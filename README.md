@@ -4,9 +4,15 @@
 This repository now includes an initial Rust workspace skeleton for the core job-seeker engine and a Windows app entrypoint.
 
 ### Workspace layout
-- `/crates/smart_job_core` — core domain models, scoring, and ranking pipeline
+- `/crates/smart_job_core` — core domain, scoring/ranking pipeline, repository abstractions, and application service layer
 - `/apps/windows_app` — Windows-oriented app entrypoint using the core crate
 - `/docs/` — research, planning, and design deliverables
+
+### Current architecture principles
+- **Separation of concerns**: domain/scoring/pipeline logic is isolated from app runtime.
+- **Dependency inversion**: application service depends on repository traits.
+- **Deterministic behavior**: ranking is sorted predictably for stable outputs.
+- **Efficiency-first**: in-memory adapter and lightweight data flow for fast iteration.
 
 ### Quick start
 From repository root:

@@ -1,9 +1,15 @@
-use smart_job_core::{rank_jobs, JobOpportunity, UserProfile};
+use smart_job_core::{InMemoryRepository, JobOpportunity, JobSeekerService, UserProfile};
 
 fn main() {
-    let profile = UserProfile::new(vec!["rust", "llm", "sqlite"], vec!["seattle"], false);
+    let mut service = JobSeekerService::new(InMemoryRepository::new());
 
-    let jobs = vec![
+    service.set_profile(UserProfile::new(
+        vec!["rust", "llm", "sqlite"],
+        vec!["seattle"],
+        false,
+    ));
+
+    service.replace_jobs(vec![
         JobOpportunity::new(
             "role-1",
             "Rust Platform Engineer",
@@ -20,15 +26,20 @@ fn main() {
             true,
             vec!["python", "transformers"],
         ),
-    ];
-
-    let ranked = rank_jobs(&profile, &jobs);
+    ]);
 
     println!("smart-job-seeker skeleton: ranked opportunities");
-    for item in ranked {
-        println!(
-            "- {} at {} => score {:.2}",
-            item.job.title, item.job.company, item.recommendation.score
-        );
+    match service.ranked_shortlist(10) {
+        Ok(ranked) => {
+            for item in ranked {
+                println!(
+                    "- {} at {} => score {:.2}",
+                    item.job.title, item.job.company, item.recommendation.score
+                );
+            }
+        }
+        Err(err) => {
+            eprintln!("Failed to rank opportunities: {err:?}");
+        }
     }
 }
