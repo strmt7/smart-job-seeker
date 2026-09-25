@@ -1,14 +1,13 @@
 # Implementation checkpoint
 
-Status: G0 complete (T001–T004). G1 next.
+Status: G0 complete. G1 code-complete & hardware-measured; accessibility observation open.
 
 | Field | Value |
 |---|---|
-| Commit | see `git log -1` (T001–T004 landed together) |
-| Completed tasks | T001, T002, T003, T004 |
-| Validation run | `cargo fmt --all`; `cargo clippy --all-targets` (clean); `cargo test` (7 core + 6 waypoint_domain + 5 waypoint_policy passing) |
-| Missing tests | No production UI, no inference probe, no hardware measurement yet |
-| Blockers | None |
-| Next smallest action | T005: eframe/egui desktop shell with virtualized 50k-row list (gate G1) |
-
-Honesty notes: license data in `docs/g0/BASELINE_AND_LICENSE_INVENTORY.md` was fetched live from the GitHub API on 2026-09-25; no competitor code was executed or copied. Rust 1.98.1 stable (MSVC) installed on this machine 2026-09-25 via rustup.
+| Latest commit | see `git log -1` |
+| Completed tasks | T001–T005, T007 (interface + live probe), T009; T006 partial (screen reader/IME/DPI unobserved); T008 measured for qwen3.5:9b on RX 9070 XT |
+| Validation run | `cargo fmt`; `cargo clippy --all-targets` → 0 warnings; `cargo test --workspace` → 25 tests pass (7 core, 6 domain, 5 policy, 4 desktop incl. 50k-row frame @25.3 ms debug, 3 inference) |
+| Runtime measurements | `docs/g1/QUALIFICATION.md` — qwen3.5:9b loads in 11.7 s, 13.23 GiB VRAM, zero CPU offload, ~77 tok/s, think+structured output pass |
+| Missing tests | release-build paint p95; Narrator/NVDA/IME/DPI observation; automated Ollama probe adapter; real ATS fixtures (G2) |
+| Blockers | T006 needs an interactive desktop session with screen reader; not claimed |
+| Next smallest action | Ollama-backed `Inference` impl making T007 repeatable in code; then T010 encrypted store (G2) |

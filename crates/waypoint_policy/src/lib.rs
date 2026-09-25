@@ -145,7 +145,7 @@ impl PermissionRegistry {
         review_recorded: bool,
     ) -> Result<(), PolicyError> {
         match self.check_public_route(source, op) {
-            Err(PolicyError::RequiresReview { source, op }) if review_recorded => Ok(()),
+            Err(PolicyError::RequiresReview { source: _, op: _ }) if review_recorded => Ok(()),
             other => other,
         }
     }

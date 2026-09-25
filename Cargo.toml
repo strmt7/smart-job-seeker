@@ -3,6 +3,8 @@ members = [
   "crates/smart_job_core",
   "crates/waypoint_domain",
   "crates/waypoint_policy",
+  "crates/waypoint_desktop",
+  "crates/waypoint_inference",
   "apps/windows_app",
 ]
 resolver = "2"

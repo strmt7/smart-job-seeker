@@ -1,50 +1,28 @@
-use smart_job_core::{JobOpportunity, JobSeekerService, SqliteRepository, UserProfile};
+use waypoint_desktop::{JobRow, Screen, ShellViewModel};
+use waypoint_domain::ApplicationState;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let repository = SqliteRepository::in_memory()
-        .map_err(|err| format!("failed to initialize SQLite repository: {err:?}"))?;
-    let mut service = JobSeekerService::new(repository);
+fn main() -> eframe::Result<()> {
+    // 50k-row fixture to exercise G1 virtualization targets on first launch.
+    let rows: Vec<JobRow> = (0..50_000)
+        .map(|i| JobRow {
+            identity: format!("job-{i}"),
+            title: format!("Embedded Linux Engineer {i}"),
+            employer: format!("Employer {}", i % 97),
+            location: if i % 3 == 0 {
+                "Remote (EU)".into()
+            } else {
+                "Zurich".into()
+            },
+            state: ApplicationState::Discovered,
+            state_label: "discovered".into(),
+            last_checked: Some("2026-09-25T10:00:00Z".into()),
+        })
+        .collect();
 
-    service
-        .set_profile(UserProfile::new(
-            vec!["rust", "llm", "sqlite"],
-            vec!["seattle"],
-            false,
-        ))
-        .map_err(|err| format!("failed to store profile: {err:?}"))?;
-
-    service
-        .replace_jobs(vec![
-            JobOpportunity::new(
-                "role-1",
-                "Rust Platform Engineer",
-                "Acme Systems",
-                "Seattle",
-                false,
-                vec!["rust", "sqlite", "llm"],
-            ),
-            JobOpportunity::new(
-                "role-2",
-                "AI Product Engineer",
-                "Nova Labs",
-                "Remote",
-                true,
-                vec!["python", "transformers"],
-            ),
-        ])
-        .map_err(|err| format!("failed to store jobs: {err:?}"))?;
-
-    println!("smart-job-seeker skeleton: ranked opportunities");
-    let ranked = service
-        .ranked_shortlist(10)
-        .map_err(|err| format!("failed to rank opportunities: {err:?}"))?;
-
-    for item in ranked {
-        println!(
-            "- {} at {} => score {:.2}",
-            item.job.title, item.job.company, item.recommendation.score
-        );
-    }
-
-    Ok(())
+    waypoint_desktop::run(ShellViewModel {
+        screen: Screen::Discovery,
+        total_jobs: rows.len(),
+        rows,
+        notice: Some("G1 qualification fixture — no live sources connected".into()),
+    })
 }
