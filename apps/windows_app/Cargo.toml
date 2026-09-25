@@ -1,0 +1,11 @@
+[package]
+name = "windows_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+smart_job_core = { path = "../../crates/smart_job_core" }
+
+[lints]
+workspace = true

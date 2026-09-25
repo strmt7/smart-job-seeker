@@ -1,0 +1,13 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1280' height='720'>
+  <rect width='100%' height='100%' fill='#111827'/>
+  <text x='32' y='48' fill='#f9fafb' font-size='28' font-family='Segoe UI'>Audit & Provenance Center</text>
+  <rect x='24' y='72' width='820' height='620' rx='10' fill='#1f2937'/>
+  <text x='46' y='110' fill='#d1d5db' font-size='18' font-family='Segoe UI'>Decision Graph + Timeline Replay</text>
+  <circle cx='220' cy='220' r='36' fill='#374151'/>
+  <circle cx='420' cy='300' r='36' fill='#374151'/>
+  <circle cx='620' cy='220' r='36' fill='#374151'/>
+  <line x1='256' y1='220' x2='384' y2='300' stroke='#9ca3af' stroke-width='3'/>
+  <line x1='456' y1='300' x2='584' y2='220' stroke='#9ca3af' stroke-width='3'/>
+  <rect x='860' y='72' width='396' height='620' rx='10' fill='#1f2937'/>
+  <text x='882' y='110' fill='#d1d5db' font-size='18' font-family='Segoe UI'>Policy Events / Action Logs</text>
+</svg>

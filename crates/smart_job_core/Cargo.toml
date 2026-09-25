@@ -1,0 +1,12 @@
+[package]
+name = "smart_job_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+
+[lints]
+workspace = true
