@@ -1,6 +1,8 @@
 [workspace]
 members = [
   "crates/smart_job_core",
+  "crates/waypoint_domain",
+  "crates/waypoint_policy",
   "apps/windows_app",
 ]
 resolver = "2"

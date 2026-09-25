@@ -1,0 +1,11 @@
+[
+  { "source": "greenhouse", "discover": "allowed_public", "read": "allowed_public", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "lever", "discover": "allowed_public", "read": "allowed_public", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "ashby", "discover": "allowed_public", "read": "allowed_public", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "workday", "discover": "requires_review", "read": "requires_review", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "icims", "discover": "requires_review", "read": "requires_review", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "smartrecruiters", "discover": "requires_review", "read": "requires_review", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "successfactors", "discover": "requires_review", "read": "requires_review", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" },
+  { "source": "linkedin", "discover": "forbidden", "read": "forbidden", "prefill": "forbidden", "upload": "forbidden", "submit": "forbidden", "confirm": "forbidden" },
+  { "source": "user_supplied_url", "discover": "allowed_public", "read": "allowed_public", "prefill": "requires_review", "upload": "requires_review", "submit": "requires_review", "confirm": "requires_review" }
+]
