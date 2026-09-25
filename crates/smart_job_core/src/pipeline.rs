@@ -13,7 +13,10 @@ pub fn rank_jobs(profile: &UserProfile, jobs: &[JobOpportunity]) -> Vec<RankedJo
         .cloned()
         .map(|job| {
             let recommendation = score_job(profile, &job);
-            RankedJob { job, recommendation }
+            RankedJob {
+                job,
+                recommendation,
+            }
         })
         .collect();
 
@@ -38,7 +41,14 @@ mod tests {
 
         let jobs = vec![
             JobOpportunity::new("2", "Data Engineer", "B", "Austin", false, vec!["python"]),
-            JobOpportunity::new("1", "Rust Engineer", "A", "Seattle", false, vec!["rust", "sql"]),
+            JobOpportunity::new(
+                "1",
+                "Rust Engineer",
+                "A",
+                "Seattle",
+                false,
+                vec!["rust", "sql"],
+            ),
         ];
 
         let ranked = rank_jobs(&profile, &jobs);

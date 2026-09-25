@@ -1,5 +1,9 @@
 use crate::domain::{JobOpportunity, UserProfile};
 
+const SKILL_WEIGHT: f32 = 0.7;
+const LOCATION_WEIGHT: f32 = 0.2;
+const SALARY_WEIGHT: f32 = 0.1;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recommendation {
     pub score: f32,
@@ -28,7 +32,10 @@ pub fn score_job(profile: &UserProfile, job: &JobOpportunity) -> Recommendation 
         reasons.push("Remote role".to_string());
     }
 
-    let score = ((skill_score * 0.7) + (location_score * 0.2) + (salary_score * 0.1)).clamp(0.0, 1.0);
+    let score = ((skill_score * SKILL_WEIGHT)
+        + (location_score * LOCATION_WEIGHT)
+        + (salary_score * SALARY_WEIGHT))
+        .clamp(0.0, 1.0);
 
     Recommendation {
         score,
@@ -54,7 +61,11 @@ fn skill_score(profile: &UserProfile, job: &JobOpportunity) -> (f32, usize, Vec<
         }
     }
 
-    (matched as f32 / job.required_skills.len() as f32, matched, missing)
+    (
+        matched as f32 / job.required_skills.len() as f32,
+        matched,
+        missing,
+    )
 }
 
 fn location_score(profile: &UserProfile, job: &JobOpportunity) -> f32 {
@@ -126,5 +137,18 @@ mod tests {
         let on_site = JobOpportunity::new("2", "Backend", "A", "NYC", false, vec!["rust"]);
 
         assert!(score_job(&profile, &remote).score > score_job(&profile, &on_site).score);
+    }
+
+    #[test]
+    fn salary_expectation_affects_score() {
+        let profile = UserProfile::new(vec!["rust"], vec!["seattle"], false)
+            .with_min_salary_expectation(120_000);
+
+        let high_salary = JobOpportunity::new("1", "Backend", "A", "Seattle", false, vec!["rust"])
+            .with_min_salary(130_000);
+        let low_salary = JobOpportunity::new("2", "Backend", "A", "Seattle", false, vec!["rust"])
+            .with_min_salary(100_000);
+
+        assert!(score_job(&profile, &high_salary).score > score_job(&profile, &low_salary).score);
     }
 }

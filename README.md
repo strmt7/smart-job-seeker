@@ -1,18 +1,24 @@
 # smart-job-seeker
 
 ## Rust skeleton (main app parts)
-This repository now includes an initial Rust workspace skeleton for the core job-seeker engine and a Windows app entrypoint.
+This repository contains a Rust-first app skeleton for a high-efficiency job-seeker platform.
 
 ### Workspace layout
-- `/crates/smart_job_core` — core domain, scoring/ranking pipeline, repository abstractions, and application service layer
-- `/apps/windows_app` — Windows-oriented app entrypoint using the core crate
+- `/crates/smart_job_core`
+  - domain models
+  - scoring + ranking pipeline
+  - repository abstraction
+  - in-memory adapter
+  - SQLite adapter
+  - application service layer
+- `/apps/windows_app` — Windows-oriented executable entrypoint
 - `/docs/` — research, planning, and design deliverables
 
-### Current architecture principles
-- **Separation of concerns**: domain/scoring/pipeline logic is isolated from app runtime.
-- **Dependency inversion**: application service depends on repository traits.
-- **Deterministic behavior**: ranking is sorted predictably for stable outputs.
-- **Efficiency-first**: in-memory adapter and lightweight data flow for fast iteration.
+### Architecture principles used
+- **Separation of concerns** between domain, persistence, and orchestration.
+- **Dependency inversion** via repository traits.
+- **Deterministic outputs** for stable ranking behavior.
+- **Local-first persistence** with SQLite adapter.
 
 ### Quick start
 From repository root:
