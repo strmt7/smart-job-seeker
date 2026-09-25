@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/waypoint/ApplicationIntent.schema.json",
+  "title": "ApplicationIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "job_identity_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "destination_origin": {
+      "type": "string",
+      "format": "uri"
+    },
+    "packet_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "form_schema_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "payload_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "operation": {
+      "enum": [
+        "prefill",
+        "submit"
+      ]
+    },
+    "state": {
+      "enum": [
+        "prepared",
+        "approved",
+        "submitting",
+        "uncertain",
+        "confirmed",
+        "external_attested",
+        "canceled"
+      ]
+    },
+    "approval_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "receipt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "external_write_started": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "id",
+    "job_identity_id",
+    "profile_revision",
+    "destination_origin",
+    "packet_sha256",
+    "form_schema_sha256",
+    "payload_sha256",
+    "operation",
+    "state",
+    "approval_id",
+    "receipt_id",
+    "external_write_started",
+    "created_at"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "confirmed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "receipt_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "submitting",
+              "uncertain"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "external_write_started": {
+            "const": true
+          },
+          "approval_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}

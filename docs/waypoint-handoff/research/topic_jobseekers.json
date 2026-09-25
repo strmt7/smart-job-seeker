@@ -1,0 +1,261 @@
+[
+  {
+    "repository": "career-ops-hq/career-ops",
+    "url": "https://github.com/career-ops-hq/career-ops",
+    "review_status": "Reviewed; see R05",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Gsync/jobsync",
+    "url": "https://github.com/Gsync/jobsync",
+    "review_status": "Reviewed; see R01",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "nicobrenner/commandjobs",
+    "url": "https://github.com/nicobrenner/commandjobs",
+    "review_status": "Reviewed; see R26",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Kajaasfaq/Company-list-Chennai",
+    "url": "https://github.com/Kajaasfaq/Company-list-Chennai",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "GabeGiro/EasyApplyJobsBot",
+    "url": "https://github.com/GabeGiro/EasyApplyJobsBot",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "amol-can/eu-visa-sponsoring-companies",
+    "url": "https://github.com/amol-can/eu-visa-sponsoring-companies",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Developer-RONNIE/List-of-Top-Unicorn-Startups-India",
+    "url": "https://github.com/Developer-RONNIE/List-of-Top-Unicorn-Startups-India",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "CarlosZBent/Directorio_trabajos_tech",
+    "url": "https://github.com/CarlosZBent/Directorio_trabajos_tech",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "pavangudiwada/job-resources",
+    "url": "https://github.com/pavangudiwada/job-resources",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "datascry/openroles",
+    "url": "https://github.com/datascry/openroles",
+    "review_status": "Reviewed; see R25",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Kumneger0/afriApply",
+    "url": "https://github.com/Kumneger0/afriApply",
+    "review_status": "Reviewed; see R29",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Boki136/Jobbing",
+    "url": "https://github.com/Boki136/Jobbing",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "xuanthanhtah/Find_Job",
+    "url": "https://github.com/xuanthanhtah/Find_Job",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "algosup/2023-2024-project-5-flutter-team-6",
+    "url": "https://github.com/algosup/2023-2024-project-5-flutter-team-6",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "nmaties/jobs-scraper-linkedin",
+    "url": "https://github.com/nmaties/jobs-scraper-linkedin",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Noospheracr/JobArmyKnife",
+    "url": "https://github.com/Noospheracr/JobArmyKnife",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "AkmalFairuz/job-hunter",
+    "url": "https://github.com/AkmalFairuz/job-hunter",
+    "review_status": "Reviewed; see R28",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "tomigbel/apply-within",
+    "url": "https://github.com/tomigbel/apply-within",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "tacitup/Resume-Match",
+    "url": "https://github.com/tacitup/Resume-Match",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "vaishnaviteja05/CareerUpdates",
+    "url": "https://github.com/vaishnaviteja05/CareerUpdates",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "lucasnevespereira/swizjobsbot",
+    "url": "https://github.com/lucasnevespereira/swizjobsbot",
+    "review_status": "Reviewed; see R27",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "rajkumar-avachar/JobGrids-job-portal-platform",
+    "url": "https://github.com/rajkumar-avachar/JobGrids-job-portal-platform",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "bughunter7/bughunter7",
+    "url": "https://github.com/bughunter7/bughunter7",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "AndreiBanu1/romania-job-aggregator",
+    "url": "https://github.com/AndreiBanu1/romania-job-aggregator",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "sameersalihabdalla/JobsAgent---jobs-Board-Platform",
+    "url": "https://github.com/sameersalihabdalla/JobsAgent---jobs-Board-Platform",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "jamessnguyenn/EZ-Apply",
+    "url": "https://github.com/jamessnguyenn/EZ-Apply",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "faketechlabsberlin/st21-jobzilla",
+    "url": "https://github.com/faketechlabsberlin/st21-jobzilla",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Blessman-Newton/RemotePathy",
+    "url": "https://github.com/Blessman-Newton/RemotePathy",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "SreecharanV/Visualizing-Current-Data-Science-Salary-Trends-Key-Insights-for-Job-Seekers",
+    "url": "https://github.com/SreecharanV/Visualizing-Current-Data-Science-Salary-Trends-Key-Insights-for-Job-Seekers",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Aimin-Nur/Job-Seeker",
+    "url": "https://github.com/Aimin-Nur/Job-Seeker",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "KarstenEvans/aletheia-app",
+    "url": "https://github.com/KarstenEvans/aletheia-app",
+    "review_status": "Reviewed; see R31",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "PydevAzmi/pydevazmi.github.io",
+    "url": "https://github.com/PydevAzmi/pydevazmi.github.io",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "damonleelcx/Opportunity-Bridge-Agent",
+    "url": "https://github.com/damonleelcx/Opportunity-Bridge-Agent",
+    "review_status": "Reviewed; see R30",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "MyTurn25176/MyTurn",
+    "url": "https://github.com/MyTurn25176/MyTurn",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "mahinjust/Job-Portal-Application",
+    "url": "https://github.com/mahinjust/Job-Portal-Application",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Pranav-un/ATSight",
+    "url": "https://github.com/Pranav-un/ATSight",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  },
+  {
+    "repository": "Dixievaseshaped907/job-tracker",
+    "url": "https://github.com/Dixievaseshaped907/job-tracker",
+    "review_status": "Discovery metadata only; feature/license verification outstanding",
+    "evidence": "S76",
+    "notes": "Do not infer product capability or missing features from a name/topic tag"
+  }
+]

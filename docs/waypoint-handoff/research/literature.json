@@ -1,0 +1,83 @@
+[
+  {
+    "id": "P01",
+    "title": "Writing assistance improves hiring in a studied marketplace",
+    "publication": "Management Science, 2025; peer-reviewed journal",
+    "sources": "S86",
+    "finding": "Nongenerative writing assistance randomized at large scale improved hiring in the studied setting.",
+    "design_implication": "Prioritize clear truthful writing and user-approved edits; test our own LLM workflow separately.",
+    "limitation": "Not evidence that mass autoapply or this platform raises hires by the same amount."
+  },
+  {
+    "id": "P02",
+    "title": "Weak ties and job mobility",
+    "publication": "Science, 2022; peer-reviewed journal",
+    "sources": "S87",
+    "finding": "Randomized network recommendations support a nonlinear role for weaker ties, differing by industry.",
+    "design_implication": "Build opt-in relationship maintenance and relevant introductions alongside applications.",
+    "limitation": "Does not justify indiscriminate contact scraping or mass outreach."
+  },
+  {
+    "id": "P03",
+    "title": "ConFit v2",
+    "publication": "Findings ACL, 2025; peer-reviewed conference findings",
+    "sources": "S88",
+    "finding": "Hard-negative training and hypothetical reference representations improve studied resume-job matching tasks.",
+    "design_implication": "Use hard near-miss examples and contrastive evaluation before expensive reranking.",
+    "limitation": "Hypothetical training representations are not candidate facts and never enter CV claims."
+  },
+  {
+    "id": "P04",
+    "title": "Multilingual Swiss occupational classification",
+    "publication": "Findings ACL, 2025; peer-reviewed conference findings",
+    "sources": "S89",
+    "finding": "Taxonomy and LLM-refined labels address multilingual occupational classification.",
+    "design_implication": "Distinguish ad language, required working language and output locale; test CH-ISCO/ISCO categories.",
+    "limitation": "Classification accuracy does not prove eligibility or hiring success."
+  },
+  {
+    "id": "P05",
+    "title": "Lost in the Middle",
+    "publication": "TACL, 2024; peer-reviewed journal",
+    "sources": "S90",
+    "finding": "Evidence position affected long-context answers in tested models.",
+    "design_implication": "Evaluate evidence at beginning/middle/end; retrieve compact relevant evidence.",
+    "limitation": "Do not assert every current model has identical bias."
+  },
+  {
+    "id": "P06",
+    "title": "Distance between relevant pieces",
+    "publication": "Findings ACL, 2025; peer-reviewed conference findings",
+    "sources": "S91",
+    "finding": "Spacing among related evidence pieces is another long-context failure axis.",
+    "design_implication": "Benchmark multi-document experience synthesis and cross-source contradictions.",
+    "limitation": "This does not validate a particular production context limit."
+  },
+  {
+    "id": "P07",
+    "title": "WebArena",
+    "publication": "arXiv 2307.13854; benchmark paper copy reviewed",
+    "sources": "S92",
+    "finding": "Functional web task evaluation checks outcomes rather than plausible narratives.",
+    "design_implication": "Use local ATS fixtures and independently verify the submitted payload/end state.",
+    "limitation": "Historical success rates are not contemporary job-agent accuracy."
+  },
+  {
+    "id": "P08",
+    "title": "OSWorld",
+    "publication": "arXiv 2404.07972; benchmark paper copy reviewed",
+    "sources": "S93",
+    "finding": "Execution-based computer task testing captures desktop interaction complexity.",
+    "design_implication": "Include Windows DPI, window focus, browser restarts and uploaded-file correctness.",
+    "limitation": "The benchmark is not a job-application-specific certification."
+  },
+  {
+    "id": "P09",
+    "title": "InjecAgent",
+    "publication": "Findings ACL, 2024; peer-reviewed conference findings",
+    "sources": "S94",
+    "finding": "Untrusted tool content can manipulate tool-using assistants.",
+    "design_implication": "Build injection fixtures and isolate reading from authorized writing capabilities.",
+    "limitation": "Passing a test corpus does not eliminate prompt-injection risk."
+  }
+]

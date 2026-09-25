@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/waypoint/Receipt.schema.json",
+  "title": "Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kind": {
+      "enum": [
+        "employer_confirmation_page",
+        "employer_acknowledgement_email",
+        "authorized_api_ack",
+        "user_attestation"
+      ]
+    },
+    "source_origin": {
+      "type": "string",
+      "format": "uri"
+    },
+    "application_reference": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "verification_status": {
+      "enum": [
+        "qualified",
+        "needs_review",
+        "attested_only"
+      ]
+    },
+    "redacted": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "intent_id",
+    "observed_at",
+    "kind",
+    "source_origin",
+    "application_reference",
+    "evidence_sha256",
+    "verification_status",
+    "redacted"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "user_attestation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verification_status": {
+            "const": "attested_only"
+          }
+        }
+      }
+    }
+  ]
+}

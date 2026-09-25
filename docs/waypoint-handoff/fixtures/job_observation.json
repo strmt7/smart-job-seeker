@@ -1,0 +1,21 @@
+{
+  "id": "observation-demo-001",
+  "job_identity_id": "demo-employer:req-101",
+  "source_url": "https://employer.example.invalid/jobs/101",
+  "source_id": "synthetic-fixture",
+  "employer_namespace": "demo-employer",
+  "requisition_id": "101",
+  "observed_at": "2026-09-25T10:00:00Z",
+  "content_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "status": "open_observed",
+  "verification_method": "employer_page",
+  "evidence_ids": [
+    "evidence-demo-job"
+  ],
+  "posting_language": "en",
+  "required_working_languages": [
+    "de"
+  ],
+  "salary_source": "unknown",
+  "errors": []
+}

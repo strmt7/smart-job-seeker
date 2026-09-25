@@ -1,0 +1,9 @@
+{
+  "images_loaded": 40,
+  "navigation_filter_keyboard_metadata": "basic next/filter/navigation exercised; keyboard handlers present but not full assistive-technology audit",
+  "javascript_errors": [],
+  "external_http_requests": [],
+  "narrow_view_horizontal_overflow": false,
+  "svg_out_of_canvas_text": [],
+  "scope": "Direct file navigation was blocked by the container browser policy; HTML logic and image loading were tested with in-memory embedded local assets. Original file-URI route not exercised. Offline design gallery smoke test only. No production app behavior or Windows UI accessibility is proven."
+}

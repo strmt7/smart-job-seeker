@@ -1,0 +1,76 @@
+{
+  "status": "PROPOSED TARGETS - not measurements",
+  "reference_hardware": "Windows x64, 16 GB discrete GPU; AMD RX 9070 XT-class explicit qualification target",
+  "measurement_requirements": [
+    "OS build",
+    "GPU/CPU/RAM/SSD",
+    "driver",
+    "model SHA256 and quantization",
+    "runtime exact revision",
+    "dataset version",
+    "cold/warm condition",
+    "number of repeats",
+    "percentiles",
+    "all child processes",
+    "dedicated and shared GPU memory",
+    "inference offload",
+    "quality results"
+  ],
+  "targets": [
+    {
+      "metric": "native shell interactive startup",
+      "threshold": "p95 < 2 s",
+      "exclusions": "optional model loading reported separately"
+    },
+    {
+      "metric": "UI resident memory",
+      "threshold": "< 250 MiB on baseline dataset",
+      "exclusions": "model/browser reported separately AND aggregate total reported"
+    },
+    {
+      "metric": "inactive UI CPU",
+      "threshold": "< 1% of one logical core averaged over 5 min",
+      "exclusions": "no active task; whole app and active tasks measured separately"
+    },
+    {
+      "metric": "input-to-visible feedback",
+      "threshold": "p95 < 50 ms",
+      "exclusions": "not total LLM response time"
+    },
+    {
+      "metric": "cached search 50,000 jobs",
+      "threshold": "p95 < 200 ms",
+      "exclusions": "cold index and initial import reported separately"
+    },
+    {
+      "metric": "interactive frame time",
+      "threshold": "p95 <= 16.7 ms",
+      "exclusions": "idle must not continuously repaint"
+    },
+    {
+      "metric": "aggregate dedicated VRAM",
+      "threshold": "normal qualified workload <= 14 GiB on 16 GiB target, dynamically budgeted",
+      "exclusions": "none; include UI/browser/display pressure"
+    },
+    {
+      "metric": "GPU-resident inference",
+      "threshold": "zero reported inference CPU offload and no hidden shared-memory paging",
+      "exclusions": "ordinary deterministic CPU parsing/indexing is permitted"
+    }
+  ],
+  "not_claimed": [
+    "measured tokens per second",
+    "proven 128K fit",
+    "fastest Rust implementation",
+    "improved hiring rate",
+    "enterprise certification"
+  ],
+  "runtime_concurrency": {
+    "reasoning_generations": 1,
+    "application_browser_sessions": 1,
+    "public_fetches_global": 4,
+    "public_fetches_per_origin": 2,
+    "automatic_retries_after_ambiguous_write": 0
+  },
+  "comparison_rule": "Never trade safety/accuracy for headline speed without reporting both."
+}

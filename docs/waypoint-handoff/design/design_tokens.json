@@ -1,0 +1,52 @@
+{
+  "version": "1.0",
+  "units": "logical pixels at 100%",
+  "reference_canvas": [
+    1600,
+    1000
+  ],
+  "minimum_target_window": [
+    1280,
+    800
+  ],
+  "spacing": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32,
+    40
+  ],
+  "radius": {
+    "small": 6,
+    "panel": 12,
+    "dialog": 16
+  },
+  "typography": {
+    "family": "Windows system font or licensed equivalent; no font binaries included",
+    "body": 16,
+    "small": 13,
+    "title": 30,
+    "section": 19
+  },
+  "colors": {
+    "canvas": "#F3F6F9",
+    "surface": "#FFFFFF",
+    "sidebar": "#0D2030",
+    "text": "#182B3B",
+    "muted": "#53697C",
+    "border": "#D8E2EA",
+    "accent": "#087F8C",
+    "focus": "#215FCE",
+    "warning": "#9C5E12",
+    "error": "#A22E40"
+  },
+  "behavior": {
+    "idle_repaint": "event-driven",
+    "color_semantics": "always paired with text/icon",
+    "motion": "respect reduced motion",
+    "focus": "visible outline; no color-only state"
+  },
+  "status": "design tokens, not accessibility certification"
+}

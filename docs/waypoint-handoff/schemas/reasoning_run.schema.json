@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/waypoint/ReasoningRun.schema.json",
+  "title": "ReasoningRun",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "runtime_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "backend": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasoning_enabled": {
+      "const": true
+    },
+    "context_tokens": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "external_facts_used": {
+      "type": "boolean"
+    },
+    "research_evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "network_status": {
+      "enum": [
+        "current_evidence",
+        "stale_offline",
+        "not_needed"
+      ]
+    },
+    "output_status": {
+      "enum": [
+        "validated",
+        "draft_unverified",
+        "blocked"
+      ]
+    },
+    "confidence_label": {
+      "enum": [
+        "supported",
+        "mixed",
+        "unknown"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id",
+    "purpose",
+    "model_id",
+    "model_sha256",
+    "runtime_revision",
+    "backend",
+    "reasoning_enabled",
+    "context_tokens",
+    "external_facts_used",
+    "research_evidence_ids",
+    "network_status",
+    "output_status",
+    "confidence_label",
+    "summary"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "external_facts_used": {
+            "const": true
+          },
+          "output_status": {
+            "const": "validated"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "research_evidence_ids": {
+            "minItems": 1
+          },
+          "network_status": {
+            "const": "current_evidence"
+          }
+        }
+      }
+    }
+  ]
+}

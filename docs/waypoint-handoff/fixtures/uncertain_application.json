@@ -1,0 +1,15 @@
+{
+  "id": "intent-demo-001",
+  "job_identity_id": "demo-employer:req-101",
+  "profile_revision": 2,
+  "destination_origin": "https://employer.example.invalid",
+  "packet_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "form_schema_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "payload_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "operation": "submit",
+  "state": "uncertain",
+  "approval_id": "grant-demo-001",
+  "receipt_id": null,
+  "external_write_started": true,
+  "created_at": "2026-09-25T10:00:00Z"
+}

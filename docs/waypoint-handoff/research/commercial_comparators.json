@@ -1,0 +1,102 @@
+[
+  {
+    "id": "C01",
+    "name": "Simplify",
+    "url": "https://simplify.jobs/copilot",
+    "documented_features": "Autofill; reusable profile; job-specific AI answers; tracker; tailored resumes; navigation advertises talent agent, interviewer and introductions.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "New navigation features not walkthrough-tested; supported-site and outcome claims not independently reproduced.",
+    "sources": "S29 S30 S77"
+  },
+  {
+    "id": "C02",
+    "name": "Teal",
+    "url": "https://www.tealhq.com/tools/job-tracker",
+    "documented_features": "Job capture/tracking; keyword guidance; materials; contacts/referral followups; advertised interview practice and negotiation tools.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Do not reduce comparator to a Kanban board; local inference and exact approval semantics unverified.",
+    "sources": "S31"
+  },
+  {
+    "id": "C03",
+    "name": "Huntr",
+    "url": "https://huntr.co/",
+    "documented_features": "Clipping/saved job descriptions; contacts; interviews; tailored CV/cover; autofill; versions and AI edit review.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Platform outcome observations do not establish causal product uplift; exact permission/egress tests outstanding.",
+    "sources": "S32 S78"
+  },
+  {
+    "id": "C04",
+    "name": "Jobright",
+    "url": "https://jobright.ai/",
+    "documented_features": "Matching; tailored resume; autofill; insider connections; fresh/verified job claims.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Freshness and matching performance are vendor claims; no recall or verification audit conducted.",
+    "sources": "S79"
+  },
+  {
+    "id": "C05",
+    "name": "LoopCV",
+    "url": "https://www.loopcv.pro/",
+    "documented_features": "Search loops; optional manual review; auto-apply; recruiter outreach; exclusions; application analytics and CV A/B tests.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Outcome learning and recruiter outreach are not novel; opens and replies are not proof of hiring impact.",
+    "sources": "S80"
+  },
+  {
+    "id": "C06",
+    "name": "AIApply",
+    "url": "https://aiapply.co/",
+    "documented_features": "Job discovery/application automation; tailored materials; tracker; resume translation; mock interviews; live interview assistance.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Differentiate ethical rehearsal from covert interview help; paid credits/cloud delivery, with no benchmark reproduced.",
+    "sources": "S81"
+  },
+  {
+    "id": "C07",
+    "name": "Scout",
+    "url": "https://applyscout.app/",
+    "documented_features": "Search criteria/profiles; tailored packets; AI/human delegated applications; visible receipts and status.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Receipts already marketed; exact recovery behavior and independent completion rate unknown.",
+    "sources": "S82"
+  },
+  {
+    "id": "C08",
+    "name": "HireProof",
+    "url": "https://hireproof.tech/docs",
+    "documented_features": "Job/recruitment fraud audits with sources; receipts; alternative listings; integration interfaces.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Risk signals cannot guarantee safe/fake verdict; interface openness is not an open-source license.",
+    "sources": "S83"
+  },
+  {
+    "id": "C09",
+    "name": "RolePatch Proof",
+    "url": "https://rolepatch.com/proof",
+    "documented_features": "Evidence-linked achievements; private imports; selective sharing; verification preview.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Some verification flows future-facing; evidence portability alone not new.",
+    "sources": "S84"
+  },
+  {
+    "id": "C10",
+    "name": "ApplyFlow Radar",
+    "url": "https://career-ops.space/",
+    "documented_features": "Review workspace; fit checks; portal plans; human approval; evidence receipts.",
+    "verification": "Official public descriptions, not hands-on product tests",
+    "source_availability": "No reusable application-source license established in this review",
+    "limits_and_unknowns": "Do not assume shared ownership with GitHub career-ops; production maturity and source license unresolved.",
+    "sources": "S85"
+  }
+]

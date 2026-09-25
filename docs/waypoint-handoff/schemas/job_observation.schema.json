@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/waypoint/JobObservation.schema.json",
+  "title": "JobObservation",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "job_identity_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "employer_namespace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requisition_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "status": {
+      "enum": [
+        "open_observed",
+        "closed_observed",
+        "unknown",
+        "stale",
+        "blocked"
+      ]
+    },
+    "verification_method": {
+      "enum": [
+        "official_api",
+        "employer_page",
+        "aggregator",
+        "user_attestation",
+        "unknown"
+      ]
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "posting_language": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "required_working_languages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "salary_source": {
+      "enum": [
+        "employer",
+        "aggregator",
+        "estimate",
+        "unknown"
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "id",
+    "job_identity_id",
+    "source_url",
+    "source_id",
+    "employer_namespace",
+    "requisition_id",
+    "observed_at",
+    "content_sha256",
+    "status",
+    "verification_method",
+    "evidence_ids",
+    "posting_language",
+    "required_working_languages",
+    "salary_source",
+    "errors"
+  ]
+}

@@ -1,0 +1,18 @@
+flowchart LR
+    UI[Native Rust desktop UI] --> DOMAIN[Typed domain services]
+    DOMAIN --> STORE[Encrypted local store and revision journal]
+    DOMAIN --> POLICY[Permission and approval broker]
+    DOMAIN --> RESEARCH[Research planner and source ledger]
+    RESEARCH --> POLICY
+    POLICY --> NET[Purpose-limited HTTP broker]
+    NET --> PUBLIC[Public employer and ATS evidence]
+    PUBLIC --> PARSE[Restricted extraction worker]
+    PARSE --> STORE
+    DOMAIN --> LLM[Managed local reasoning runtime - no network]
+    STORE --> LLM
+    LLM --> PROPOSAL[Typed proposals - no authority]
+    PROPOSAL --> DOMAIN
+    POLICY --> BROWSER[Dedicated visible browser session]
+    BROWSER --> ATS[Employer application flow]
+    ATS --> RECEIPT[Receipt qualification or Uncertain]
+    RECEIPT --> STORE

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "GAP01",
+    "topic": "Native Windows + local reasoning",
+    "existing_evidence": "AI Job Hunter already has Windows/Tauri and Ollama; AARG has Rust/local-model workflows.",
+    "sources": "S63 S66",
+    "revised_opportunity": "Not novel. Target a native Rust UI with measured end-to-end AMD 16 GB qualification.",
+    "validation": "Run matched correctness, resource, accessibility and latency tests; do not assume Rust alone wins.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP02",
+    "topic": "Truthful/evidence-backed materials",
+    "existing_evidence": "AARG, AI Job Hunter, AutoApply and RolePatch already ground material in evidence.",
+    "sources": "S15 S63 S65 S66 S84",
+    "revised_opportunity": "Not novel alone. Investigate graph-wide correction propagation to unsent artifacts and approval invalidation.",
+    "validation": "Change 100 facts across multi-artifact fixtures; detect all impacted claims, preserve unaffected ones and invalidate the exact approvals.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP03",
+    "topic": "Application receipts",
+    "existing_evidence": "Scout and ApplyFlow document receipts; AI Job Hunter has confirmation tracking.",
+    "sources": "S63 S82 S85",
+    "revised_opportunity": "Not novel. Test receipt-qualified state semantics and reconciliation after uncertain writes.",
+    "validation": "Crash before click, after click and before local commit; no automatic ambiguous retry and no false confirmed state.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP04",
+    "topic": "Already-applied detection",
+    "existing_evidence": "AI Job Hunter has applied checks and an independent lifecycle; job-hunter documents repost handling.",
+    "sources": "S64 S70",
+    "revised_opportunity": "Generation-based badges are a specific semantics risk to reproduce, not proof tracking is absent.",
+    "validation": "Compare Prepared versus Confirmed across URL aliases, imports and generation-only workflows at pinned versions.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP05",
+    "topic": "Job freshness and aggregation",
+    "existing_evidence": "openroles already refreshes many ATS sources and exposes stale filtering; Jobright markets fresh verified roles.",
+    "sources": "S67 S79",
+    "revised_opportunity": "Not novel. Target explicit observation evidence and measured source/locale coverage under failure.",
+    "validation": "Gold-label open/closed/unknown samples; hold out source outages; score stale false positives and missing coverage notices.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP06",
+    "topic": "Visa/language/eligibility guidance",
+    "existing_evidence": "Opportunity Bridge already explains met/unmet/unknown criteria; specialist directories exist.",
+    "sources": "S72 S76 S89",
+    "revised_opportunity": "Not new as a category. Target precise source-linked distinctions without legal verdicts or silent relaxations.",
+    "validation": "English ad with German requirement; historical sponsorship with unknown role support; failed and missing constraints stay separate.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP07",
+    "topic": "Privacy and data ownership",
+    "existing_evidence": "Local SQLite/keychain, local inference and private proof imports already exist.",
+    "sources": "S63 S64 S66 S84",
+    "revised_opportunity": "Not novel. Target independently tested purpose-level network isolation and coherent deletion/backup policy.",
+    "validation": "Canary resume/email text must not enter general search queries or telemetry; test every egress path.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP08",
+    "topic": "Human approvals",
+    "existing_evidence": "AutoApply, Opportunity Bridge and assisted products already have human review; hash-bound approval appears in Opportunity Bridge.",
+    "sources": "S15 S29 S72",
+    "revised_opportunity": "Not novel. Require typed, one-use, expiring grants tied to profile/packet/form/destination revisions.",
+    "validation": "Mutate each bound field; stale/replayed grants cannot cause writes. Confirm approval is enforced in code, not prompt.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP09",
+    "topic": "Learning from outcomes",
+    "existing_evidence": "LoopCV advertises analytics and CV A/B testing; mature trackers have funnels.",
+    "sources": "S31 S32 S80",
+    "revised_opportunity": "Not novel. Target accurate denominators, response lag and honest causal limitations.",
+    "validation": "Simulated censoring and selection shifts must not become claimed causal gains or calibrated hire probabilities.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP10",
+    "topic": "Networking and interviews",
+    "existing_evidence": "Simplify, Huntr, Teal, Jobright and AIApply already address these stages.",
+    "sources": "S31 S77 S78 S79 S81 S87",
+    "revised_opportunity": "Table stakes. Improve source-backed preparation and consented, relevant outreach rather than claim invention.",
+    "validation": "Blinded specificity/usability scoring; no invented contacts, fake experience or covert live interview functionality.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP11",
+    "topic": "Document quality and revision loops",
+    "existing_evidence": "AARG exports ATS/human PDFs and iterates; AI Job Hunter has multiple templates and DOCX/PDF.",
+    "sources": "S63 S66",
+    "revised_opportunity": "Not novel. Target explicit layout locks, fact consistency, corrected evidence and export regression gates.",
+    "validation": "Render representative fonts/locales; verify exact page targets, image aspect ratio and semantic text parity.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  },
+  {
+    "id": "GAP12",
+    "topic": "Recovery and efficient orchestration",
+    "existing_evidence": "General systems, browser frameworks and several workbenches already have queues/logging.",
+    "sources": "S33 S39 S64 S92 S93 S95",
+    "revised_opportunity": "No universal missing-feature claim. Target reproducible bounded-resource workflow reliability as a combined quality property.",
+    "validation": "Inject hangs/OOM/sleep/resume/cancel; assert queue bounds, visible degradation, preserved drafts and accurate external-action states.",
+    "status": "Competitive hypothesis or quality target; universal novelty NOT established"
+  }
+]

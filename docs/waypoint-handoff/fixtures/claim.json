@@ -1,0 +1,12 @@
+{
+  "id": "claim-demo-001",
+  "profile_revision": 2,
+  "text": "Built a laboratory coating test setup. Fictional demonstration.",
+  "status": "user_attested",
+  "evidence_ids": [
+    "evidence-demo-resume"
+  ],
+  "source_kind": "candidate_document",
+  "requires_review": true,
+  "supersedes": null
+}

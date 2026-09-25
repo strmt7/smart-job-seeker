@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/waypoint/Claim.schema.json",
+  "title": "Claim",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "user_attested",
+        "externally_supported",
+        "disputed",
+        "inferred",
+        "unknown"
+      ]
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "source_kind": {
+      "enum": [
+        "candidate_document",
+        "candidate_attestation",
+        "external_confirmation",
+        "inference"
+      ]
+    },
+    "requires_review": {
+      "type": "boolean"
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "profile_revision",
+    "text",
+    "status",
+    "evidence_ids",
+    "source_kind",
+    "requires_review",
+    "supersedes"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "externally_supported"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence_ids": {
+            "minItems": 1
+          },
+          "source_kind": {
+            "const": "external_confirmation"
+          }
+        }
+      }
+    }
+  ]
+}

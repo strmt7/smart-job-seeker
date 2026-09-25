@@ -1,0 +1,2156 @@
+[
+  {
+    "id": "UI01",
+    "title": "Your next move",
+    "group": "Overview",
+    "layout": "dashboard",
+    "description": "A focused plan across your career campaigns.",
+    "primary_action": "Review priority roles",
+    "rows": [
+      {
+        "label": "Review two prepared packets",
+        "value": "Both need your approval",
+        "status": "Ready"
+      },
+      {
+        "label": "Resolve one uncertain submission",
+        "value": "Do not retry until reconciled",
+        "status": "Needs attention"
+      },
+      {
+        "label": "Recheck a saved opening",
+        "value": "Employer source is out of date",
+        "status": "Stale"
+      },
+      {
+        "label": "Prepare for an interview",
+        "value": "Use your own evidence and examples",
+        "status": "Scheduled"
+      }
+    ],
+    "detail": [
+      "CAREER CAMPAIGN",
+      "Specialist engineering · strict constraints",
+      "12 shortlisted · 3 prepared · 0 sent today",
+      "Counts are simulated, not actual activity."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Prepared is not Submitted.",
+    "task_ids": [
+      "T013",
+      "T042"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI01_your_next_move.svg",
+    "png": "screens/UI01_your_next_move.png"
+  },
+  {
+    "id": "UI02",
+    "title": "Set up your private workspace",
+    "group": "Settings",
+    "layout": "form",
+    "description": "Choose where data lives and what may leave your device.",
+    "primary_action": "Create local workspace",
+    "rows": [
+      {
+        "label": "Storage location",
+        "value": "A folder under your Windows account",
+        "status": "Local"
+      },
+      {
+        "label": "Encryption",
+        "value": "Protected key and encrypted database",
+        "status": "Required"
+      },
+      {
+        "label": "Cloud model access",
+        "value": "Not needed for core workflows",
+        "status": "Off"
+      },
+      {
+        "label": "Diagnostic reporting",
+        "value": "Preview each report before sending",
+        "status": "Off"
+      }
+    ],
+    "detail": [
+      "SETUP CONTRACT",
+      "No Docker, WSL, Node or Python required.",
+      "Model downloads are separate and explicit.",
+      "A recovery key must be stored safely."
+    ],
+    "demonstrated_state": "onboarding",
+    "safety_guard": "Never upload candidate documents during setup.",
+    "task_ids": [
+      "T010",
+      "T044"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI02_set_up_your_private_workspace.svg",
+    "png": "screens/UI02_set_up_your_private_workspace.png"
+  },
+  {
+    "id": "UI03",
+    "title": "Qualify your local model",
+    "group": "Settings",
+    "layout": "form",
+    "description": "Measure the complete workload before enabling AI tasks.",
+    "primary_action": "Run qualification",
+    "rows": [
+      {
+        "label": "Target GPU",
+        "value": "16 GB discrete GPU · AMD reference",
+        "status": "Target"
+      },
+      {
+        "label": "Reasoning model",
+        "value": "Qwen3.5-9B · candidate configuration",
+        "status": "Unqualified"
+      },
+      {
+        "label": "Context profile",
+        "value": "8K / 16K / 32K tests",
+        "status": "Pending"
+      },
+      {
+        "label": "Peak memory and recall",
+        "value": "Not measured on this device yet",
+        "status": "Pending"
+      }
+    ],
+    "detail": [
+      "QUALIFICATION GATE",
+      "Reasoning control must pass.",
+      "Include browser and desktop GPU usage.",
+      "No silent CPU offload or cloud fallback."
+    ],
+    "demonstrated_state": "unqualified",
+    "safety_guard": "A small model file is not proof of VRAM fit.",
+    "task_ids": [
+      "T007",
+      "T008"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI03_qualify_your_local_model.svg",
+    "png": "screens/UI03_qualify_your_local_model.png"
+  },
+  {
+    "id": "UI04",
+    "title": "Import career evidence",
+    "group": "Materials",
+    "layout": "form",
+    "description": "Bring in documents without losing their origins.",
+    "primary_action": "Select files",
+    "rows": [
+      {
+        "label": "Resume and work history",
+        "value": "PDF, DOCX or plain text",
+        "status": "Choose"
+      },
+      {
+        "label": "Certificates and publications",
+        "value": "Keep source, date and ownership",
+        "status": "Choose"
+      },
+      {
+        "label": "Portfolio and project evidence",
+        "value": "Candidate-authorized files or URLs",
+        "status": "Choose"
+      },
+      {
+        "label": "Sensitive attachments",
+        "value": "Macros disabled; restricted extraction",
+        "status": "Protected"
+      }
+    ],
+    "detail": [
+      "IMPORT REVIEW",
+      "Nothing becomes verified merely by import.",
+      "Resolve conflicting dates before tailoring.",
+      "Keep original files and extracted spans."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "A CV statement starts as candidate evidence, not external proof.",
+    "task_ids": [
+      "T012"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI04_import_career_evidence.svg",
+    "png": "screens/UI04_import_career_evidence.png"
+  },
+  {
+    "id": "UI05",
+    "title": "Your evidence ledger",
+    "group": "Materials",
+    "layout": "list",
+    "description": "See the source behind every claim in your application.",
+    "primary_action": "Review selected claim",
+    "rows": [
+      {
+        "label": "Coating test setup",
+        "value": "Candidate CV · paragraph 12",
+        "status": "Attested"
+      },
+      {
+        "label": "Thin-film deposition",
+        "value": "Project notes · pages 3–4",
+        "status": "Attested"
+      },
+      {
+        "label": "Employment dates",
+        "value": "Two documents disagree",
+        "status": "Conflict"
+      },
+      {
+        "label": "Team contribution",
+        "value": "Specific role needs confirmation",
+        "status": "Review"
+      }
+    ],
+    "detail": [
+      "CLAIM C-014",
+      "Built a laboratory coating test setup.",
+      "Source: fictional CV, paragraph 12.",
+      "Used by: resume v3, letter v2, answer v4."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Traceability is not the same as truth.",
+    "task_ids": [
+      "T012",
+      "T022"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI05_your_evidence_ledger.svg",
+    "png": "screens/UI05_your_evidence_ledger.png"
+  },
+  {
+    "id": "UI06",
+    "title": "Resolve a profile conflict",
+    "group": "Materials",
+    "layout": "modal",
+    "description": "Confirm the fact before changing dependent documents.",
+    "primary_action": "Confirm correction",
+    "rows": [
+      {
+        "label": "Earlier record",
+        "value": "Role end date: June",
+        "status": "Original"
+      },
+      {
+        "label": "New candidate correction",
+        "value": "Role end date: September",
+        "status": "Proposed"
+      },
+      {
+        "label": "Affected artifacts",
+        "value": "3 unsent documents; 1 approval",
+        "status": "Review"
+      },
+      {
+        "label": "Already submitted packet",
+        "value": "Preserved exactly as sent",
+        "status": "Immutable"
+      }
+    ],
+    "detail": [
+      "CORRECTION REVIEW",
+      "You are updating a fictional example.",
+      "One pending approval will be invalidated.",
+      "No submitted document will be overwritten."
+    ],
+    "demonstrated_state": "conflict",
+    "safety_guard": "Only affected unsent artifacts change.",
+    "task_ids": [
+      "T025"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI06_resolve_a_profile_conflict.svg",
+    "png": "screens/UI06_resolve_a_profile_conflict.png"
+  },
+  {
+    "id": "UI07",
+    "title": "Campaign strategy",
+    "group": "Discover",
+    "layout": "form",
+    "description": "Keep urgent income, specialist and relocation searches separate.",
+    "primary_action": "Save campaign",
+    "rows": [
+      {
+        "label": "Primary campaign",
+        "value": "Specialist engineering",
+        "status": "Active"
+      },
+      {
+        "label": "Location and working language",
+        "value": "Explicit hard constraints",
+        "status": "Strict"
+      },
+      {
+        "label": "Compensation",
+        "value": "Base annual salary; unknown shown separately",
+        "status": "Strict"
+      },
+      {
+        "label": "Unknown sponsorship",
+        "value": "Keep in review, never mark eligible",
+        "status": "Review"
+      }
+    ],
+    "detail": [
+      "SEARCH POLICY",
+      "No silent relaxation to fill results.",
+      "A relaxed branch is separate and labeled.",
+      "Every exclusion can be explained."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Working language is not the ad language.",
+    "task_ids": [
+      "T013"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI07_campaign_strategy.svg",
+    "png": "screens/UI07_campaign_strategy.png"
+  },
+  {
+    "id": "UI08",
+    "title": "Discover the right roles",
+    "group": "Discover",
+    "layout": "list",
+    "description": "Search permitted sources with visible coverage and constraints.",
+    "primary_action": "Inspect selected role",
+    "rows": [
+      {
+        "label": "Optical Coatings Engineer",
+        "value": "Northstar Optics · fictional employer",
+        "status": "Strong evidence"
+      },
+      {
+        "label": "Materials Process Engineer",
+        "value": "Meridian Labs · fictional employer",
+        "status": "Review"
+      },
+      {
+        "label": "Surface Scientist",
+        "value": "Cedar Research · fictional employer",
+        "status": "Unknown salary"
+      },
+      {
+        "label": "Manufacturing Lead",
+        "value": "Harbor Systems · fictional employer",
+        "status": "Constraint gap"
+      }
+    ],
+    "detail": [
+      "SEARCH COVERAGE",
+      "3 source families checked in this demo.",
+      "1 source is degraded; results may be missing.",
+      "All employers and listings here are fictional."
+    ],
+    "demonstrated_state": "partial_results",
+    "safety_guard": "Do not hide source failures or call this exhaustive.",
+    "task_ids": [
+      "T014",
+      "T018",
+      "T019"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI08_discover_the_right_roles.svg",
+    "png": "screens/UI08_discover_the_right_roles.png"
+  },
+  {
+    "id": "UI09",
+    "title": "Opportunity details",
+    "group": "Discover",
+    "layout": "detail",
+    "description": "Separate source facts from estimates and unresolved questions.",
+    "primary_action": "Build application plan",
+    "rows": [
+      {
+        "label": "Employer requisition",
+        "value": "Northstar demo · NS-101",
+        "status": "Source linked"
+      },
+      {
+        "label": "Opening status",
+        "value": "Observed open in fictional fixture",
+        "status": "Demo"
+      },
+      {
+        "label": "Base compensation",
+        "value": "USD 160k–190k / year · synthetic",
+        "status": "Demo"
+      },
+      {
+        "label": "Sponsorship for this role",
+        "value": "Not established by the example",
+        "status": "Unknown"
+      }
+    ],
+    "detail": [
+      "SOURCE OBSERVATION",
+      "Employer page captured in demo fixture.",
+      "Observation time and source are preserved.",
+      "An open observation is not a future guarantee."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Never invent role-specific sponsorship.",
+    "task_ids": [
+      "T017",
+      "T018"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI09_opportunity_details.svg",
+    "png": "screens/UI09_opportunity_details.png"
+  },
+  {
+    "id": "UI10",
+    "title": "Why this role fits—or does not",
+    "group": "Discover",
+    "layout": "list",
+    "description": "Requirement-by-requirement evidence, not a hiring probability.",
+    "primary_action": "Review unknowns",
+    "rows": [
+      {
+        "label": "Physical vapor deposition",
+        "value": "Supported by candidate evidence",
+        "status": "Supported"
+      },
+      {
+        "label": "Optical filter design",
+        "value": "Supported by project notes",
+        "status": "Supported"
+      },
+      {
+        "label": "Production ownership",
+        "value": "Not established in supplied evidence",
+        "status": "Unknown"
+      },
+      {
+        "label": "Working language",
+        "value": "Required language needs confirmation",
+        "status": "Unknown"
+      }
+    ],
+    "detail": [
+      "DECISION SUMMARY",
+      "Strong task overlap; two important unknowns.",
+      "No percentage implies interview probability.",
+      "Missing mandatory facts stay visible."
+    ],
+    "demonstrated_state": "mixed_evidence",
+    "safety_guard": "Preferred and mandatory requirements remain distinct.",
+    "task_ids": [
+      "T018",
+      "T022"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI10_why_this_role_fits_or_does_not.svg",
+    "png": "screens/UI10_why_this_role_fits_or_does_not.png"
+  },
+  {
+    "id": "UI11",
+    "title": "Company research",
+    "group": "Discover",
+    "layout": "detail",
+    "description": "Read a source-linked brief prepared by your local model.",
+    "primary_action": "Refresh research",
+    "rows": [
+      {
+        "label": "Products and teams",
+        "value": "Official company pages first",
+        "status": "Source linked"
+      },
+      {
+        "label": "Role-specific evidence",
+        "value": "Employer posting and team context",
+        "status": "Source linked"
+      },
+      {
+        "label": "Recent changes",
+        "value": "Date and source required",
+        "status": "Needs refresh"
+      },
+      {
+        "label": "Conflicting information",
+        "value": "Preserved, not silently averaged",
+        "status": "Review"
+      }
+    ],
+    "detail": [
+      "RESEARCH RUN",
+      "Public queries only; no full CV sent.",
+      "Local synthesis uses captured source spans.",
+      "Company facts cannot become candidate facts."
+    ],
+    "demonstrated_state": "stale",
+    "safety_guard": "Current claims require fresh external evidence.",
+    "task_ids": [
+      "T020"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI11_company_research.svg",
+    "png": "screens/UI11_company_research.png"
+  },
+  {
+    "id": "UI12",
+    "title": "Possible duplicate opportunity",
+    "group": "Discover",
+    "layout": "modal",
+    "description": "Inspect identity evidence before merging application history.",
+    "primary_action": "Link as aliases",
+    "rows": [
+      {
+        "label": "Employer identity",
+        "value": "Same fictional employer namespace",
+        "status": "Matches"
+      },
+      {
+        "label": "Requisition identifier",
+        "value": "NS-101 on both sources",
+        "status": "Matches"
+      },
+      {
+        "label": "Location wording",
+        "value": "Different labels; inspect change",
+        "status": "Review"
+      },
+      {
+        "label": "Existing application",
+        "value": "One prepared packet, not submitted",
+        "status": "Prepared"
+      }
+    ],
+    "detail": [
+      "REVERSIBLE LINK",
+      "Keep both source observations.",
+      "Merging is never based on title alone.",
+      "You can undo an incorrect alias link."
+    ],
+    "demonstrated_state": "duplicate_review",
+    "safety_guard": "Different URLs do not automatically mean new roles.",
+    "task_ids": [
+      "T016"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI12_possible_duplicate_opportunity.svg",
+    "png": "screens/UI12_possible_duplicate_opportunity.png"
+  },
+  {
+    "id": "UI13",
+    "title": "Saved searches and watchlists",
+    "group": "Discover",
+    "layout": "list",
+    "description": "Know what will run, where it will search and when it stops.",
+    "primary_action": "Edit schedule",
+    "rows": [
+      {
+        "label": "Specialist engineering",
+        "value": "Direct employer sources",
+        "status": "Enabled"
+      },
+      {
+        "label": "Local income options",
+        "value": "Separate constraints and profile",
+        "status": "Paused"
+      },
+      {
+        "label": "Relocation opportunities",
+        "value": "Unknown authorization in review",
+        "status": "Enabled"
+      },
+      {
+        "label": "Failed source refresh",
+        "value": "Last good data retained as stale",
+        "status": "Degraded"
+      }
+    ],
+    "detail": [
+      "SCHEDULE BOUNDARIES",
+      "App must be running or a disclosed local task active.",
+      "Sleeping devices do not perform magic refreshes.",
+      "Notifications are scoped and optional."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "No hidden remote monitoring service.",
+    "task_ids": [
+      "T013",
+      "T019"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI13_saved_searches_and_watchlists.svg",
+    "png": "screens/UI13_saved_searches_and_watchlists.png"
+  },
+  {
+    "id": "UI14",
+    "title": "Resume studio",
+    "group": "Materials",
+    "layout": "document",
+    "description": "Edit a source-backed resume without altering locked facts.",
+    "primary_action": "Review changes",
+    "rows": [
+      {
+        "label": "Base document",
+        "value": "Resume v2 · fictional profile",
+        "status": "Selected"
+      },
+      {
+        "label": "Professional title",
+        "value": "Exact wording is locked",
+        "status": "Locked"
+      },
+      {
+        "label": "Page target",
+        "value": "Two pages; no silent deletion",
+        "status": "Required"
+      },
+      {
+        "label": "Layout validation",
+        "value": "Render and text order checks",
+        "status": "Pending"
+      }
+    ],
+    "detail": [
+      "EDIT EVIDENCE",
+      "Selected sentence links to claim C-014.",
+      "Changes: specific wording only.",
+      "New skills or numbers require confirmation."
+    ],
+    "demonstrated_state": "draft",
+    "safety_guard": "Do not stretch or distort profile images.",
+    "task_ids": [
+      "T021",
+      "T023",
+      "T024"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI14_resume_studio.svg",
+    "png": "screens/UI14_resume_studio.png"
+  },
+  {
+    "id": "UI15",
+    "title": "Cover letter studio",
+    "group": "Materials",
+    "layout": "document",
+    "description": "Write a specific letter from candidate and employer evidence.",
+    "primary_action": "Review letter",
+    "rows": [
+      {
+        "label": "Candidate claims",
+        "value": "From approved profile revision 2",
+        "status": "Linked"
+      },
+      {
+        "label": "Employer references",
+        "value": "From current company brief",
+        "status": "Linked"
+      },
+      {
+        "label": "Length and tone",
+        "value": "Short, direct and role-specific",
+        "status": "Preference"
+      },
+      {
+        "label": "Unsupported sentence",
+        "value": "Needs candidate confirmation",
+        "status": "Blocked"
+      }
+    ],
+    "detail": [
+      "CONTENT CHECK",
+      "No invented achievements.",
+      "No generic claim of perfect fit.",
+      "One unresolved sentence blocks readiness."
+    ],
+    "demonstrated_state": "validation_error",
+    "safety_guard": "A polished layout does not override a truth check.",
+    "task_ids": [
+      "T022",
+      "T023"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI15_cover_letter_studio.svg",
+    "png": "screens/UI15_cover_letter_studio.png"
+  },
+  {
+    "id": "UI16",
+    "title": "Application answers",
+    "group": "Materials",
+    "layout": "list",
+    "description": "Reuse context carefully and respect exact portal limits.",
+    "primary_action": "Review selected answer",
+    "rows": [
+      {
+        "label": "Why this role?",
+        "value": "Linked to employer and candidate evidence",
+        "status": "Draft"
+      },
+      {
+        "label": "Work authorization",
+        "value": "Explicit candidate response required",
+        "status": "Required"
+      },
+      {
+        "label": "Expected salary",
+        "value": "Currency, period and gross/base basis",
+        "status": "Review"
+      },
+      {
+        "label": "Project ownership",
+        "value": "Specific individual contribution",
+        "status": "Draft"
+      }
+    ],
+    "detail": [
+      "ANSWER LIMIT",
+      "Counter: Unicode code points in this demo.",
+      "Show the actual portal rule where known.",
+      "Old salary or visa answers are not auto-reused."
+    ],
+    "demonstrated_state": "needs_input",
+    "safety_guard": "Sensitive declarations are never guessed.",
+    "task_ids": [
+      "T026"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI16_application_answers.svg",
+    "png": "screens/UI16_application_answers.png"
+  },
+  {
+    "id": "UI17",
+    "title": "Review your application packet",
+    "group": "Applications",
+    "layout": "detail",
+    "description": "Approve the exact files and answers—not a vague instruction.",
+    "primary_action": "Open prefill review",
+    "rows": [
+      {
+        "label": "Resume v3.pdf",
+        "value": "Content and layout checks passed in fixture",
+        "status": "Demo"
+      },
+      {
+        "label": "Cover letter v2.pdf",
+        "value": "One specific role, exact employer",
+        "status": "Demo"
+      },
+      {
+        "label": "Portal answers v4",
+        "value": "All required declarations reviewed",
+        "status": "Demo"
+      },
+      {
+        "label": "Submission status",
+        "value": "No information has been submitted",
+        "status": "Prepared"
+      }
+    ],
+    "detail": [
+      "PACKET MANIFEST",
+      "Profile revision 2 · payload digest shown.",
+      "Document hashes are saved with the intent.",
+      "Any change requires new approval."
+    ],
+    "demonstrated_state": "prepared",
+    "safety_guard": "Prepared is never counted as confirmed.",
+    "task_ids": [
+      "T025",
+      "T029"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI17_review_your_application_packet.svg",
+    "png": "screens/UI17_review_your_application_packet.png"
+  },
+  {
+    "id": "UI18",
+    "title": "Assisted application workspace",
+    "group": "Applications",
+    "layout": "browser",
+    "description": "Visible employer form with a narrow, approved data mapping.",
+    "primary_action": "Review prefill disclosure",
+    "rows": [
+      {
+        "label": "Name and contact",
+        "value": "Candidate-approved profile fields",
+        "status": "Review"
+      },
+      {
+        "label": "Uploaded resume",
+        "value": "Exact reviewed PDF hash",
+        "status": "Review"
+      },
+      {
+        "label": "Custom required question",
+        "value": "Cannot infer candidate answer",
+        "status": "Needs input"
+      },
+      {
+        "label": "Login or challenge",
+        "value": "Complete personally in the browser",
+        "status": "Handoff"
+      }
+    ],
+    "detail": [
+      "PREFILL IS DISCLOSURE",
+      "A page can observe text as it is entered.",
+      "Approve prefill before writing personal fields.",
+      "Final submission requires another grant."
+    ],
+    "demonstrated_state": "permission_required",
+    "safety_guard": "Never attach to unrelated personal browser tabs.",
+    "task_ids": [
+      "T027",
+      "T028",
+      "T029"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI18_assisted_application_workspace.svg",
+    "png": "screens/UI18_assisted_application_workspace.png"
+  },
+  {
+    "id": "UI19",
+    "title": "Approve final submission",
+    "group": "Applications",
+    "layout": "modal",
+    "description": "One application, one destination, one exact reviewed payload.",
+    "primary_action": "Approve and submit",
+    "rows": [
+      {
+        "label": "Destination",
+        "value": "employer.example.invalid · fictional",
+        "status": "Checked"
+      },
+      {
+        "label": "Documents and answers",
+        "value": "Exact packet digest and form revision",
+        "status": "Bound"
+      },
+      {
+        "label": "Permission lifetime",
+        "value": "One use; expires shortly",
+        "status": "Limited"
+      },
+      {
+        "label": "What happens next",
+        "value": "Receipt or an explicit uncertain state",
+        "status": "Visible"
+      }
+    ],
+    "detail": [
+      "FINAL APPROVAL",
+      "Your data has already been prefilled with approval.",
+      "This grant authorizes final submission only.",
+      "No batch or hidden future applications."
+    ],
+    "demonstrated_state": "awaiting_approval",
+    "safety_guard": "A changed packet, form or destination cancels this grant.",
+    "task_ids": [
+      "T029",
+      "T030"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI19_approve_final_submission.svg",
+    "png": "screens/UI19_approve_final_submission.png"
+  },
+  {
+    "id": "UI20",
+    "title": "Submission outcome uncertain",
+    "group": "Applications",
+    "layout": "recovery",
+    "description": "The website may have received the application. Do not retry automatically.",
+    "primary_action": "Check for confirmation",
+    "rows": [
+      {
+        "label": "Last recorded step",
+        "value": "Submit command began; no receipt captured",
+        "status": "Uncertain"
+      },
+      {
+        "label": "Safe next action",
+        "value": "Inspect employer account or authorized inbox",
+        "status": "Review"
+      },
+      {
+        "label": "Retry behavior",
+        "value": "Automatic retry is disabled",
+        "status": "Protected"
+      },
+      {
+        "label": "Manual decision",
+        "value": "Record your confirmation or deliberate retry",
+        "status": "User choice"
+      }
+    ],
+    "detail": [
+      "NOT A FAILURE CLAIM",
+      "The network failed after a possible external write.",
+      "We cannot promise exactly-once delivery.",
+      "Your reviewed packet remains available."
+    ],
+    "demonstrated_state": "uncertain",
+    "safety_guard": "Never show a misleading Try again primary button.",
+    "task_ids": [
+      "T030",
+      "T032"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI20_submission_outcome_uncertain.svg",
+    "png": "screens/UI20_submission_outcome_uncertain.png"
+  },
+  {
+    "id": "UI21",
+    "title": "Application receipt",
+    "group": "Applications",
+    "layout": "detail",
+    "description": "Keep the evidence of what was sent and what was acknowledged.",
+    "primary_action": "Inspect receipt evidence",
+    "rows": [
+      {
+        "label": "Application reference",
+        "value": "DEMO-NS-101 · fictional identifier",
+        "status": "Demo"
+      },
+      {
+        "label": "Employer acknowledgement",
+        "value": "Source origin and captured excerpt",
+        "status": "Linked"
+      },
+      {
+        "label": "Packet version",
+        "value": "Resume v3 · letter v2 · answers v4",
+        "status": "Immutable"
+      },
+      {
+        "label": "Timeline status",
+        "value": "Confirmed by qualifying fixture evidence",
+        "status": "Demo"
+      }
+    ],
+    "detail": [
+      "RECEIPT BOUNDARIES",
+      "A receipt is not an interview or a hiring guarantee.",
+      "User attestation is shown separately.",
+      "Sensitive capture areas are redacted."
+    ],
+    "demonstrated_state": "confirmed_fixture",
+    "safety_guard": "A receipt ID alone does not prove remote delivery.",
+    "task_ids": [
+      "T031"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI21_application_receipt.svg",
+    "png": "screens/UI21_application_receipt.png"
+  },
+  {
+    "id": "UI22",
+    "title": "Application timeline",
+    "group": "Applications",
+    "layout": "list",
+    "description": "Every stage has an origin, date and supporting evidence.",
+    "primary_action": "Open selected application",
+    "rows": [
+      {
+        "label": "Northstar · NS-101",
+        "value": "Prepared packet; awaiting candidate action",
+        "status": "Prepared"
+      },
+      {
+        "label": "Meridian · ML-204",
+        "value": "External write outcome not resolved",
+        "status": "Uncertain"
+      },
+      {
+        "label": "Cedar · CR-016",
+        "value": "Candidate reports an external application",
+        "status": "Attested"
+      },
+      {
+        "label": "Harbor · HS-321",
+        "value": "Interview invitation linked to source",
+        "status": "Interview"
+      }
+    ],
+    "detail": [
+      "LIFECYCLE METRICS",
+      "Prepared, confirmed and attested counts differ.",
+      "No response is not automatically rejection.",
+      "Correction history stays traceable."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Do not merge all company responses into one role.",
+    "task_ids": [
+      "T030",
+      "T036",
+      "T042"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI22_application_timeline.svg",
+    "png": "screens/UI22_application_timeline.png"
+  },
+  {
+    "id": "UI23",
+    "title": "Inbox review queue",
+    "group": "Applications",
+    "layout": "list",
+    "description": "Turn selected messages into proposed updates, with review.",
+    "primary_action": "Review proposed update",
+    "rows": [
+      {
+        "label": "Interview invitation",
+        "value": "Matched by requisition ID in fictional email",
+        "status": "High evidence"
+      },
+      {
+        "label": "Application acknowledgement",
+        "value": "Matches destination and role",
+        "status": "Review"
+      },
+      {
+        "label": "Rejection message",
+        "value": "Two possible roles at the same company",
+        "status": "Ambiguous"
+      },
+      {
+        "label": "Unrelated personal email",
+        "value": "Outside the selected import scope",
+        "status": "Excluded"
+      }
+    ],
+    "detail": [
+      "MAIL PERMISSION",
+      "Read only the authorized selection or scope.",
+      "Message text remains local for analysis.",
+      "Sending email always requires separate approval."
+    ],
+    "demonstrated_state": "ambiguous",
+    "safety_guard": "A low-confidence match is a proposal, not a timeline fact.",
+    "task_ids": [
+      "T035",
+      "T036"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI23_inbox_review_queue.svg",
+    "png": "screens/UI23_inbox_review_queue.png"
+  },
+  {
+    "id": "UI24",
+    "title": "Interviews and calendar",
+    "group": "Interview",
+    "layout": "list",
+    "description": "Prepare appointments with timezone and availability checks.",
+    "primary_action": "Review calendar event",
+    "rows": [
+      {
+        "label": "Technical interview",
+        "value": "Fictional event · Europe/Zurich",
+        "status": "Draft"
+      },
+      {
+        "label": "Timezone conversion",
+        "value": "Original timezone preserved",
+        "status": "Checked"
+      },
+      {
+        "label": "Existing appointment",
+        "value": "Potential overlap detected",
+        "status": "Conflict"
+      },
+      {
+        "label": "Attendee identity",
+        "value": "Confirm exact recipient before invitation",
+        "status": "Review"
+      }
+    ],
+    "detail": [
+      "CALENDAR WRITE",
+      "A draft does not send an invitation.",
+      "Check availability before scheduling.",
+      "DST and travel zones are explicit."
+    ],
+    "demonstrated_state": "conflict",
+    "safety_guard": "No calendar action is sent from inferred attendees.",
+    "task_ids": [
+      "T037"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI24_interviews_and_calendar.svg",
+    "png": "screens/UI24_interviews_and_calendar.png"
+  },
+  {
+    "id": "UI25",
+    "title": "Relationships and introductions",
+    "group": "Relationships",
+    "layout": "list",
+    "description": "Relevant conversations, not indiscriminate outreach.",
+    "primary_action": "Review follow-up draft",
+    "rows": [
+      {
+        "label": "Former collaborator",
+        "value": "Candidate-supplied relationship",
+        "status": "Known"
+      },
+      {
+        "label": "Professional introduction",
+        "value": "Exact public or shared contact route",
+        "status": "Review"
+      },
+      {
+        "label": "Recruiter conversation",
+        "value": "Follow-up date chosen by candidate",
+        "status": "Scheduled"
+      },
+      {
+        "label": "Unknown email address",
+        "value": "Not guessed or scraped into a campaign",
+        "status": "Blocked"
+      }
+    ],
+    "detail": [
+      "RELATIONSHIP CONTEXT",
+      "Explain why a conversation may be relevant.",
+      "Keep sensitive notes private.",
+      "Approve each recipient and exact message."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "No invented relationships or mass unsolicited sends.",
+    "task_ids": [
+      "T038"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI25_relationships_and_introductions.svg",
+    "png": "screens/UI25_relationships_and_introductions.png"
+  },
+  {
+    "id": "UI26",
+    "title": "Interview practice",
+    "group": "Interview",
+    "layout": "detail",
+    "description": "Rehearse with the role and your actual experience.",
+    "primary_action": "Start practice session",
+    "rows": [
+      {
+        "label": "Technical example",
+        "value": "Explain your coating-test setup",
+        "status": "Ready"
+      },
+      {
+        "label": "Behavioral question",
+        "value": "Describe your individual contribution",
+        "status": "Ready"
+      },
+      {
+        "label": "Company questions",
+        "value": "Use current source-linked research",
+        "status": "Refresh"
+      },
+      {
+        "label": "Voice and recording",
+        "value": "Off until explicitly enabled",
+        "status": "Off"
+      }
+    ],
+    "detail": [
+      "PRACTICE, NOT IMPERSONATION",
+      "Feedback links to your evidence.",
+      "No fabricated achievements or confidence scores.",
+      "No covert live interview answer feed."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Practice transcripts remain private by default.",
+    "task_ids": [
+      "T039"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI26_interview_practice.svg",
+    "png": "screens/UI26_interview_practice.png"
+  },
+  {
+    "id": "UI27",
+    "title": "Close a real skills gap",
+    "group": "Interview",
+    "layout": "list",
+    "description": "Build useful evidence without exaggerating what it proves.",
+    "primary_action": "Create learning task",
+    "rows": [
+      {
+        "label": "Required production method",
+        "value": "Not evidenced in current profile",
+        "status": "Gap"
+      },
+      {
+        "label": "Small practical exercise",
+        "value": "Candidate-owned demonstrable output",
+        "status": "Plan"
+      },
+      {
+        "label": "Paid retraining route",
+        "value": "Official source and criteria needed",
+        "status": "Research"
+      },
+      {
+        "label": "Completed short course",
+        "value": "Not equivalent to years of employment",
+        "status": "Qualified"
+      }
+    ],
+    "detail": [
+      "LEARNING PATH",
+      "Choose a small, verifiable next step.",
+      "Keep time/cost assumptions visible.",
+      "Escalate unclear eligibility to a person."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "A recommendation is not an eligibility verdict.",
+    "task_ids": [
+      "T040"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI27_close_a_real_skills_gap.svg",
+    "png": "screens/UI27_close_a_real_skills_gap.png"
+  },
+  {
+    "id": "UI28",
+    "title": "Compare offers",
+    "group": "Insights",
+    "layout": "list",
+    "description": "Separate actual compensation from assumptions and risk.",
+    "primary_action": "Edit scenario assumptions",
+    "rows": [
+      {
+        "label": "Base salary",
+        "value": "Original currency and yearly basis",
+        "status": "Source linked"
+      },
+      {
+        "label": "Fixed installments",
+        "value": "12 versus 13 payments normalized",
+        "status": "Explicit"
+      },
+      {
+        "label": "Bonus and equity",
+        "value": "Variable; not guaranteed base pay",
+        "status": "Scenario"
+      },
+      {
+        "label": "Relocation and authorization",
+        "value": "Outstanding dependencies",
+        "status": "Unknown"
+      }
+    ],
+    "detail": [
+      "DECISION WORKSHEET",
+      "Show original figures beside normalized values.",
+      "Tax and exchange rates need dated sources.",
+      "No invented competing offer for negotiation."
+    ],
+    "demonstrated_state": "mixed_evidence",
+    "safety_guard": "Estimated net pay is not a payroll quotation.",
+    "task_ids": [
+      "T041"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI28_compare_offers.svg",
+    "png": "screens/UI28_compare_offers.png"
+  },
+  {
+    "id": "UI29",
+    "title": "Outcomes and effort",
+    "group": "Insights",
+    "layout": "dashboard",
+    "description": "Learn from your search without making unsupported causal claims.",
+    "primary_action": "Inspect funnel definitions",
+    "rows": [
+      {
+        "label": "Shortlisted",
+        "value": "12 fictional opportunities",
+        "status": "Demo"
+      },
+      {
+        "label": "Prepared",
+        "value": "3 local packets; not yet sent",
+        "status": "Demo"
+      },
+      {
+        "label": "Confirmed or attested",
+        "value": "Shown as separate denominators",
+        "status": "Demo"
+      },
+      {
+        "label": "Active candidate effort",
+        "value": "Measured during a future pilot",
+        "status": "Pending"
+      }
+    ],
+    "detail": [
+      "INTERPRETATION",
+      "Recent applications have had less response time.",
+      "No response does not prove rejection.",
+      "Variant differences can reflect selection bias."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Do not label correlations as hiring uplift.",
+    "task_ids": [
+      "T042",
+      "T048"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI29_outcomes_and_effort.svg",
+    "png": "screens/UI29_outcomes_and_effort.png"
+  },
+  {
+    "id": "UI30",
+    "title": "Source coverage and health",
+    "group": "Discover",
+    "layout": "list",
+    "description": "Know what the search reached—and what it did not.",
+    "primary_action": "Inspect source capability",
+    "rows": [
+      {
+        "label": "Greenhouse-like public listing",
+        "value": "Discovery fixture only",
+        "status": "Demo"
+      },
+      {
+        "label": "Lever-like public listing",
+        "value": "Read path; employer submission key not assumed",
+        "status": "Read only"
+      },
+      {
+        "label": "Regional source",
+        "value": "Unsupported locale in example",
+        "status": "Unsupported"
+      },
+      {
+        "label": "Aggregator refresh",
+        "value": "Last-known records retained with warning",
+        "status": "Degraded"
+      }
+    ],
+    "detail": [
+      "CAPABILITY MATRIX",
+      "Discover / inspect / fill / upload / submit / confirm.",
+      "Each operation is qualified independently.",
+      "Counts never imply whole-internet coverage."
+    ],
+    "demonstrated_state": "degraded",
+    "safety_guard": "Failed source is not zero jobs.",
+    "task_ids": [
+      "T002",
+      "T019",
+      "T034"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI30_source_coverage_and_health.svg",
+    "png": "screens/UI30_source_coverage_and_health.png"
+  },
+  {
+    "id": "UI31",
+    "title": "Research run and task queue",
+    "group": "Overview",
+    "layout": "list",
+    "description": "Visible progress, bounded work and meaningful cancellation.",
+    "primary_action": "Pause queued work",
+    "rows": [
+      {
+        "label": "Fetch employer evidence",
+        "value": "Public request; no candidate profile sent",
+        "status": "Running"
+      },
+      {
+        "label": "Local reasoning",
+        "value": "One GPU generation slot",
+        "status": "Queued"
+      },
+      {
+        "label": "Document render checks",
+        "value": "Restricted local worker",
+        "status": "Queued"
+      },
+      {
+        "label": "Application submission",
+        "value": "Never part of an unattended research run",
+        "status": "Protected"
+      }
+    ],
+    "detail": [
+      "RUN BUDGET",
+      "Normal role: bounded queries, pages and repairs.",
+      "Partial findings are preserved.",
+      "Cancellation after a write cannot undo it."
+    ],
+    "demonstrated_state": "running",
+    "safety_guard": "An endless spinner is not a valid recovery policy.",
+    "task_ids": [
+      "T009",
+      "T020"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI31_research_run_and_task_queue.svg",
+    "png": "screens/UI31_research_run_and_task_queue.png"
+  },
+  {
+    "id": "UI32",
+    "title": "Privacy and network controls",
+    "group": "Settings",
+    "layout": "form",
+    "description": "Separate local inference from internet research and external writes.",
+    "primary_action": "Review permissions",
+    "rows": [
+      {
+        "label": "Local model inference",
+        "value": "Core AI stays on this device",
+        "status": "Required"
+      },
+      {
+        "label": "Public web research",
+        "value": "Purpose-limited, candidate PII minimized",
+        "status": "Allowed"
+      },
+      {
+        "label": "Inbox and calendar",
+        "value": "Independent explicit scopes",
+        "status": "Off"
+      },
+      {
+        "label": "Telemetry and enrichment",
+        "value": "No default behavioral reporting",
+        "status": "Off"
+      }
+    ],
+    "detail": [
+      "EGRESS INSPECTOR",
+      "Destination · purpose · data class · permission.",
+      "Pause new requests without losing drafts.",
+      "Existing external submissions cannot be undone."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "Local storage alone is not a privacy guarantee.",
+    "task_ids": [
+      "T003",
+      "T015",
+      "T047"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI32_privacy_and_network_controls.svg",
+    "png": "screens/UI32_privacy_and_network_controls.png"
+  },
+  {
+    "id": "UI33",
+    "title": "Backup and restore",
+    "group": "Settings",
+    "layout": "form",
+    "description": "Protect the whole workspace, not only the main database.",
+    "primary_action": "Create encrypted backup",
+    "rows": [
+      {
+        "label": "Backup scope",
+        "value": "Evidence, versions and schema manifest",
+        "status": "Selected"
+      },
+      {
+        "label": "Encryption and key",
+        "value": "Stored separately from exported archive",
+        "status": "Required"
+      },
+      {
+        "label": "Restore verification",
+        "value": "Test hashes and counts in clean workspace",
+        "status": "Required"
+      },
+      {
+        "label": "Deletion limits",
+        "value": "SSD overwrite is not guaranteed erasure",
+        "status": "Disclosed"
+      }
+    ],
+    "detail": [
+      "RESTORE SAFETY",
+      "Preview what will be restored.",
+      "Never overwrite a newer workspace silently.",
+      "Failed migration preserves last good state."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "An encrypted database does not encrypt every export.",
+    "task_ids": [
+      "T011",
+      "T047"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI33_backup_and_restore.svg",
+    "png": "screens/UI33_backup_and_restore.png"
+  },
+  {
+    "id": "UI34",
+    "title": "Resource diagnostics",
+    "group": "Settings",
+    "layout": "detail",
+    "description": "Measure memory, latency and correctness together.",
+    "primary_action": "Run diagnostic profile",
+    "rows": [
+      {
+        "label": "UI process",
+        "value": "Idle CPU and resident memory",
+        "status": "Pending"
+      },
+      {
+        "label": "Model process",
+        "value": "Dedicated/shared VRAM; offload",
+        "status": "Pending"
+      },
+      {
+        "label": "Browser process",
+        "value": "Included in aggregate resource budget",
+        "status": "Pending"
+      },
+      {
+        "label": "Task quality",
+        "value": "Context recall and grounded answers",
+        "status": "Pending"
+      }
+    ],
+    "detail": [
+      "PERFORMANCE TARGETS",
+      "All figures in this design are targets or examples.",
+      "No target-device benchmark has run here.",
+      "Do not improve a metric by excluding child cost."
+    ],
+    "demonstrated_state": "unmeasured",
+    "safety_guard": "Rust is not a performance benchmark.",
+    "task_ids": [
+      "T008",
+      "T009",
+      "T048"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI34_resource_diagnostics.svg",
+    "png": "screens/UI34_resource_diagnostics.png"
+  },
+  {
+    "id": "UI35",
+    "title": "Share a review packet",
+    "group": "Relationships",
+    "layout": "modal",
+    "description": "Give a reviewer only the items you deliberately choose.",
+    "primary_action": "Create scoped export",
+    "rows": [
+      {
+        "label": "Included documents",
+        "value": "Resume and selected answers only",
+        "status": "Selected"
+      },
+      {
+        "label": "Private evidence ledger",
+        "value": "Excluded from this packet",
+        "status": "Excluded"
+      },
+      {
+        "label": "Sensitive contact details",
+        "value": "Redacted in the preview",
+        "status": "Redacted"
+      },
+      {
+        "label": "Reviewer permissions",
+        "value": "Comment-only; no application authority",
+        "status": "Limited"
+      }
+    ],
+    "detail": [
+      "SHARING BOUNDARY",
+      "Sharing is optional; local core remains complete.",
+      "Remote links need separate service consent.",
+      "Exported files cannot always be remotely revoked."
+    ],
+    "demonstrated_state": "permission_required",
+    "safety_guard": "Never share the entire vault by default.",
+    "task_ids": [
+      "T043"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI35_share_a_review_packet.svg",
+    "png": "screens/UI35_share_a_review_packet.png"
+  },
+  {
+    "id": "UI36",
+    "title": "Get help without losing context",
+    "group": "Overview",
+    "layout": "detail",
+    "description": "Hand off a precise question when the system cannot resolve it.",
+    "primary_action": "Prepare help summary",
+    "rows": [
+      {
+        "label": "Question to resolve",
+        "value": "Working-language requirement is ambiguous",
+        "status": "Unknown"
+      },
+      {
+        "label": "Evidence to include",
+        "value": "Selected role excerpt only",
+        "status": "Review"
+      },
+      {
+        "label": "Human route",
+        "value": "Candidate-chosen contact or official service",
+        "status": "Choose"
+      },
+      {
+        "label": "What is not included",
+        "value": "Private credentials and unrelated history",
+        "status": "Excluded"
+      }
+    ],
+    "detail": [
+      "HONEST LIMITS",
+      "The app can explain available evidence.",
+      "It cannot guarantee a job, visa or response.",
+      "You decide whether and where to send the summary."
+    ],
+    "demonstrated_state": "needs_human",
+    "safety_guard": "No false reassurance or invented authority.",
+    "task_ids": [
+      "T040",
+      "T050"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI36_get_help_without_losing_context.svg",
+    "png": "screens/UI36_get_help_without_losing_context.png"
+  },
+  {
+    "id": "UI37",
+    "title": "Accessibility and appearance",
+    "group": "Settings",
+    "layout": "form",
+    "description": "Make the workspace readable and controllable your way.",
+    "primary_action": "Apply display preferences",
+    "rows": [
+      {
+        "label": "Text scale",
+        "value": "Follow Windows; tested enlarged layouts",
+        "status": "Preference"
+      },
+      {
+        "label": "Motion",
+        "value": "Reduced animation and static progress",
+        "status": "On"
+      },
+      {
+        "label": "Keyboard and screen reader",
+        "value": "Visible focus and semantic control names",
+        "status": "Required"
+      },
+      {
+        "label": "Theme and contrast",
+        "value": "Light / dark / system",
+        "status": "System"
+      }
+    ],
+    "detail": [
+      "NATIVE QUALITY GATE",
+      "Do not infer accessibility from attractive screenshots.",
+      "Test actual Narrator, input and focus behavior.",
+      "No color-only meaning or hidden keyboard traps."
+    ],
+    "demonstrated_state": "ready",
+    "safety_guard": "A custom widget needs real accessibility semantics.",
+    "task_ids": [
+      "T006"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI37_accessibility_and_appearance.svg",
+    "png": "screens/UI37_accessibility_and_appearance.png"
+  },
+  {
+    "id": "UI38",
+    "title": "Review an update",
+    "group": "Settings",
+    "layout": "modal",
+    "description": "Verify the publisher, package and migration before installing.",
+    "primary_action": "Install verified update",
+    "rows": [
+      {
+        "label": "Release identity",
+        "value": "Pinned version and signed metadata",
+        "status": "Review"
+      },
+      {
+        "label": "Package checksum",
+        "value": "Must match the trusted manifest",
+        "status": "Required"
+      },
+      {
+        "label": "Database migration",
+        "value": "Backup and compatibility check",
+        "status": "Required"
+      },
+      {
+        "label": "Rollback",
+        "value": "Last supported version retained",
+        "status": "Ready"
+      }
+    ],
+    "detail": [
+      "UPDATE SAFETY",
+      "No opaque self-modifying agent.",
+      "Tampered packages are rejected.",
+      "A failed update does not erase candidate data."
+    ],
+    "demonstrated_state": "awaiting_approval",
+    "safety_guard": "A signature is checked, not merely displayed.",
+    "task_ids": [
+      "T044",
+      "T045",
+      "T046"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI38_review_an_update.svg",
+    "png": "screens/UI38_review_an_update.png"
+  },
+  {
+    "id": "UI39",
+    "title": "Model capacity exceeded",
+    "group": "Settings",
+    "layout": "recovery",
+    "description": "Preserve the task and choose an explicit smaller workload.",
+    "primary_action": "Review safe recovery",
+    "rows": [
+      {
+        "label": "Current task",
+        "value": "Draft saved before the resource failure",
+        "status": "Preserved"
+      },
+      {
+        "label": "Reduce context",
+        "value": "Retrieve a smaller evidence set",
+        "status": "Option"
+      },
+      {
+        "label": "Qualified smaller model",
+        "value": "Requires your explicit choice",
+        "status": "Option"
+      },
+      {
+        "label": "Cloud fallback",
+        "value": "Never activated silently",
+        "status": "Disabled"
+      }
+    ],
+    "detail": [
+      "RESOURCE RECOVERY",
+      "Show measured peak and runtime error when available.",
+      "Do not quietly offload inference or drop key evidence.",
+      "A smaller context must still pass quality checks."
+    ],
+    "demonstrated_state": "out_of_memory",
+    "safety_guard": "No paid request is triggered by a local failure.",
+    "task_ids": [
+      "T008",
+      "T009"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI39_model_capacity_exceeded.svg",
+    "png": "screens/UI39_model_capacity_exceeded.png"
+  },
+  {
+    "id": "UI40",
+    "title": "Review campaign changes",
+    "group": "Discover",
+    "layout": "modal",
+    "description": "Preview exactly what relaxing a search constraint would change.",
+    "primary_action": "Create separate branch",
+    "rows": [
+      {
+        "label": "Current campaign",
+        "value": "Strict location and base-salary requirements",
+        "status": "Preserved"
+      },
+      {
+        "label": "Proposed branch",
+        "value": "Wider location; original remains unchanged",
+        "status": "Separate"
+      },
+      {
+        "label": "Unknown evidence",
+        "value": "Still displayed as unknown",
+        "status": "Preserved"
+      },
+      {
+        "label": "Existing applications",
+        "value": "No retroactive changes or new sends",
+        "status": "Unchanged"
+      }
+    ],
+    "detail": [
+      "COUNTERFACTUAL SEARCH",
+      "Explore alternatives without rewriting your goals.",
+      "The new branch gets its own visible label.",
+      "No empty-result workaround hides a failed source."
+    ],
+    "demonstrated_state": "counterfactual_review",
+    "safety_guard": "Relaxed results never enter strict results silently.",
+    "task_ids": [
+      "T013",
+      "T018"
+    ],
+    "standard_states": [
+      "loading",
+      "ready",
+      "empty",
+      "degraded",
+      "error",
+      "offline",
+      "permission_required"
+    ],
+    "data": "Fictional demonstration data; not live jobs or measured performance",
+    "svg": "screens/UI40_review_campaign_changes.svg",
+    "png": "screens/UI40_review_campaign_changes.png"
+  }
+]

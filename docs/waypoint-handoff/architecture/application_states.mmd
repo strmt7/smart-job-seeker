@@ -1,0 +1,16 @@
+stateDiagram-v2
+    [*] --> Prepared
+    Prepared --> Approved: explicit exact-payload grant
+    Approved --> Prepared: expiry or dependency changed
+    Approved --> Submitting: durable intent and atomic grant consumption
+    Submitting --> Confirmed: qualifying receipt evidence
+    Submitting --> Uncertain: possible write with missing acknowledgement
+    Uncertain --> Confirmed: scoped reconciliation finds receipt
+    Uncertain --> ExternalAttested: candidate attestation retained as such
+    Uncertain --> Prepared: deliberate candidate retry decision recorded
+    Prepared --> Canceled: before external write
+    Confirmed --> [*]
+    note right of Uncertain
+      Never automatically retry.
+      Exactly-once external delivery is not guaranteed.
+    end note

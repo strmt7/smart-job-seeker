@@ -1,0 +1,738 @@
+[
+  {
+    "id": "T001",
+    "phase": "G0",
+    "title": "Baseline and license inventory",
+    "work": "Pin AI Job Hunter, AARG, openroles and selected dependencies; separate code/data/model terms.",
+    "crates": "research, legal inventory",
+    "acceptance": "Reproduce documented Prepared/Applied/Confirmed distinction and record exact version; no third-party code copied without allowed terms.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T002",
+    "phase": "G0",
+    "title": "Source permission registry",
+    "work": "Record permitted discover/read/fill/upload/submit/confirm operations and limitations per provider.",
+    "crates": "connectors, policy",
+    "acceptance": "Employer credential-only endpoints cannot be selected as candidate public submit routes.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T001"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T003",
+    "phase": "G0",
+    "title": "Threat model and data map",
+    "work": "Enumerate PII, egress, parser, browser, update and local IPC threats.",
+    "crates": "policy, security",
+    "acceptance": "Every external write and secret store has an owner and enforcement point.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T002"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T004",
+    "phase": "G0",
+    "title": "Domain contracts",
+    "work": "Define typed identities, revisions, states, grants, observations and amount units.",
+    "crates": "domain",
+    "acceptance": "Schema rejects unknown state, missing source, invalid currency basis and unbound approval.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T003"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T005",
+    "phase": "G1",
+    "title": "Rust desktop shell",
+    "work": "Create eframe/egui native navigation and typed view models.",
+    "crates": "desktop",
+    "acceptance": "No Node/Python/WSL runtime; 50k-row view virtualized; UI thread remains nonblocking.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T006",
+    "phase": "G1",
+    "title": "Accessibility and input spike",
+    "work": "Keyboard, Narrator/NVDA, IME, RTL sample and scaled multi-monitor behavior.",
+    "crates": "desktop",
+    "acceptance": "Focus order, semantic names, copy/select and 200% scaling pass observed tests; record unsupported cases.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T005"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T007",
+    "phase": "G1",
+    "title": "Runtime capability handshake",
+    "work": "Probe model metadata, tokenizer, reasoning control, schema output and cancellation.",
+    "crates": "inference",
+    "acceptance": "Unsupported reasoning settings fail qualification rather than silently disable thinking.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T006"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T008",
+    "phase": "G1",
+    "title": "16 GB AMD qualification",
+    "work": "Pin model/backend/driver; measure VRAM, offload, latency and recall.",
+    "crates": "inference, benchmark",
+    "acceptance": "Target card tested with active UI/browser; aggregate peaks and context-position accuracy recorded.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T007"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T009",
+    "phase": "G1",
+    "title": "Resource scheduler",
+    "work": "Bound requests, model slot, browser session and blocking workers.",
+    "crates": "domain, runtime",
+    "acceptance": "Stress queue does not exceed budgets; cancellation does not lose drafts.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T008"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T010",
+    "phase": "G2",
+    "title": "Encrypted store",
+    "work": "Implement SQLite transactions, key storage and source/claim revision persistence.",
+    "crates": "store",
+    "acceptance": "Secrets absent from logs/config; encrypted file/backup/WAL handling tested.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T011",
+    "phase": "G2",
+    "title": "Migrations and restore",
+    "work": "Atomic migrations with preflight backups and rollback path.",
+    "crates": "store, export",
+    "acceptance": "Interrupted migration restores earlier consistent store in a clean account.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T010"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T012",
+    "phase": "G2",
+    "title": "Profile evidence import",
+    "work": "Import text/PDF/DOCX through restricted extraction; preserve source spans.",
+    "crates": "ingest, profile",
+    "acceptance": "Malicious archive/macros rejected; user attestation not mislabeled external verification.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T011"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T013",
+    "phase": "G2",
+    "title": "Campaign constraints",
+    "work": "Independent income/career/relocation campaigns with explicit hard/soft constraints.",
+    "crates": "profile, search",
+    "acceptance": "No cross-campaign answer leakage; unknown salary/sponsorship not silently passed.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T012"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T014",
+    "phase": "G2",
+    "title": "ATS discovery adapters",
+    "work": "Implement read-only permitted Greenhouse/Lever/Ashby sources.",
+    "crates": "connectors",
+    "acceptance": "Empty/error/blocked/stale states distinct; fixture fields and references preserved.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T013"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T015",
+    "phase": "G2",
+    "title": "Safe network broker",
+    "work": "Apply purpose/destination limits, redirect/IP checks, conditional cache and bounded bodies.",
+    "crates": "policy, research",
+    "acceptance": "SSRF/private-IP redirects and poisoned URLs fail without credential exposure.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T014"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T016",
+    "phase": "G2",
+    "title": "Identity and dedup graph",
+    "work": "Use requisition namespaces, aliases and conservative merge proposals.",
+    "crates": "domain, search",
+    "acceptance": "Same role multiple URLs retained as aliases; similar title different req stays separate; undo works.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T015"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T017",
+    "phase": "G2",
+    "title": "Freshness observations",
+    "work": "Track open/closed/unknown with time and method; recheck shortlist.",
+    "crates": "connectors, search",
+    "acceptance": "HTTP 200 alone never qualifies a vacancy; source outage preserves last-known stale data.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T016"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T018",
+    "phase": "G2",
+    "title": "Lexical and semantic matching",
+    "work": "Hard gates then lexical retrieval and bounded optional embedding/rerank.",
+    "crates": "search, inference",
+    "acceptance": "Near-miss test roles separated; scores not presented as interview probabilities.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T017"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T019",
+    "phase": "G2",
+    "title": "Coverage dashboard",
+    "work": "Show source/locale capability and scan failures with timestamps.",
+    "crates": "desktop, connectors",
+    "acceptance": "Failures never become silently relaxed filters or misleading empty success.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T018"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T020",
+    "phase": "G3",
+    "title": "Research runs",
+    "work": "Public source retrieval, contradictions and local synthesis with bounded passes.",
+    "crates": "research, inference",
+    "acceptance": "Candidate PII absent from general queries; answer citations resolve to captured evidence.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T021",
+    "phase": "G3",
+    "title": "Semantic document tree",
+    "work": "Resume/cover/answers reference source claims and lockable fields.",
+    "crates": "materials",
+    "acceptance": "Dates/title/ownership cannot change from a model proposal without explicit attestation.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T020"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T022",
+    "phase": "G3",
+    "title": "Evidence validation",
+    "work": "Validate claim IDs, quoted spans, numbers and user-approved semantic consistency.",
+    "crates": "materials, policy",
+    "acceptance": "Job requirements cannot become candidate evidence; unresolved claim blocks ready assurance.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T021"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T023",
+    "phase": "G3",
+    "title": "Bounded drafting loop",
+    "work": "Draft, deterministic checks, focused critique, two repair attempts, user review.",
+    "crates": "materials, inference",
+    "acceptance": "Best valid draft retained; no endless retry; failed constraint visible.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T022"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T024",
+    "phase": "G3",
+    "title": "PDF and DOCX exporters",
+    "work": "Render from semantic tree using qualified Rust pipelines and test fonts.",
+    "crates": "materials, export",
+    "acceptance": "Page targets, image ratio, text order and fact parity pass render comparisons.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T023"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T025",
+    "phase": "G3",
+    "title": "Correction propagation",
+    "work": "Invalidate downstream unsent revisions and grants when evidence changes.",
+    "crates": "profile, materials, applications",
+    "acceptance": "100 correction fixtures affect exactly intended dependencies; submitted bytes remain immutable.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T024"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T026",
+    "phase": "G3",
+    "title": "Answer library",
+    "work": "Context-tagged answers with character counters and explicit reuse diff.",
+    "crates": "materials",
+    "acceptance": "Old authorization/salary answer cannot silently migrate to a new job.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T025"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T027",
+    "phase": "G4",
+    "title": "Dedicated browser session",
+    "work": "Visible Rust-controlled browser with isolated profile and private transport.",
+    "crates": "browser",
+    "acceptance": "No main-profile attachment or external CDP exposure; login/MFA challenge handoff works.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T028",
+    "phase": "G4",
+    "title": "Typed form mapping",
+    "work": "Read field labels/types and propose exact values without arbitrary JS execution.",
+    "crates": "browser, applications",
+    "acceptance": "Complex and ambiguous widgets pause; sensitive declarations need explicit user input.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T027"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T029",
+    "phase": "G4",
+    "title": "One-use approval service",
+    "work": "Bind job/destination/packet/profile/form/operation digest and expiry.",
+    "crates": "policy, applications",
+    "acceptance": "Replay/expiry/mutation/race cases reject; grant minted only by user gesture.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T028"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T030",
+    "phase": "G4",
+    "title": "Submission journal",
+    "work": "Persist intent and transition before approved external write.",
+    "crates": "applications, store",
+    "acceptance": "Fault at every boundary yields consistent local state; no Prepared=>Confirmed shortcut.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T029"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T031",
+    "phase": "G4",
+    "title": "Receipt verification",
+    "work": "Adapter-specific acknowledgement/identifier/email proof with redacted snapshot.",
+    "crates": "applications",
+    "acceptance": "Plausible success text on wrong origin not accepted; receipt source linked.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T030"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T032",
+    "phase": "G4",
+    "title": "Uncertain recovery",
+    "work": "Block ambiguous retries; reconcile through approved observation routes.",
+    "crates": "applications, browser",
+    "acceptance": "Crash-after-click scenario never auto-resubmits; user manual attestation separately labeled.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T031"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T033",
+    "phase": "G4",
+    "title": "Manual fallback packet",
+    "work": "Copy answers/download exact files and track external attestation.",
+    "crates": "desktop, export",
+    "acceptance": "Unsupported ATS remains usable without pretending automation or confirmation worked.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T032"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T034",
+    "phase": "G4",
+    "title": "Adapter drift tests",
+    "work": "Form fingerprints, custom questions and receipt fixtures with per-operation capabilities.",
+    "crates": "browser, connectors",
+    "acceptance": "Failed upload test disables upload claim without disabling permitted discovery.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T033"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T035",
+    "phase": "G5",
+    "title": "Inbox consent and ingestion",
+    "work": "OAuth/IMAP or selected-message import with minimal scopes and encrypted tokens.",
+    "crates": "mail",
+    "acceptance": "Unrelated mail excluded by policy; revoked grant stops new reads.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T036",
+    "phase": "G5",
+    "title": "Timeline reconciliation",
+    "work": "Match message evidence to requisition and propose lifecycle events.",
+    "crates": "mail, applications",
+    "acceptance": "One-role rejection does not reject other roles; low-confidence match awaits review.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T035"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T037",
+    "phase": "G5",
+    "title": "Calendar coordination",
+    "work": "Prepare timezone-aware events and availability checks before user-approved writes.",
+    "crates": "calendar",
+    "acceptance": "DST/overlap/recipient ambiguity handled; no invitation merely from a draft.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T036"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T038",
+    "phase": "G5",
+    "title": "Relationship CRM",
+    "work": "Candidate-owned contacts, provenance, opt-in followups and draft approvals.",
+    "crates": "contacts, desktop",
+    "acceptance": "No guessed email mass send; exact outbound text/recipient visible.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T037"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T039",
+    "phase": "G5",
+    "title": "Interview practice",
+    "work": "Role/evidence-based question and feedback sessions with optional local voice.",
+    "crates": "interview",
+    "acceptance": "Record consent; no fabricated experience/covert live assistance; resource budget remains visible.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T038"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T040",
+    "phase": "G5",
+    "title": "Learning and public support",
+    "work": "Source-backed gap exercises and official service links with unknown criteria.",
+    "crates": "research, profile",
+    "acceptance": "Tutorial completion not years of employment; program eligibility not decided by app.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T039"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T041",
+    "phase": "G5",
+    "title": "Offer scenarios",
+    "work": "Normalize units/currency/date while preserving original offers and assumptions.",
+    "crates": "offers",
+    "acceptance": "Gross/net/base/equity/installments distinguished; no unqualified legal/tax claims.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T040"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T042",
+    "phase": "G5",
+    "title": "Outcome analytics",
+    "work": "Explicit funnel denominators, response lag and variant provenance.",
+    "crates": "applications, analytics",
+    "acceptance": "Recent unresolved applications not counted rejected; observational results labeled.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T041"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T043",
+    "phase": "G5",
+    "title": "Scoped review sharing",
+    "work": "Candidate chooses exact redacted packet, expiry and reviewer permissions.",
+    "crates": "export, policy",
+    "acceptance": "Local core works without hosted sharing; no full vault disclosed by default.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T042"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T044",
+    "phase": "G6",
+    "title": "Windows release packaging",
+    "work": "Signed nonadmin installer, separate model downloads and manifest verification.",
+    "crates": "release",
+    "acceptance": "Clean account install/uninstall/upgrade tested; no mandatory development tools.",
+    "status": "PLANNED",
+    "dependencies": [],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T045",
+    "phase": "G6",
+    "title": "Update and rollback",
+    "work": "Signed metadata, version checks, migration coupling and last-good version.",
+    "crates": "release, store",
+    "acceptance": "Tampered binary rejected; interrupted update leaves recoverable supported state.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T044"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T046",
+    "phase": "G6",
+    "title": "Dependency and supply-chain audit",
+    "work": "SBOM, license notices, vulnerability checks, pinned build inputs.",
+    "crates": "release, security",
+    "acceptance": "No code/data/model license conflation; critical findings resolved or release blocked.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T045"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T047",
+    "phase": "G6",
+    "title": "Privacy and redacted support",
+    "work": "Opt-in diagnostics, egress inspector, retention, export and key disposal.",
+    "crates": "policy, export",
+    "acceptance": "Canary PII stays out of telemetry; backup deletion behavior documented.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T046"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T048",
+    "phase": "G6",
+    "title": "Comparative benchmark",
+    "work": "Run blinded task suite against accessible current alternatives.",
+    "crates": "benchmark",
+    "acceptance": "Published denominators/version/tier/confidence limits; no untested missing-feature claims.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T047"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T049",
+    "phase": "G6",
+    "title": "Usability pilot",
+    "work": "Observe diverse consenting seekers on real permitted workflows.",
+    "crates": "research, UX",
+    "acceptance": "Task effort and failures recorded; no hiring-uplift claim from underpowered pilot.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T048"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  },
+  {
+    "id": "T050",
+    "phase": "G6",
+    "title": "Release gate and limitations",
+    "work": "Assemble test evidence, coverage matrix, support plan and known limitations.",
+    "crates": "all",
+    "acceptance": "Cannot release as enterprise-grade on screenshots or mocked happy paths alone.",
+    "status": "PLANNED",
+    "dependencies": [
+      "T049"
+    ],
+    "gate_dependency": "previous gate must pass; within-gate dependencies refine during implementation",
+    "review_roles": "domain + security/UX/performance reviewer as relevant",
+    "evidence_required": "Exact commit, commands, actual outputs, fixture IDs, screenshots/profile results where relevant"
+  }
+]

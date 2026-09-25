@@ -1,0 +1,18 @@
+{
+  "id": "run-demo-001",
+  "purpose": "Synthetic test of role assessment",
+  "model_id": "qualification-pending",
+  "model_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_revision": "fixture-only",
+  "backend": "not-executed",
+  "reasoning_enabled": true,
+  "context_tokens": 8192,
+  "external_facts_used": true,
+  "research_evidence_ids": [
+    "evidence-demo-job"
+  ],
+  "network_status": "current_evidence",
+  "output_status": "validated",
+  "confidence_label": "mixed",
+  "summary": "Fixture only; English ad explicitly requires German. Not a live inference result."
+}

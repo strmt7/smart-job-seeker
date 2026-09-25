@@ -1,0 +1,75 @@
+{
+  "scope": "Design-time structural checks only; no model, Rust runtime, Windows app or ATS execution tested.",
+  "results": [
+    {
+      "test": "valid fixture: job_observation",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: claim",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: prepared_application",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: uncertain_application",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: confirmed_application",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: approval_grant",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: receipt",
+      "passed": true
+    },
+    {
+      "test": "valid fixture: reasoning_run",
+      "passed": true
+    },
+    {
+      "test": "confirmed requires receipt reference",
+      "passed": true
+    },
+    {
+      "test": "external support requires external evidence",
+      "passed": true
+    },
+    {
+      "test": "reasoning capability required",
+      "passed": true
+    },
+    {
+      "test": "current external decision requires research evidence",
+      "passed": true
+    },
+    {
+      "test": "grant requires explicit gesture",
+      "passed": true
+    },
+    {
+      "test": "attestation is not employer qualification",
+      "passed": true
+    },
+    {
+      "test": "all Markdown source IDs resolve",
+      "passed": true
+    },
+    {
+      "test": "40 screens resolve assets and task IDs",
+      "passed": true
+    },
+    {
+      "test": "implementation tasks are not falsely marked complete",
+      "passed": true
+    }
+  ],
+  "passed": 17,
+  "failed": 0
+}

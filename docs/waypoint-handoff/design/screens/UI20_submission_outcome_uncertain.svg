@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000"><rect x="0" y="0" width="1600" height="1000" rx="0" fill="#F3F6F9" stroke="none" stroke-width="1"/>
+<rect x="0" y="0" width="1600" height="38" rx="0" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<text x="16" y="25" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="700" fill="#182B3B">WAYPOINT</text>
+<text x="1458" y="25" font-family="Lato, Segoe UI, sans-serif" font-size="16" font-weight="400" fill="#182B3B">—</text>
+<rect x="1508" y="13" width="10" height="10" rx="0" fill="none" stroke="#182B3B" stroke-width="1"/>
+<text x="1564" y="26" font-family="Lato, Segoe UI, sans-serif" font-size="20" font-weight="400" fill="#182B3B">×</text>
+<rect x="0" y="38" width="228" height="962" rx="0" fill="#0D2030" stroke="none" stroke-width="1"/>
+<text x="25" y="89" font-family="Lato, Segoe UI, sans-serif" font-size="23" font-weight="800" fill="#FFFFFF">WAYPOINT</text>
+<text x="25" y="116" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="400" fill="#A9C0CF">Your search. Your evidence.</text>
+<rect x="27" y="150" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="165" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Overview</text>
+<rect x="27" y="208" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="223" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Discover</text>
+<rect x="12" y="254" width="204" height="44" rx="8" fill="#183C4C" stroke="none" stroke-width="1"/>
+<rect x="12" y="259" width="3" height="34" rx="1" fill="#47C9C6" stroke="none" stroke-width="1"/>
+<rect x="27" y="266" width="13" height="13" rx="3" fill="none" stroke="#60B9BC" stroke-width="1"/>
+<text x="54" y="281" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="600" fill="#FFFFFF">Applications</text>
+<rect x="27" y="324" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="339" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Materials</text>
+<rect x="27" y="382" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="397" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Relationships</text>
+<rect x="27" y="440" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="455" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Interview</text>
+<rect x="27" y="498" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="513" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Insights</text>
+<rect x="27" y="556" width="13" height="13" rx="3" fill="none" stroke="#8DA8BC" stroke-width="1"/>
+<text x="54" y="571" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#B6CAD7">Settings</text>
+<rect x="17" y="778" width="194" height="129" rx="10" fill="#152F40" stroke="none" stroke-width="1"/>
+<text x="31" y="805" font-family="Lato, Segoe UI, sans-serif" font-size="11" font-weight="700" fill="#83CED0">PRIVATE BY DESIGN</text>
+<text x="31" y="834" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="400" fill="#CEDCE5">Local reasoning.</text>
+<text x="31" y="855" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="400" fill="#CEDCE5">Permissioned research.</text>
+<text x="31" y="876" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="400" fill="#CEDCE5">You approve external</text>
+<text x="31" y="897" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="400" fill="#CEDCE5">actions.</text>
+<text x="24" y="964" font-family="Lato, Segoe UI, sans-serif" font-size="11" font-weight="700" fill="#91AEBD">DEMO WORKSPACE</text>
+<rect x="228" y="38" width="1372" height="66" rx="0" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<text x="265" y="79" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="400" fill="#53697C">Applications  /  UI20</text>
+<rect x="751" y="53" width="387" height="35" rx="8" fill="#F3F6F9" stroke="#D8E2EA" stroke-width="1"/>
+<text x="765" y="76" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="400" fill="#53697C">Search workspace or run a command</text>
+<text x="1090" y="76" font-family="Lato, Segoe UI, sans-serif" font-size="11" font-weight="400" fill="#53697C">Ctrl K</text>
+<rect x="1191" y="56" width="133" height="28" rx="14" fill="#E8F4F3" stroke="none" stroke-width="1"/>
+<text x="1201" y="75" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#096A72">Local reasoning</text>
+<rect x="1340" y="56" width="110" height="28" rx="14" fill="#E8F4F3" stroke="none" stroke-width="1"/>
+<text x="1350" y="75" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#096A72">Demo data</text>
+<text x="264" y="152" font-family="Lato, Segoe UI, sans-serif" font-size="30" font-weight="800" fill="#182B3B">Submission outcome uncertain</text>
+<text x="266" y="184" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#53697C">The website may have received the application. Do not retry automatically.</text>
+<rect x="1284" y="125" width="280" height="42" rx="8" fill="#087F8C" stroke="#087F8C" stroke-width="1"/>
+<text x="1300" y="152" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="700" fill="#FFFFFF">Check for confirmation</text>
+<path d="M263,222 L1564,222" stroke="#D8E2EA" stroke-width="1"/>
+<text x="268" y="982" font-family="Lato, Segoe UI, sans-serif" font-size="11" font-weight="400" fill="#53697C">DESIGN REFERENCE · FICTIONAL DATA · no live applications or measured model performance</text>
+<text x="1440" y="982" font-family="Lato, Segoe UI, sans-serif" font-size="11" font-weight="400" fill="#53697C">UI20 / 40</text>
+<rect x="264" y="248" width="1300" height="111" rx="12" fill="#FFF3E4" stroke="#E6CA9D" stroke-width="1"/>
+<text x="291" y="286" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="800" fill="#9C5E12">PAUSED — YOUR WORK IS PRESERVED</text>
+<text x="291" y="319" font-family="Lato, Segoe UI, sans-serif" font-size="17" font-weight="400" fill="#182B3B">The website may have received the application. Do not retry automatically.</text>
+<rect x="264" y="381" width="840" height="508" rx="12" fill="#FFFFFF" stroke="#D8E2EA" stroke-width="1"/>
+<text x="290" y="423" font-family="Lato, Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#182B3B">Last recorded step</text>
+<text x="290" y="452" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="400" fill="#53697C">Submit command began; no receipt captured</text>
+<rect x="918" y="403" width="161" height="28" rx="14" fill="#E8F4F3" stroke="none" stroke-width="1"/>
+<text x="928" y="422" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#096A72">Uncertain</text>
+<path d="M289,496 L1080,496" stroke="#D8E2EA" stroke-width="1"/>
+<text x="290" y="536" font-family="Lato, Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#182B3B">Safe next action</text>
+<text x="290" y="565" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="400" fill="#53697C">Inspect employer account or authorized inbox</text>
+<rect x="918" y="516" width="161" height="28" rx="14" fill="#E8F4F3" stroke="none" stroke-width="1"/>
+<text x="928" y="535" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#096A72">Review</text>
+<path d="M289,609 L1080,609" stroke="#D8E2EA" stroke-width="1"/>
+<text x="290" y="649" font-family="Lato, Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#182B3B">Retry behavior</text>
+<text x="290" y="678" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="400" fill="#53697C">Automatic retry is disabled</text>
+<rect x="918" y="629" width="161" height="28" rx="14" fill="#E8F4F3" stroke="none" stroke-width="1"/>
+<text x="928" y="648" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#096A72">Protected</text>
+<path d="M289,722 L1080,722" stroke="#D8E2EA" stroke-width="1"/>
+<text x="290" y="762" font-family="Lato, Segoe UI, sans-serif" font-size="18" font-weight="700" fill="#182B3B">Manual decision</text>
+<text x="290" y="791" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="400" fill="#53697C">Record your confirmation or deliberate retry</text>
+<rect x="918" y="742" width="161" height="28" rx="14" fill="#E8F4F3" stroke="none" stroke-width="1"/>
+<text x="928" y="761" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#096A72">User choice</text>
+<rect x="1132" y="381" width="432" height="331" rx="12" fill="#FFFFFF" stroke="#D8E2EA" stroke-width="1"/>
+<text x="1156" y="418" font-family="Lato, Segoe UI, sans-serif" font-size="13" font-weight="800" fill="#087F8C">NOT A FAILURE CLAIM</text>
+<text x="1156" y="456" font-family="Lato, Segoe UI, sans-serif" font-size="16" font-weight="400" fill="#182B3B">The network failed after a possible</text>
+<text x="1156" y="481" font-family="Lato, Segoe UI, sans-serif" font-size="16" font-weight="400" fill="#182B3B">external write.</text>
+<text x="1156" y="527" font-family="Lato, Segoe UI, sans-serif" font-size="16" font-weight="400" fill="#182B3B">We cannot promise exactly-once delivery.</text>
+<text x="1156" y="573" font-family="Lato, Segoe UI, sans-serif" font-size="16" font-weight="400" fill="#182B3B">Your reviewed packet remains available.</text>
+<path d="M1156,624 L1540,624" stroke="#D8E2EA" stroke-width="1"/>
+<text x="1156" y="653" font-family="Lato, Segoe UI, sans-serif" font-size="14" font-weight="400" fill="#53697C">Evidence and uncertainty stay visible.</text>
+<rect x="1132" y="732" width="432" height="154" rx="12" fill="#EBF2F7" stroke="none" stroke-width="1"/>
+<text x="1156" y="762" font-family="Lato, Segoe UI, sans-serif" font-size="12" font-weight="800" fill="#53697C">IMPLEMENTATION GUARD</text>
+<text x="1156" y="792" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#182B3B">Never show a misleading Try again primary</text>
+<text x="1156" y="815" font-family="Lato, Segoe UI, sans-serif" font-size="15" font-weight="400" fill="#182B3B">button.</text></svg>

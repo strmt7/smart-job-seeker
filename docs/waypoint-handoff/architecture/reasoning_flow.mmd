@@ -1,0 +1,14 @@
+flowchart TD
+    Q[Candidate task and campaign constraints] --> P[Deterministic parse and cheap filters]
+    P --> R{Current external facts needed?}
+    R -->|yes| WEB[Permissioned public retrieval]
+    WEB --> E[Capture evidence time source and contradictions]
+    R -->|no| LOCAL[Candidate evidence only]
+    E --> REASON[Qualified local model - thinking enabled]
+    LOCAL --> REASON
+    REASON --> CHECK[Schema source numeric and policy validation]
+    CHECK -->|bounded repair| REASON
+    CHECK -->|valid| REVIEW[Candidate review with evidence summary]
+    CHECK -->|unresolved| BLOCK[Draft / unknown / blocked - honest limit]
+    REVIEW --> PREP[Prepared packet]
+    PREP --> APPROVAL[Separate prefill and submit approvals]

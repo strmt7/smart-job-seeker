@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/waypoint/ApprovalGrant.schema.json",
+  "title": "ApprovalGrant",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bound_payload_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "profile_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "packet_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "form_schema_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "destination_origin": {
+      "type": "string",
+      "format": "uri"
+    },
+    "operation": {
+      "enum": [
+        "prefill",
+        "submit",
+        "send_email",
+        "create_event"
+      ]
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 32
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "explicit_user_gesture": {
+      "const": true
+    },
+    "consumed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "id",
+    "intent_id",
+    "bound_payload_sha256",
+    "profile_revision",
+    "packet_sha256",
+    "form_schema_sha256",
+    "destination_origin",
+    "operation",
+    "nonce",
+    "issued_at",
+    "expires_at",
+    "explicit_user_gesture",
+    "consumed_at"
+  ]
+}
