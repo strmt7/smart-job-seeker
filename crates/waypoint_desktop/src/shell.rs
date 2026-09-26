@@ -67,6 +67,77 @@ impl WaypointShell {
         }
         ui.separator();
 
+        match self.model.screen {
+            Screen::Coverage => {
+                // T019: per-source truth with explicit denominators. A failed
+                // source is shown as degraded — never as "no results".
+                if let Some(report) = &self.model.coverage {
+                    ui.heading("Source coverage");
+                    ui.label(report.summary_line());
+                    ui.separator();
+                    egui::ScrollArea::vertical().show_rows(
+                        ui,
+                        ROW_HEIGHT,
+                        report.sources.len(),
+                        |ui, range| {
+                            for i in range {
+                                let s = &report.sources[i];
+                                let state = match s.state {
+                                    waypoint_search::coverage::SourceFetchState::Ok => "OK",
+                                    waypoint_search::coverage::SourceFetchState::Empty => {
+                                        "empty (verified)"
+                                    }
+                                    waypoint_search::coverage::SourceFetchState::NetworkError => {
+                                        "NETWORK ERROR"
+                                    }
+                                    waypoint_search::coverage::SourceFetchState::AccessDenied => {
+                                        "ACCESS DENIED"
+                                    }
+                                    waypoint_search::coverage::SourceFetchState::Unsupported => {
+                                        "UNSUPPORTED"
+                                    }
+                                    waypoint_search::coverage::SourceFetchState::ParserDrift => {
+                                        "PARSER DRIFT"
+                                    }
+                                    waypoint_search::coverage::SourceFetchState::Stale => "STALE",
+                                };
+                                let detail = s.detail.as_deref().unwrap_or("");
+                                let response = ui.selectable_label(
+                                    false,
+                                    format!(
+                                        "{} — {} — {} results — last checked {} {detail}",
+                                        s.source,
+                                        state,
+                                        s.results,
+                                        s.last_checked.as_deref().unwrap_or("never")
+                                    ),
+                                );
+                                let _ = response;
+                            }
+                        },
+                    );
+                } else {
+                    ui.label("No sources checked yet.");
+                }
+                return;
+            }
+            Screen::ModelQualification => {
+                ui.heading("Local model qualification");
+                match &self.model.model_status {
+                    Some(status) => {
+                        ui.label(status);
+                    }
+                    None => {
+                        ui.label("No model probe has run in this session.");
+                    }
+                }
+                ui.separator();
+                ui.label("See docs/g1/QUALIFICATION.md for the recorded hardware measurements.");
+                return;
+            }
+            _ => {}
+        }
+
         // Virtualized long list: only the visible row range is laid out, so a
         // 50k-row model costs the same as a 50-row one per frame.
         let total = self.model.rows.len();

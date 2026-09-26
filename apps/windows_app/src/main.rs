@@ -24,5 +24,10 @@ fn main() -> eframe::Result<()> {
         total_jobs: rows.len(),
         rows,
         notice: Some("G1 qualification fixture — no live sources connected".into()),
+        coverage: None,
+        model_status: Some(
+            "Qualified on this machine: qwen3.5:9b — 13.23 GiB VRAM, zero CPU offload,              ~77 tok/s, structured output + reasoning pass (see docs/g1/QUALIFICATION.md)"
+                .into(),
+        ),
     })
 }

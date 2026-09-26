@@ -1,12 +1,12 @@
 # Implementation checkpoint
 
-Status: G0 complete. G1 code-complete & hardware-measured (a11y observation open). G2 complete at the data/policy layer (T010-T020); UI coverage screen pending with the G3 UI pass.
+Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
 
 | Field | Value |
 |---|---|
 | Latest commit | see `git log -1` |
-| Completed tasks | T001-T005, T007, T009, T010-T020 (T006 partial: keyboard nav done; screen reader/IME/DPI unobserved) |
-| Validation run | `cargo fmt --all`; `cargo clippy --all-targets` -> 0 warnings; `cargo test --workspace` -> 45 pass, 0 fail; live ATS parse checks pass (vercel/ashby/spotify boards) |
-| Runtime measurements | docs/g1/QUALIFICATION.md |
-| Known limits | store unencrypted (SQLCipher planned); coverage report not yet rendered in shell; no model-backed generation wired yet |
-| Next smallest action | G3 T021 semantic document tree + T022 evidence validation + T025 correction propagation (the D1 differentiator) |
+| Completed tasks | T001-T020, T021-T026, T027-T034, T035-T043 (all gates' engineering tasks); T044 (binary builds, unsigned), T045 (migration rollback tested; update channel pending), T046 (audit+deny+SBOM executed), T047 (defaults verified in code), T048 (skeleton + measured model baseline), T050 (limitations register) |
+| Partial | T006 (keyboard done; Narrator/IME/DPI unobserved), T007 (trait+live probe; production adapter unwired), T049 (pilot not run by design) |
+| Validation | `cargo fmt`; `cargo clippy --all-targets` -> 0 warnings; `cargo test --workspace` -> 110 pass; `cargo audit` -> 0 vulns (1 informational unmaintained notice); `cargo deny check` -> licenses/bans/sources ok; release binary PE32+ 14.3 MB |
+| Known blockers | signing cert + installer; SQLCipher; production inference adapter; browser CDP wiring; a11y observation session |
+| Next smallest action | Production `Inference` adapter for the local runtime, then SQLCipher integration |

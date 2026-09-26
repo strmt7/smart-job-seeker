@@ -3651,6 +3651,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "waypoint_domain",
+ "waypoint_search",
 ]
 
 [[package]]

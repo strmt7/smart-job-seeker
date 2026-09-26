@@ -47,6 +47,8 @@ fn one_frame_completes_quickly_with_50k_rows() {
         total_jobs: 50_000,
         rows: fixture_rows(50_000),
         notice: None,
+        coverage: None,
+        model_status: None,
     };
 
     let ctx = Context::default();

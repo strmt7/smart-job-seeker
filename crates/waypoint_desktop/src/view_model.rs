@@ -1,6 +1,7 @@
 //! Typed view models. Rendering consumes these; domain actions never borrow UI.
 
 use waypoint_domain::ApplicationState;
+use waypoint_search::coverage::CoverageReport;
 
 /// One row of the opportunity list — plain data, safe to produce on a worker.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +22,10 @@ pub struct ShellViewModel {
     pub total_jobs: usize,
     pub rows: Vec<JobRow>,
     pub notice: Option<String>,
+    /// T019: truthful source coverage, shown with explicit denominators.
+    pub coverage: Option<CoverageReport>,
+    /// Model qualification summary from the last probe (T007/T008).
+    pub model_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
