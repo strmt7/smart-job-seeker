@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy (zero warnings required)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+      - name: Release build
+        run: cargo build --release -p windows_app
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install audit/deny
+        run: |
+          cargo install cargo-audit
+          cargo install cargo-deny
+      - name: Security audit (deny warnings except the documented unmaintained notice)
+        # RUSTSEC-2026-0192: ttf-parser 0.25.1 unmaintained, transitive via egui,
+        # no CVE, no safe upgrade; tracked in KNOWN_LIMITATIONS.md item 9.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2026-0192
+      - name: License/ban/source policy
+        run: cargo deny check licenses bans sources
