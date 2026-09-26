@@ -3666,6 +3666,7 @@ dependencies = [
  "serde",
  "serde_json",
  "waypoint_domain",
+ "waypoint_inference",
 ]
 
 [[package]]
