@@ -108,8 +108,8 @@ fn default_false() -> bool {
 
 /// Accept both a bare JSON array and {"<wrapper>": [...]} shapes, since live
 /// endpoints differ and drift is a recorded risk (T034).
-fn extract_job_list<'a>(
-    payload: &'a str,
+fn extract_job_list(
+    payload: &str,
     wrappers: &[&str],
     source: &str,
 ) -> Result<Vec<GreenhouseJob>, ConnectorError> {

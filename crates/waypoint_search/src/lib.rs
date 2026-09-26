@@ -4,6 +4,8 @@
 //! Hard constraints are evaluated *before* ranking; unknown is neither pass
 //! nor fail (MASTER_PLAN §6 D3). No silent relaxation.
 
+pub mod coverage;
+
 use waypoint_domain::{Amount, JobIdentityId};
 
 /// Hard vs soft constraint. Unknown facts never silently pass a hard check.
