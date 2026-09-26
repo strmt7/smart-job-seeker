@@ -6,6 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Production inference adapter: Ollama over loopback-only HTTP, std-only.
+pub mod ollama;
+pub use ollama::OllamaInference;
+
 /// What a backend reports about itself after a successful startup probe.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityReport {
@@ -38,6 +42,10 @@ pub enum InferenceError {
     Cancelled,
     /// Hard refusal to ever fall back to a paid cloud model silently.
     CloudFallbackForbidden,
+    /// The inference runtime could not be reached (loopback only).
+    RuntimeUnreachable(String),
+    /// A non-loopback origin was requested; structurally impossible.
+    NonLocalRuntime,
 }
 
 impl std::fmt::Display for InferenceError {
@@ -52,15 +60,21 @@ impl std::fmt::Display for InferenceError {
             InferenceError::CloudFallbackForbidden => {
                 write!(f, "silent paid-cloud fallback is forbidden")
             }
+            InferenceError::RuntimeUnreachable(m) => {
+                write!(f, "local inference runtime unreachable: {m}")
+            }
+            InferenceError::NonLocalRuntime => {
+                write!(
+                    f,
+                    "inference origin must be a literal loopback http address"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for InferenceError {}
 
-/// Trait-like boundary used by the domain. Implementations: managed llama.cpp
-/// server over private pipe / authenticated loopback (T007 runtime), and a
-/// deterministic test stub used in fixtures.
 pub trait Inference {
     /// Startup probe: structured output + bounded reasoning request must both
     /// succeed for the model to be marked qualified.
