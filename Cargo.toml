@@ -5,6 +5,9 @@ members = [
   "crates/waypoint_policy",
   "crates/waypoint_desktop",
   "crates/waypoint_inference",
+  "crates/waypoint_store",
+  "crates/waypoint_search",
+  "crates/waypoint_research",
   "apps/windows_app",
 ]
 resolver = "2"
