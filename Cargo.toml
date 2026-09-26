@@ -10,6 +10,7 @@ members = [
   "crates/waypoint_research",
   "crates/waypoint_connectors",
   "crates/waypoint_materials",
+  "crates/waypoint_applications",
   "apps/windows_app",
 ]
 resolver = "2"
