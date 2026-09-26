@@ -3623,6 +3623,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "waypoint_connectors"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "waypoint_domain",
+ "waypoint_policy",
+ "waypoint_search",
+]
+
+[[package]]
 name = "waypoint_desktop"
 version = "0.1.0"
 dependencies = [

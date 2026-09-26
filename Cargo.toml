@@ -8,6 +8,7 @@ members = [
   "crates/waypoint_store",
   "crates/waypoint_search",
   "crates/waypoint_research",
+  "crates/waypoint_connectors",
   "apps/windows_app",
 ]
 resolver = "2"

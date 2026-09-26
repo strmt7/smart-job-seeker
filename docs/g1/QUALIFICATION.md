@@ -42,3 +42,11 @@ Implemented: full keyboard navigation via egui focus, selectable rows, virtual s
 - 50k-row latency recorded here is a debug-profile layout time, on an unloaded machine; the §13 p95 budget needs a release-build soak test.
 - Screen-reader/IME/DPI are not yet validated (see T006 partial).
 - No signing/packaging yet (G6).
+
+## Live ATS parse validation (T014 evidence, 2026-09-25)
+Read-only public GETs (registry `allowed_public`):
+- Greenhouse `boards-api.greenhouse.io/v1/boards/vercel/jobs` — parses (wrapped `{"jobs":[...]}` shape).
+- Ashby `api.ashbyhq.com/posting-api/job-board/ashby` — parses (wrapped `{"jobs":[...]}`).
+- Lever `api.lever.co/v0/postings/spotify?mode=json` — parses (79 live rows).
+- Lever boards for netflix/cloudflare/stripe and others 404 on this endpoint — recorded; adapter must surface 404 as `AccessDenied/NotFound`, not empty results.
+Live checks are `#[ignore]` tests run via `cargo test -p waypoint_connectors -- --ignored`.
