@@ -192,7 +192,7 @@ pub enum CompensationCategory {
 
 /// A money amount. Never compared across currency/period without explicit
 /// normalization (MASTER_PLAN §5).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Amount {
     /// ISO-4217 code, e.g. "CHF", "USD".
     pub currency: String,
