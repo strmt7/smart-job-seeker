@@ -3660,6 +3660,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "waypoint_materials"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "waypoint_domain",
+]
+
+[[package]]
 name = "waypoint_policy"
 version = "0.1.0"
 dependencies = [
