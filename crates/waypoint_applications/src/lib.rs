@@ -7,6 +7,7 @@
 
 pub mod form_mapping;
 pub mod journal;
+pub mod manual_fallback;
 pub mod preflight;
 pub mod receipt;
 pub mod recovery;
