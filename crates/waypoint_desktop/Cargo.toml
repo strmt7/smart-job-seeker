@@ -10,6 +10,8 @@ egui = "0.36"
 egui_extras = "0.36"
 waypoint_domain = { path = "../waypoint_domain" }
 waypoint_search = { path = "../waypoint_search" }
+waypoint_workspace = { path = "../waypoint_workspace" }
+waypoint_store = { path = "../waypoint_store" }
 
 [lints]
 workspace = true

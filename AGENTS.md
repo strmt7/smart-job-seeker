@@ -37,15 +37,20 @@ repo up cold. Read this first, then `README.md`, then the references below.
 - `docs/g0/`, `docs/g1/`, `docs/g6/` — gate evidence: license/permission inventories,
   hardware qualification (real measured numbers), release audit, SBOM.
 - `IMPLEMENTATION_STATUS.md`, `KNOWN_LIMITATIONS.md` — what is done vs honestly pending.
-- `crates/` — 11 crates, one job each (see README table). `apps/windows_app` is the binary.
+- `crates/` — 13 crates, one job each (see README table). `apps/windows_app` is the binary.
+  - `waypoint_net` — the ONLY HTTP client: HTTPS-only for public hosts, OS-native TLS
+    (schannel), resolves-then-validates every address (DNS-rebinding guard), size-capped.
+  - `waypoint_workspace` — the end-to-end pipeline (permission gate → bounded fetch →
+    parse → identity/dedup → store → ranked search). Degradation is reported, never
+    silently converted to "0 jobs". This is where the honesty rules become behaviour.
 - `deny.toml` — license/supply-chain policy; `cargo deny check` must stay green.
-- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 115 tests,
+- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 145 tests,
   release build, `cargo audit` (with one documented informational ignore), deny checks.
 
 ## Build, test, quality commands
 
 ```bash
-cargo test --workspace                 # 115 tests
+cargo test --workspace                 # 145 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --release -p windows_app   # native PE32+ binary, ~14 MB
@@ -82,6 +87,15 @@ Windows/MSVC toolchain assumed; no Node/Python/WSL/Docker anywhere in the produc
   board (netflix) 404s — live tests use vercel/ashby/spotify.
 - Zero/negative timestamps mean "unrecorded observation" (Unknown), never Fresh.
 - MSYS/Git-Bash path quirks: pass `C:/...` forward-slash paths to native tools.
+- Adapters expect the providers' real camelCase payloads (Lever `hostedUrl`/`workplaceType`,
+  Ashby `jobUrl`/`isRemote`/`publishedAt`). Fixtures written in snake_case silently default
+  to empty strings and get dropped as untrusted URLs — mirror real payloads.
+- The shell has exactly ONE frame path (`WaypointShell::frame`: poll → render → dispatch).
+  Tests must render through it, or controller results never arrive.
+- `Cargo.lock` moves with the graph: adding a dep re-resolved `url`→`idna`→ICU and pulled a
+  yanked `yoke-derive 0.8.3`. Always re-run `cargo audit --deny warnings` after dependency
+  changes; fix yanks by moving versions (`cargo update -p <crate> --precise X`), never by
+  silencing the check.
 - Entity-escaping text through write/patch tooling corrupts `&`-style strings;
   write such code via line-index scripts, not string-replace through the tool.
 
@@ -95,7 +109,8 @@ None of these are silently skippable, and none are claimed done.
 
 ## Where to start next (highest value, in order)
 
-1. Wire `OllamaInference` (now real, tested) into drafting/materials flows end-to-end.
+1. Wire `OllamaInference` into the drafting/interview flows so materials are generated
+   through the real adapter (with the deterministic fallback kept for offline runs).
 2. SQLCipher at-rest encryption behind the existing store API.
 3. Browser CDP integration behind the typed `BrowserCommand` surface.
 4. Accessibility observation session (Narrator/IME/DPI) to close T006.

@@ -1,13 +1,13 @@
 [package]
-name = "waypoint_domain"
+name = "waypoint_net"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-sha2 = "0.10"
-serde = { version = "1", features = ["derive"] }
+native-tls = "0.2"
 serde_json = "1"
+waypoint_connectors = { path = "../waypoint_connectors" }
 
 [lints]
 workspace = true

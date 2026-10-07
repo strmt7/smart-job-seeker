@@ -80,7 +80,28 @@ impl std::error::Error for DomainError {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Sha256Digest(String);
 
+/// SHA-256 as lowercase hex. Central helper so every hash in the product is
+/// real cryptography rather than an opaque caller-supplied string.
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let out = hasher.finalize();
+    let mut s = String::with_capacity(64);
+    for byte in out {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{byte:02x}");
+    }
+    s
+}
+
 impl Sha256Digest {
+    /// Real content addressing: SHA-256 of the given bytes, lowercase hex.
+    /// This is the only way a digest should be produced in product code.
+    pub fn of(content: &str) -> Self {
+        Self(sha256_hex(content.as_bytes()))
+    }
+
     pub fn new(s: impl Into<String>) -> Result<Self, DomainError> {
         let s = s.into();
         if s.len() == 64
@@ -94,6 +115,31 @@ impl Sha256Digest {
     }
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    #[test]
+    fn sha256_matches_published_test_vectors() {
+        // NIST/FIPS 180-4 known-answer vectors.
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let d = Sha256Digest::of("abc");
+        assert_eq!(
+            d.as_str(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // Digest produced by `of` is always a valid digest by construction.
+        assert!(Sha256Digest::new(d.as_str().to_string()).is_ok());
     }
 }
 

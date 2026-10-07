@@ -206,6 +206,42 @@ pub fn freshness(observed_at_unix: i64, now_unix: i64, stale_after_seconds: i64)
     }
 }
 
+/// Evidence overlap the other way round: which of the *candidate's* skills are
+/// actually evidenced in a posting's text. This is what the UI shows as
+/// "matched: Rust, SQLite" — interpretable, deterministic, no ML (§6).
+///
+/// Token-aware so short skills ("C", "R") cannot match inside unrelated words,
+/// while real-world tokens ("c++", "c#", ".net", "node.js") still match.
+pub fn evidence_overlap(profile_skills: &[String], text: &str) -> (f32, Vec<String>) {
+    if profile_skills.is_empty() {
+        return (0.0, vec![]);
+    }
+    let hay = text.to_lowercase();
+    let tokens: Vec<&str> = hay
+        .split(|c: char| !(c.is_alphanumeric() || matches!(c, '+' | '#' | '.' | '-')))
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut matched: Vec<String> = Vec::new();
+    for skill in profile_skills {
+        let s = skill.trim().to_lowercase();
+        if s.is_empty() {
+            continue;
+        }
+        let hit = if s.contains(' ') {
+            hay.contains(&s)
+        } else {
+            tokens
+                .iter()
+                .any(|t| *t == s || t.trim_end_matches('.') == s || t.trim_start_matches('.') == s)
+        };
+        if hit {
+            matched.push(skill.clone());
+        }
+    }
+    let score = matched.len() as f32 / profile_skills.len() as f32;
+    (score, matched)
+}
+
 /* ------------------------------ lexical matching ----------------------------- */
 
 /// Interpretable overlap score in [0,1]: fraction of required skills the

@@ -1,0 +1,19 @@
+[package]
+name = "waypoint_workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+waypoint_connectors = { path = "../waypoint_connectors" }
+waypoint_domain = { path = "../waypoint_domain" }
+waypoint_inference = { path = "../waypoint_inference" }
+waypoint_net = { path = "../waypoint_net" }
+waypoint_policy = { path = "../waypoint_policy" }
+waypoint_search = { path = "../waypoint_search" }
+waypoint_store = { path = "../waypoint_store" }
+
+[lints]
+workspace = true

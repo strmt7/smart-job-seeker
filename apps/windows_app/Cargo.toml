@@ -6,9 +6,11 @@ license.workspace = true
 
 [dependencies]
 eframe = "0.36"
-smart_job_core = { path = "../../crates/smart_job_core" }
 waypoint_desktop = { path = "../../crates/waypoint_desktop" }
 waypoint_domain = { path = "../../crates/waypoint_domain" }
+waypoint_inference = { path = "../../crates/waypoint_inference" }
+waypoint_search = { path = "../../crates/waypoint_search" }
+waypoint_workspace = { path = "../../crates/waypoint_workspace" }
 
 [lints]
 workspace = true

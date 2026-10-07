@@ -9,6 +9,8 @@ members = [
   "crates/waypoint_search",
   "crates/waypoint_research",
   "crates/waypoint_connectors",
+  "crates/waypoint_net",
+  "crates/waypoint_workspace",
   "crates/waypoint_materials",
   "crates/waypoint_applications",
   "crates/waypoint_lifecycle",
