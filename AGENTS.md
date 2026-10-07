@@ -45,17 +45,19 @@ repo up cold. Read this first, then `README.md`, then the references below.
     packet → one-use approval → DOCX export, with correction propagation. Degradation
     is reported, never silently converted to "0 jobs". This is where the honesty
     rules become behaviour.
-  - `waypoint_store` — versioned migrations (v3 adds `claims`, `packets`, `grants`).
-    **Never edit a released migration; add v(N+1).** Grants persist their `consumed`
-    flag so a restart cannot resurrect a spent approval.
+  - `waypoint_store` — versioned migrations (v3 adds `claims`, `packets`, `grants`;
+    v4 adds the submission journal). **Never edit a released migration; add v(N+1).**
+    Grants persist their `consumed` flag so a restart cannot resurrect a spent
+    approval, and the journal is append-only *enforced by database triggers* — an
+    UPDATE or DELETE on it fails at the SQLite level.
 - `deny.toml` — license/supply-chain policy; `cargo deny check` must stay green.
-- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 168 tests,
+- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 179 tests,
   release build, `cargo audit` (with one documented informational ignore), deny checks.
 
 ## Build, test, quality commands
 
 ```bash
-cargo test --workspace                 # 168 tests
+cargo test --workspace                 # 179 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --release -p windows_app   # native PE32+ binary, ~14 MB
@@ -118,9 +120,11 @@ None of these are silently skippable, and none are claimed done.
 
 ## Where to start next (highest value, in order)
 
-1. The submission stage: a browser engine that consumes an approval through
-   `Workspace::consume_grant` (CDP behind the typed `BrowserCommand` surface). Today an
-   approval can be created, exported and voided, but nothing can spend it for real.
+1. The real browser driver: `waypoint_workspace::submit` implements the whole
+   supervised-apply flow behind a `BrowserDriver` trait (preflight at the boundary,
+   durable consumption, typed fills, qualified receipts, no auto-retry) and it is
+   tested end to end with a scripted driver. What is missing is a CDP implementation
+   of that trait, so no real employer submission can happen yet.
 2. Wire `OllamaInference` into the drafting/interview flows so materials are generated
    through the real adapter (keeping a deterministic offline fallback).
 3. SQLCipher at-rest encryption behind the existing store API.

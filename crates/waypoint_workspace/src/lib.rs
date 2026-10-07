@@ -207,6 +207,8 @@ pub enum WorkspaceError {
     Approval(String),
     /// Export or document serialization failed.
     Export(String),
+    /// The append-only submission journal refused a transition.
+    Journal(String),
 }
 
 impl std::fmt::Display for WorkspaceError {
@@ -239,6 +241,7 @@ impl std::fmt::Display for WorkspaceError {
             ),
             WorkspaceError::Approval(m) => write!(f, "approval: {m}"),
             WorkspaceError::Export(m) => write!(f, "export: {m}"),
+            WorkspaceError::Journal(m) => write!(f, "submission journal refused: {m}"),
         }
     }
 }
@@ -695,8 +698,13 @@ impl Scheduler {
     }
 }
 
+pub mod submit;
 pub mod work;
 
+pub use submit::{
+    live_form_schema_digest, plan_fill, BrowserDriver, DriverError, FillPlan, LiveForm, SiteAck,
+    SubmitOutcome,
+};
 pub use work::{CorrectionReport, FactOrigin, PacketReadiness, PreparedPacket};
 
 /// Test-only fixture helpers (kept out of the product surface).
@@ -705,6 +713,17 @@ impl Workspace {
     /// Insert a tracked job directly, for suites that exercise the work layer
     /// rather than discovery.
     pub(crate) fn test_insert_job(&mut self, id: &str, title: &str, employer: &str) {
+        self.test_insert_job_at(id, title, employer, "1758900000");
+    }
+
+    /// Insert a job with an explicit last-observed timestamp (freshness tests).
+    pub(crate) fn test_insert_job_at(
+        &mut self,
+        id: &str,
+        title: &str,
+        employer: &str,
+        last_seen: &str,
+    ) {
         let job = StoredJob {
             id: JobIdentityId::new(id).expect("valid test id"),
             title: title.into(),
@@ -713,8 +732,8 @@ impl Workspace {
             state: ApplicationState::Discovered,
             canonical_url: Some(format!("https://boards.greenhouse.io/{id}")),
             content_hash: Some(sha256_hex(id.as_bytes())),
-            first_seen: Some("1758900000".into()),
-            last_seen: Some("1758900000".into()),
+            first_seen: Some(last_seen.to_string()),
+            last_seen: Some(last_seen.to_string()),
             remote: true,
             source: "greenhouse".into(),
             requisition_id: Some(id.rsplit("::").next().unwrap_or(id).to_string()),
@@ -724,6 +743,8 @@ impl Workspace {
     }
 }
 
+#[cfg(test)]
+mod submit_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

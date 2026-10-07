@@ -92,10 +92,86 @@ const MIGRATIONS: &[&str] = &[
      );
      INSERT OR IGNORE INTO meta(key,value) VALUES('profile_revision','1');
      UPDATE meta SET value='3' WHERE key='schema_version';",
+    // v4 — the submission journal. Append-only by construction: the triggers
+    // below make an update or delete fail at the database level, so a
+    // submission history cannot be rewritten by any code path (including a
+    // future bug). This is what makes "durable intent record" a property
+    // rather than an intention.
+    "CREATE TABLE IF NOT EXISTS submission_journal(
+       seq INTEGER PRIMARY KEY AUTOINCREMENT,
+       application_id TEXT NOT NULL,
+       state TEXT NOT NULL,
+       timestamp TEXT NOT NULL,
+       reason TEXT NOT NULL
+     );
+     CREATE TRIGGER IF NOT EXISTS submission_journal_no_update
+       BEFORE UPDATE ON submission_journal
+       BEGIN SELECT RAISE(ABORT, 'submission journal is append-only'); END;
+     CREATE TRIGGER IF NOT EXISTS submission_journal_no_delete
+       BEFORE DELETE ON submission_journal
+       BEGIN SELECT RAISE(ABORT, 'submission journal is append-only'); END;
+     UPDATE meta SET value='4' WHERE key='schema_version';",
 ];
 
 pub mod work;
 pub use work::{StoredClaim, StoredGrant, StoredPacket};
+
+/// One append-only submission-journal record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalRow {
+    pub application_id: String,
+    pub state: ApplicationState,
+    pub timestamp: String,
+    pub reason: String,
+}
+
+impl Store {
+    /// Append one journal record. There is deliberately no update or delete
+    /// counterpart; the database triggers reject both.
+    pub fn append_journal(
+        &mut self,
+        application_id: &str,
+        state: ApplicationState,
+        timestamp: &str,
+        reason: &str,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO submission_journal(application_id,state,timestamp,reason) VALUES(?1,?2,?3,?4)",
+            params![
+                application_id,
+                serde_json::to_string(&state).unwrap(),
+                timestamp,
+                reason
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The full, ordered history for one application.
+    pub fn journal_entries(&self, application_id: &str) -> Result<Vec<JournalRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT application_id,state,timestamp,reason FROM submission_journal
+             WHERE application_id=?1 ORDER BY seq ASC",
+        )?;
+        let rows = stmt.query_map(params![application_id], |r| {
+            let state_json: String = r.get(1)?;
+            Ok(JournalRow {
+                application_id: r.get(0)?,
+                state: serde_json::from_str(&state_json).unwrap_or(ApplicationState::Uncertain),
+                timestamp: r.get(2)?,
+                reason: r.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn journal_count(&self) -> Result<u64, StoreError> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM submission_journal", [], |r| r.get(0))?;
+        Ok(n as u64)
+    }
+}
 
 #[derive(Debug)]
 pub struct Store {
@@ -436,6 +512,31 @@ mod tests {
         .unwrap();
         assert!(s.remove_alias("https://mirror.example/r/1").unwrap());
         assert_eq!(s.resolve_alias("https://mirror.example/r/1").unwrap(), None);
+    }
+
+    #[test]
+    fn the_submission_journal_rejects_updates_and_deletes_at_the_database_level() {
+        let mut s = Store::in_memory().unwrap();
+        s.append_journal(
+            "app-1",
+            ApplicationState::Submitting,
+            "100",
+            "write_started",
+        )
+        .unwrap();
+        assert_eq!(s.journal_count().unwrap(), 1);
+
+        // Appending is fine; rewriting history is not.
+        let update = s
+            .conn
+            .execute("UPDATE submission_journal SET reason='rewritten'", []);
+        assert!(update.is_err(), "an update must be refused by the trigger");
+        let delete = s.conn.execute("DELETE FROM submission_journal", []);
+        assert!(delete.is_err(), "a delete must be refused by the trigger");
+
+        let rows = s.journal_entries("app-1").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].reason, "write_started", "history is intact");
     }
 
     #[test]

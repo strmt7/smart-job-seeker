@@ -9,11 +9,16 @@ Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this 
 3. **Accessibility observation incomplete (T006).** Keyboard navigation is implemented; Narrator/NVDA announcement quality, IME composition, 125–200% DPI and multi-monitor behavior have NOT been observed and recorded. Gate G1 stays partially open for this reason.
 4. **No code signing / installer.** The release binary builds; signing certificates and MSIX/NSIS packaging are not produced. Until signed, users must verify hashes manually.
 5. **No update channel.** Update metadata/signing blocked on T044 signing; store-level migration rollback is implemented and tested.
-6. **No submission stage exists yet, so an approval cannot be spent for real.** Facts,
-   packets and one-use approvals are implemented and tested (`approve_packet`,
-   `consume_grant`, voiding on correction), and packets export to real DOCX — but nothing
-   submits anything, because the browser stage is not built. The approval machinery is
-   therefore proven by tests, not by a live employer submission.
+6. **The submission engine exists and is tested; the real browser driver does not.**
+   `waypoint_workspace::submit` implements the full supervised-apply flow behind a
+   `BrowserDriver` trait: it inspects the live form, runs preflight at the boundary
+   (a mismatch voids the approval, reopens the job and sends nothing), spends the
+   approval durably before any write, fills only with typed commands, records an
+   append-only journal, and treats an absent or unqualified confirmation as Uncertain
+   with retry frozen. All of that is exercised end to end with a scripted driver,
+   including captcha/login walls and ambiguous writes. What is missing is a CDP
+   implementation of `BrowserDriver`, so **no real employer submission has ever been
+   performed** — the engine's behaviour against real sites is unverified.
 7. **Live application submission not exercised.** The supervised-apply engine is fixture-tested end to end (preflight, one-use grants, journal, receipts, recovery), but no real external submission has been performed — by design (no automated real applications as tests).
 8. **Browser automation backend not integrated.** `BrowserCommand` is the narrow typed surface; chromiumoxide/CDP wiring is not written yet. All form logic runs against `FormSchema` fixtures. (The HTTPS discovery path IS real: `waypoint_net` performs real TLS fetches with an OS trust store, a DNS-rebinding guard and a response size cap.)
 9. **Benchmark corpus is a skeleton.** Measured baselines exist only for the local model; the §14 corpus (5,000 observations etc.) is a design target, not collected data.
