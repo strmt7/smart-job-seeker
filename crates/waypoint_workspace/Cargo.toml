@@ -10,6 +10,7 @@ serde_json = "1"
 waypoint_connectors = { path = "../waypoint_connectors" }
 waypoint_domain = { path = "../waypoint_domain" }
 waypoint_inference = { path = "../waypoint_inference" }
+waypoint_materials = { path = "../waypoint_materials" }
 waypoint_net = { path = "../waypoint_net" }
 waypoint_policy = { path = "../waypoint_policy" }
 waypoint_search = { path = "../waypoint_search" }

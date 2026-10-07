@@ -193,6 +193,20 @@ pub enum WorkspaceError {
     },
     /// No such job identity in the workspace.
     NotFound(String),
+    /// A fact must have text.
+    EmptyFact,
+    /// The referenced fact does not exist.
+    UnknownFact(String),
+    /// A packet must exist before it can be approved or exported.
+    PacketRequired(String),
+    /// The packet cited a fact that has since been corrected.
+    PacketInvalidated(String),
+    /// Approval was requested while spans remain unsupported.
+    UnsupportedClaims(Vec<String>),
+    /// An approval could not be created or spent.
+    Approval(String),
+    /// Export or document serialization failed.
+    Export(String),
 }
 
 impl std::fmt::Display for WorkspaceError {
@@ -208,6 +222,23 @@ impl std::fmt::Display for WorkspaceError {
                 )
             }
             WorkspaceError::NotFound(id) => write!(f, "no such job: {id}"),
+            WorkspaceError::EmptyFact => write!(f, "a fact must have text"),
+            WorkspaceError::UnknownFact(id) => write!(f, "no such fact: {id}"),
+            WorkspaceError::PacketRequired(id) => {
+                write!(f, "no prepared packet exists for {id}")
+            }
+            WorkspaceError::PacketInvalidated(id) => write!(
+                f,
+                "packet for {id} cites a fact that changed; re-prepare before approving"
+            ),
+            WorkspaceError::UnsupportedClaims(reasons) => write!(
+                f,
+                "cannot approve: {} unsupported item(s): {}",
+                reasons.len(),
+                reasons.join("; ")
+            ),
+            WorkspaceError::Approval(m) => write!(f, "approval: {m}"),
+            WorkspaceError::Export(m) => write!(f, "export: {m}"),
         }
     }
 }
@@ -664,5 +695,36 @@ impl Scheduler {
     }
 }
 
+pub mod work;
+
+pub use work::{CorrectionReport, FactOrigin, PacketReadiness, PreparedPacket};
+
+/// Test-only fixture helpers (kept out of the product surface).
+#[cfg(test)]
+impl Workspace {
+    /// Insert a tracked job directly, for suites that exercise the work layer
+    /// rather than discovery.
+    pub(crate) fn test_insert_job(&mut self, id: &str, title: &str, employer: &str) {
+        let job = StoredJob {
+            id: JobIdentityId::new(id).expect("valid test id"),
+            title: title.into(),
+            employer: employer.into(),
+            location: "Remote".into(),
+            state: ApplicationState::Discovered,
+            canonical_url: Some(format!("https://boards.greenhouse.io/{id}")),
+            content_hash: Some(sha256_hex(id.as_bytes())),
+            first_seen: Some("1758900000".into()),
+            last_seen: Some("1758900000".into()),
+            remote: true,
+            source: "greenhouse".into(),
+            requisition_id: Some(id.rsplit("::").next().unwrap_or(id).to_string()),
+            posted_at: None,
+        };
+        self.store.upsert_job(&job).expect("insert test job");
+    }
+}
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod work_tests;

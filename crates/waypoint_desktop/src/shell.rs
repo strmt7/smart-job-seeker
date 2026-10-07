@@ -232,6 +232,10 @@ impl WaypointShell {
                 );
                 return;
             }
+            Screen::Facts => {
+                self.facts_body(ui);
+                return;
+            }
             Screen::YourNextMove => {
                 self.next_move_body(ui);
                 return;
@@ -241,7 +245,185 @@ impl WaypointShell {
 
         self.filter_bar(ui);
         ui.separator();
+        self.detail_body(ui);
         self.rows_body(ui);
+    }
+
+    /// The selected job, its material/approval status, and only the actions the
+    /// state machine actually allows. The pipeline stays the authority; this
+    /// simply refuses to offer an impossible step.
+    fn detail_body(&mut self, ui: &mut egui::Ui) {
+        let Some(detail) = self.model.selection.clone() else {
+            return;
+        };
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong(format!("{} - {}", detail.title, detail.employer));
+                ui.label(format!("[{}]", detail.state_label));
+                if detail.remote {
+                    ui.label("(remote)");
+                }
+            });
+            if let Some(action) = &self.model.last_action {
+                ui.colored_label(egui::Color32::from_rgb(140, 200, 140), action);
+            }
+            match &detail.packet {
+                None => {
+                    ui.label("No packet prepared for this role yet.");
+                }
+                Some(packet) => {
+                    ui.label(format!(
+                        "Packet {} - {} supported span(s)",
+                        packet.hash_prefix, packet.supported_spans
+                    ));
+                    if packet.invalidated_at.is_some() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 190, 120),
+                            "Stale: a fact it cites was corrected. Re-prepare before approving.",
+                        );
+                    }
+                    for reason in &packet.unsupported {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(230, 150, 120),
+                            format!("Needs evidence - {reason}"),
+                        );
+                    }
+                }
+            }
+            if let Some(grant) = &detail.grant {
+                ui.label(format!("Your approval: {}", grant.state_label()));
+                ui.label(format!("  bound to {}", grant.destination_origin));
+            }
+            ui.horizontal(|ui| {
+                let identity = detail.identity.clone();
+                let can_shortlist = detail.state == waypoint_domain::ApplicationState::Discovered;
+                if ui
+                    .add_enabled(can_shortlist, egui::Button::new("Shortlist"))
+                    .clicked()
+                {
+                    self.commands.push(ShellCommand::Shortlist(identity.clone()));
+                }
+                let can_prepare = matches!(
+                    detail.state,
+                    waypoint_domain::ApplicationState::Shortlisted
+                        | waypoint_domain::ApplicationState::Prepared
+                );
+                if ui
+                    .add_enabled(can_prepare, egui::Button::new("Prepare packet"))
+                    .on_hover_text("Builds a packet from your attested facts only. Nothing is sent.")
+                    .clicked()
+                {
+                    self.commands
+                        .push(ShellCommand::PreparePacket(identity.clone()));
+                }
+                let can_approve = detail.state == waypoint_domain::ApplicationState::Prepared
+                    && detail.packet.as_ref().is_some_and(|p| p.is_approvable());
+                if ui
+                    .add_enabled(can_approve, egui::Button::new("Approve (one use)"))
+                    .on_hover_text(
+                        "Records your explicit approval, bound to this exact packet and destination. \
+                         It can be spent once and is voided if a fact changes.",
+                    )
+                    .clicked()
+                {
+                    self.commands
+                        .push(ShellCommand::ApprovePacket(identity.clone()));
+                }
+                let can_export = detail.packet.is_some();
+                if ui
+                    .add_enabled(can_export, egui::Button::new("Export DOCX"))
+                    .on_hover_text("Writes the prepared packet as a real .docx file.")
+                    .clicked()
+                {
+                    self.commands
+                        .push(ShellCommand::ExportPacket(identity.clone()));
+                }
+                if let Some(next) = detail.next_actions().first() {
+                    ui.label(format!("(next: {next})"));
+                }
+            });
+        });
+    }
+
+    /// Facts are the only source of material content. Inferred facts are
+    /// labelled and must be confirmed before they can support an approval, so
+    /// the panel never presents model guesses as the candidate's own words.
+    fn facts_body(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Your facts");
+        ui.label(
+            "Facts are statements you stand behind. Anything the model inferred is labelled \
+             and cannot support an approval until you confirm it.",
+        );
+        ui.separator();
+        ui.label("Add facts (one per line):");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.model.facts_draft)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY)
+                .hint_text("Nine years building distributed systems"),
+        );
+        let draft = self.model.facts_draft.clone();
+        let busy = self.model.busy.is_some();
+        if ui
+            .add_enabled(
+                !busy && !draft.trim().is_empty(),
+                egui::Button::new("Save facts"),
+            )
+            .clicked()
+        {
+            self.commands.push(ShellCommand::SaveFacts(draft));
+        }
+
+        ui.separator();
+        if self.model.facts.is_empty() {
+            ui.label("No facts yet: a packet prepared now would contain nothing to approve.");
+            return;
+        }
+        ui.label(format!("{} fact(s) in force", self.model.facts.len()));
+        let facts = self.model.facts.clone();
+        if self.model.fact_edits.len() != facts.len() {
+            self.model.fact_edits = facts.iter().map(|f| f.text.clone()).collect();
+        }
+        let mut edits = std::mem::take(&mut self.model.fact_edits);
+        let mut to_correct: Option<(String, String)> = None;
+        egui::ScrollArea::vertical()
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for (i, fact) in facts.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if fact.inferred {
+                            ui.colored_label(egui::Color32::from_rgb(220, 190, 120), "inferred");
+                        }
+                        ui.add(egui::TextEdit::singleline(&mut edits[i]).desired_width(500.0));
+                        let changed = edits[i].trim() != fact.text.trim();
+                        if ui
+                            .add_enabled(changed && !busy, egui::Button::new("Correct"))
+                            .on_hover_text(
+                                "Corrects this fact everywhere it is used: affected packets become \
+                                 stale and approvals that relied on it are voided.",
+                            )
+                            .clicked()
+                        {
+                            to_correct = Some((fact.id.clone(), edits[i].clone()));
+                        }
+                        if fact.inferred
+                            && ui
+                                .add_enabled(!busy, egui::Button::new("Confirm as mine"))
+                                .clicked()
+                        {
+                            to_correct = Some((fact.id.clone(), fact.text.clone()));
+                        }
+                        if !fact.inferred && changed {
+                            ui.label(format!("(currently: {})", fact.text));
+                        }
+                    });
+                }
+            });
+        self.model.fact_edits = edits;
+        if let Some((claim_id, new_text)) = to_correct {
+            self.commands
+                .push(ShellCommand::CorrectFact { claim_id, new_text });
+        }
     }
 
     /// Deterministic "what should I do next" — no model call required.
@@ -367,6 +549,8 @@ impl WaypointShell {
                         ));
                     if response.clicked() {
                         clicked = Some(i);
+                        let identity = self.model.rows[i].identity.clone();
+                        self.commands.push(ShellCommand::SelectJob(identity));
                     }
                 }
                 ui.add_space(total.saturating_sub(last) as f32 * ROW_HEIGHT);

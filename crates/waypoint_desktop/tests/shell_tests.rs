@@ -148,5 +148,9 @@ fn navigation_messages_are_typed() {
     let mut shell = WaypointShell::new();
     let none: Vec<ShellMessage> = shell.drain_messages();
     assert!(none.is_empty());
-    assert_eq!(Screen::ALL.len(), 4);
+    assert_eq!(
+        Screen::ALL.len(),
+        5,
+        "screens: next move, discovery, facts, coverage, model"
+    );
 }

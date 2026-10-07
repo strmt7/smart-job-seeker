@@ -3931,6 +3931,7 @@ dependencies = [
  "waypoint_connectors",
  "waypoint_domain",
  "waypoint_inference",
+ "waypoint_materials",
  "waypoint_net",
  "waypoint_policy",
  "waypoint_search",
@@ -4383,6 +4384,7 @@ dependencies = [
  "waypoint_domain",
  "waypoint_inference",
  "waypoint_search",
+ "waypoint_store",
  "waypoint_workspace",
 ]
 

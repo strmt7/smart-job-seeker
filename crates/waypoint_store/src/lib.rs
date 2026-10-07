@@ -52,11 +52,54 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE jobs ADD COLUMN requisition_id TEXT;
      ALTER TABLE jobs ADD COLUMN posted_at TEXT;
      UPDATE meta SET value='2' WHERE key='schema_version';",
+    // v3 — the "act on a job" layer: candidate facts (claims), prepared
+    // packets, and one-use approval grants. Grants are persisted because the
+    // one-use property must survive a restart: an approval that was spent
+    // before a crash must never be spendable again.
+    "CREATE TABLE IF NOT EXISTS claims(
+       id TEXT PRIMARY KEY,
+       profile_revision INTEGER NOT NULL,
+       text TEXT NOT NULL,
+       status TEXT NOT NULL,
+       source_kind TEXT NOT NULL,
+       evidence_ids TEXT NOT NULL DEFAULT '[]',
+       requires_review INTEGER NOT NULL DEFAULT 0,
+       supersedes TEXT
+     );
+     CREATE TABLE IF NOT EXISTS packets(
+       job_id TEXT PRIMARY KEY REFERENCES jobs(id),
+       packet_sha256 TEXT NOT NULL,
+       doc_json TEXT NOT NULL,
+       body TEXT NOT NULL,
+       cited_claim_ids TEXT NOT NULL DEFAULT '[]',
+       profile_revision INTEGER NOT NULL,
+       created_at TEXT NOT NULL,
+       invalidated_at TEXT
+     );
+     CREATE TABLE IF NOT EXISTS grants(
+       id TEXT PRIMARY KEY,
+       job_id TEXT NOT NULL,
+       intent_id TEXT NOT NULL,
+       bound_payload_sha256 TEXT NOT NULL,
+       packet_sha256 TEXT NOT NULL,
+       form_schema_sha256 TEXT NOT NULL,
+       destination_origin TEXT NOT NULL,
+       profile_revision INTEGER NOT NULL,
+       nonce TEXT NOT NULL,
+       explicit_user_gesture INTEGER NOT NULL DEFAULT 1,
+       consumed INTEGER NOT NULL DEFAULT 0,
+       expired INTEGER NOT NULL DEFAULT 0
+     );
+     INSERT OR IGNORE INTO meta(key,value) VALUES('profile_revision','1');
+     UPDATE meta SET value='3' WHERE key='schema_version';",
 ];
+
+pub mod work;
+pub use work::{StoredClaim, StoredGrant, StoredPacket};
 
 #[derive(Debug)]
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -407,5 +450,29 @@ mod tests {
         let restored = Store::open(&backup).unwrap();
         assert_eq!(restored.job_count().unwrap(), 1);
         let _ = std::fs::remove_file(&backup);
+    }
+}
+
+/// Shared fixture constructors for tests in this crate.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+
+    pub fn job(id: &str) -> StoredJob {
+        StoredJob {
+            id: JobIdentityId::new(id).unwrap(),
+            title: "T".into(),
+            employer: "E".into(),
+            location: "Zurich".into(),
+            state: ApplicationState::Discovered,
+            canonical_url: Some(format!("https://x/{id}")),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "greenhouse".into(),
+            requisition_id: Some(id.to_string()),
+            posted_at: None,
+        }
     }
 }

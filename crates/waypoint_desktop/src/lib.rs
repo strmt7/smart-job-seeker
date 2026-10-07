@@ -10,9 +10,11 @@ pub use eframe;
 /// version (a classic source of "two egui versions" compile pain).
 pub use egui;
 
+pub mod detail;
 pub mod shell;
 pub mod view_model;
 
+pub use detail::{detail_from, facts_from, FactRow, GrantView, JobDetail, PacketView};
 pub use shell::{run, Controller, ShellMessage, WaypointShell};
 pub use view_model::{
     rows_from_ranked, state_label, ExcludedRow, JobRow, Screen, ShellCommand, ShellViewModel,

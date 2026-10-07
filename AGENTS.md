@@ -41,16 +41,21 @@ repo up cold. Read this first, then `README.md`, then the references below.
   - `waypoint_net` — the ONLY HTTP client: HTTPS-only for public hosts, OS-native TLS
     (schannel), resolves-then-validates every address (DNS-rebinding guard), size-capped.
   - `waypoint_workspace` — the end-to-end pipeline (permission gate → bounded fetch →
-    parse → identity/dedup → store → ranked search). Degradation is reported, never
-    silently converted to "0 jobs". This is where the honesty rules become behaviour.
+    parse → identity/dedup → store → ranked search) plus `work.rs`: facts → prepared
+    packet → one-use approval → DOCX export, with correction propagation. Degradation
+    is reported, never silently converted to "0 jobs". This is where the honesty
+    rules become behaviour.
+  - `waypoint_store` — versioned migrations (v3 adds `claims`, `packets`, `grants`).
+    **Never edit a released migration; add v(N+1).** Grants persist their `consumed`
+    flag so a restart cannot resurrect a spent approval.
 - `deny.toml` — license/supply-chain policy; `cargo deny check` must stay green.
-- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 145 tests,
+- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 168 tests,
   release build, `cargo audit` (with one documented informational ignore), deny checks.
 
 ## Build, test, quality commands
 
 ```bash
-cargo test --workspace                 # 145 tests
+cargo test --workspace                 # 168 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --release -p windows_app   # native PE32+ binary, ~14 MB
@@ -96,6 +101,10 @@ Windows/MSVC toolchain assumed; no Node/Python/WSL/Docker anywhere in the produc
   yanked `yoke-derive 0.8.3`. Always re-run `cargo audit --deny warnings` after dependency
   changes; fix yanks by moving versions (`cargo update -p <crate> --precise X`), never by
   silencing the check.
+- `validate_claim_support` reports *positive* support (`Supported`) as well as problems, and
+  a citation that no longer resolves is reported as unsupported. Do not "optimise" it back
+  to problems-only: the approval gate counts supported spans, and a dangling citation must
+  never read as supported.
 - Entity-escaping text through write/patch tooling corrupts `&`-style strings;
   write such code via line-index scripts, not string-replace through the tool.
 
@@ -109,9 +118,11 @@ None of these are silently skippable, and none are claimed done.
 
 ## Where to start next (highest value, in order)
 
-1. Wire `OllamaInference` into the drafting/interview flows so materials are generated
-   through the real adapter (with the deterministic fallback kept for offline runs).
-2. SQLCipher at-rest encryption behind the existing store API.
-3. Browser CDP integration behind the typed `BrowserCommand` surface.
+1. The submission stage: a browser engine that consumes an approval through
+   `Workspace::consume_grant` (CDP behind the typed `BrowserCommand` surface). Today an
+   approval can be created, exported and voided, but nothing can spend it for real.
+2. Wire `OllamaInference` into the drafting/interview flows so materials are generated
+   through the real adapter (keeping a deterministic offline fallback).
+3. SQLCipher at-rest encryption behind the existing store API.
 4. Accessibility observation session (Narrator/IME/DPI) to close T006.
 5. Expand the adversarial fixture corpus toward the §14 benchmark targets.

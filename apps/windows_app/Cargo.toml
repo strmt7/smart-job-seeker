@@ -10,6 +10,7 @@ waypoint_desktop = { path = "../../crates/waypoint_desktop" }
 waypoint_domain = { path = "../../crates/waypoint_domain" }
 waypoint_inference = { path = "../../crates/waypoint_inference" }
 waypoint_search = { path = "../../crates/waypoint_search" }
+waypoint_store = { path = "../../crates/waypoint_store" }
 waypoint_workspace = { path = "../../crates/waypoint_workspace" }
 
 [lints]

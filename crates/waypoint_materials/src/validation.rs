@@ -70,27 +70,55 @@ pub fn validate_claim_support(doc: &SemanticDocument, claims: &[Claim]) -> Vec<V
                     }
                 }
             } else {
-                for c in claims {
-                    if n.claim_ids.iter().any(|cid| cid == &c.id) {
-                        let supported = match c.status {
-                            ClaimStatus::UserAttested | ClaimStatus::ExternallySupported => true,
-                            ClaimStatus::Inferred | ClaimStatus::Unknown => false,
-                            ClaimStatus::Disputed => false,
-                        };
-                        if !supported {
-                            out.push(ValidationOutcome::Unsupported {
-                                node_id: n.id.clone(),
-                                text: n.text.clone(),
-                                reason: format!("cited claim {} is {:?}", c.id.as_str(), c.status),
-                            });
-                        } else if c.source_kind == SourceKind::Inference {
-                            out.push(ValidationOutcome::Unsupported {
-                                node_id: n.id.clone(),
-                                text: n.text.clone(),
-                                reason: "cited claim only backed by inference".into(),
-                            });
+                // Positive support is reported once per span, and every
+                // problem is reported per cited claim. A citation that no
+                // longer resolves is itself a problem: an unknown fact must
+                // never read as "supported".
+                let mut any_supported = false;
+                for cid in &n.claim_ids {
+                    match claims.iter().find(|c| &c.id == cid) {
+                        None => out.push(ValidationOutcome::Unsupported {
+                            node_id: n.id.clone(),
+                            text: n.text.clone(),
+                            reason: format!("cites claim {} which no longer exists", cid.as_str()),
+                        }),
+                        Some(c) => {
+                            let attested = matches!(
+                                c.status,
+                                ClaimStatus::UserAttested | ClaimStatus::ExternallySupported
+                            );
+                            if !attested {
+                                out.push(ValidationOutcome::Unsupported {
+                                    node_id: n.id.clone(),
+                                    text: n.text.clone(),
+                                    reason: format!(
+                                        "cited claim {} is {:?}",
+                                        c.id.as_str(),
+                                        c.status
+                                    ),
+                                });
+                            } else if c.source_kind == SourceKind::Inference {
+                                out.push(ValidationOutcome::Unsupported {
+                                    node_id: n.id.clone(),
+                                    text: n.text.clone(),
+                                    reason: "cited claim only backed by inference".into(),
+                                });
+                            } else {
+                                any_supported = true;
+                            }
                         }
                     }
+                }
+                if any_supported {
+                    out.push(ValidationOutcome::Supported {
+                        node_id: n.id.clone(),
+                        claim: n
+                            .claim_ids
+                            .iter()
+                            .map(|c| c.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    });
                 }
             }
         }
@@ -154,14 +182,34 @@ mod tests {
     }
 
     #[test]
-    fn cited_attested_claim_is_supported_and_silent() {
+    fn cited_attested_claim_is_reported_as_supported() {
         let c = claim(
             "c1",
             ClaimStatus::UserAttested,
             SourceKind::CandidateAttestation,
         );
         let doc = doc_with_span("Led deployment of a thing", Some(c.id.clone()), false);
-        assert!(validate_claim_support(&doc, &[c]).is_empty());
+        let out = validate_claim_support(&doc, &[c]);
+        assert_eq!(out.len(), 1, "support is reported positively: {out:?}");
+        assert!(matches!(out[0], ValidationOutcome::Supported { .. }));
+    }
+
+    #[test]
+    fn a_citation_that_no_longer_resolves_is_unsupported_not_silent() {
+        let stale = ClaimId::new("gone").unwrap();
+        let doc = doc_with_span("Led deployment of a thing", Some(stale), false);
+        let out = validate_claim_support(&doc, &[]);
+        assert_eq!(
+            out.len(),
+            1,
+            "a dangling citation must be reported: {out:?}"
+        );
+        match &out[0] {
+            ValidationOutcome::Unsupported { reason, .. } => {
+                assert!(reason.contains("no longer exists"), "{reason}")
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
     }
 
     #[test]

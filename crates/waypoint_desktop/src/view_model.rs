@@ -43,6 +43,19 @@ pub enum ShellCommand {
     ProbeModel,
     /// Re-apply the strict filters currently held in the view model.
     ApplyFilters,
+    /// Load the detail panel for one job.
+    SelectJob(String),
+    /// Record one fact per non-empty line (user-attested).
+    SaveFacts(String),
+    /// Correct a fact; propagation happens in the pipeline, not here.
+    CorrectFact {
+        claim_id: String,
+        new_text: String,
+    },
+    Shortlist(String),
+    PreparePacket(String),
+    ApprovePacket(String),
+    ExportPacket(String),
 }
 
 /// Immutable snapshot the shell renders from.
@@ -69,6 +82,18 @@ pub struct ShellViewModel {
     pub query: String,
     /// Whether a workspace is attached at all (offline/demo runs say so).
     pub workspace_attached: bool,
+    /// Candidate facts in force (render-ready).
+    pub facts: Vec<crate::detail::FactRow>,
+    /// Edit buffer per fact row, parallel to `facts`.
+    pub fact_edits: Vec<String>,
+    /// Draft for new facts: one fact per line.
+    pub facts_draft: String,
+    /// The selected job, with its packet and approval status.
+    pub selection: Option<crate::detail::JobDetail>,
+    /// Row index highlighted in the list (navigation bookkeeping only).
+    pub selected_row: Option<usize>,
+    /// Last completed action, reported verbatim to the candidate.
+    pub last_action: Option<String>,
 }
 
 impl ShellViewModel {
@@ -154,14 +179,16 @@ pub enum Screen {
     #[default]
     YourNextMove,
     Discovery,
+    Facts,
     Coverage,
     ModelQualification,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 4] = [
+    pub const ALL: [Screen; 5] = [
         Screen::YourNextMove,
         Screen::Discovery,
+        Screen::Facts,
         Screen::Coverage,
         Screen::ModelQualification,
     ];
@@ -170,6 +197,7 @@ impl Screen {
         match self {
             Screen::YourNextMove => "Your next move",
             Screen::Discovery => "Discover roles",
+            Screen::Facts => "Facts & materials",
             Screen::Coverage => "Source coverage",
             Screen::ModelQualification => "Model qualification",
         }
