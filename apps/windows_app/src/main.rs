@@ -20,7 +20,8 @@ use waypoint_domain::{ApplicationState, JobIdentityId, Sha256Digest};
 use waypoint_inference::{Inference, OllamaInference};
 use waypoint_search::CampaignConstraints;
 use waypoint_workspace::{
-    DiscoveryOutcome, DiscoveryTarget, FactOrigin, LiveFetcher, RankedResults, Workspace,
+    DiscoveryOutcome, DiscoveryTarget, FactOrigin, LiveFetcher, RankedResults, SubmitOutcome,
+    Workspace,
 };
 
 /// Public ATS boards the demo ships with. These are boards the source
@@ -310,6 +311,9 @@ impl AppController {
             JobAction::Prepare => "Preparing the packet…",
             JobAction::Approve => "Recording your approval…",
             JobAction::Export => "Exporting DOCX…",
+            JobAction::Submit => "Submitting in a private browser profile…",
+            JobAction::ConfirmLanded => "Recording your confirmation…",
+            JobAction::RetrySubmit => "Recording your deliberate retry…",
         };
         self.start(model, ctx, label);
         std::thread::spawn(move || {
@@ -373,6 +377,50 @@ impl AppController {
                                 .map(|bytes| format!("Wrote {} bytes to {}", bytes, file.display()))
                                 .map_err(|e| e.to_string())
                         }
+                        JobAction::Submit => {
+                            // The packet file must be on disk for the form's
+                            // upload field, so export first, then drive the
+                            // browser. Everything after this is the engine's
+                            // decision, not ours.
+                            let file = export_path(&data_dir, &identity);
+                            let prepared = ws
+                                .export_packet(&id, &file)
+                                .map_err(|e| e.to_string())
+                                .and_then(|_| {
+                                    let uploads = file
+                                        .parent()
+                                        .map(|p| p.to_path_buf())
+                                        .unwrap_or_else(|| data_dir.clone());
+                                    let mut driver =
+                                        waypoint_browser::CdpDriver::launch(vec![uploads])
+                                            .map_err(|e| e.to_string())?;
+                                    ws.submit_packet(&id, &mut driver, now_unix())
+                                        .map_err(|e| e.to_string())
+                                });
+                            match prepared {
+                                Ok(SubmitOutcome::Confirmed { application_ref }) => Ok(format!(
+                                    "Submitted. The employer's reference is {application_ref}."
+                                )),
+                                Ok(SubmitOutcome::Uncertain { why }) => Ok(format!(
+                                    "Uncertain: {why}. Check the employer's site before doing anything else."
+                                )),
+                                Ok(SubmitOutcome::Refused { issues, .. }) => {
+                                    Ok(format!("Not sent: {}.", issues.join("; ")))
+                                }
+                                Err(e) => Err(format!("could not submit: {e}")),
+                            }
+                        }
+                        JobAction::ConfirmLanded => ws
+                            .confirm_after_uncertain(&id, now_unix())
+                            .map(|_| "Marked confirmed at your word.".to_string())
+                            .map_err(|e| e.to_string()),
+                        JobAction::RetrySubmit => ws
+                            .retry_after_uncertain(&id, now_unix())
+                            .map(|_| {
+                                "Recorded. Approve again to re-send, knowing it may duplicate."
+                                    .to_string()
+                            })
+                            .map_err(|e| e.to_string()),
                     };
                     Self::publish(&ws, &tx, &selection, &constraints, &terms);
                     match result {
@@ -387,12 +435,16 @@ impl AppController {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum JobAction {
     Shortlist,
     Prepare,
     Approve,
     Export,
+    /// The single external write. Runs a real browser.
+    Submit,
+    ConfirmLanded,
+    RetrySubmit,
 }
 
 impl Controller for AppController {
@@ -462,6 +514,15 @@ impl Controller for AppController {
             ShellCommand::ExportPacket(identity) => {
                 self.spawn_job_action(identity, JobAction::Export, model, ctx)
             }
+            ShellCommand::SubmitPacket(identity) => {
+                self.spawn_job_action(identity, JobAction::Submit, model, ctx)
+            }
+            ShellCommand::ConfirmLanded(identity) => {
+                self.spawn_job_action(identity, JobAction::ConfirmLanded, model, ctx)
+            }
+            ShellCommand::RetrySubmit(identity) => {
+                self.spawn_job_action(identity, JobAction::RetrySubmit, model, ctx)
+            }
         }
     }
 }
@@ -477,11 +538,13 @@ fn build_detail(ws: &Workspace, identity: &str) -> Option<JobDetail> {
         .flatten()
         .map(|r| (r.supported_spans, r.unsupported));
     let grant = ws.grant(&id).ok().flatten();
+    let history = ws.submission_history(&id).unwrap_or_default();
     Some(detail_from(
         &job,
         packet.as_ref(),
         readiness,
         grant.as_ref(),
+        &history,
     ))
 }
 

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Backend Engineer</title></head>
+<body>
+  <h1>Apply for Backend Engineer</h1>
+  <form id="application">
+    <label for="cover">Cover letter</label>
+    <textarea id="cover" name="cover" required></textarea>
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" required>
+
+    <!-- Added after the candidate approved the previous version of this form.
+         Submitting against it must be refused and the approval voided. -->
+    <label for="portfolio">Portfolio URL</label>
+    <input id="portfolio" name="portfolio" type="text">
+
+    <button id="send" type="submit" onclick="return false;">Submit application</button>
+  </form>
+</body>
+</html>

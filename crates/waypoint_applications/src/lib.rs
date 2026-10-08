@@ -5,6 +5,7 @@
 //! uncertainty not failure, and no ambiguous write is ever retried
 //! automatically.
 
+pub mod driver;
 pub mod form_mapping;
 pub mod journal;
 pub mod manual_fallback;

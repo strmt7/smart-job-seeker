@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 eframe = "0.36"
+waypoint_browser = { path = "../../crates/waypoint_browser" }
 waypoint_desktop = { path = "../../crates/waypoint_desktop" }
 waypoint_domain = { path = "../../crates/waypoint_domain" }
 waypoint_inference = { path = "../../crates/waypoint_inference" }

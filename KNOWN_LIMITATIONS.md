@@ -9,18 +9,25 @@ Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this 
 3. **Accessibility observation incomplete (T006).** Keyboard navigation is implemented; Narrator/NVDA announcement quality, IME composition, 125–200% DPI and multi-monitor behavior have NOT been observed and recorded. Gate G1 stays partially open for this reason.
 4. **No code signing / installer.** The release binary builds; signing certificates and MSIX/NSIS packaging are not produced. Until signed, users must verify hashes manually.
 5. **No update channel.** Update metadata/signing blocked on T044 signing; store-level migration rollback is implemented and tested.
-6. **The submission engine exists and is tested; the real browser driver does not.**
-   `waypoint_workspace::submit` implements the full supervised-apply flow behind a
-   `BrowserDriver` trait: it inspects the live form, runs preflight at the boundary
-   (a mismatch voids the approval, reopens the job and sends nothing), spends the
-   approval durably before any write, fills only with typed commands, records an
-   append-only journal, and treats an absent or unqualified confirmation as Uncertain
-   with retry frozen. All of that is exercised end to end with a scripted driver,
-   including captcha/login walls and ambiguous writes. What is missing is a CDP
-   implementation of `BrowserDriver`, so **no real employer submission has ever been
-   performed** — the engine's behaviour against real sites is unverified.
-7. **Live application submission not exercised.** The supervised-apply engine is fixture-tested end to end (preflight, one-use grants, journal, receipts, recovery), but no real external submission has been performed — by design (no automated real applications as tests).
-8. **Browser automation backend not integrated.** `BrowserCommand` is the narrow typed surface; chromiumoxide/CDP wiring is not written yet. All form logic runs against `FormSchema` fixtures. (The HTTPS discovery path IS real: `waypoint_net` performs real TLS fetches with an OS trust store, a DNS-rebinding guard and a response size cap.)
+6. **No submission has been made to a real employer site.**
+   The engine and a real Chrome DevTools Protocol driver both exist and are tested:
+   `cargo test -p waypoint_browser --test cdp_live -- --ignored` runs a real browser
+   against local fixture pages and proves the whole path (schema read from the live
+   DOM, text typed with real input events, file attached, submit clicked, qualified
+   reference extracted, change-detected form refused with the approval voided). CI
+   runs these too. What is unverified is behaviour on a real third-party site, and
+   deliberately so: performing it means actually applying to an employer, which is
+   the candidate's decision, not a test's.
+7. **The form reader is single-page and does not pierce frames.** Multi-step
+   wizards are read as one page (`multi_step: false`), `iframe` content and shadow
+   DOM are not traversed (`pierce: false`), and radio groups are reported without
+   their options. A required field in any of those shapes therefore blocks the
+   submission with an explicit reason instead of being filled wrongly — safe, but
+   incomplete. Real applicant-tracking systems on Workday/iCIMS-class platforms
+   would need this work (and those sources are `requires_review` in the
+   registry anyway, so they cannot be automated today).
+
+8. **Interactive browser flows beyond forms are not automated.** The driver navigates, fills, uploads, clicks and reads confirmations — it does not handle logins the candidate must perform interactively, multi-page wizards, or account creation. Those are reported as walls. (The HTTPS discovery path is real: `waypoint_net` performs real TLS fetches with an OS trust store, a DNS-rebinding guard and a response size cap.)
 9. **Benchmark corpus is a skeleton.** Measured baselines exist only for the local model; the §14 corpus (5,000 observations etc.) is a design target, not collected data.
 10. **ttf-parser 0.25.1 unmaintained notice** (RUSTSEC-2026-0192, informational, no CVE): transitive via egui. No safe upgrade at pinned versions; revisit on egui upgrade.
 11. **WMI AdapterRAM reporting is clipped** (reports 4 GB on a 16 GB card — a known Windows WMI limitation). VRAM figures in docs come from the inference runtime's own report, not WMI.

@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  build-and-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,16 +26,30 @@ jobs:
       - name: Release build
         run: cargo build --release -p windows_app
 
+  # The submission engine is only meaningful if it works against a real
+  # browser, so the ignored CDP tests run here against the runner's own
+  # Chromium-family install. Local fixture pages only: no third-party site is
+  # ever contacted by these tests.
+  browser-e2e:
+    runs-on: windows-latest
+    env:
+      WAYPOINT_BROWSER_NO_SANDBOX: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real-browser submission tests
+        run: cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1
+
   supply-chain:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install audit/deny
-        run: |
-          cargo install cargo-audit
-          cargo install cargo-deny
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
       - name: Security audit (deny warnings except the documented unmaintained notice)
         # RUSTSEC-2026-0192: ttf-parser 0.25.1 unmaintained, transitive via egui,
         # no CVE, no safe upgrade; tracked in KNOWN_LIMITATIONS.md item 9.

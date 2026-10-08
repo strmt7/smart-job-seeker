@@ -13,6 +13,7 @@ members = [
   "crates/waypoint_workspace",
   "crates/waypoint_materials",
   "crates/waypoint_applications",
+  "crates/waypoint_browser",
   "crates/waypoint_lifecycle",
   "apps/windows_app",
 ]

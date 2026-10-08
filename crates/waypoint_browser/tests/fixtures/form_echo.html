@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Data Engineer</title></head>
+<body>
+  <h1>Apply for Data Engineer</h1>
+  <form id="application">
+    <label for="motivation">Why do you want this role?</label>
+    <textarea id="motivation" name="motivation" required></textarea>
+
+    <label for="resume">Resume / CV</label>
+    <input id="resume" name="resume" type="file" required>
+
+    <button id="apply" type="submit" onclick="waypointEcho(); return false;">Send application</button>
+  </form>
+
+  <script>
+    // Echoes exactly what the page received, so the test can prove the typed
+    // text and the attached file truly arrived — not just that our driver
+    // believed it filled something. Built with DOM nodes/textContent (no
+    // innerHTML) so page data is never parsed as markup.
+    function line(tag, text) {
+      var el = document.createElement(tag);
+      el.textContent = text;
+      return el;
+    }
+
+    function waypointEcho() {
+      var text = document.getElementById('motivation').value || '';
+      var files = document.getElementById('resume').files;
+      var attached = (files && files.length > 0) ? files[0].name : 'none';
+      var id = 'ECHO-' + (10000 + text.length);
+      var body = document.body;
+      body.textContent = '';
+      body.appendChild(line('h1', 'Thanks'));
+      body.appendChild(line('p', 'Application ID: ' + id));
+      body.appendChild(line('p', 'received characters: ' + text.length));
+      body.appendChild(line('p', 'received file: ' + attached));
+    }
+  </script>
+</body>
+</html>

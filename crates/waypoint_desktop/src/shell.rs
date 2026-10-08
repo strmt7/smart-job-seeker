@@ -256,6 +256,7 @@ impl WaypointShell {
         let Some(detail) = self.model.selection.clone() else {
             return;
         };
+        let busy = self.model.busy.is_some();
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong(format!("{} - {}", detail.title, detail.employer));
@@ -330,6 +331,20 @@ impl WaypointShell {
                         .push(ShellCommand::ApprovePacket(identity.clone()));
                 }
                 let can_export = detail.packet.is_some();
+                let can_submit = detail.can_submit();
+                if ui
+                    .add_enabled(can_submit, egui::Button::new("Submit application"))
+                    .on_hover_text(
+                        "Opens the employer's form in a private browser profile, fills only \
+                         what your packet genuinely answers, and submits once using your \
+                         approval. A confirmation is only believed if the site gives a \
+                         stable reference.",
+                    )
+                    .clicked()
+                {
+                    self.commands
+                        .push(ShellCommand::SubmitPacket(identity.clone()));
+                }
                 if ui
                     .add_enabled(can_export, egui::Button::new("Export DOCX"))
                     .on_hover_text("Writes the prepared packet as a real .docx file.")
@@ -342,6 +357,46 @@ impl WaypointShell {
                     ui.label(format!("(next: {next})"));
                 }
             });
+
+            if detail.needs_reconciliation() {
+                ui.colored_label(
+                    egui::Color32::from_rgb(230, 150, 120),
+                    "The last attempt was ambiguous: the employer may or may not have \
+                     received it. Nothing is retried automatically.",
+                );
+                ui.horizontal(|ui| {
+                    let identity = detail.identity.clone();
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("I checked: it landed"))
+                        .on_hover_text(
+                            "Marks it confirmed because you verified it with the employer.",
+                        )
+                        .clicked()
+                    {
+                        self.commands
+                            .push(ShellCommand::ConfirmLanded(identity.clone()));
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Retry anyway (may duplicate)"))
+                        .on_hover_text(
+                            "Records a deliberate retry after you accept the risk of \
+                             applying twice.",
+                        )
+                        .clicked()
+                    {
+                        self.commands
+                            .push(ShellCommand::RetrySubmit(identity.clone()));
+                    }
+                });
+            }
+
+            if !detail.history.is_empty() {
+                ui.separator();
+                ui.label("Submission history (append-only):");
+                for row in detail.history.iter().rev().take(6) {
+                    ui.label(format!("  {} — {} — {}", row.at, row.state_label, row.reason));
+                }
+            }
         });
     }
 

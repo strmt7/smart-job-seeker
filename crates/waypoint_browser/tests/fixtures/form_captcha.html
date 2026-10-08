@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Platform Engineer</title></head>
+<body>
+  <h1>Apply for Platform Engineer</h1>
+  <form id="application">
+    <label for="cover">Cover letter</label>
+    <textarea id="cover" name="cover" required></textarea>
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" required>
+
+    <!-- A bot check. The app must report this as a wall and stop, never
+         attempt to answer it. -->
+    <div class="g-recaptcha" data-sitekey="6Lc-fixture-key"></div>
+
+    <button id="send" type="submit">Submit application</button>
+  </form>
+</body>
+</html>

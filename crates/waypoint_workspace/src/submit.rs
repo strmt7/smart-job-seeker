@@ -22,7 +22,7 @@ use waypoint_applications::form_mapping::{
 };
 use waypoint_applications::journal::JournalEntry;
 use waypoint_applications::preflight::{preflight_check, PreflightInput};
-use waypoint_applications::receipt::{verify_receipt, ReceiptKind, ReceiptVerdict};
+use waypoint_applications::receipt::{verify_receipt, ReceiptVerdict};
 use waypoint_applications::recovery::{reconcile_uncertain, AmbiguityInputs, RecoveryAction};
 use waypoint_domain::{
     ApplicationState, ApprovalGrant, GrantId, GrantOperation, IntentId, JobIdentityId, Sha256Digest,
@@ -32,36 +32,10 @@ use waypoint_store::work::StoredGrant;
 
 use crate::{Workspace, WorkspaceError, STALE_AFTER_SECONDS};
 
-/// What the live page looks like right now.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LiveForm {
-    pub origin: String,
-    pub schema: FormSchema,
-    /// Hard blockers discovered on the page ("captcha", "login required", ...).
-    /// A wall is never something the app tries to climb.
-    pub walls: Vec<String>,
-}
-
-/// What the site said after the write.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SiteAck {
-    pub receipt_kind: ReceiptKind,
-    pub payload: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DriverError(pub String);
-
-/// The browser boundary. Implementations: a real CDP driver (not built yet)
-/// and scripted drivers used by tests. Deliberately narrow: open, execute a
-/// typed command, commit. There is no "run script" and no way to fill a field
-/// except through `BrowserCommand::Fill`.
-pub trait BrowserDriver {
-    fn open(&mut self, url: &str) -> Result<LiveForm, DriverError>;
-    fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError>;
-    /// The single external write. Everything before this is reversible.
-    fn commit(&mut self) -> Result<SiteAck, DriverError>;
-}
+/// The browser contract now lives in `waypoint_applications::driver`, beside
+/// the form model it acts on, so a concrete browser crate can implement it
+/// without depending on this pipeline.
+pub use waypoint_applications::driver::{BrowserDriver, DriverError, LiveForm, SiteAck};
 
 /// The result of attempting a submission.
 #[derive(Debug, Clone, PartialEq)]
@@ -136,7 +110,7 @@ impl Workspace {
         // 1. Inspect the live form. Nothing is trusted from memory.
         let live = driver
             .open(&url)
-            .map_err(|e| WorkspaceError::Approval(format!("could not open the page: {}", e.0)))?;
+            .map_err(|e| WorkspaceError::Approval(format!("could not open the page: {e}")))?;
         if !live.walls.is_empty() {
             return Ok(SubmitOutcome::Refused {
                 issues: live
@@ -238,8 +212,7 @@ impl Workspace {
                 self.set_state(job_id, ApplicationState::Uncertain)?;
                 return Ok(SubmitOutcome::Uncertain {
                     why: format!(
-                        "the page could not be filled ({}); nothing was sent, and a new approval is required",
-                        e.0
+                        "the page could not be filled ({e}); nothing was sent, and a new approval is required"
                     ),
                 });
             }
@@ -291,10 +264,38 @@ impl Workspace {
                 )?;
                 self.set_state(job_id, ApplicationState::Uncertain)?;
                 Ok(SubmitOutcome::Uncertain {
-                    why: format!("{} — never retried automatically ({})", why, e.0),
+                    why: format!("{} — never retried automatically ({e})", why),
                 })
             }
         }
+    }
+
+    /// The candidate checked and the application did land (they saw the
+    /// employer's acknowledgement). This is a deliberate user decision, so it
+    /// is journalled as one — never inferred by the app.
+    pub fn confirm_after_uncertain(
+        &mut self,
+        job_id: &JobIdentityId,
+        now_unix: i64,
+    ) -> Result<(), WorkspaceError> {
+        let job = self
+            .store
+            .get_job(job_id)?
+            .ok_or_else(|| WorkspaceError::NotFound(job_id.as_str().to_string()))?;
+        if job.state != ApplicationState::Uncertain {
+            return Err(WorkspaceError::IllegalTransition {
+                from: job.state,
+                to: ApplicationState::Confirmed,
+            });
+        }
+        self.journal(
+            job_id,
+            ApplicationState::Confirmed,
+            now_unix,
+            "user_confirmed_landed_after_uncertain",
+        )?;
+        self.set_state(job_id, ApplicationState::Confirmed)?;
+        Ok(())
     }
 
     /// The deliberate, recorded retry after an Uncertain outcome. Only the UI

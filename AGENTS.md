@@ -45,24 +45,32 @@ repo up cold. Read this first, then `README.md`, then the references below.
     packet → one-use approval → DOCX export, with correction propagation. Degradation
     is reported, never silently converted to "0 jobs". This is where the honesty
     rules become behaviour.
+  - `waypoint_browser` — the real `BrowserDriver`: Chrome DevTools Protocol over a
+    throwaway browser profile. Reads the form from the live DOM, types with real
+    input events, attaches files, clicks by box model. **It has no script
+    execution surface** — only DOM/Input/Page protocol calls. Captchas and login
+    walls are reported as walls, never climbed.
   - `waypoint_store` — versioned migrations (v3 adds `claims`, `packets`, `grants`;
     v4 adds the submission journal). **Never edit a released migration; add v(N+1).**
     Grants persist their `consumed` flag so a restart cannot resurrect a spent
     approval, and the journal is append-only *enforced by database triggers* — an
     UPDATE or DELETE on it fails at the SQLite level.
 - `deny.toml` — license/supply-chain policy; `cargo deny check` must stay green.
-- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 179 tests,
+- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 183 tests,
   release build, `cargo audit` (with one documented informational ignore), deny checks.
 
 ## Build, test, quality commands
 
 ```bash
-cargo test --workspace                 # 179 tests
+cargo test --workspace                 # 183 tests (+5 ignored browser tests)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --release -p windows_app   # native PE32+ binary, ~14 MB
 cargo deny check licenses bans sources
 cargo audit --deny warnings --ignore RUSTSEC-2026-0192   # documented unmaintained notice
+# real-browser submission tests (Edge/Chrome required; CI runs these too):
+cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1
+#   set WAYPOINT_BROWSER_NO_SANDBOX=1 when the Chromium sandbox is unavailable (containers)
 # live model qualification (needs local Ollama + qwen3.5:9b on 127.0.0.1:11434):
 cargo test -p waypoint_inference --lib -- --ignored
 # live ATS board fetch tests (network):
@@ -103,6 +111,12 @@ Windows/MSVC toolchain assumed; no Node/Python/WSL/Docker anywhere in the produc
   yanked `yoke-derive 0.8.3`. Always re-run `cargo audit --deny warnings` after dependency
   changes; fix yanks by moving versions (`cargo update -p <crate> --precise X`), never by
   silencing the check.
+- Application references must keep their original casing: `extract_application_ref`
+  matches on an ASCII-lowercased copy but slices the *original* text. Slicing the
+  lowercased text silently downcases identifiers the candidate has to quote back.
+- The upload directory must contain the file name the fill plan asks for
+  (`waypoint-packet.docx`); the driver resolves names against configured folders and
+  reports a missing file rather than submitting without it.
 - `validate_claim_support` reports *positive* support (`Supported`) as well as problems, and
   a citation that no longer resolves is reported as unsupported. Do not "optimise" it back
   to problems-only: the approval gate counts supported spans, and a dangling citation must
@@ -120,11 +134,11 @@ None of these are silently skippable, and none are claimed done.
 
 ## Where to start next (highest value, in order)
 
-1. The real browser driver: `waypoint_workspace::submit` implements the whole
-   supervised-apply flow behind a `BrowserDriver` trait (preflight at the boundary,
-   durable consumption, typed fills, qualified receipts, no auto-retry) and it is
-   tested end to end with a scripted driver. What is missing is a CDP implementation
-   of that trait, so no real employer submission can happen yet.
+1. First real-submission verification on a third-party site, with a candidate's own
+   consent. The engine and the CDP driver are both done and tested against
+   real browsers on local fixtures; what is unproven is behaviour on a live
+   employer site (multi-step wizards, iframes, radio groups — see
+   KNOWN_LIMITATIONS item 7).
 2. Wire `OllamaInference` into the drafting/interview flows so materials are generated
    through the real adapter (keeping a deterministic offline fallback).
 3. SQLCipher at-rest encryption behind the existing store API.

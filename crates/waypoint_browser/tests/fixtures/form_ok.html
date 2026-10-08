@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Backend Engineer</title></head>
+<body>
+  <h1>Apply for Backend Engineer</h1>
+  <form id="application">
+    <label for="cover">Cover letter</label>
+    <textarea id="cover" name="cover" required></textarea>
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" required>
+
+    <button id="send" type="submit" onclick="waypointFixtureSubmit(); return false;">Submit application</button>
+  </form>
+
+  <script>
+    // Stand-in for an employer's confirmation page. This script belongs to the
+    // fixture (i.e. to the "site"), never to the driver.
+    //
+    // The confirmation is built with DOM nodes and textContent rather than
+    // innerHTML: page data (a file name, a value length) must never be parsed
+    // as markup, even in a local fixture.
+    function line(tag, text) {
+      var el = document.createElement(tag);
+      el.textContent = text;
+      return el;
+    }
+
+    function waypointFixtureSubmit() {
+      var cover = document.getElementById('cover').value || '';
+      var files = document.getElementById('resume').files;
+      var attached = (files && files.length > 0) ? files[0].name : 'none';
+      var body = document.body;
+      body.textContent = '';
+      body.appendChild(line('h1', 'Application received'));
+      body.appendChild(line('p', 'Application ID: GH-44117'));
+      body.appendChild(line('p', 'cover characters: ' + cover.length));
+      body.appendChild(line('p', 'resume file: ' + attached));
+    }
+  </script>
+</body>
+</html>

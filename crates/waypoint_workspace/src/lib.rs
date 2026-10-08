@@ -337,6 +337,18 @@ impl Workspace {
         Ok(self.store.resolve_alias(url)?)
     }
 
+    /// Track a job the candidate already knows about: their own research, a
+    /// pasted URL, or a saved local page. This is real product surface (it is
+    /// how "I found this myself" enters the pipeline, and how scripts import
+    /// jobs), not a test hook.
+    ///
+    /// The URL is stored exactly as supplied — all *fetches* remain guarded by
+    /// the permission registry and the network layer's public-host checks.
+    pub fn import_job(&mut self, job: StoredJob) -> Result<(), WorkspaceError> {
+        self.store.upsert_job(&job)?;
+        Ok(())
+    }
+
     /// Drive an application-state change. Illegal transitions are refused with
     /// an error rather than silently applied — the state machine is a product
     /// invariant, not a UI suggestion.

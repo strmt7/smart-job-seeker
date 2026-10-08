@@ -56,6 +56,12 @@ pub enum ShellCommand {
     PreparePacket(String),
     ApprovePacket(String),
     ExportPacket(String),
+    /// The single external write, through a real browser.
+    SubmitPacket(String),
+    /// After an ambiguous write: the candidate says it did land.
+    ConfirmLanded(String),
+    /// After an ambiguous write: the candidate accepts the duplicate risk.
+    RetrySubmit(String),
 }
 
 /// Immutable snapshot the shell renders from.

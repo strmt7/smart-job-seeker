@@ -6,7 +6,7 @@
 
 use waypoint_domain::ApplicationState;
 use waypoint_store::work::{StoredClaim, StoredGrant, StoredPacket};
-use waypoint_store::StoredJob;
+use waypoint_store::{JournalRow, StoredJob};
 
 use crate::view_model::state_label;
 
@@ -72,9 +72,39 @@ pub struct JobDetail {
     pub remote: bool,
     pub packet: Option<PacketView>,
     pub grant: Option<GrantView>,
+    /// The append-only submission history, oldest first: what actually
+    /// happened, with the machine-checkable reason for each step.
+    pub history: Vec<HistoryRow>,
+}
+
+/// One journalled step, render-ready.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryRow {
+    pub at: String,
+    pub state_label: String,
+    pub reason: String,
 }
 
 impl JobDetail {
+    /// Whether an actual submission may be attempted right now: the job is
+    /// approved, the approval is live, and the packet is still valid.
+    pub fn can_submit(&self) -> bool {
+        self.state == ApplicationState::Approved
+            && self
+                .grant
+                .as_ref()
+                .is_some_and(|g| !g.expired && !g.consumed)
+            && self
+                .packet
+                .as_ref()
+                .is_some_and(|p| p.invalidated_at.is_none())
+    }
+
+    /// Whether the candidate must deliberately decide about an ambiguous write.
+    pub fn needs_reconciliation(&self) -> bool {
+        self.state == ApplicationState::Uncertain
+    }
+
     /// The legal next steps for this job, as button labels. Mirrors the state
     /// machine rather than inventing its own rules.
     pub fn next_actions(&self) -> Vec<&'static str> {
@@ -121,6 +151,7 @@ pub fn detail_from(
     packet: Option<&StoredPacket>,
     readiness: Option<(usize, Vec<String>)>,
     grant: Option<&StoredGrant>,
+    history: &[JournalRow],
 ) -> JobDetail {
     JobDetail {
         identity: job.id.as_str().to_string(),
@@ -145,6 +176,14 @@ pub fn detail_from(
             consumed: g.consumed,
             expired: g.expired,
         }),
+        history: history
+            .iter()
+            .map(|row| HistoryRow {
+                at: row.timestamp.clone(),
+                state_label: state_label(row.state).to_string(),
+                reason: row.reason.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -300,6 +339,7 @@ mod tests {
                     consumed: !grant_live,
                     expired: !grant_live,
                 }),
+                history: vec![],
             }
         };
 
@@ -337,6 +377,7 @@ mod tests {
             Some(&packet(false)),
             Some((2, vec!["problem".into()])),
             None,
+            &[],
         );
         let p = detail.packet.as_ref().unwrap();
         assert_eq!(p.hash_prefix, "abcdef123456", "12 chars for eyeballing");
