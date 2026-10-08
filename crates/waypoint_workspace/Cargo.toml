@@ -15,6 +15,7 @@ waypoint_materials = { path = "../waypoint_materials" }
 waypoint_net = { path = "../waypoint_net" }
 waypoint_policy = { path = "../waypoint_policy" }
 waypoint_search = { path = "../waypoint_search" }
+waypoint_seal = { path = "../waypoint_seal" }
 waypoint_store = { path = "../waypoint_store" }
 
 [lints]

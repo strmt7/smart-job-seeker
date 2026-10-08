@@ -94,6 +94,9 @@ pub struct ShellViewModel {
     pub fact_edits: Vec<String>,
     /// Draft for new facts: one fact per line.
     pub facts_draft: String,
+    /// How the candidate's own material is protected on disk, in words they can
+    /// act on. Set from the workspace; never a claim we cannot back.
+    pub sealing_status: Option<String>,
     /// The selected job, with its packet and approval status.
     pub selection: Option<crate::detail::JobDetail>,
     /// Row index highlighted in the list (navigation bookkeeping only).

@@ -50,6 +50,11 @@ repo up cold. Read this first, then `README.md`, then the references below.
     input events, attaches files, clicks by box model. **It has no script
     execution surface** — only DOM/Input/Page protocol calls. Captchas and login
     walls are reported as walls, never climbed.
+  - `waypoint_seal` — sealing candidate material at rest. Windows DPAPI through a
+    hand-written three-call FFI (the workspace's only `unsafe`, scoped to that
+    module with a justification comment). Values carry a self-describing envelope
+    (`magic | version | backend | payload`) so a value sealed by one backend is
+    refused by another instead of being misread.
   - `waypoint_store` — versioned migrations (v3 adds `claims`, `packets`, `grants`;
     v4 adds the submission journal). **Never edit a released migration; add v(N+1).**
     Grants persist their `consumed` flag so a restart cannot resurrect a spent
@@ -117,6 +122,20 @@ Windows/MSVC toolchain assumed; no Node/Python/WSL/Docker anywhere in the produc
 - The upload directory must contain the file name the fill plan asks for
   (`waypoint-packet.docx`); the driver resolves names against configured folders and
   reports a missing file rather than submitting without it.
+- Candidate material is sealed, public data is not. Everything the candidate
+  writes (claim text, packet body/doc_json) goes through `Store::seal` when a
+  sealer is attached and its plaintext column is written empty; postings and
+  journals stay plaintext so search and reporting keep working with no key.
+  There is exactly **one** read path per table (`all_claims`,
+  `row_to_packet_full`) so a sealed column cannot be missed through a side door —
+  a new query that reads `text`, `body` or `doc_json` directly reintroduces the
+  bug this design prevents (it happened once while building it).
+- After sealing existing rows the store VACUUMs: SQLite keeps freed page contents
+  until it rewrites the file, and "the plaintext is gone" must be true of the file
+  on disk, not just of a query result.
+- `unsafe_code` is `deny` workspace-wide rather than `forbid`, so exactly one
+  module can carry a reviewed `#[allow(unsafe_code)]`. Any unsafe code outside
+  `waypoint_seal`'s DPAPI module fails the build, which is the intent.
 - `validate_claim_support` reports *positive* support (`Supported`) as well as problems, and
   a citation that no longer resolves is reported as unsupported. Do not "optimise" it back
   to problems-only: the approval gate counts supported spans, and a dangling citation must

@@ -448,3 +448,46 @@ fn live_discovery_end_to_end() {
         ranked.strict[0].matched_skills
     );
 }
+
+#[test]
+fn facts_are_sealed_on_disk_and_survive_reopen() {
+    let dir = std::env::temp_dir().join(format!("wp-ws-seal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let secret = "Zx9 confidential: negotiating a notice-period waiver with a competitor";
+
+    {
+        let mut ws = crate::Workspace::open(&dir).unwrap();
+        ws.add_fact(secret, crate::work::FactOrigin::UserAttested)
+            .unwrap();
+        assert_eq!(ws.facts().unwrap()[0].text, secret);
+    }
+
+    // Reopening must find the fact itself, not an empty string left behind by
+    // a sealed column nobody unseals.
+    let ws = crate::Workspace::open(&dir).unwrap();
+    let facts = ws.facts().unwrap();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(
+        facts[0].text, secret,
+        "a sealed fact must round-trip through close and reopen"
+    );
+
+    let status = ws.sealing_status();
+    assert!(
+        status.contains("Windows account") || status.starts_with("NOT encrypted"),
+        "the status must be one of the two honest answers: {status}"
+    );
+
+    if waypoint_seal::platform_sealer().map(|s| s.kind()) == Some(waypoint_seal::SealerKind::Dpapi)
+    {
+        let db = std::fs::read(dir.join("jobs.sqlite3")).unwrap();
+        assert!(
+            !db.windows(secret.len()).any(|w| w == secret.as_bytes()),
+            "the candidate's own words must not be readable in the workspace file"
+        );
+    } else {
+        eprintln!("no sealing backend on this host; absence assertion skipped");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

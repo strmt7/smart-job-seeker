@@ -4,7 +4,24 @@ Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this 
 
 ## Hard limitations (known, deliberate, documented)
 
-1. **Store is not encrypted yet.** SQLite plaintext; schema and API are encryption-ready, SQLCipher integration is a planned task. Until then: local store contains profile data unencrypted — candidate decision to use remains theirs, but the limitation is explicit.
+1. **Job postings are stored in plaintext on purpose; the candidate's own material is sealed.**
+   Postings are public data and SQLite has to search them, so they sit in ordinary
+   columns. Everything the candidate *writes* about themselves — the facts they
+   assert and the documents built from them — is sealed at rest with Windows DPAPI
+   (`CryptProtectData`, user + machine scoped, with a fixed application entropy
+   string), so the workspace file holds an opaque envelope instead of their words.
+   There is no key to manage and no password to remember. What remains true:
+   - Sealing is bound to the Windows account and machine, so copying the database
+     elsewhere makes the sealed material unreadable. That is the point, but it also
+     means **there is no cross-machine export/recovery path yet** for sealed data.
+   - While the app runs, unsealed values exist in process memory, as they must.
+   - Journal reasons, titles and match signals stay unsealed: operational and
+     public data, and sealing them would stop search and reporting working.
+   - Only the DPAPI backend exists. Where no equivalent is available there is no
+     encryption, and the UI says so ("NOT encrypted: no sealing backend is active")
+     rather than implying protection it lacks.
+   - The sealing FFI is the workspace's only `unsafe` code (one module in
+     `waypoint_seal`, everything else denies unsafe); it has had one author.
 2. **Local-inference adapter exists and is live-qualified; flows are not all wired to it yet.** `waypoint_inference::OllamaInference` is a real adapter (loopback-only by construction, strict-JSON + reasoning probes, schema-constrained generation) and passes a live probe against the local runtime. What is still missing: drafting/materials/interview flows do not yet call it in the shipped app, and no model download-integrity check is implemented.
 3. **Accessibility observation incomplete (T006).** Keyboard navigation is implemented; Narrator/NVDA announcement quality, IME composition, 125–200% DPI and multi-monitor behavior have NOT been observed and recorded. Gate G1 stays partially open for this reason.
 4. **No code signing / installer.** The release binary builds; signing certificates and MSIX/NSIS packaging are not produced. Until signed, users must verify hashes manually.

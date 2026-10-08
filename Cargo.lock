@@ -4049,6 +4049,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "waypoint_seal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "waypoint_search"
 version = "0.1.0"
 dependencies = [
@@ -4065,6 +4073,7 @@ dependencies = [
  "serde",
  "serde_json",
  "waypoint_domain",
+ "waypoint_seal",
 ]
 
 [[package]]
@@ -4080,6 +4089,7 @@ dependencies = [
  "waypoint_materials",
  "waypoint_net",
  "waypoint_policy",
+ "waypoint_seal",
  "waypoint_search",
  "waypoint_store",
 ]

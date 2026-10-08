@@ -276,21 +276,51 @@ pub struct Workspace {
     coverage: CoverageReport,
     last_outcome: Option<DiscoveryOutcome>,
     pub db_path: Option<PathBuf>,
+    sealed_now: usize,
 }
 
 impl Workspace {
     /// Open (creating directories + migrating) a workspace on disk.
+    ///
+    /// The candidate's own material (facts and prepared documents) is sealed at
+    /// rest with the best backend the platform offers — on Windows that is
+    /// DPAPI, keyed to the logged-in user, so there is no password for anyone
+    /// to manage or for us to store. If no backend exists, the workspace still
+    /// works and says so plainly rather than implying protection it does not
+    /// have. Any rows written before sealing was available are migrated here.
     pub fn open(dir: &Path) -> Result<Self, WorkspaceError> {
         std::fs::create_dir_all(dir)?;
         let db_path = dir.join("jobs.sqlite3");
+        let mut store = Store::open(&db_path)?;
+        let mut sealed_now = 0usize;
+        if let Some(sealer) = waypoint_seal::platform_sealer() {
+            store = store.with_sealer(sealer);
+            sealed_now = store.seal_existing_rows()?;
+        }
         Ok(Self {
-            store: Store::open(&db_path)?,
+            store,
             registry: default_registry(),
             budgets: ResourceBudgets::default(),
             coverage: CoverageReport::default(),
             last_outcome: None,
             db_path: Some(db_path),
+            sealed_now,
         })
+    }
+
+    /// How the candidate's own material is protected at rest, in words they can
+    /// act on. Never overstated: with no backend it says so.
+    pub fn sealing_status(&self) -> String {
+        match self.store.sealing_kind() {
+            Some(kind) => kind.label().to_string(),
+            None => "NOT encrypted: no sealing backend is available on this platform".to_string(),
+        }
+    }
+
+    /// How many rows were migrated to sealed storage the last time this
+    /// workspace was opened (0 when nothing needed it).
+    pub fn rows_sealed_on_open(&self) -> usize {
+        self.sealed_now
     }
 
     /// In-memory workspace for tests and dry runs.
@@ -302,6 +332,7 @@ impl Workspace {
             coverage: CoverageReport::default(),
             last_outcome: None,
             db_path: None,
+            sealed_now: 0,
         })
     }
 

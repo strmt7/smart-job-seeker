@@ -48,6 +48,8 @@ enum Update {
     },
     Ranked(RankedResults),
     Facts(Vec<waypoint_store::work::StoredClaim>),
+    /// How the candidate's own data is protected at rest, reported by the store.
+    Sealing(String),
     Detail(Box<JobDetail>),
     Model(String),
     Notice(String),
@@ -107,6 +109,7 @@ impl AppController {
         if let Ok(facts) = ws.facts() {
             let _ = tx.send(Update::Facts(facts));
         }
+        let _ = tx.send(Update::Sealing(ws.sealing_status()));
         if let Ok(ranked) = ws.ranked(constraints, terms, now_unix()) {
             let _ = tx.send(Update::Ranked(ranked));
         }
@@ -143,6 +146,7 @@ impl AppController {
                 if let Ok(facts) = ws.facts() {
                     let _ = tx.send(Update::Facts(facts));
                 }
+                let _ = tx.send(Update::Sealing(ws.sealing_status()));
                 if let Some(identity) = &selection {
                     if let Some(detail) = build_detail(&ws, identity) {
                         let _ = tx.send(Update::Detail(Box::new(detail)));
@@ -482,6 +486,7 @@ impl Controller for AppController {
                     model.selection = Some(*detail);
                 }
                 Update::Model(status) => model.model_status = Some(status),
+                Update::Sealing(status) => model.sealing_status = Some(status),
                 Update::Notice(message) => model.last_action = Some(message),
                 Update::Failed(message) => model.last_action = Some(format!("Failed: {message}")),
             }

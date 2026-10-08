@@ -5,9 +5,12 @@
 //! recorded in the header; caller supplies the path and an optional key slot),
 //! and the unencrypted-local default is explicitly recorded in Known limits.
 
+use std::sync::Arc;
+
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use waypoint_domain::{ApplicationState, JobIdentityId};
+use waypoint_seal::{SealError, Sealer, SealerKind};
 
 /// Re-exported so callers can handle store failures without depending on the
 /// storage engine directly (keeps the persistence choice swappable).
@@ -111,6 +114,17 @@ const MIGRATIONS: &[&str] = &[
        BEFORE DELETE ON submission_journal
        BEGIN SELECT RAISE(ABORT, 'submission journal is append-only'); END;
      UPDATE meta SET value='4' WHERE key='schema_version';",
+    // v5 — sealed-at-rest storage for the candidate's own material.
+    //
+    // Job postings stay in plain columns: they are public data, and searching
+    // them is the point. The candidate's facts and prepared documents get
+    // shadow columns that hold sealed bytes; the plaintext columns are then
+    // emptied by `seal_existing_rows`, which also VACUUMs so the freed pages
+    // stop holding the old text.
+    "ALTER TABLE claims ADD COLUMN text_sealed BLOB;
+     ALTER TABLE packets ADD COLUMN body_sealed BLOB;
+     ALTER TABLE packets ADD COLUMN doc_json_sealed BLOB;
+     UPDATE meta SET value='5' WHERE key='schema_version';",
 ];
 
 pub mod work;
@@ -173,9 +187,20 @@ impl Store {
     }
 }
 
-#[derive(Debug)]
 pub struct Store {
     pub(crate) conn: Connection,
+    /// When set, the candidate's own material is sealed before it is written
+    /// and unsealed after it is read. `None` means plaintext columns are used,
+    /// and the metadata says so — nothing silently claims to be encrypted.
+    pub(crate) sealer: Option<Arc<dyn Sealer>>,
+}
+
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("sealing", &self.sealer.as_ref().map(|s| s.kind()))
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -209,6 +234,140 @@ impl Store {
         Self::migrate(Connection::open_in_memory()?)
     }
 
+    /// Attach a sealing backend for the candidate's own material. Call
+    /// [`Store::seal_existing_rows`] once after attaching, to migrate any
+    /// rows that were written before sealing was enabled.
+    pub fn with_sealer(mut self, sealer: Arc<dyn Sealer>) -> Self {
+        let kind = sealer.kind();
+        self.sealer = Some(sealer);
+        let _ = self.conn.execute(
+            "UPDATE meta SET value=?1 WHERE key='sealing'",
+            params![kind.as_str()],
+        );
+        let _ = self.conn.execute(
+            "INSERT OR IGNORE INTO meta(key,value) VALUES('sealing',?1)",
+            params![kind.as_str()],
+        );
+        self
+    }
+
+    /// Which backend is active, if any.
+    pub fn sealing_kind(&self) -> Option<SealerKind> {
+        self.sealer.as_ref().map(|s| s.kind())
+    }
+
+    fn seal(&self, plaintext: &str) -> Result<Option<Vec<u8>>, SealError> {
+        match &self.sealer {
+            Some(s) => Ok(Some(s.seal(plaintext.as_bytes())?)),
+            None => Ok(None),
+        }
+    }
+
+    fn unseal_str(&self, sealed: &[u8]) -> Result<String, SealError> {
+        let Some(s) = &self.sealer else {
+            return Err(SealError::Unavailable);
+        };
+        let bytes = s.unseal(sealed)?;
+        String::from_utf8(bytes).map_err(|e| SealError::Backend(e.to_string()))
+    }
+
+    /// Seal every row that still holds plaintext, then purge the freed pages.
+    ///
+    /// Idempotent: rows that are already sealed are skipped. Ends with VACUUM
+    /// because SQLite leaves the old text in freed pages until it rewrites the
+    /// file, and "the plaintext is gone" has to be true of the file on disk.
+    pub fn seal_existing_rows(&mut self) -> Result<usize, StoreError> {
+        if self.sealer.is_none() {
+            return Ok(0);
+        }
+        let mut migrated = 0usize;
+
+        let claims: Vec<(String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id,text FROM claims WHERE text_sealed IS NULL")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (id, text) in claims {
+            let sealed = self
+                .seal(&text)
+                .map_err(|e| StoreError::ToSqlConversionFailure(Box::new(e)))?;
+            self.conn.execute(
+                "UPDATE claims SET text_sealed=?1, text='' WHERE id=?2",
+                params![sealed, id],
+            )?;
+            migrated += 1;
+        }
+
+        let packets: Vec<(String, String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT job_id,body,doc_json FROM packets WHERE body_sealed IS NULL")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (job_id, body, doc_json) in packets {
+            let sealed_body = self
+                .seal(&body)
+                .map_err(|e| StoreError::ToSqlConversionFailure(Box::new(e)))?;
+            let sealed_doc = self
+                .seal(&doc_json)
+                .map_err(|e| StoreError::ToSqlConversionFailure(Box::new(e)))?;
+            self.conn.execute(
+                "UPDATE packets SET body_sealed=?1, doc_json_sealed=?2, body='', doc_json='' WHERE job_id=?3",
+                params![sealed_body, sealed_doc, job_id],
+            )?;
+            migrated += 1;
+        }
+
+        if migrated > 0 {
+            self.conn.execute_batch("VACUUM;")?;
+        }
+        Ok(migrated)
+    }
+
+    /// True when this store holds sealed candidate material.
+    pub fn has_sealed_material(&self) -> Result<bool, StoreError> {
+        let claims: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM claims WHERE text_sealed IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        let packets: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM packets WHERE body_sealed IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(claims + packets > 0)
+    }
+
+    /// The value actually stored for a claim's text: sealed bytes when the
+    /// column holds them, plaintext otherwise. Used by tests and by the
+    /// sealing pass to prove what is on disk.
+    pub fn raw_claim_text(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT text_sealed, text FROM claims WHERE id=?1",
+                params![id],
+                |r| {
+                    let sealed: Option<Vec<u8>> = r.get(0)?;
+                    let plain: Option<String> = r.get(1)?;
+                    Ok(match (sealed, plain) {
+                        (Some(s), _) => Some(s),
+                        (None, Some(p)) => Some(p.into_bytes()),
+                        (None, None) => None,
+                    })
+                },
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
+            .map(|opt| opt.flatten())
+    }
+
     fn migrate(mut conn: Connection) -> Result<Self, rusqlite::Error> {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         // Bootstrap bookkeeping tables before any versioned step runs, so a
@@ -218,6 +377,7 @@ impl Store {
                key TEXT PRIMARY KEY,
                value TEXT NOT NULL
              );
+             INSERT OR IGNORE INTO meta(key,value) VALUES('sealing','none');
              CREATE TABLE IF NOT EXISTS migration_backups(
                version INTEGER PRIMARY KEY,
                taken_at TEXT NOT NULL,
@@ -245,7 +405,7 @@ impl Store {
                 tx.commit()?;
             }
         }
-        Ok(Self { conn })
+        Ok(Self { conn, sealer: None })
     }
 
     fn row_counts(conn: &Connection) -> Result<String, rusqlite::Error> {
@@ -577,3 +737,6 @@ pub(crate) mod tests_support {
         }
     }
 }
+
+#[cfg(test)]
+mod seal_tests;

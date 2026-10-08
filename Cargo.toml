@@ -7,6 +7,7 @@ members = [
   "crates/waypoint_inference",
   "crates/waypoint_store",
   "crates/waypoint_search",
+  "crates/waypoint_seal",
   "crates/waypoint_research",
   "crates/waypoint_connectors",
   "crates/waypoint_net",
@@ -25,4 +26,8 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Denied everywhere, with exactly one visible exception: the DPAPI FFI in
+# `waypoint_seal`, which carries a scoped #[allow(unsafe_code)] and a comment.
+# `deny` (not `forbid`) is what makes a single reviewed exception possible while
+# still failing the build on any other unsafe code.
+unsafe_code = "deny"

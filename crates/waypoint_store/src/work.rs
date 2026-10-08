@@ -10,10 +10,15 @@
 //!   propagation possible without re-parsing rendered text.
 
 use rusqlite::params;
+use waypoint_seal::SealError;
 
 use waypoint_domain::{ClaimStatus, GrantId, JobIdentityId, SourceKind};
 
 use crate::{Store, StoreError};
+
+fn seal_err(e: SealError) -> StoreError {
+    StoreError::ToSqlConversionFailure(Box::new(e))
+}
 
 /// A candidate fact, as persisted. Mirrors `waypoint_domain::Claim` plus the
 /// supersession link used by correction propagation.
@@ -77,13 +82,23 @@ impl Store {
     /* ------------------------------- claims -------------------------------- */
 
     pub fn insert_claim(&mut self, claim: &StoredClaim) -> Result<(), StoreError> {
+        // The candidate's own words are sealed when a backend is attached; the
+        // plaintext column is written empty so there is exactly one source of
+        // truth and nothing sensitive is duplicated.
+        let sealed = self.seal(&claim.text).map_err(seal_err)?;
+        let plaintext = if sealed.is_some() {
+            ""
+        } else {
+            claim.text.as_str()
+        };
         self.conn.execute(
-            "INSERT INTO claims(id,profile_revision,text,status,source_kind,evidence_ids,requires_review,supersedes)
-             VALUES(?1,?2,?3,?4,?5,'[]',?6,?7)",
+            "INSERT INTO claims(id,profile_revision,text,text_sealed,status,source_kind,evidence_ids,requires_review,supersedes)
+             VALUES(?1,?2,?3,?4,?5,?6,'[]',?7,?8)",
             params![
                 claim.id,
                 claim.profile_revision as i64,
-                claim.text,
+                plaintext,
+                sealed,
                 encode(&claim.status),
                 encode(&claim.source_kind),
                 claim.requires_review as i64,
@@ -97,21 +112,41 @@ impl Store {
     /// what lets a correction explain itself).
     pub fn all_claims(&self) -> Result<Vec<StoredClaim>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id,profile_revision,text,status,source_kind,requires_review,supersedes
+            "SELECT id,profile_revision,text,text_sealed,status,source_kind,requires_review,supersedes
              FROM claims ORDER BY profile_revision DESC, id ASC",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(StoredClaim {
-                id: r.get(0)?,
-                profile_revision: r.get::<_, i64>(1)? as u64,
-                text: r.get(2)?,
-                status: decode_status(&r.get::<_, String>(3)?),
-                source_kind: decode_source(&r.get::<_, String>(4)?),
-                requires_review: r.get::<_, i64>(5)? != 0,
-                supersedes: r.get(6)?,
-            })
+            let plain: String = r.get(2)?;
+            let sealed: Option<Vec<u8>> = r.get(3)?;
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)? as u64,
+                plain,
+                sealed,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, i64>(6)? != 0,
+                r.get::<_, Option<String>>(7)?,
+            ))
         })?;
-        rows.collect()
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, revision, plain, sealed, status, source, review, supersedes) = row?;
+            let text = match sealed {
+                Some(bytes) => self.unseal_str(&bytes).map_err(seal_err)?,
+                None => plain,
+            };
+            out.push(StoredClaim {
+                id,
+                profile_revision: revision,
+                text,
+                status: decode_status(&status),
+                source_kind: decode_source(&source),
+                requires_review: review,
+                supersedes,
+            });
+        }
+        Ok(out)
     }
 
     /// Claims that are still in force (not superseded) at the current revision.
@@ -153,13 +188,29 @@ impl Store {
     /* ------------------------------- packets ------------------------------- */
 
     pub fn upsert_packet(&mut self, packet: &StoredPacket) -> Result<(), StoreError> {
+        // Prepared documents are the candidate's material: sealed when a
+        // backend is attached, with the plaintext columns left empty.
+        let sealed_body = self.seal(&packet.body).map_err(seal_err)?;
+        let sealed_doc = self.seal(&packet.doc_json).map_err(seal_err)?;
+        let body = if sealed_body.is_some() {
+            ""
+        } else {
+            packet.body.as_str()
+        };
+        let doc_json = if sealed_doc.is_some() {
+            ""
+        } else {
+            packet.doc_json.as_str()
+        };
         self.conn.execute(
-            "INSERT INTO packets(job_id,packet_sha256,doc_json,body,cited_claim_ids,profile_revision,created_at,invalidated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+            "INSERT INTO packets(job_id,packet_sha256,doc_json,doc_json_sealed,body,body_sealed,cited_claim_ids,profile_revision,created_at,invalidated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
              ON CONFLICT(job_id) DO UPDATE SET
                packet_sha256=excluded.packet_sha256,
                doc_json=excluded.doc_json,
+               doc_json_sealed=excluded.doc_json_sealed,
                body=excluded.body,
+               body_sealed=excluded.body_sealed,
                cited_claim_ids=excluded.cited_claim_ids,
                profile_revision=excluded.profile_revision,
                created_at=excluded.created_at,
@@ -167,8 +218,10 @@ impl Store {
             params![
                 packet.job_id,
                 packet.packet_sha256,
-                packet.doc_json,
-                packet.body,
+                doc_json,
+                sealed_doc,
+                body,
+                sealed_body,
                 encode(&packet.cited_claim_ids),
                 packet.profile_revision as i64,
                 packet.created_at,
@@ -184,10 +237,10 @@ impl Store {
     ) -> Result<Option<StoredPacket>, StoreError> {
         self.conn
             .query_row(
-                "SELECT job_id,packet_sha256,doc_json,body,cited_claim_ids,profile_revision,created_at,invalidated_at
+                "SELECT job_id,packet_sha256,doc_json,doc_json_sealed,body,body_sealed,cited_claim_ids,profile_revision,created_at,invalidated_at
                  FROM packets WHERE job_id=?1",
                 params![job_id.as_str()],
-                row_to_packet,
+                |r| self.row_to_packet_full(r),
             )
             .map(Some)
             .or_else(|e| match e {
@@ -200,10 +253,10 @@ impl Store {
     /// propagation exact instead of text-matching.
     pub fn packets_citing_claim(&self, claim_id: &str) -> Result<Vec<StoredPacket>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT job_id,packet_sha256,doc_json,body,cited_claim_ids,profile_revision,created_at,invalidated_at
+            "SELECT job_id,packet_sha256,doc_json,doc_json_sealed,body,body_sealed,cited_claim_ids,profile_revision,created_at,invalidated_at
              FROM packets",
         )?;
-        let rows = stmt.query_map([], row_to_packet)?;
+        let rows = stmt.query_map([], |r| self.row_to_packet_full(r))?;
         let all: Vec<StoredPacket> = rows.collect::<Result<_, _>>()?;
         Ok(all
             .into_iter()
@@ -213,10 +266,10 @@ impl Store {
 
     pub fn all_packets(&self) -> Result<Vec<StoredPacket>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT job_id,packet_sha256,doc_json,body,cited_claim_ids,profile_revision,created_at,invalidated_at
+            "SELECT job_id,packet_sha256,doc_json,doc_json_sealed,body,body_sealed,cited_claim_ids,profile_revision,created_at,invalidated_at
              FROM packets ORDER BY created_at DESC, job_id ASC",
         )?;
-        let rows = stmt.query_map([], row_to_packet)?;
+        let rows = stmt.query_map([], |r| self.row_to_packet_full(r))?;
         rows.collect()
     }
 
@@ -311,18 +364,45 @@ impl Store {
     }
 }
 
-fn row_to_packet(r: &rusqlite::Row<'_>) -> Result<StoredPacket, rusqlite::Error> {
-    let cited: String = r.get(4)?;
-    Ok(StoredPacket {
-        job_id: r.get(0)?,
-        packet_sha256: r.get(1)?,
-        doc_json: r.get(2)?,
-        body: r.get(3)?,
-        cited_claim_ids: serde_json::from_str(&cited).unwrap_or_default(),
-        profile_revision: r.get::<_, i64>(5)? as u64,
-        created_at: r.get(6)?,
-        invalidated_at: r.get(7)?,
-    })
+impl Store {
+    /// Full layout, including the sealed columns.
+    fn row_to_packet_full(&self, r: &rusqlite::Row<'_>) -> Result<StoredPacket, rusqlite::Error> {
+        let plain_doc: String = r.get(2)?;
+        let sealed_doc: Option<Vec<u8>> = r.get(3)?;
+        let plain_body: String = r.get(4)?;
+        let sealed_body: Option<Vec<u8>> = r.get(5)?;
+        let cited: String = r.get(6)?;
+        let doc_json = match sealed_doc {
+            Some(bytes) => self.unseal_str(&bytes).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Blob,
+                    Box::new(e),
+                )
+            })?,
+            None => plain_doc,
+        };
+        let body = match sealed_body {
+            Some(bytes) => self.unseal_str(&bytes).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Blob,
+                    Box::new(e),
+                )
+            })?,
+            None => plain_body,
+        };
+        Ok(StoredPacket {
+            job_id: r.get(0)?,
+            packet_sha256: r.get(1)?,
+            doc_json,
+            body,
+            cited_claim_ids: serde_json::from_str(&cited).unwrap_or_default(),
+            profile_revision: r.get::<_, i64>(7)? as u64,
+            created_at: r.get(8)?,
+            invalidated_at: r.get(9)?,
+        })
+    }
 }
 
 fn row_to_grant(r: &rusqlite::Row<'_>) -> Result<StoredGrant, rusqlite::Error> {

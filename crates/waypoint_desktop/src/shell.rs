@@ -409,6 +409,10 @@ impl WaypointShell {
             "Facts are statements you stand behind. Anything the model inferred is labelled \
              and cannot support an approval until you confirm it.",
         );
+        if let Some(status) = &self.model.sealing_status {
+            // Told plainly, including when the answer is "not encrypted".
+            ui.label(format!("At rest on this machine: {status}"));
+        }
         ui.separator();
         ui.label("Add facts (one per line):");
         ui.add(
