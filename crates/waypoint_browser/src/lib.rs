@@ -254,12 +254,63 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
+        let available = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled'); }","returnByValue":true})).map_err(derr)?;
+        if available.get("exceptionDetails").is_some()
+            || available.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "File field is unavailable; review it manually".into(),
+            ));
+        }
         self.cdp
             .call(
                 "DOM.setFileInputFiles",
                 json!({ "files": [path.to_string_lossy()], "nodeId": node }),
             )
             .map_err(derr)?;
+        self.verify_local_file(selector, path)
+    }
+
+    /// Check whether the selected input still holds the staged local file.
+    pub fn verify_local_file(
+        &mut self,
+        selector: &str,
+        path: &std::path::Path,
+    ) -> Result<(), DriverError> {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| DriverError("File name cannot be represented in the browser".into()))?;
+        let size = std::fs::metadata(path)
+            .map_err(|e| DriverError(format!("Cannot read attachment: {e}")))?
+            .len();
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("File field not found".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
+        let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(name, size) { return this.isConnected && !this.matches(':disabled') && this.files && this.files.length === 1 && this.files[0].name === name && this.files[0].size === size; }","arguments":[{"value":name},{"value":size}],"returnByValue":true})).map_err(derr)?;
+        if retained.get("exceptionDetails").is_some()
+            || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "File was not retained by the field; review the attachment manually".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -1114,12 +1165,7 @@ impl CdpDriver {
         match value {
             PacketValue::FileRef { name } => {
                 let path = self.resolve_upload(name)?;
-                self.cdp
-                    .call(
-                        "DOM.setFileInputFiles",
-                        json!({ "files": [path.to_string_lossy()], "nodeId": node }),
-                    )
-                    .map_err(derr)?;
+                self.attach_local_file(selector, &path)?;
                 self.trace.push(format!("attached {name} to {selector}"));
                 Ok(())
             }
@@ -1181,7 +1227,7 @@ impl CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect checkbox".into()))?;
-                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (this.tagName !== 'INPUT' || this.type !== 'checkbox' || this.disabled) return false; if (this.checked !== value) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set; set.call(this, value); this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.checked === value; }","arguments":[{"value":b}],"returnByValue":true})).map_err(derr)?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.isConnected || this.tagName !== 'INPUT' || this.type !== 'checkbox' || this.matches(':disabled')) return false; if (this.checked !== value) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set; set.call(this, value); this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.isConnected && !this.matches(':disabled') && this.checked === value; }","arguments":[{"value":b}],"returnByValue":true})).map_err(derr)?;
                 if result.get("exceptionDetails").is_some()
                     || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1203,7 +1249,7 @@ impl CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect date field".into()))?;
-                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (this.tagName !== 'INPUT' || this.type !== 'date' || this.disabled || this.readOnly) return false; const previous = this.value; const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(this, value); if (this.value !== value || !this.validity.valid) { set.call(this, previous); return false; } this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); return this.value === value; }","arguments":[{"value":d}],"returnByValue":true})).map_err(derr)?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.isConnected || this.tagName !== 'INPUT' || this.type !== 'date' || this.matches(':disabled') || this.readOnly) return false; const previous = this.value; const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(this, value); if (this.value !== value || !this.validity.valid) { set.call(this, previous); return false; } this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); return this.isConnected && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid; }","arguments":[{"value":d}],"returnByValue":true})).map_err(derr)?;
                 if result.get("exceptionDetails").is_some()
                     || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1239,7 +1285,7 @@ impl CdpDriver {
             .and_then(|v| v.get("objectId"))
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this.tagName !== 'SELECT' || this.multiple || this.disabled || !this.isConnected) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this.tagName !== 'SELECT' || this.multiple || this.matches(':disabled') || !this.isConnected) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.isConnected && !this.matches(':disabled') && this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && !matches[0].disabled && !(matches[0].parentElement && matches[0].parentElement.tagName === 'OPTGROUP' && matches[0].parentElement.disabled) && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result
                 .get("result")
@@ -1289,7 +1335,7 @@ impl CdpDriver {
                 this.dispatchEvent(new Event('input', {bubbles:true}));
                 this.dispatchEvent(new Event('change', {bubbles:true}));
             }
-            return this.isConnected && !this.matches(':disabled') && this.validity.valid && options.every(o => o.selected === chosen.includes(o));
+            return this.isConnected && !this.matches(':disabled') && this.validity.valid && Array.from(this.options).length === options.length && Array.from(this.options).every((o, i) => o === options[i] && o.selected === chosen.includes(o)) && chosen.every(o => !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled));
         }"#,"arguments":[{"value":labels},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)

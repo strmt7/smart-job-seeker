@@ -138,6 +138,42 @@ fn text_fill_checks_that_the_site_retains_the_complete_value() {
     assert!(driver.execute(&fill("#years", "8")).is_err());
     driver.execute(&fill("#code", "ABC")).unwrap();
     assert!(driver.execute(&fill("#code", "123")).is_err());
+    for selector in ["#disabled-check", "#changing-check"] {
+        assert!(driver
+            .execute(&BrowserCommand::Fill {
+                selector: selector.into(),
+                value: PacketValue::Bool(true),
+            })
+            .is_err());
+    }
+    for selector in ["#disabled-date", "#changing-date"] {
+        assert!(driver
+            .execute(&BrowserCommand::Fill {
+                selector: selector.into(),
+                value: PacketValue::Date("2026-11-01".into()),
+            })
+            .is_err());
+    }
+    for selector in ["#disabled-select", "#changing-select"] {
+        assert!(driver
+            .execute(&BrowserCommand::SelectOption {
+                selector: selector.into(),
+                label: "Beta".into(),
+            })
+            .is_err());
+    }
+    assert!(driver
+        .execute(&BrowserCommand::SelectOptions {
+            selector: "#changing-options".into(),
+            labels: vec!["Beta".into()],
+        })
+        .is_err());
+    let file = upload_dir().join("fictional-attachment.pdf");
+    std::fs::write(&file, b"fictional local fixture").unwrap();
+    driver.attach_local_file("#kept-file", &file).unwrap();
+    assert!(driver.attach_local_file("#cleared-file", &file).is_err());
+    driver.verify_local_file("#kept-file", &file).unwrap();
+
     let checkbox = BrowserCommand::Fill {
         selector: "#agree".into(),
         value: PacketValue::Bool(true),
@@ -158,6 +194,8 @@ fn text_fill_checks_that_the_site_retains_the_complete_value() {
         .verify_text_value("#normal", "Fictional candidate")
         .unwrap();
     driver.execute(&fill("#later", "Changed")).unwrap();
+    assert!(driver.verify_local_file("#kept-file", &file).is_err());
+    std::fs::remove_file(&file).unwrap();
     assert!(driver
         .verify_text_value("#normal", "Fictional candidate")
         .is_err());

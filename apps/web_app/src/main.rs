@@ -96,6 +96,7 @@ struct ReviewSession {
     completed_selectors: Vec<String>,
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
+    attachments: Vec<(String, std::path::PathBuf)>,
     record: Option<attempt_record::AttemptRecord>,
 }
 
@@ -2450,6 +2451,7 @@ fn serve(
                 completed_selectors: vec![],
                 visible,
                 staged_files: vec![],
+                attachments: vec![],
                 record,
             });
         }
@@ -2929,6 +2931,16 @@ fn serve(
                     ));
                 }
             };
+            for (selector, path) in &current.attachments {
+                if current.driver.verify_local_file(selector, path).is_err() {
+                    current.preview.manual_review.push(format!(
+                        "Attachment at {selector} could not be verified after filling; inspect it manually"
+                    ));
+                    if let Some(record) = &mut current.record {
+                        let _ = record.event(json!({"type":"attachment_verification_failed","time":now(),"selector":selector}));
+                    }
+                }
+            }
             let screenshot = match current.driver.screenshot_base64() {
                 Ok(image) => image,
                 Err(error) => {
@@ -3166,6 +3178,10 @@ fn serve(
                     "Document attachment may be incomplete; review the form: {error}"
                 ));
             }
+            current
+                .attachments
+                .retain(|(previous, _)| previous != selector);
+            current.attachments.push((selector.to_owned(), path));
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name}))?;
                 if let Ok(image) = current.driver.screenshot_base64() {
@@ -4572,6 +4588,7 @@ mod tests {
                 completed_selectors: vec![],
                 visible: false,
                 staged_files: vec![],
+                attachments: vec![],
                 record: None,
             });
             let (mut stream, _) = listener.accept().unwrap();
@@ -4804,6 +4821,17 @@ mod tests {
             assert_eq!(session.as_ref().unwrap().completed_selectors.len(), 2);
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
+            session.as_mut().unwrap().filled = false;
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
+            assert!(session
+                .as_ref()
+                .unwrap()
+                .preview
+                .manual_review
+                .iter()
+                .any(|reason| reason.contains("Attachment at #resume could not be verified")));
+            drop(stream);
             drop(session);
             assert!(!staged_path.exists());
             let records = workspace_dir.path().join("application-records");
@@ -4824,6 +4852,7 @@ mod tests {
             );
             assert!(events.contains("\"segments\":2"), "{events}");
             assert!(events.contains("document_visual_review_linked"));
+            assert!(events.contains("attachment_verification_failed"));
             assert!(std::fs::read_dir(&record)
                 .unwrap()
                 .filter_map(Result::ok)
@@ -4934,6 +4963,15 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
         assert!(
             response.contains("400 Bad Request") && response.contains("Given name"),
+            "{response}"
+        );
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":[],"answers":[{"selector":"#clear-attachment","value":"Changed"}]}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.contains("Attachment at #resume could not be verified"),
             "{response}"
         );
         worker.join().unwrap();

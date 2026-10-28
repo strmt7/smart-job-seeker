@@ -9,6 +9,13 @@
 <label for="agree">Available</label><input id="agree" type="checkbox">
 <label for="place">Place</label><select id="place"><option value="a">Alpha</option><option value="b">Beta</option></select>
 <fieldset><legend>Mode</legend><label for="on">On site</label><input id="on" name="mode" type="radio" checked><label for="off">Remote</label><input id="off" name="mode" type="radio"></fieldset>
-<label for="later">Later answer</label><input id="later" oninput="document.querySelector('#normal').value='';document.querySelector('#agree').checked=false;document.querySelector('#place').value='a';document.querySelector('#on').checked=true">
+<label for="later">Later answer</label><input id="later" oninput="document.querySelector('#normal').value='';document.querySelector('#kept-file').value='';document.querySelector('#agree').checked=false;document.querySelector('#place').value='a';document.querySelector('#on').checked=true">
+<fieldset disabled><legend>Disabled section</legend><label for="disabled-check">Disabled checkbox</label><input id="disabled-check" type="checkbox"><label for="disabled-date">Disabled date</label><input id="disabled-date" type="date"><label for="disabled-select">Disabled select</label><select id="disabled-select"><option>Alpha</option><option>Beta</option></select></fieldset>
+<label for="changing-select">Select disabled by page</label><select id="changing-select" onchange="this.disabled=true"><option>Alpha</option><option>Beta</option></select>
+<label for="changing-options">Options disabled by page</label><select id="changing-options" multiple onchange="this.options[1].disabled=true"><option>Alpha</option><option>Beta</option></select>
+<label for="changing-check">Checkbox disabled by page</label><input id="changing-check" type="checkbox" onchange="this.disabled=true">
+<label for="changing-date">Date disabled by page</label><input id="changing-date" type="date" onchange="this.disabled=true">
+<label for="kept-file">File retained</label><input id="kept-file" type="file">
+<label for="cleared-file">File cleared by page</label><input id="cleared-file" type="file" onchange="this.value=''">
 <button type="submit">Submit</button>
 </form></body></html>
