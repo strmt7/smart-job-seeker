@@ -23,6 +23,7 @@ mod form_task;
 mod gmail_connect;
 mod gmail_net;
 mod gmail_oauth;
+mod gmail_password;
 mod letter_export;
 mod manual_job;
 mod pdf_extract;
@@ -985,6 +986,17 @@ fn serve(
             gmail_connect::start(id.clone(), client.as_bytes().to_vec(), ws)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
+        "/api/gmail/password-start" => {
+            let email = body["email"].as_str().ok_or("missing Gmail address")?;
+            let password = body["password"].as_str().ok_or("missing app password")?;
+            let id = random_id()?;
+            gmail_password::start(id.clone(), email.to_owned(), password.to_owned(), ws)?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/gmail/password-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", gmail_password::poll(id, ws)?);
+        }
         "/api/gmail/connect-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", gmail_connect::poll(id, ws)?);
@@ -1007,7 +1019,7 @@ fn serve(
             );
         }
         "/api/gmail/disconnect" => {
-            if gmail_connect::busy() {
+            if gmail_connect::busy() || gmail_password::busy() {
                 return Err("Cancel the active Gmail connection and wait for it to finish".into());
             }
             ws.clear_gmail_credentials()
@@ -3002,6 +3014,77 @@ mod tests {
         let submit = request("/api/submit", "test-token", "{}");
         assert!(submit.contains("unknown endpoint"));
         assert!(submit.contains("facts=0"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires explicitly supplied test Gmail credentials; authenticates without sending"]
+    fn live_gmail_password_api_connects_and_disconnects() {
+        let email = zeroize::Zeroizing::new(
+            std::env::var("WAYPOINT_TEST_GMAIL_USER").expect("test account is required"),
+        );
+        let password = zeroize::Zeroizing::new(
+            std::env::var("WAYPOINT_TEST_GMAIL_PASSWORD").expect("test password is required"),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let dir = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::open(dir.path()).unwrap();
+            let mut saw_credentials = false;
+            loop {
+                let (mut stream, _) = listener.accept().unwrap();
+                if let Err(error) = serve(&mut stream, &mut ws, &mut None, "test-token", port) {
+                    json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+                }
+                let has_credentials = ws
+                    .gmail_credentials()
+                    .unwrap()
+                    .map(zeroize::Zeroizing::new)
+                    .is_some();
+                if saw_credentials && !has_credentials {
+                    break;
+                }
+                saw_credentials |= has_credentials;
+            }
+        });
+        let post = |path: &str, body: &str| -> Value {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let body = zeroize::Zeroizing::new(
+            serde_json::to_string(&json!({"email":email.as_str(),"password":password.as_str()}))
+                .unwrap(),
+        );
+        let started = post("/api/gmail/password-start", &body);
+        let id = started["task_id"]
+            .as_str()
+            .expect("connection task should start");
+        let deadline = Instant::now() + Duration::from_secs(55);
+        loop {
+            let status = post(
+                "/api/gmail/password-status",
+                &json!({"task_id":id}).to_string(),
+            );
+            match status["status"].as_str() {
+                Some("complete") => break,
+                Some("running") if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(250))
+                }
+                _ => panic!(
+                    "Gmail API connection failed: {}",
+                    status["error"].as_str().unwrap_or("timeout")
+                ),
+            }
+        }
+        let state = post("/api/gmail/status", "{}");
+        assert_eq!(state["connected"], true);
+        assert_eq!(state["sending_available"], false);
+        assert_eq!(post("/api/gmail/disconnect", "{}")["ok"], true);
+        worker.join().unwrap();
     }
 
     #[test]

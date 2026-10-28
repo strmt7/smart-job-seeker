@@ -340,6 +340,60 @@ impl CdpDriver {
         Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
     }
 
+    /// Inspect rendered visibility and derive a structural selector without changing the page.
+    fn control_visibility_and_path(&mut self, node: u64) -> Result<(bool, String), DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Form field disappeared during visibility inspection".into())
+            })?
+            .to_owned();
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected) return null;
+            const visibleNode = this instanceof HTMLInputElement && this.type === 'file' ? this.parentElement : this;
+            if (!visibleNode) return null;
+            const style = getComputedStyle(visibleNode);
+            const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+            const parts = []; let current = this;
+            while (current && current.nodeType === 1) {
+                if (parts.length >= 64 || !current.localName) return null;
+                let position = 1, sibling = current.previousElementSibling;
+                while (sibling) { if (++position > 5000) return null; sibling = sibling.previousElementSibling; }
+                parts.unshift(CSS.escape(current.localName) + ':nth-child(' + position + ')');
+                current = current.parentElement;
+            }
+            const path = parts.join(' > ');
+            return path.length <= 4096 ? {visible, path} : null;
+        }"#,"returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        let value = result.pointer("/result/value").ok_or_else(|| {
+            DriverError("Could not inspect field visibility; manual review is needed".into())
+        })?;
+        let visible = value
+            .get("visible")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                DriverError("Field visibility is unavailable; manual review is needed".into())
+            })?;
+        let path = value
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| {
+                DriverError("Field selector is unavailable; manual review is needed".into())
+            })?;
+        Ok((visible, path.to_owned()))
+    }
+
     /// Read the form as it exists right now.
     fn read_form(
         &mut self,
@@ -352,6 +406,8 @@ impl CdpDriver {
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
+        let mut custom_nodes = Vec::new();
+        let mut next_nodes = Vec::new();
         let mut text = String::new();
         let mut possible_next_step = false;
         walk_with_visibility(&root, false, false, &mut |node, in_control, hidden| {
@@ -387,7 +443,11 @@ impl CdpDriver {
                     caption.as_str(),
                     "next" | "next step" | "continue" | "weiter" | "suivant" | "siguiente"
                 ) {
-                    possible_next_step = true;
+                    if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                        next_nodes.push(id);
+                    } else {
+                        possible_next_step = true;
+                    }
                 }
             }
             for key in ["class", "id", "name", "src", "title", "data-sitekey"] {
@@ -408,24 +468,32 @@ impl CdpDriver {
             }
             // Custom ARIA controls are not handled by the native-field driver.
             // Do not silently omit a required question on an otherwise readable form.
-            if !matches!(tag.as_str(), "input" | "textarea" | "select")
-                && attrs
+            if (attrs.contains_key("required")
+                || attrs
                     .get("aria-required")
-                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
-                && attrs.get("role").is_some_and(|role| {
-                    matches!(
-                        role.to_ascii_lowercase().as_str(),
-                        "combobox"
-                            | "listbox"
-                            | "textbox"
-                            | "checkbox"
-                            | "radio"
-                            | "spinbutton"
-                            | "slider"
-                    )
-                })
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true")))
+                && attrs
+                    .get("role")
+                    .is_some_and(|role| match role.to_ascii_lowercase().as_str() {
+                        "combobox" | "listbox" => tag != "select",
+                        "spinbutton" => {
+                            !(tag == "input"
+                                && attrs
+                                    .get("type")
+                                    .is_some_and(|kind| kind.eq_ignore_ascii_case("number")))
+                        }
+                        "slider" => true,
+                        "textbox" | "checkbox" | "radio" => {
+                            !matches!(tag.as_str(), "input" | "textarea" | "select")
+                        }
+                        _ => false,
+                    })
             {
-                wall_flags.push("a required custom control needs manual review".into());
+                if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                    custom_nodes.push(id);
+                } else {
+                    wall_flags.push("a required custom control needs manual review".into());
+                }
             }
             if tag == "label" {
                 let mut label_text = String::new();
@@ -520,22 +588,7 @@ impl CdpDriver {
                         options: options_of(node),
                     };
                     if hidden {
-                        hidden_selectors.insert(selector_for(&control));
-                        hidden_selectors.insert(control.tag.clone());
-                        if let Some(name) = attrs.get("name").filter(|name| !name.is_empty()) {
-                            hidden_selectors.insert(format!(
-                                "{}[name=\"{}\"]",
-                                control.tag,
-                                css_string(name)
-                            ));
-                        }
-                        if let Some(kind) = attrs.get("type") {
-                            hidden_selectors.insert(format!(
-                                "{}[type=\"{}\"]",
-                                control.tag,
-                                css_string(kind)
-                            ));
-                        }
+                        add_hidden_selectors(&mut hidden_selectors, &control);
                     } else {
                         controls.push(control);
                     }
@@ -551,6 +604,70 @@ impl CdpDriver {
             }
             true
         });
+
+        // Determine rendered visibility and a unique structural selector from
+        // the live page. Bound both the count and the total inspection time.
+        controls.retain(|control| {
+            let ignored = control.attrs.get("type").is_some_and(|kind| {
+                matches!(
+                    kind.to_ascii_lowercase().as_str(),
+                    "hidden" | "submit" | "button" | "reset" | "image"
+                )
+            });
+            if ignored {
+                add_hidden_selectors(&mut hidden_selectors, control);
+            }
+            !ignored
+        });
+        if controls
+            .len()
+            .saturating_add(custom_nodes.len())
+            .saturating_add(next_nodes.len())
+            > 160
+        {
+            return Err(DriverError(
+                "Form has too many controls for one inspection; manual review is needed".into(),
+            ));
+        }
+        let mut css_paths = HashMap::new();
+        let start = Instant::now();
+        let previous_timeout = self.cdp.timeout;
+        self.cdp.timeout = Duration::from_secs(1);
+        let checked = (|| -> Result<Vec<Control>, DriverError> {
+            let mut visible = Vec::new();
+            for control in controls {
+                if start.elapsed() > Duration::from_secs(8) {
+                    return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
+                }
+                let (rendered, path) = self.control_visibility_and_path(control.node_id)?;
+                if rendered {
+                    css_paths.insert(control.node_id, path);
+                    visible.push(control);
+                } else {
+                    add_hidden_selectors(&mut hidden_selectors, &control);
+                }
+            }
+            for node in custom_nodes {
+                if start.elapsed() > Duration::from_secs(8) {
+                    return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
+                }
+                if self.control_visibility_and_path(node)?.0 {
+                    wall_flags.push("a required custom control needs manual review".into());
+                }
+            }
+            for node in next_nodes {
+                if possible_next_step {
+                    break;
+                }
+                if start.elapsed() > Duration::from_secs(8) {
+                    return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
+                }
+                possible_next_step = self.control_visibility_and_path(node)?.0;
+            }
+            Ok(visible)
+        })();
+        self.cdp.timeout = previous_timeout;
+        let controls = checked?;
 
         // Resolve ID references after collecting the controls because labels can
         // occur anywhere in the document, including after the input itself.
@@ -612,7 +729,10 @@ impl CdpDriver {
         for control in controls {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector) {
-                format!("{selector}:not([hidden]):not([hidden] *)")
+                css_paths
+                    .get(&control.node_id)
+                    .cloned()
+                    .ok_or_else(|| DriverError("Visible field has no stable selector".into()))?
             } else {
                 selector
             };
@@ -1339,6 +1459,17 @@ struct Control {
     tag: String,
     attrs: HashMap<String, String>,
     options: Vec<String>,
+}
+
+fn add_hidden_selectors(hidden: &mut std::collections::HashSet<String>, control: &Control) {
+    hidden.insert(selector_for(control));
+    hidden.insert(control.tag.clone());
+    if let Some(name) = control.attrs.get("name").filter(|name| !name.is_empty()) {
+        hidden.insert(format!("{}[name=\"{}\"]", control.tag, css_string(name)));
+    }
+    if let Some(kind) = control.attrs.get("type") {
+        hidden.insert(format!("{}[type=\"{}\"]", control.tag, css_string(kind)));
+    }
 }
 
 fn attributes(node: &Value) -> HashMap<String, String> {

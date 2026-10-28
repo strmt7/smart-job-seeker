@@ -270,6 +270,10 @@ Page-node and text traversal use an explicit depth-first work stack, reducing ca
 
 Unparseable or excessively nested browser responses now produce an explicit inspection error instead of being ignored until another response or timeout. The parser's nesting limit still applies.
 
-Controls carrying the HTML hidden attribute or inside an element with that attribute are excluded from form inspection, and selectors avoid matching them when they duplicate an active field. CSS-hidden controls are not yet detected.
+Controls carrying the HTML hidden attribute or inside an element with that attribute are excluded from form inspection. The driver also checks rendered visibility for native controls and uses structural selectors when hidden and active fields share identifiers. A visually hidden file input remains available when its parent is rendered. Visibility inspection is limited to 160 controls and checks an eight-second budget between fields; a form that exceeds either requires manual review.
+Required custom ARIA widgets and possible next-step buttons are also checked for rendered visibility. Visual state such as opacity and overlays is not fully modeled.
+Required inputs with combobox and other complex widget roles are treated as custom controls too; a typed value alone may not select a valid option.
+
+Gmail can also be connected with an app password. Waypoint checks SMTP and IMAP authentication on a background task without reading or sending a message and saves successful credentials with Windows DPAPI. Actual in-app email delivery and mailbox reading are not implemented. A live test account authenticated through the local API, checked connection status, and disconnected in a temporary workspace; no account details are stored in this repository.
 
 A fictional two-section browser fixture checks that inspecting again after the section changes detects and fills the newly visible field. Navigation between steps in the product remains manual; the fixture's local button is not an employer application.

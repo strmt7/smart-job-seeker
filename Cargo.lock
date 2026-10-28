@@ -4812,6 +4812,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "getrandom 0.3.4",
+ "native-tls",
  "percent-encoding",
  "processkit",
  "quick-xml",

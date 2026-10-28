@@ -665,6 +665,156 @@ fn reinspection_tracks_a_revealed_form_section() {
 }
 
 #[test]
+#[ignore = "launches one local browser and changes CSS-hidden sections without submitting"]
+fn css_hidden_sections_are_reinspected_and_visible_field_is_filled() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let first = driver
+        .open(&file_url("form_css_steps.html"))
+        .expect("open fixture");
+    assert!(first.walls.is_empty(), "{:?}", first.walls);
+    assert!(first.schema.multi_step);
+    assert!(
+        first
+            .schema
+            .fields
+            .iter()
+            .any(|field| matches!(field.field_type, FormFieldType::File)),
+        "visually hidden file input should remain attachable"
+    );
+    let field = first
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "First answer")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: field.selector.clone(),
+            value: PacketValue::Text("First".into()),
+        })
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#next".into(),
+        })
+        .unwrap();
+    let second = driver.inspect_current().expect("inspect revealed section");
+    assert!(second.walls.is_empty(), "{:?}", second.walls);
+    assert!(
+        !second.schema.multi_step,
+        "the previous step's CSS-hidden button must not count"
+    );
+    assert!(!second
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "First answer"));
+    let field = second
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Second answer")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: field.selector.clone(),
+            value: PacketValue::Text("Second".into()),
+        })
+        .unwrap();
+    assert_eq!(
+        driver
+            .read_attribute(&field.selector, "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("Second")
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser with a fictional CSS-hidden custom widget"]
+fn required_custom_widget_is_reported_only_when_rendered() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let first = driver
+        .open(&file_url("form_css_custom.html"))
+        .expect("open fixture");
+    assert!(first.walls.is_empty(), "{:?}", first.walls);
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#reveal".into(),
+        })
+        .unwrap();
+    let second = driver.inspect_current().expect("inspect revealed widget");
+    assert!(
+        second
+            .walls
+            .iter()
+            .any(|wall| wall.contains("required custom control")),
+        "{:?}",
+        second.walls
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser with a fictional native-input combobox"]
+fn required_input_combobox_requires_manual_review() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let form = driver
+        .open(&file_url("form_input_combobox.html"))
+        .expect("open fixture");
+    assert!(
+        form.walls
+            .iter()
+            .any(|wall| wall.contains("required custom control")),
+        "{:?}",
+        form.walls
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser with fictional native controls"]
+fn native_select_and_number_roles_remain_supported() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let form = driver
+        .open(&file_url("form_native_roles.html"))
+        .expect("open fixture");
+    assert!(form.walls.is_empty(), "{:?}", form.walls);
+    assert_eq!(form.schema.fields.len(), 2);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser with a bounded synthetic form"]
+fn oversized_form_reports_manual_review() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let error = driver
+        .open(&file_url("form_many_controls.html"))
+        .unwrap_err();
+    assert!(
+        error.0.contains("too many controls") && error.0.contains("manual review"),
+        "{error}"
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_changed_page_voids_the_approval_against_a_real_site() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");

@@ -20,6 +20,9 @@ pub fn busy() -> bool {
 }
 
 pub fn start(id: String, client: Vec<u8>, ws: &Workspace) -> Result<(), String> {
+    if crate::gmail_password::busy() {
+        return Err("A Gmail connection is already running".into());
+    }
     if !ws.can_store_gmail_credentials() {
         return Err("Gmail connection requires Windows DPAPI credential storage".into());
     }

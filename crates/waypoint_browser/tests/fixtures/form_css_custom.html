@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Custom control visibility fixture</title>
+<style>.inactive { display:none }</style></head>
+<body><form>
+  <label>Name<input name="name"></label>
+  <section id="custom" class="inactive"><div role="combobox" aria-label="Location" aria-required="true">Choose a location</div></section>
+  <button type="button" id="reveal" onclick="document.getElementById('custom').classList.remove('inactive')">Show section</button>
+</form></body></html>

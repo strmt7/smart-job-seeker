@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local form limit fixture</title></head>
+<body><form id="form"></form><script>
+for (let i = 0; i < 161; i++) {
+  const input = document.createElement('input'); input.name = `field-${i}`;
+  document.getElementById('form').append(input);
+}
+</script></body></html>

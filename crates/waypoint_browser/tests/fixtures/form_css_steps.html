@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>CSS section fixture</title>
+<style>.inactive { display:none } .upload { display:none }</style></head>
+<body><form>
+  <section id="first"><label>First answer<input name="answer" oninput="this.setAttribute('data-seen',this.value)"></label>
+    <button id="next" type="button" onclick="document.getElementById('first').classList.add('inactive');document.getElementById('second').classList.remove('inactive')">Next</button>
+  </section>
+  <section id="second" class="inactive"><label>Second answer<input name="answer" oninput="this.setAttribute('data-seen',this.value)"></label></section>
+  <label>Upload CV<input id="resume" type="file" class="upload"></label>
+</form></body></html>
