@@ -290,3 +290,5 @@ The multi-step review heuristic also recognizes visible custom controls with `ro
 
 Manual-review reasons for required custom controls include a bounded `aria-label` when provided, helping locate the question in the browser. Controls without such a label remain generic; detection does not fill custom widgets.
 Bounded, unambiguous `aria-labelledby` references can also identify these questions. Missing or duplicate references leave the reason generic rather than guessing a label.
+
+Pending local-model form answers can be recovered after a reload in the same browser session. The recovered answer and its sources appear separately for review; they are not inserted into a newly inspected form. The existing server-side freshness check can reject an answer when the original session, page or supporting information changed. Unsaved form edits are not recovered.
