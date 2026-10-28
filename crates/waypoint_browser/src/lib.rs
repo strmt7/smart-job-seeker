@@ -408,6 +408,7 @@ impl CdpDriver {
         let mut wall_flags: Vec<String> = vec![];
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
+        let mut next_references = Vec::new();
         let mut text = String::new();
         let mut possible_next_step = false;
         walk_with_visibility(&root, false, false, &mut |node, in_control, hidden| {
@@ -420,11 +421,17 @@ impl CdpDriver {
             // form controls, so every node is checked.
             let attrs = attributes(node);
             if (tag == "button"
+                || attrs
+                    .get("role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("button"))
                 || (tag == "input"
                     && attrs.get("type").is_some_and(|kind| {
                         matches!(kind.to_ascii_lowercase().as_str(), "button" | "submit")
                     })))
                 && !attrs.contains_key("disabled")
+                && !attrs
+                    .get("aria-disabled")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
                 && !hidden
             {
                 let mut caption = String::new();
@@ -439,7 +446,16 @@ impl CdpDriver {
                     .collect::<Vec<_>>()
                     .join(" ")
                     .to_lowercase();
-                if matches!(
+                if let Some(ids) = attrs
+                    .get("aria-labelledby")
+                    .filter(|ids| !ids.is_empty() && ids.len() <= 512)
+                {
+                    if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                        next_references.push((id, ids.clone()));
+                    } else {
+                        possible_next_step = true;
+                    }
+                } else if matches!(
                     caption.as_str(),
                     "next" | "next step" | "continue" | "weiter" | "suivant" | "siguiente"
                 ) {
@@ -604,6 +620,68 @@ impl CdpDriver {
             }
             true
         });
+
+        // Accessible names may be provided by nodes elsewhere in the page.
+        // Resolve only bounded, unambiguous references; unresolved names need
+        // review rather than silently dropping a possible navigation control.
+        if next_references.len() > 160 {
+            return Err(DriverError(
+                "Form has too many controls for one inspection; manual review is needed".into(),
+            ));
+        }
+        let mut next_labels: HashMap<String, Option<String>> = HashMap::new();
+        let mut wanted_next = std::collections::HashSet::new();
+        for (_, ids) in &next_references {
+            for id in ids.split_whitespace().take(16) {
+                wanted_next.insert(id.to_owned());
+            }
+        }
+        walk(&root, false, &mut |node, _| {
+            let attrs = attributes(node);
+            if let Some(id) = attrs.get("id").filter(|id| wanted_next.contains(*id)) {
+                if next_labels.contains_key(id) {
+                    next_labels.insert(id.clone(), None);
+                } else {
+                    let mut label = String::new();
+                    collect_text(node, false, &mut label);
+                    let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+                    next_labels.insert(
+                        id.clone(),
+                        (!label.is_empty() && label.len() <= 1000).then_some(label),
+                    );
+                }
+            }
+            true
+        });
+        for (node, ids) in next_references {
+            let parts: Option<Vec<_>> = if ids.split_whitespace().count() > 16 {
+                None
+            } else {
+                ids.split_whitespace()
+                    .map(|id| next_labels.get(id).and_then(Option::as_ref))
+                    .collect()
+            };
+            match parts {
+                Some(parts)
+                    if matches!(
+                        parts
+                            .iter()
+                            .map(|part| part.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .to_lowercase()
+                            .as_str(),
+                        "next" | "next step" | "continue" | "weiter" | "suivant" | "siguiente"
+                    ) =>
+                {
+                    next_nodes.push(node)
+                }
+                None => wall_flags.push(
+                    "a button has an unresolved accessible name; manual review is needed".into(),
+                ),
+                _ => {}
+            }
+        }
 
         // Determine rendered visibility and a unique structural selector from
         // the live page. Bound both the count and the total inspection time.

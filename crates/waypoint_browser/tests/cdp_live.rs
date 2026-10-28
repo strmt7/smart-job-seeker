@@ -56,6 +56,21 @@ fn flags_a_possible_next_step_without_clicking_it() {
 }
 
 #[test]
+#[ignore = "launches one local browser without navigating or submitting"]
+fn flags_accessibly_named_custom_next_control_without_clicking() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_accessible_steps.html"))
+        .unwrap();
+    assert!(live.schema.multi_step);
+    assert_eq!(
+        driver.read_attribute("#next", "data-clicked").unwrap(),
+        None
+    );
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser and immediately exercises startup timeout cleanup"]
 fn timed_out_browser_start_cleans_its_private_profile() {
     let temp = std::env::temp_dir();
