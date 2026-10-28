@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local application links</title></head>
+<body>
+  <a href="application-form.html" aria-label="Apply now">Apply now</a>
+  <a href="application-other.html" aria-label="Apply for this job"><span>Start</span></a>
+  <a href="not-an-application.html" aria-label="Read job details">Apply now</a>
+  <a href="fallback.html" aria-label=" ">Apply now</a>
+  <span id="apply-label">Apply</span><span id="now-label">now</span>
+  <a href="referenced.html" aria-labelledby="apply-label now-label" aria-label="Read details">More</a>
+  <a href="missing.html" aria-labelledby="missing-label">Apply now</a>
+  <span id="ambiguous">Apply now</span><span id="ambiguous">Read details</span>
+  <a href="ambiguous.html" aria-labelledby="ambiguous">Apply now</a>
+</body></html>

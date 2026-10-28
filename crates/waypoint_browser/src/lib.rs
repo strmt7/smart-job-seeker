@@ -1324,15 +1324,72 @@ fn attributes(node: &Value) -> HashMap<String, String> {
 }
 
 fn application_links_from_document(root: &Value) -> Vec<String> {
+    let mut wanted = std::collections::HashSet::new();
+    walk(root, false, &mut |node, _| {
+        if node
+            .get("nodeName")
+            .and_then(Value::as_str)
+            .is_some_and(|tag| tag.eq_ignore_ascii_case("a"))
+        {
+            let attrs = attributes(node);
+            if let Some(ids) = attrs.get("aria-labelledby").filter(|ids| ids.len() <= 512) {
+                for id in ids.split_whitespace().take(16) {
+                    if wanted.len() < 160 {
+                        wanted.insert(id.to_owned());
+                    }
+                }
+            }
+        }
+        true
+    });
+    let mut referenced: HashMap<String, Option<String>> = HashMap::new();
+    walk(root, false, &mut |node, _| {
+        let attrs = attributes(node);
+        if let Some(id) = attrs.get("id").filter(|id| wanted.contains(*id)) {
+            if referenced.contains_key(id) {
+                referenced.insert(id.clone(), None);
+            } else {
+                let mut text = String::new();
+                collect_text(node, false, &mut text);
+                let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                referenced.insert(
+                    id.clone(),
+                    (!text.is_empty() && text.len() <= 1000).then_some(text),
+                );
+            }
+        }
+        true
+    });
     let mut links = Vec::new();
     walk(root, false, &mut |node, _| {
         let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
         if tag.eq_ignore_ascii_case("a") {
             let attrs = attributes(node);
             let mut label = String::new();
-            collect_text(node, false, &mut label);
-            if let Some(aria) = attrs.get("aria-label") {
+            if let Some(ids) = attrs.get("aria-labelledby") {
+                let parts: Vec<_> = ids.split_whitespace().collect();
+                if ids.len() > 512 || parts.is_empty() || parts.len() > 16 {
+                    return true;
+                }
+                let resolved: Option<Vec<_>> = parts
+                    .iter()
+                    .map(|id| referenced.get(*id).and_then(Option::as_ref))
+                    .collect();
+                let Some(resolved) = resolved else {
+                    return true;
+                };
+                label = resolved
+                    .into_iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            } else if let Some(aria) = attrs
+                .get("aria-label")
+                .filter(|label| !label.trim().is_empty())
+            {
                 label.push_str(aria);
+            } else {
+                collect_text(node, false, &mut label);
             }
             let label = label
                 .split_whitespace()
@@ -1400,15 +1457,45 @@ fn options_of(node: &Value) -> Vec<String> {
 /// id, then name, then tag[type=...] — the same knobs a site actually exposes.
 fn selector_for(control: &Control) -> String {
     if let Some(id) = control.attrs.get("id").filter(|v| !v.is_empty()) {
-        return format!("#{id}");
+        let bytes = id.as_bytes();
+        let simple = bytes
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'-')
+            && (bytes[0].is_ascii_alphabetic()
+                || bytes[0] == b'_'
+                || (bytes[0] == b'-' && bytes.len() > 1 && !bytes[1].is_ascii_digit()));
+        return if simple {
+            format!("#{id}")
+        } else {
+            format!("[id=\"{}\"]", css_string(id))
+        };
     }
     if let Some(name) = control.attrs.get("name").filter(|v| !v.is_empty()) {
-        return format!("{}[name=\"{name}\"]", control.tag);
+        return format!("{}[name=\"{}\"]", control.tag, css_string(name));
     }
     if let Some(t) = control.attrs.get("type") {
-        return format!("{}[type={t}]", control.tag);
+        return format!("{}[type=\"{}\"]", control.tag, css_string(t));
     }
     control.tag.clone()
+}
+
+/// Escape a DOM attribute value inside a double-quoted CSS string.
+fn css_string(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\0' => escaped.push('\u{fffd}'),
+            '"' | '\\' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+                escaped.push_str(&format!("\\{:x} ", c as u32))
+            }
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 fn collect_text(node: &Value, skip: bool, out: &mut String) {

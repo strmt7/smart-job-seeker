@@ -515,6 +515,63 @@ fn multiple_choice_fill_detects_later_changes_and_rejects_unavailable_options() 
 }
 
 #[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn application_links_use_the_accessible_label_without_navigating() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    driver
+        .open(&file_url("application_accessible_links.html"))
+        .expect("open fixture");
+    let links = driver.application_links().expect("read links");
+    assert_eq!(
+        links,
+        vec![
+            "application-form.html",
+            "application-other.html",
+            "fallback.html",
+            "referenced.html"
+        ]
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn generated_ids_and_quoted_names_are_fillable() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_generated_ids.html"))
+        .expect("open fixture");
+    for (label, value) in [("First name", "Example"), ("Last name", "Person")] {
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: field.selector.clone(),
+                value: PacketValue::Text(value.into()),
+            })
+            .expect("fill generated selector");
+        assert_eq!(
+            driver
+                .read_attribute(&field.selector, "data-seen")
+                .unwrap()
+                .as_deref(),
+            Some(value)
+        );
+    }
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_changed_page_voids_the_approval_against_a_real_site() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");

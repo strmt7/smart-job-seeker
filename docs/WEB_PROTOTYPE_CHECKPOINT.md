@@ -255,3 +255,7 @@ Native select fields now expose enabled options inside option groups for review 
 Native multiple-select questions can now be answered in the review panel using individual checkboxes. The driver checks that each choice is unique and available, fills the selection, and verifies that the page retained it. Local fixtures exercised the panel and browser without submitting; custom multi-select widgets still require manual handling.
 
 For long multi-select lists, the review panel renders at most 40 choices at a time and offers paging and a filter. Selections remain checked while the filter or page changes. This limits the panel's rendered controls; it does not bound the memory consumed by the page or browser itself.
+
+Application-link inspection resolves bounded accessible label references and uses a nonempty accessible label in preference to visible text, rather than concatenating them. Missing or ambiguous references are not guessed. The destination still requires user review before navigation; the fixture only reads local links.
+
+Form selectors now quote generated IDs and escape attribute values when needed, so punctuation, leading digits, and quotes do not make otherwise supported fields inaccessible. A local browser fixture filled two such fields without submission.
