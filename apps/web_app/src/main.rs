@@ -70,6 +70,19 @@ fn remaining_session_seconds(ttl: Duration, elapsed: Duration) -> u64 {
     ttl.saturating_sub(elapsed).as_secs()
 }
 
+fn inspection_failure_reason(error: &str) -> String {
+    let reason: String = error
+        .chars()
+        .take(240)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    if reason.trim().is_empty() {
+        "Application inspection failed".to_string()
+    } else {
+        format!("Inspection failed: {reason}")
+    }
+}
+
 struct ReviewSession {
     id: String,
     job_id: JobIdentityId,
@@ -939,7 +952,7 @@ fn serve(
             .manual_reviews()
             .map_err(|e| e.to_string())?
             .iter()
-            .map(|review| json!({"job_id":review.job_id,"reason":review.reason}))
+            .map(|review| json!({"job_id":review.job_id,"reason":review.reason,"revision":review.revision,"reason_count":review.reason_count}))
             .collect();
         let profile = match ws.candidate_profile().map_err(|e| e.to_string())? {
             Some(content) => {
@@ -2226,13 +2239,41 @@ fn serve(
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
                 .map_err(|e| e.to_string())?;
             let required = body["required"].as_bool().ok_or("missing review status")?;
-            if required {
+            let changed = if required {
                 ws.mark_manual_review(&id, "Manual review requested", now())
                     .map_err(|e| e.to_string())?;
+                true
             } else {
-                ws.clear_manual_review(&id).map_err(|e| e.to_string())?;
-            }
-            json_reply(stream, "200 OK", json!({"ok":true}));
+                let revision = body["revision"]
+                    .as_i64()
+                    .filter(|value| *value >= 0)
+                    .ok_or("missing or invalid review revision")?;
+                ws.clear_manual_review_if_current(&id, revision)
+                    .map_err(|e| e.to_string())?
+            };
+            json_reply(stream, "200 OK", json!({"ok":true,"changed":changed}));
+        }
+        "/api/review/reasons" => {
+            let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
+                .map_err(|e| e.to_string())?;
+            let reasons = ws.manual_review_reasons(&id).map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"reasons": reasons}));
+        }
+        "/api/review/resolve" => {
+            let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
+                .map_err(|e| e.to_string())?;
+            let reason = body["reason"]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .ok_or("missing review reason")?;
+            let revision = body["revision"]
+                .as_i64()
+                .filter(|value| *value >= 0)
+                .ok_or("missing or invalid review revision")?;
+            let removed = ws
+                .clear_manual_review_reason(&id, reason, revision)
+                .map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"removed": removed}));
         }
         "/api/form/inspect-start" => {
             if application_check::busy()
@@ -2299,7 +2340,7 @@ fn serve(
             let (mut driver, mut preview) = match result {
                 Ok(value) => value,
                 Err(error) => {
-                    ws.mark_manual_review(&job_id, "Application needs manual review", now())
+                    ws.mark_manual_review(&job_id, &inspection_failure_reason(&error), now())
                         .map_err(|e| e.to_string())?;
                     let record_error = match random_id().and_then(|id| {
                         attempt_record::AttemptRecord::start(ws, &job_id, &id, now())
@@ -3480,6 +3521,24 @@ fn serve_loop(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn inspection_failure_reason_is_readable_and_bounded() {
+        assert_eq!(
+            super::inspection_failure_reason("  \n"),
+            "Application inspection failed"
+        );
+        assert_eq!(
+            super::inspection_failure_reason("Could not open\npage"),
+            "Inspection failed: Could not open page"
+        );
+        assert_eq!(
+            super::inspection_failure_reason(&"é".repeat(300))
+                .chars()
+                .count(),
+            "Inspection failed: ".chars().count() + 240
+        );
+    }
+
+    #[test]
     fn review_session_remaining_time_is_bounded_by_elapsed_time() {
         use std::time::Duration;
         let ttl = Duration::from_secs(120);
@@ -3498,6 +3557,88 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn review_reason_endpoints_resolve_only_the_requested_reason() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/fixture","title":"Engineer","employer":"Fixture"}), 1).unwrap();
+            let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            ws.mark_manual_review(&id, "First\nissue", 1).unwrap();
+            ws.mark_manual_review(&id, "Second issue", 2).unwrap();
+            tx.send(id.as_str().to_owned()).unwrap();
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+            }
+            let remaining = ws.manual_review_reasons(&id).unwrap();
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(remaining[0].reason, "Second issue");
+            assert_eq!(ws.manual_reviews().unwrap().len(), 1);
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+            }
+            assert!(ws.manual_reviews().unwrap().is_empty());
+        });
+        let id = rx.recv().unwrap();
+        let request = |path: &str, body: Value| -> Value {
+            let body = body.to_string();
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let before = request("/api/review/reasons", json!({"id":id}));
+        assert_eq!(before["reasons"].as_array().unwrap().len(), 2);
+        let revision = before["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["reason"] == "First\nissue")
+            .unwrap()["revision"]
+            .as_i64()
+            .unwrap();
+        let outcome = request(
+            "/api/review/resolve",
+            json!({"id":id,"reason":"First\nissue","revision":revision}),
+        );
+        assert_eq!(outcome["removed"], true);
+        let after = request("/api/review/reasons", json!({"id":id}));
+        assert_eq!(after["reasons"][0]["reason"], "Second issue");
+        let stale_revision = after["reasons"][0]["revision"].as_i64().unwrap();
+        assert_eq!(
+            request("/api/review", json!({"id":id,"required":true}))["changed"],
+            true
+        );
+        assert_eq!(
+            request(
+                "/api/review",
+                json!({"id":id,"required":false,"revision":stale_revision})
+            )["changed"],
+            false
+        );
+        let current = request("/api/review/reasons", json!({"id":id}));
+        let current_revision = current["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["revision"].as_i64().unwrap())
+            .max()
+            .unwrap();
+        assert_eq!(
+            request(
+                "/api/review",
+                json!({"id":id,"required":false,"revision":current_revision})
+            )["changed"],
+            true
+        );
+        worker.join().unwrap();
+    }
 
     #[test]
     fn duplicate_comparison_is_invalid_after_a_user_decision() {

@@ -134,3 +134,15 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 .document-row{gap:8px;align-items:center}.document-identity{display:flex;align-items:center;gap:12px;flex-basis:100%;min-width:0;margin-bottom:4px}.document-icon{display:grid;place-items:center;flex:0 0 36px;width:36px;height:43px;border:1.5px solid #43818a;border-radius:4px;color:#17636a;font-size:9px;font-weight:700;letter-spacing:.02em}.document-name{min-width:0}.document-name strong,.document-name small{display:block;overflow-wrap:anywhere}.document-name strong{font-size:13px;color:#172b3c}.document-name small{margin-top:4px;font-size:12px;color:#72828f;font-weight:400}.document-row button{border:1px solid #d7e7e5;background:#f7fbfa;color:#165d62}.document-row button:hover:not(:disabled){background:#e5f3f0}
 
 .form-session-content{border:0;margin:0;padding:0;min-width:0}.form-session-content:disabled{opacity:.72}
+
+.job-review-badge{display:inline-block;margin-top:6px;padding:4px 8px;border-radius:12px;background:#fff1d8;color:#805514;font-size:11px;font-weight:600}.selected-review-notice{margin:10px 0;color:#805514;font-size:13px;overflow-wrap:anywhere}
+
+#selected-job button,#selected-job summary,#selected-job a{scroll-margin-top:76px}
+
+#selected-job{height:max-content}
+
+.selected-scores{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}.selected-scores .score{white-space:normal;text-align:right}
+
+.selected-review-notice,.job-more .review-label{white-space:pre-line}
+
+.review-reason-manager{margin:8px 0 12px;font-size:13px}.review-reason-manager summary{cursor:pointer;color:#176a70;font-weight:600}.review-reason-list{margin-top:8px;max-width:720px}.review-reason-row{display:flex;justify-content:space-between;align-items:start;gap:12px;padding:8px 0;border-top:1px solid #e8eeee}.review-reason-row span{overflow-wrap:anywhere;white-space:pre-wrap}.review-reason-row button{flex-shrink:0;padding:6px 10px;font-size:12px}

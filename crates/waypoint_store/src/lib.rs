@@ -215,6 +215,44 @@ const MIGRATIONS: &[&str] = &[
      CREATE TRIGGER duplicate_epoch_job_insert AFTER INSERT ON jobs BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
      CREATE TRIGGER duplicate_epoch_job_delete AFTER DELETE ON jobs BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
      UPDATE meta SET value='21' WHERE key='schema_version';",
+    // v22 — retain distinct unresolved reasons while preserving the existing
+    // one-row-per-job queue API and migrating earlier review flags.
+    "CREATE TABLE manual_review_reasons(
+       job_id TEXT NOT NULL REFERENCES manual_reviews(job_id) ON DELETE CASCADE,
+       reason TEXT NOT NULL,
+       updated_at INTEGER NOT NULL,
+       PRIMARY KEY(job_id, reason)
+     );
+     INSERT INTO manual_review_reasons(job_id,reason,updated_at)
+       SELECT job_id,reason,updated_at FROM manual_reviews;
+     CREATE TRIGGER manual_review_reason_limit BEFORE INSERT ON manual_review_reasons
+       WHEN NOT EXISTS(SELECT 1 FROM manual_review_reasons WHERE job_id=NEW.job_id AND reason=NEW.reason)
+        AND (SELECT COUNT(*) FROM manual_review_reasons WHERE job_id=NEW.job_id)>=20
+       BEGIN SELECT RAISE(ABORT, 'Manual review has 20 unresolved reasons; review and clear them first'); END;
+     CREATE TRIGGER manual_review_reason_insert AFTER INSERT ON manual_reviews
+       BEGIN INSERT INTO manual_review_reasons(job_id,reason,updated_at) VALUES(NEW.job_id,NEW.reason,NEW.updated_at)
+         ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at; END;
+     CREATE TRIGGER manual_review_reason_update AFTER UPDATE ON manual_reviews
+       BEGIN INSERT INTO manual_review_reasons(job_id,reason,updated_at) VALUES(NEW.job_id,NEW.reason,NEW.updated_at)
+         ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at; END;
+     UPDATE meta SET value='22' WHERE key='schema_version';",
+    // v23 — a monotonic revision prevents resolving an occurrence that was
+    // reported again after the user opened the review panel.
+    "ALTER TABLE manual_review_reasons ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+     INSERT INTO meta(key,value) VALUES('manual_review_revision','0');
+     DROP TRIGGER manual_review_reason_insert;
+     DROP TRIGGER manual_review_reason_update;
+     CREATE TRIGGER manual_review_reason_insert AFTER INSERT ON manual_reviews
+       BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='manual_review_revision';
+         INSERT INTO manual_review_reasons(job_id,reason,updated_at,revision)
+           VALUES(NEW.job_id,NEW.reason,NEW.updated_at,(SELECT CAST(value AS INTEGER) FROM meta WHERE key='manual_review_revision'))
+           ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at,revision=excluded.revision; END;
+     CREATE TRIGGER manual_review_reason_update AFTER UPDATE ON manual_reviews
+       BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='manual_review_revision';
+         INSERT INTO manual_review_reasons(job_id,reason,updated_at,revision)
+           VALUES(NEW.job_id,NEW.reason,NEW.updated_at,(SELECT CAST(value AS INTEGER) FROM meta WHERE key='manual_review_revision'))
+           ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at,revision=excluded.revision; END;
+     UPDATE meta SET value='23' WHERE key='schema_version';",
 ];
 
 pub mod documents;

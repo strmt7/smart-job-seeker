@@ -478,6 +478,34 @@ impl Workspace {
         Ok(self.store.manual_reviews()?)
     }
 
+    pub fn manual_review_reasons(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<Vec<waypoint_store::review::ReviewReason>, WorkspaceError> {
+        Ok(self.store.manual_review_reasons(id.as_str())?)
+    }
+
+    pub fn clear_manual_review_reason(
+        &self,
+        id: &JobIdentityId,
+        reason: &str,
+        revision: i64,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .clear_manual_review_reason(id.as_str(), reason, revision)?)
+    }
+
+    pub fn clear_manual_review_if_current(
+        &self,
+        id: &JobIdentityId,
+        revision: i64,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .clear_manual_review_if_current(id.as_str(), revision)?)
+    }
+
     pub fn clear_manual_review(&self, id: &JobIdentityId) -> Result<(), WorkspaceError> {
         self.store.clear_manual_review(id.as_str())?;
         Ok(())
