@@ -444,7 +444,7 @@ fn a_required_custom_control_is_reported_alongside_native_fields() {
     assert!(
         live.walls
             .iter()
-            .any(|w| w.contains("required custom control")),
+            .any(|w| w.contains("required custom control") && w.contains("Preferred location")),
         "the unsupported required question must be reported: {:?}",
         live.walls
     );

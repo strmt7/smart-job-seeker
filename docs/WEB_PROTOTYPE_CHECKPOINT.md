@@ -287,3 +287,5 @@ The unsent email editor can request a two-pass local-model body suggestion using
 A fictional two-section browser fixture checks that inspecting again after the section changes detects and fills the newly visible field. Navigation between steps in the product remains manual; the fixture's local button is not an employer application.
 
 The multi-step review heuristic also recognizes visible custom controls with `role=button` and bounded, unambiguous `aria-labelledby` names. Unresolved referenced names are flagged for manual review. A local Chromium fixture verified detection without clicking or submitting; this still cannot identify every next-step control and does not advance the application.
+
+Manual-review reasons for required custom controls include a bounded `aria-label` when provided, helping locate the question in the browser. Controls without such a label remain generic; detection does not fill custom widgets.

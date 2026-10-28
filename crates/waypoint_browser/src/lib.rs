@@ -506,7 +506,11 @@ impl CdpDriver {
                     })
             {
                 if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
-                    custom_nodes.push(id);
+                    let label = attrs
+                        .get("aria-label")
+                        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+                        .filter(|value| !value.is_empty() && value.len() <= 160);
+                    custom_nodes.push((id, label));
                 } else {
                     wall_flags.push("a required custom control needs manual review".into());
                 }
@@ -725,12 +729,17 @@ impl CdpDriver {
                     add_hidden_selectors(&mut hidden_selectors, &control);
                 }
             }
-            for node in custom_nodes {
+            for (node, label) in custom_nodes {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
                 if self.control_visibility_and_path(node)?.0 {
-                    wall_flags.push("a required custom control needs manual review".into());
+                    wall_flags.push(match label {
+                        Some(label) => {
+                            format!("a required custom control needs manual review: {label}")
+                        }
+                        None => "a required custom control needs manual review".into(),
+                    });
                 }
             }
             for node in next_nodes {
