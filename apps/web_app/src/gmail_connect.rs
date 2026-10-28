@@ -5,6 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
+use std::time::{Duration, Instant};
 use waypoint_workspace::Workspace;
 use zeroize::Zeroizing;
 
@@ -12,11 +13,28 @@ struct Task {
     id: String,
     cancel: Arc<AtomicBool>,
     result: Option<Result<gmail_oauth::Credentials, String>>,
+    finished_at: Option<Instant>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+const RESULT_LIFETIME: Duration = Duration::from_secs(600);
+
+fn expire_finished(task: &mut Option<Task>, now: Instant) {
+    if task
+        .as_ref()
+        .and_then(|task| task.finished_at)
+        .is_some_and(|finished| now.saturating_duration_since(finished) >= RESULT_LIFETIME)
+    {
+        *task = None;
+    }
+}
 
 pub fn busy() -> bool {
-    TASK.lock().map(|task| task.is_some()).unwrap_or(true)
+    TASK.lock()
+        .map(|mut task| {
+            expire_finished(&mut task, Instant::now());
+            task.is_some()
+        })
+        .unwrap_or(true)
 }
 
 pub fn start(id: String, client: Vec<u8>, ws: &Workspace) -> Result<(), String> {
@@ -31,6 +49,7 @@ pub fn start(id: String, client: Vec<u8>, ws: &Workspace) -> Result<(), String> 
     }
     let cancel = Arc::new(AtomicBool::new(false));
     let mut task = TASK.lock().map_err(|_| "Gmail connection unavailable")?;
+    expire_finished(&mut task, Instant::now());
     if task.is_some() {
         return Err("A Gmail connection is active or awaiting its result".into());
     }
@@ -38,6 +57,7 @@ pub fn start(id: String, client: Vec<u8>, ws: &Workspace) -> Result<(), String> 
         id: id.clone(),
         cancel: cancel.clone(),
         result: None,
+        finished_at: None,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -51,6 +71,7 @@ pub fn start(id: String, client: Vec<u8>, ws: &Workspace) -> Result<(), String> 
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut().filter(|task| task.id == id) {
                 task.result = Some(result);
+                task.finished_at = Some(Instant::now());
             }
         }
     });
@@ -59,6 +80,7 @@ pub fn start(id: String, client: Vec<u8>, ws: &Workspace) -> Result<(), String> 
 
 pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Gmail connection unavailable")?;
+    expire_finished(&mut tasks, Instant::now());
     let task = tasks
         .as_mut()
         .filter(|task| task.id == id)
@@ -94,4 +116,33 @@ pub fn cancel(id: &str) -> Result<(), String> {
         .cancel
         .store(true, Ordering::SeqCst);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_expired_finished_results_are_discarded() {
+        let now = Instant::now();
+        let make_task = |finished_at: Option<Instant>| {
+            Some(Task {
+                id: "fixture".into(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                result: finished_at.map(|_| Err("fixture".into())),
+                finished_at,
+            })
+        };
+        let mut running = make_task(None);
+        expire_finished(&mut running, now + RESULT_LIFETIME);
+        assert!(running.is_some());
+        let mut completed = make_task(Some(now));
+        expire_finished(
+            &mut completed,
+            now + RESULT_LIFETIME - Duration::from_secs(1),
+        );
+        assert!(completed.is_some());
+        expire_finished(&mut completed, now + RESULT_LIFETIME);
+        assert!(completed.is_none());
+    }
 }

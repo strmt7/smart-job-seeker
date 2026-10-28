@@ -278,6 +278,7 @@ Gmail can also be connected with an app password. Waypoint checks SMTP and IMAP 
 Starting a new inbox check replaces an uncollected completed count, while a still-running check remains single-instance.
 App-password connection can be cancelled; cancellation prevents new credentials from being stored. An in-flight network operation may need to finish or time out first.
 An uncollected app-password authentication result expires after ten minutes once another connection operation checks it. Expiry discards the result without storing the credential; a running operation is not replaced.
+OAuth connection results use the same expiry rule, so an abandoned completed consent flow does not indefinitely block reconnection or disconnection.
 OAuth connections can also request inbox counts using the Gmail labels API. The response must identify INBOX and contain consistent total and unread counts. A loopback fixture exercised token refresh and the read-only request; OAuth connectivity has not been tested against a live authorized account. The app-password path was tested separately.
 The endpoint and fields were checked against Google's native Gmail API discovery document at `https://gmail.googleapis.com/$discovery/rest?version=v1` (2026-10-28, local ignored capture `prototype-local/gmail-discovery-20261028.json`, SHA-256 `5b31d46375e98c88594c810d651e55ee9a4c9b8b3bc85086611f0a570b85ca9b`).
 
