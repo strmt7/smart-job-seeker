@@ -9,13 +9,17 @@ struct Task {
     id: String,
     receiver: mpsc::Receiver<EmailHandoffOutcome>,
     result: Option<EmailHandoffOutcome>,
+    record: Option<(JobIdentityId, String)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum WorkerStatus {
     Running,
-    Finished(EmailHandoffOutcome),
+    Finished {
+        outcome: EmailHandoffOutcome,
+        record_saved: Option<bool>,
+    },
 }
 
 /// No network action starts until the one-use approval and reservation are
@@ -24,16 +28,16 @@ pub fn start_gmail(
     ws: &mut Workspace,
     job: &JobIdentityId,
     approval_id: &str,
-    handoff_id: String,
-    packet: PreparedApplicationEmail,
+    attempt_id: String,
     now: i64,
 ) -> Result<(), String> {
+    let (_, packet) = crate::attempt_record::load_gmail_review(ws, job, &attempt_id)?;
     let credentials = packet.connected_credentials(ws)?;
     start_with(
         ws,
         job,
         approval_id,
-        handoff_id,
+        attempt_id.clone(),
         packet,
         now,
         move |packet| PreparedApplicationEmail::transmit(&packet.reviewed(), &credentials),
@@ -56,6 +60,10 @@ where
     if task.is_some() {
         return Err("An email handoff is running or awaiting its result".into());
     }
+    let record = ws
+        .db_path
+        .is_some()
+        .then(|| (job.clone(), handoff_id.clone()));
     ws.reserve_reviewed_email(job, approval_id, &handoff_id, &packet.reviewed(), now)?;
     let (sender, receiver) = mpsc::channel();
     let spawned = std::thread::Builder::new()
@@ -74,6 +82,7 @@ where
         id: handoff_id,
         receiver,
         result: None,
+        record,
     });
     Ok(())
 }
@@ -99,8 +108,14 @@ pub fn poll(ws: &mut Workspace, id: &str) -> Result<WorkerStatus, String> {
         return Err("Email worker result unavailable; check the saved handoff".into());
     };
     ws.finish_reviewed_email(id, outcome)?;
+    let record_saved = task.record.as_ref().map(|(job, attempt)| {
+        crate::attempt_record::record_email_outcome(ws, job, attempt, outcome, crate::now()).is_ok()
+    });
     *tasks = None;
-    Ok(WorkerStatus::Finished(outcome))
+    Ok(WorkerStatus::Finished {
+        outcome,
+        record_saved,
+    })
 }
 
 #[cfg(test)]
@@ -109,7 +124,8 @@ mod tests {
     use waypoint_domain::ApplicationState;
     #[test]
     fn worker_reserves_before_transport_and_records_one_outcome() {
-        let mut ws = Workspace::in_memory().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
         let job = JobIdentityId::new("worker-fixture").unwrap();
         ws.import_job(waypoint_store::StoredJob {
             id: job.clone(),
@@ -127,6 +143,10 @@ mod tests {
             posted_at: None,
         })
         .unwrap();
+        let attempt = "00000000000000000000000000000001";
+        crate::attempt_record::AttemptRecord::start(&ws, &job, attempt, 1)
+            .unwrap()
+            .unwrap();
         let packet = PreparedApplicationEmail::prepare(
             "sender@example.invalid",
             "recipient@example.invalid",
@@ -142,7 +162,7 @@ mod tests {
             &mut ws,
             &job,
             "approval",
-            "handoff".into(),
+            attempt.into(),
             packet,
             2,
             move |_| {
@@ -155,13 +175,17 @@ mod tests {
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "reserved"
         );
-        assert_eq!(poll(&mut ws, "handoff").unwrap(), WorkerStatus::Running);
+        assert_eq!(poll(&mut ws, attempt).unwrap(), WorkerStatus::Running);
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
-            match poll(&mut ws, "handoff").unwrap() {
-                WorkerStatus::Finished(outcome) => {
+            match poll(&mut ws, attempt).unwrap() {
+                WorkerStatus::Finished {
+                    outcome,
+                    record_saved,
+                } => {
                     assert_eq!(outcome, EmailHandoffOutcome::Accepted);
+                    assert_eq!(record_saved, Some(true));
                     break;
                 }
                 WorkerStatus::Running if std::time::Instant::now() < deadline => {
@@ -174,6 +198,16 @@ mod tests {
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "accepted"
         );
-        assert!(poll(&mut ws, "handoff").is_err());
+        assert!(poll(&mut ws, attempt).is_err());
+        let folder = std::fs::read_dir(directory.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let outcome: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(folder.join("email-handoff.json")).unwrap())
+                .unwrap();
+        assert_eq!(outcome["state"], "accepted");
     }
 }

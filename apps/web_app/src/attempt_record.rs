@@ -23,6 +23,58 @@ pub struct GmailReviewAttachment {
     pub stored_name: String,
 }
 
+/// Copy a recorded outcome to the human-readable attempt folder. The database
+/// remains authoritative if this optional file cannot be written.
+pub fn record_email_outcome(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    outcome: waypoint_store::email_handoff::EmailHandoffOutcome,
+    timestamp: i64,
+) -> Result<(), String> {
+    if attempt.len() != 32 || !attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid application record".into());
+    }
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let dir = root
+        .join("application-records")
+        .join(format!("{}-{attempt}", &hash.as_str()[..16]));
+    let meta = fs::symlink_metadata(&dir).map_err(|_| "Application record not found")?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err("Invalid application record".into());
+    }
+    let info_path = dir.join("attempt.json");
+    let info_meta =
+        fs::symlink_metadata(&info_path).map_err(|_| "Application record metadata not found")?;
+    if !info_meta.is_file() || info_meta.file_type().is_symlink() || info_meta.len() > 65536 {
+        return Err("Invalid application record metadata".into());
+    }
+    let info: Value =
+        serde_json::from_slice(&fs::read(info_path).map_err(|_| "Cannot read application record")?)
+            .map_err(|_| "Invalid application record metadata")?;
+    if info["job_id"].as_str() != Some(job.as_str()) || info["attempt_id"].as_str() != Some(attempt)
+    {
+        return Err("Application record does not match the handoff".into());
+    }
+    let state = match outcome {
+        waypoint_store::email_handoff::EmailHandoffOutcome::Accepted => "accepted",
+        waypoint_store::email_handoff::EmailHandoffOutcome::Uncertain => "uncertain",
+        waypoint_store::email_handoff::EmailHandoffOutcome::NotSent => "not_sent",
+    };
+    let mut file =
+        tempfile::NamedTempFile::new_in(&dir).map_err(|_| "Cannot write email outcome")?;
+    serde_json::to_writer_pretty(&mut file, &json!({"handoff_id":attempt,"state":state,"recorded_at":timestamp,"note":"SMTP acceptance does not prove inbox delivery. Check the mailbox before any retry."})).map_err(|_| "Cannot write email outcome")?;
+    file.flush().map_err(|_| "Cannot write email outcome")?;
+    file.persist_noclobber(dir.join("email-handoff.json"))
+        .map_err(|_| "Cannot save email outcome")?;
+    Ok(())
+}
+
 /// Rebuild the packet from its saved review details and materials before
 /// returning those details. This is a review aid, not submission approval.
 pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {

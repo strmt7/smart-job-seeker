@@ -1926,7 +1926,11 @@ fn serve(
             ws.job(&id)
                 .map_err(|e| e.to_string())?
                 .ok_or("Job not found")?;
-            json_reply(stream, "200 OK", attempt_record::list(ws, &id)?);
+            let mut listing = attempt_record::list(ws, &id)?;
+            let (handoffs, truncated) = ws.email_handoff_history(&id)?;
+            listing["email_handoffs"] = json!(handoffs.into_iter().map(|item| json!({"attempt_id":item.id,"state":item.state,"created_at":item.created_at})).collect::<Vec<_>>());
+            listing["email_handoffs_truncated"] = json!(truncated);
+            json_reply(stream, "200 OK", listing);
         }
         "/api/review" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
@@ -3169,6 +3173,26 @@ mod tests {
             approve_saved_gmail(&mut ws, &fresh_request).unwrap()["sent"],
             false
         );
+        attempt_record::record_email_outcome(
+            &ws,
+            &job,
+            attempt_id,
+            waypoint_store::email_handoff::EmailHandoffOutcome::Uncertain,
+            2,
+        )
+        .unwrap();
+        let outcome: Value =
+            serde_json::from_slice(&std::fs::read(attempt.join("email-handoff.json")).unwrap())
+                .unwrap();
+        assert_eq!(outcome["state"], "uncertain");
+        assert!(attempt_record::record_email_outcome(
+            &ws,
+            &job,
+            attempt_id,
+            waypoint_store::email_handoff::EmailHandoffOutcome::Accepted,
+            3
+        )
+        .is_err());
         std::fs::write(
             attempt.join("materials").join("0001-resume.pdf"),
             b"%PDF-changed",
