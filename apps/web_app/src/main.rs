@@ -1578,12 +1578,39 @@ fn serve(
             };
             let mut record = attempt_record::AttemptRecord::start(ws, &id, &attempt_id, now())?
                 .ok_or("Email draft requires a disk-backed workspace")?;
+            let mut saved_materials = Vec::new();
             for (_, name, bytes) in &attachments {
-                record.material(name, bytes)?;
+                let stored_name = record.material(name, bytes)?;
+                saved_materials.push(attempt_record::GmailReviewAttachment {
+                    name: name.clone(),
+                    stored_name,
+                });
             }
             record.email_draft(&draft)?;
+            if let Some(sender) = gmail_sender.as_ref() {
+                record.gmail_review(&attempt_record::GmailReview {
+                    job_id: id.as_str().to_owned(),
+                    attempt_id: attempt_id.clone(),
+                    sender: sender.clone(),
+                    recipient: recipient.trim().to_owned(),
+                    subject: subject.to_owned(),
+                    message: text.to_owned(),
+                    attachments: saved_materials,
+                    mime_sha256: waypoint_domain::sha256_hex(&draft),
+                })?;
+            }
             record.event(json!({"type":"email_draft_created", "time":now(), "sender":gmail_sender, "recipient":recipient, "subject":subject, "attachments":attachments.len(), "mime_sha256":waypoint_domain::sha256_hex(&draft), "sent":false}))?;
             document_reply(stream, &draft);
+        }
+        "/api/gmail/review-application" => {
+            let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::gmail_review(ws, &id, attempt)?,
+            );
         }
         "/api/email-answer/start" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
@@ -3088,6 +3115,20 @@ mod tests {
         let events = std::fs::read_to_string(attempt.join("events.jsonl")).unwrap();
         assert!(events.contains(&waypoint_domain::sha256_hex(mime)));
         assert!(events.contains("\"sent\":false"));
+        let meta: Value =
+            serde_json::from_slice(&std::fs::read(attempt.join("attempt.json")).unwrap()).unwrap();
+        let attempt_id = meta["attempt_id"].as_str().unwrap();
+        let ws = Workspace::open(directory.path()).unwrap();
+        let job = JobIdentityId::new("fictional-email").unwrap();
+        let review = attempt_record::gmail_review(&ws, &job, attempt_id).unwrap();
+        assert_eq!(review["message"], "Hello");
+        assert_eq!(review["attachments"][0]["name"], "resume.pdf");
+        std::fs::write(
+            attempt.join("materials").join("0001-resume.pdf"),
+            b"%PDF-changed",
+        )
+        .unwrap();
+        assert!(attempt_record::gmail_review(&ws, &job, attempt_id).is_err());
     }
 
     #[test]

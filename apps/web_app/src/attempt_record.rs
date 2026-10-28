@@ -5,6 +5,93 @@ use std::{fs, io::Write, path::PathBuf};
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_workspace::Workspace;
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct GmailReview {
+    pub job_id: String,
+    pub attempt_id: String,
+    pub sender: String,
+    pub recipient: String,
+    pub subject: String,
+    pub message: String,
+    pub attachments: Vec<GmailReviewAttachment>,
+    pub mime_sha256: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct GmailReviewAttachment {
+    pub name: String,
+    pub stored_name: String,
+}
+
+/// Rebuild the packet from its saved review details and materials before
+/// returning those details. This is a review aid, not submission approval.
+pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {
+    if attempt.len() != 32 || !attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid application record".into());
+    }
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let dir = root
+        .join("application-records")
+        .join(format!("{}-{attempt}", &hash.as_str()[..16]));
+    let metadata = fs::symlink_metadata(&dir).map_err(|_| "Application record not found")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Invalid application record".into());
+    }
+    let read_bounded = |path: &std::path::Path, limit: u64| -> Result<Vec<u8>, String> {
+        let meta = fs::symlink_metadata(path).map_err(|_| "Saved packet file is unavailable")?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > limit {
+            return Err("Saved packet file is invalid or too large".into());
+        }
+        fs::read(path).map_err(|_| "Cannot read saved packet file".into())
+    };
+    let review: GmailReview =
+        serde_json::from_slice(&read_bounded(&dir.join("gmail-review.json"), 65536)?)
+            .map_err(|_| "Saved Gmail review is invalid")?;
+    if review.job_id != job.as_str() || review.attempt_id != attempt || review.attachments.len() > 5
+    {
+        return Err("Saved Gmail review does not match this job".into());
+    }
+    let mut attachments = Vec::new();
+    let mut total = 0usize;
+    for attachment in &review.attachments {
+        let path = std::path::Path::new(&attachment.stored_name);
+        if path.components().count() != 1
+            || !matches!(
+                path.components().next(),
+                Some(std::path::Component::Normal(_))
+            )
+        {
+            return Err("Invalid saved attachment name".into());
+        }
+        let bytes = read_bounded(&dir.join("materials").join(path), 10 * 1024 * 1024)?;
+        total = total
+            .checked_add(bytes.len())
+            .ok_or("Attachments exceed the limit")?;
+        if total > 10 * 1024 * 1024 {
+            return Err("Attachments exceed the limit".into());
+        }
+        attachments.push((attachment.name.clone(), bytes));
+    }
+    let packet = crate::application_email::PreparedApplicationEmail::prepare(
+        &review.sender,
+        &review.recipient,
+        &review.subject,
+        &review.message,
+        &attachments,
+        attempt,
+    )?;
+    let saved = read_bounded(&dir.join("email-draft.eml"), 15 * 1024 * 1024)?;
+    if packet.mime() != saved || waypoint_domain::sha256_hex(&saved) != review.mime_sha256 {
+        return Err("Saved message or materials changed; prepare a new packet".into());
+    }
+    serde_json::to_value(review).map_err(|_| "Cannot display saved Gmail review".into())
+}
+
 pub struct AttemptRecord {
     dir: PathBuf,
     sequence: u32,
@@ -77,7 +164,11 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
             unreadable += 1;
             continue;
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"]}));
+        let gmail_review =
+            fs::symlink_metadata(entry.path().join("gmail-review.json")).is_ok_and(|meta| {
+                meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
+            });
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"gmail_review":gmail_review}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -242,6 +333,13 @@ impl AttemptRecord {
     }
     pub fn email_draft(&mut self, bytes: &[u8]) -> Result<(), String> {
         fs::write(self.dir.join("email-draft.eml"), bytes).map_err(|e| e.to_string())
+    }
+    pub fn gmail_review(&mut self, review: &GmailReview) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(review).map_err(|e| e.to_string())?;
+        if bytes.len() > 65536 {
+            return Err("Gmail review exceeds size limit".into());
+        }
+        fs::write(self.dir.join("gmail-review.json"), bytes).map_err(|e| e.to_string())
     }
     pub fn screenshot(&mut self, data: &str) -> Result<(), String> {
         let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
