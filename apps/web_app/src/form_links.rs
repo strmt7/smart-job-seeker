@@ -122,11 +122,20 @@ fn filtered_candidates(
     Ok(result)
 }
 
+fn reviewed_link_matches(
+    link: &waypoint_applications::driver::PageLink,
+    target: &str,
+    label: &str,
+) -> bool {
+    link.url == target && link.label == label
+}
+
 pub fn start(
     id: String,
     mut session: ReviewSession,
     target: Option<String>,
     allow_other: bool,
+    reviewed_label: Option<String>,
     profile: serde_json::Value,
 ) -> Result<(), (Box<ReviewSession>, String)> {
     let mut tasks = match TASK.lock() {
@@ -154,9 +163,11 @@ pub fn start(
                         return Err("The current page requires manual review".into());
                     }
                     let found = if allow_other {
-                        other_candidates(&mut session.driver)?
-                            .iter()
-                            .any(|link| link.url == target)
+                        other_candidates(&mut session.driver)?.iter().any(|link| {
+                            reviewed_label
+                                .as_deref()
+                                .is_some_and(|label| reviewed_link_matches(link, &target, label))
+                        })
                     } else {
                         candidates(&mut session.driver)?.contains(&target)
                     };
@@ -283,6 +294,20 @@ mod tests {
         fn commit(&mut self) -> Result<SiteAck, DriverError> {
             panic!("candidate discovery must not submit")
         }
+    }
+    #[test]
+    fn reviewed_link_requires_the_same_label_and_destination() {
+        let link = waypoint_applications::driver::PageLink {
+            url: "https://jobs.example.org/apply".into(),
+            label: "Continue".into(),
+        };
+        assert!(reviewed_link_matches(&link, &link.url, "Continue"));
+        assert!(!reviewed_link_matches(&link, &link.url, "Submit"));
+        assert!(!reviewed_link_matches(
+            &link,
+            "https://other.example.org/apply",
+            "Continue"
+        ));
     }
     #[test]
     fn other_links_remain_bounded_and_exclude_final_action_routes() {

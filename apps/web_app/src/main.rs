@@ -2420,13 +2420,26 @@ fn serve(
                 }
                 None => json!({}),
             };
+            let allow_other = body["allow_other"].as_bool() == Some(true);
+            let reviewed_label = if allow_other {
+                Some(
+                    body["reviewed_label"]
+                        .as_str()
+                        .filter(|label| label.chars().count() <= 200)
+                        .ok_or("Missing or invalid reviewed link label")?
+                        .to_owned(),
+                )
+            } else {
+                None
+            };
             let task_id = random_id()?;
             let current = session.take().ok_or("Form session expired")?;
             if let Err((current, error)) = form_links::start(
                 task_id.clone(),
                 current,
                 Some(target.to_owned()),
-                body["allow_other"].as_bool() == Some(true),
+                allow_other,
+                reviewed_label,
                 profile,
             ) {
                 *session = Some(*current);
@@ -2536,7 +2549,7 @@ fn serve(
             let task_id = random_id()?;
             let current = session.take().ok_or("Form session expired")?;
             if let Err((current, error)) =
-                form_links::start(task_id.clone(), current, None, false, profile)
+                form_links::start(task_id.clone(), current, None, false, None, profile)
             {
                 *session = Some(*current);
                 return Err(error);
