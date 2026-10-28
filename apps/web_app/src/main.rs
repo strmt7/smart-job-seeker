@@ -42,6 +42,7 @@ mod suggestions;
 mod template_suggest;
 #[cfg(windows)]
 mod tray;
+mod visual_review;
 mod web_search;
 mod web_search_batch;
 use std::io::{Read, Write};
@@ -2318,6 +2319,71 @@ fn serve(
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/form/visual-review-start" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let screenshot = current
+                .driver
+                .screenshot_base64()
+                .map_err(|e| e.to_string())?;
+            let task_id = random_id()?;
+            let expected = current
+                .preview
+                .suggestions
+                .iter()
+                .filter(|_| current.filled)
+                .filter_map(|mapping| {
+                    let field = current
+                        .preview
+                        .schema
+                        .fields
+                        .iter()
+                        .find(|field| field.selector == mapping.field_selector)?;
+                    match &mapping.value {
+                        waypoint_applications::form_mapping::PacketValue::Text(value)
+                            if value.len() <= 1000 =>
+                        {
+                            Some((field.label.clone(), value.clone()))
+                        }
+                        _ => None,
+                    }
+                })
+                .take(20)
+                .collect();
+            visual_review::start(
+                task_id.clone(),
+                current.id.clone(),
+                model,
+                screenshot.clone(),
+                expected,
+            )?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":task_id,"screenshot":screenshot}),
+            );
+        }
+        "/api/form/visual-review-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let result = visual_review::poll(id)?;
+            if result["status"] == "complete"
+                && !session.as_ref().is_some_and(|s| {
+                    Some(s.id.as_str()) == result["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                })
+            {
+                return Err(
+                    "The form session expired; this visual observation is no longer current".into(),
+                );
+            }
+            json_reply(stream, "200 OK", result);
+        }
         "/api/form/answer-start" => {
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let selector = body["selector"].as_str().ok_or("missing field")?;
@@ -2518,6 +2584,23 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 }
             }
+            if let Err(error) = ws.mark_manual_review(
+                &current.job_id,
+                "Visual inspection and user review required",
+                now(),
+            ) {
+                current.created = Instant::now();
+                *session = Some(current);
+                return Err(format!("Fields were filled, but the review flag could not be saved: {error}. Inspect the form manually."));
+            }
+            if let Some(record) = &mut current.record {
+                if let Err(error) = record.status("manual_review", now()) {
+                    current.created = Instant::now();
+                    *session = Some(current);
+                    return Err(format!("Fields were filled, but the attempt status could not be saved: {error}. Inspect the form manually."));
+                }
+            }
+            current.preview.manual_review.push("Visual verification and user review are required; model observations may be incomplete or wrong".into());
             current.created = Instant::now();
             let (filled_fields, required_not_filled) =
                 form_preview::fill_coverage(&current.preview);
@@ -4004,7 +4087,7 @@ mod tests {
                     .as_deref(),
                 Some("manual@example.invalid")
             );
-            assert!(ws.manual_reviews().unwrap().is_empty());
+            assert!(!ws.manual_reviews().unwrap().is_empty());
             assert_eq!(
                 session
                     .as_mut()
