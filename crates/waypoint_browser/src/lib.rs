@@ -1709,6 +1709,9 @@ fn application_links_from_document(root: &Value) -> Vec<String> {
                 .collect::<Vec<_>>()
                 .join(" ")
                 .to_lowercase();
+            // Decorative arrows and punctuation are often part of a link's accessible name.
+            // Keep the vocabulary conservative: this only proposes a destination, not a submission.
+            let normalized = label.trim_matches(|c: char| !c.is_alphanumeric());
             let candidate = [
                 "apply",
                 "apply now",
@@ -1716,8 +1719,16 @@ fn application_links_from_document(root: &Value) -> Vec<String> {
                 "apply for this position",
                 "start application",
                 "start your application",
+                "bewerben",
+                "jetzt bewerben",
+                "postuler",
+                "postuler maintenant",
+                "postularse",
+                "solicitar empleo",
+                "candidatar-se",
+                "candidatar-me",
             ]
-            .contains(&label.as_str());
+            .contains(&normalized);
             if candidate {
                 if let Some(href) = attrs.get("href").filter(|href| !href.trim().is_empty()) {
                     if !links.contains(href) {

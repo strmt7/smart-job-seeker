@@ -603,7 +603,12 @@ fn application_links_use_the_accessible_label_without_navigating() {
             "application-form.html",
             "application-other.html",
             "fallback.html",
-            "referenced.html"
+            "referenced.html",
+            "punctuation.html",
+            "german.html",
+            "french.html",
+            "spanish.html",
+            "portuguese.html"
         ]
     );
     assert!(driver
