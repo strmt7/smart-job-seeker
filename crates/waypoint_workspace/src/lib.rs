@@ -994,6 +994,7 @@ impl Scheduler {
     }
 }
 
+pub mod email_handoff;
 pub mod submit;
 pub mod work;
 
