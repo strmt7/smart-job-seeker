@@ -49,6 +49,21 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
     }
 }
 
+fn classify_fields(field_count: usize, followed: bool) -> (String, bool) {
+    if field_count == 0 {
+        (
+            "No form fields detected on this page; find or open the application manually.".into(),
+            true,
+        )
+    } else {
+        (format!(
+            "{} form fields detected{}; the page is not confirmed as an application. Manual review needed.",
+            field_count,
+            if followed { " after opening an application link" } else { "" }
+        ), true)
+    }
+}
+
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
 }
@@ -97,25 +112,8 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                     "Sign-in, CAPTCHA or another obstacle detected; manual review needed.".into(),
                     true,
                 ))
-            } else if page.schema.fields.is_empty() {
-                Ok((
-                    "No form fields detected on this page; find or open the application manually."
-                        .into(),
-                    true,
-                ))
             } else {
-                Ok((
-                    format!(
-                        "{} form fields detected{}; review whether this is the actual application.",
-                        page.schema.fields.len(),
-                        if followed {
-                            " after opening an application link"
-                        } else {
-                            ""
-                        }
-                    ),
-                    false,
-                ))
+                Ok(classify_fields(page.schema.fields.len(), followed))
             }
         })();
         let message = result.unwrap_or_else(|_| {
@@ -156,7 +154,16 @@ pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::application_destination;
+    use super::{application_destination, classify_fields};
+    #[test]
+    fn detected_fields_do_not_confirm_an_application_page() {
+        for followed in [false, true] {
+            let (message, manual_review) = classify_fields(1, followed);
+            assert!(manual_review);
+            assert!(message.contains("not confirmed"));
+        }
+        assert!(classify_fields(0, false).1);
+    }
     use waypoint_applications::driver::BrowserDriver;
     #[test]
     fn follows_only_a_single_safe_same_origin_application_link() {
