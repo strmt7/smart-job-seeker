@@ -11,6 +11,8 @@ struct Task {
     result: Option<(String, bool)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// Retain only the most recently saved result for a lost response retry.
+static COMPLETED: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 
 // Follow only one unambiguous same-origin link. In particular, never navigate
 // a URL that looks like a final submit action or contains query parameters.
@@ -147,10 +149,16 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
 
 pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
-    let current = task
-        .as_mut()
-        .filter(|task| task.id == id)
-        .ok_or("Application check not found")?;
+    let Some(current) = task.as_mut().filter(|task| task.id == id) else {
+        let completed = COMPLETED
+            .lock()
+            .map_err(|_| "Application check unavailable")?;
+        return completed
+            .as_ref()
+            .filter(|(task_id, _, _)| task_id == id)
+            .map(|(_, job_id, result)| Some((job_id.clone(), result.clone(), false)))
+            .ok_or_else(|| "Application check not found".into());
+    };
     if current.result.is_none() {
         current.result = match current.receiver.try_recv() {
             Ok(result) => Some(result),
@@ -170,13 +178,27 @@ pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
 /// Release a completed result only after its review entry has been saved.
 pub fn acknowledge(id: &str) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
-    let current = task
+    let Some(current) = task.as_ref().filter(|task| task.id == id) else {
+        let completed = COMPLETED
+            .lock()
+            .map_err(|_| "Application check unavailable")?;
+        return if completed
+            .as_ref()
+            .is_some_and(|(task_id, _, _)| task_id == id)
+        {
+            Ok(())
+        } else {
+            Err("Application check not found".into())
+        };
+    };
+    let (result, _) = current
+        .result
         .as_ref()
-        .filter(|task| task.id == id)
-        .ok_or("Application check not found")?;
-    if current.result.is_none() {
-        return Err("Application check is still running".into());
-    }
+        .ok_or("Application check is still running")?;
+    *COMPLETED
+        .lock()
+        .map_err(|_| "Application check unavailable")? =
+        Some((current.id.clone(), current.job_id.clone(), result.clone()));
     *task = None;
     Ok(())
 }
@@ -205,6 +227,12 @@ mod tests {
         assert!(acknowledge("wrong-task").is_err());
         acknowledge("fictional-interrupted-check").unwrap();
         assert!(TASK.lock().unwrap().is_none());
+        let (saved_job, saved_result, needs_save) =
+            poll("fictional-interrupted-check").unwrap().unwrap();
+        assert_eq!(saved_job, "fictional-job");
+        assert!(saved_result.contains("stopped unexpectedly"));
+        assert!(!needs_save);
+        acknowledge("fictional-interrupted-check").unwrap();
     }
     #[test]
     fn detected_fields_do_not_confirm_an_application_page() {

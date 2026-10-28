@@ -9,6 +9,8 @@ struct Task {
     record_saved: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// Retain the most recent result for a retry if its response is lost.
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 const PAGE_LIMIT: usize = 30;
 
 fn page_findings(value: &Value) -> Result<Vec<Value>, String> {
@@ -38,21 +40,36 @@ where
     let mut findings = Vec::new();
     let mut total = 0usize;
     for index in 0..PAGE_LIMIT {
-        let page = render(bytes, index)?;
-        let count = page["pages"]
-            .as_u64()
-            .filter(|n| *n > 0 && *n <= 30)
-            .ok_or("Invalid PDF page count")? as usize;
+        let result = (|| -> Result<(usize, Vec<Value>), String> {
+            let page = render(bytes, index)?;
+            let count = page["pages"]
+                .as_u64()
+                .filter(|n| *n > 0 && *n <= 30)
+                .ok_or("Invalid PDF page count")? as usize;
+            if index == 0 {
+                total = count;
+            } else if count != total {
+                return Err("PDF page count changed during visual inspection".into());
+            }
+            let image = page["image"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 4 * 1024 * 1024)
+                .ok_or("Invalid rendered page image")?;
+            let result = page_findings(&analyze(image)?)?;
+            Ok((count, result))
+        })();
+        let (count, result) = match result {
+            Ok(result) => result,
+            Err(error) if !findings.is_empty() => {
+                return Ok(
+                    json!({"pages":total,"pages_inspected":findings.len(),"complete":false,"findings":findings,"error":error,"document_sha256":waypoint_domain::sha256_hex(bytes)}),
+                );
+            }
+            Err(error) => return Err(error),
+        };
         if index == 0 {
             total = count;
-        } else if count != total {
-            return Err("PDF page count changed during visual inspection".into());
         }
-        let image = page["image"]
-            .as_str()
-            .filter(|s| !s.is_empty() && s.len() <= 4 * 1024 * 1024)
-            .ok_or("Invalid rendered page image")?;
-        let result = page_findings(&analyze(image)?)?;
         findings.push(json!({"page":index+1,"issues":result}));
         if index + 1 >= total {
             break;
@@ -118,7 +135,7 @@ pub fn start(
         }).unwrap_or_else(|_|Err("Document visual review stopped unexpectedly".into()));
         let evidence = match &outcome {
             Ok(report) => {
-                json!({"status":"complete","recorded_at":crate::now(),"material":material,"document_name":name_for_record,"document_sha256":document_sha,"context_sha256":context_sha,"model":model_for_record,"report":report,"note":"Advisory model output; not a submission or proof of correctness."})
+                json!({"status":if report["complete"] == true {"complete"} else {"partial"},"recorded_at":crate::now(),"material":material,"document_name":name_for_record,"document_sha256":document_sha,"context_sha256":context_sha,"model":model_for_record,"report":report,"note":"Advisory model output; not a submission or proof of correctness."})
             }
             Err(error) => {
                 json!({"status":"failed","recorded_at":crate::now(),"material":material,"document_name":name_for_record,"document_sha256":document_sha,"context_sha256":context_sha,"model":model_for_record,"error":error,"note":"Visual review is incomplete; manual review is required."})
@@ -140,27 +157,53 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK
         .lock()
         .map_err(|_| "Document visual review unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Document visual review not found")?;
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        let completed = COMPLETED
+            .lock()
+            .map_err(|_| "Document visual review unavailable")?;
+        return completed
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| "Document visual review not found".into());
+    };
     let Some(outcome) = task.outcome.take() else {
         return Ok(json!({"status":"running","pages_processed":task.pages_processed}));
     };
     let record_saved = task.record_saved;
-    *tasks = None;
-    Ok(match outcome {
+    let result = match outcome {
         Ok(report) => {
             json!({"status":"complete","report":report,"record_saved":record_saved,"attempt_id":id})
         }
         Err(error) => {
             json!({"status":"failed","error":error,"record_saved":record_saved,"attempt_id":id})
         }
-    })
+    };
+    *COMPLETED
+        .lock()
+        .map_err(|_| "Document visual review unavailable")? = Some((id.into(), result.clone()));
+    *tasks = None;
+    Ok(result)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completed_partial_review_can_be_retrieved_again() {
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-review".into(),
+            outcome: Some(Ok(
+                json!({"complete":false,"pages":2,"pages_inspected":1,"findings":[]}),
+            )),
+            pages_processed: 1,
+            completed: Some(std::time::Instant::now()),
+            record_saved: true,
+        });
+        let first = poll("fictional-review").unwrap();
+        assert_eq!(first["report"]["complete"], false);
+        assert_eq!(first, poll("fictional-review").unwrap());
+        assert!(poll("another-review").is_err());
+    }
     #[test]
     #[ignore = "requires a local PDF worker and fictional multi-page PDF"]
     fn renders_each_page_before_visual_review() {
@@ -183,6 +226,28 @@ mod tests {
             |_| Ok(json!({"issues":[]}))
         )
         .is_err());
+    }
+    #[test]
+    fn later_page_failure_preserves_incomplete_findings() {
+        let report = inspect(
+            b"fictional",
+            |_, page| {
+                if page == 0 {
+                    Ok(json!({"pages":2,"image":"page1"}))
+                } else {
+                    Err("Renderer failed".into())
+                }
+            },
+            |_| Ok(json!({"issues":[{"category":"layout","description":"Check alignment"}]})),
+        )
+        .unwrap();
+        assert_eq!(report["complete"], false);
+        assert_eq!(report["pages_inspected"], 1);
+        assert_eq!(
+            report["findings"][0]["issues"][0]["description"],
+            "Check alignment"
+        );
+        assert_eq!(report["error"], "Renderer failed");
     }
     #[test]
     fn inspects_each_page_and_rejects_invalid_findings() {

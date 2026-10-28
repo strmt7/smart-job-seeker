@@ -2028,6 +2028,15 @@ fn serve(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let task_id = random_id()?;
+            // Visual model output is advisory, including when every page is processed.
+            // Record the need for human review before starting the background worker,
+            // so a failure or interruption does not silently leave the job unflagged.
+            ws.mark_manual_review(
+                &job,
+                "Review the document and visual inspection results",
+                now(),
+            )
+            .map_err(|e| e.to_string())?;
             document_visual::start(task_id.clone(), model, bytes, context, ws, &job, &name)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }

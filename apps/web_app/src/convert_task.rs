@@ -9,6 +9,8 @@ struct Task {
     result: Option<Result<Vec<u8>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// A lost response can be retried without saving the same PDF a second time.
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 
 pub fn start(id: String, name: String, bytes: Vec<u8>, image: bool) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Conversion state unavailable")?;
@@ -41,22 +43,37 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, image: bool) -> Result<()
 
 pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Conversion state unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|task| task.id == id)
-        .ok_or("Conversion not found")?;
+    let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
+        let completed = COMPLETED
+            .lock()
+            .map_err(|_| "Conversion state unavailable")?;
+        return completed
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| "Conversion not found".into());
+    };
     let Some(result) = task.result.take() else {
         return Ok(json!({"status":"running"}));
     };
     match result {
         Err(error) => {
+            let result = json!({"status":"failed","error":error});
+            *COMPLETED
+                .lock()
+                .map_err(|_| "Conversion state unavailable")? = Some((id.into(), result.clone()));
             *tasks = None;
-            Ok(json!({"status":"failed","error":error}))
+            Ok(result)
         }
         Ok(pdf) => {
             if pdf.len() > crate::MAX_DOCUMENT {
+                let result = json!({"status":"failed","error":"Converted PDF exceeds 10 MiB"});
+                *COMPLETED
+                    .lock()
+                    .map_err(|_| "Conversion state unavailable")? =
+                    Some((id.into(), result.clone()));
                 *tasks = None;
-                return Err("Converted PDF exceeds 10 MiB".into());
+                return Ok(result);
             }
             let new_id = match crate::random_id() {
                 Ok(id) => id,
@@ -68,8 +85,13 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
             match ws.add_document(&new_id, &task.name, &pdf, crate::now()) {
                 Ok(()) => {
                     let name = task.name.clone();
+                    let result = json!({"status":"complete","id":new_id,"name":name});
+                    *COMPLETED
+                        .lock()
+                        .map_err(|_| "Conversion state unavailable")? =
+                        Some((id.into(), result.clone()));
                     *tasks = None;
-                    Ok(json!({"status":"complete","id":new_id,"name":name}))
+                    Ok(result)
                 }
                 Err(_) => {
                     task.result = Some(Ok(pdf));
@@ -83,6 +105,32 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_conversion_can_be_retried_without_duplicate_documents() {
+        let ws = Workspace::in_memory().unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-pdf-task".into(),
+            name: "fictional.pdf".into(),
+            result: Some(Ok(b"%PDF-fixture".to_vec())),
+        });
+        let first = poll("fictional-pdf-task", &ws).unwrap();
+        let retry = poll("fictional-pdf-task", &ws).unwrap();
+        assert_eq!(first, retry);
+        assert_eq!(ws.documents().unwrap().len(), 1);
+    }
+    #[test]
+    fn oversized_conversion_reports_a_terminal_result_on_retry() {
+        let ws = Workspace::in_memory().unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "oversized-fixture".into(),
+            name: "fictional.pdf".into(),
+            result: Some(Ok(vec![0; crate::MAX_DOCUMENT + 1])),
+        });
+        let first = poll("oversized-fixture", &ws).unwrap();
+        assert_eq!(first["status"], "failed");
+        assert_eq!(first, poll("oversized-fixture", &ws).unwrap());
+        assert!(ws.documents().unwrap().is_empty());
+    }
     #[test]
     #[ignore = "converts a fictional certificate image with local Pillow"]
     fn background_image_conversion_saves_a_reviewable_pdf() {
@@ -129,11 +177,24 @@ mod tests {
             let result = poll("fixture-task", &ws).unwrap();
             if result["status"] == "complete" {
                 let id = result["id"].as_str().unwrap();
-                assert!(ws
-                    .document_content(id)
-                    .unwrap()
-                    .unwrap()
-                    .starts_with(b"%PDF-"));
+                let pdf = ws.document_content(id).unwrap().unwrap();
+                assert!(pdf.starts_with(b"%PDF-"));
+                if let Some(path) = std::env::var_os("WAYPOINT_CONVERSION_PDF_OUTPUT") {
+                    std::fs::write(path, &pdf).unwrap();
+                }
+                if let Ok(expected) = std::env::var("WAYPOINT_EXPECTED_PDF_TEXT") {
+                    let extracted = crate::pdf_extract::extract(&pdf).unwrap();
+                    assert!(
+                        extracted.contains(&expected),
+                        "Expected fixture text missing from PDF"
+                    );
+                }
+                if let Some(path) = std::env::var_os("WAYPOINT_CONVERSION_PREVIEW_OUTPUT") {
+                    let preview = crate::pdf_extract::render_page(&pdf, 0).unwrap();
+                    assert_eq!(preview["page"], 0);
+                    assert!(preview["pages"].as_u64().unwrap() >= 1);
+                    std::fs::write(path, serde_json::to_vec(&preview).unwrap()).unwrap();
+                }
                 break;
             }
             assert_eq!(result["status"], "running", "{result}");
