@@ -11,6 +11,7 @@ struct Task {
     job_id: String,
     kind: String,
     digest: String,
+    reviewed_text: String,
     result: Option<Result<Vec<u8>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -42,6 +43,7 @@ pub fn start(
         job_id,
         kind,
         digest,
+        reviewed_text: text.clone(),
         result: None,
     });
     drop(task);
@@ -121,8 +123,20 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
             })();
             match saved {
                 Ok((doc_id, name)) => {
+                    let record = record_generated(
+                        ws,
+                        &job_id,
+                        &task.kind,
+                        &task.reviewed_text,
+                        &pdf,
+                        &task.digest,
+                    );
+                    let record_saved = record.is_ok();
+                    let record_error = record.err();
                     *tasks = None;
-                    Ok(json!({"status":"complete","id":doc_id,"name":name}))
+                    Ok(
+                        json!({"status":"complete","id":doc_id,"name":name,"record_saved":record_saved,"record_error":record_error}),
+                    )
                 }
                 Err(error) => {
                     task.result = Some(Ok(pdf));
@@ -134,6 +148,56 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
         }
     }
 }
+fn record_generated(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+    kind: &str,
+    text: &str,
+    pdf: &[u8],
+    context_digest: &str,
+) -> Result<(), String> {
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(profile) => serde_json::from_str(&profile).map_err(|_| "Stored profile is invalid")?,
+        None => json!({}),
+    };
+    let key = match kind {
+        "cv" => "cv_template_id",
+        "cover_letter" => "cover_template_id",
+        _ => return Err("Unknown document type".into()),
+    };
+    let template = if let Some(id) = profile[key].as_str().filter(|id| !id.is_empty()) {
+        let info = ws
+            .documents()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|doc| doc.id == id)
+            .ok_or("Selected template is unavailable")?;
+        let bytes = ws
+            .document_content(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Selected template is unavailable")?;
+        Some((info.name, bytes))
+    } else {
+        None
+    };
+    let mut record = crate::attempt_record::AttemptRecord::start(
+        ws,
+        job_id,
+        &crate::random_id()?,
+        crate::now(),
+    )?
+    .ok_or("Application record requires a disk workspace")?;
+    let template_name = template
+        .as_ref()
+        .map(|(name, bytes)| record.material(&format!("original-{name}"), bytes))
+        .transpose()?;
+    let text_name = record.material(&format!("reviewed-{kind}.txt"), text.as_bytes())?;
+    let pdf_name = record.material(&format!("reviewed-{kind}.pdf"), pdf)?;
+    record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
+    record.status("manual_review", crate::now())?;
+    Ok(())
+}
+
 fn build_docx(text: &str) -> Result<Vec<u8>, String> {
     let mut body = String::new();
     for line in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
@@ -168,6 +232,7 @@ mod tests {
             job_id: "fictional".into(),
             kind: "cv".into(),
             digest: "fixture".into(),
+            reviewed_text: "Fictional text".into(),
             result: Some(Err("Fictional conversion error".into())),
         });
         let error = super::start(
@@ -211,6 +276,7 @@ mod tests {
             job_id: "fictional".into(),
             kind: "cv".into(),
             digest,
+            reviewed_text: "Fictional text".into(),
             result: Some(Ok(b"%PDF-fictional".to_vec())),
         });
         ws.add_fact(
@@ -221,6 +287,69 @@ mod tests {
         let result = super::poll("stale", &ws).unwrap();
         assert_eq!(result["status"], "failed");
         assert!(ws.documents().unwrap().is_empty());
+    }
+    #[test]
+    fn generated_record_includes_template_reviewed_text_and_pdf() {
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = waypoint_workspace::Workspace::open(root.path()).unwrap();
+        let id = JobIdentityId::new("fictional-export-record").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: id.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: "".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional posting"),
+        )
+        .unwrap();
+        ws.add_document("template", "template.docx", b"fictional-template", 1)
+            .unwrap();
+        ws.save_candidate_profile(&serde_json::json!({"cv_template_id":"template"}).to_string())
+            .unwrap();
+        super::record_generated(
+            &ws,
+            &id,
+            "cv",
+            "Reviewed fictional text",
+            b"%PDF-fictional",
+            "context",
+        )
+        .unwrap();
+        let dir = std::fs::read_dir(root.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let event: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("events.jsonl")).unwrap()).unwrap();
+        assert_eq!(event["type"], "draft_exported");
+        for (key, expected) in [
+            ("template", b"fictional-template".as_slice()),
+            ("reviewed_text", b"Reviewed fictional text".as_slice()),
+            ("pdf", b"%PDF-fictional".as_slice()),
+        ] {
+            assert_eq!(
+                std::fs::read(dir.join("materials").join(event[key].as_str().unwrap())).unwrap(),
+                expected
+            );
+        }
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(metadata["status"], "manual_review");
+        assert_eq!(metadata["submitted_by_waypoint"], false);
     }
     #[test]
     fn document_preserves_unicode_and_xml_characters() {
