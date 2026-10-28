@@ -392,11 +392,36 @@ impl CdpDriver {
             for key in ["class", "id", "name", "src", "title", "data-sitekey"] {
                 if let Some(v) = attrs.get(key) {
                     let lv = v.to_lowercase();
-                    if lv.contains("captcha") || lv.contains("recaptcha") || lv.contains("hcaptcha")
+                    if lv.contains("captcha")
+                        || lv.contains("recaptcha")
+                        || lv.contains("hcaptcha")
+                        || lv.contains("cf-turnstile")
+                        || lv.contains("challenges.cloudflare.com/turnstile")
                     {
                         wall_flags.push("captcha present".into());
                     }
                 }
+            }
+            // Custom ARIA controls are not handled by the native-field driver.
+            // Do not silently omit a required question on an otherwise readable form.
+            if !matches!(tag.as_str(), "input" | "textarea" | "select")
+                && attrs
+                    .get("aria-required")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                && attrs.get("role").is_some_and(|role| {
+                    matches!(
+                        role.to_ascii_lowercase().as_str(),
+                        "combobox"
+                            | "listbox"
+                            | "textbox"
+                            | "checkbox"
+                            | "radio"
+                            | "spinbutton"
+                            | "slider"
+                    )
+                })
+            {
+                wall_flags.push("a required custom control needs manual review".into());
             }
             if tag == "label" {
                 let mut label_text = String::new();

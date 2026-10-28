@@ -7,7 +7,8 @@
 .form-screenshot{display:block;width:100%;height:auto;margin-top:12px;border:1px solid #ccd8e6;border-radius:5px}
 
 .field-selection { display: block; margin: .6rem 0; overflow-wrap: anywhere; }
-.field-selection input { width: auto; margin-right: .35rem; }
+.field-selection input[type="checkbox"] { width: auto; margin-right: .35rem; }
+.field-selection > input, .field-selection > textarea, .field-selection > select { display: block; width: min(100%, 36rem); margin-top: .35rem; }
 
 .job-selection-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}.job-selection-toolbar button{padding:8px 10px;font-size:13px}.job-selection-toolbar button:not(:last-of-type){background:#eef5ff;color:#176de2}.job-selection-toolbar span{font-size:13px;color:#526583}.job-select,.job-review-select{display:flex;align-items:center;gap:6px;min-width:0;margin:0 0 7px;font-size:12px;font-weight:400}.job-select input,.job-review-select input{width:auto;margin:0}
 

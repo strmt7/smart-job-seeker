@@ -12,6 +12,7 @@ use waypoint_inference::Inference;
 use waypoint_policy::Operation;
 use waypoint_workspace::Workspace;
 
+#[derive(Clone)]
 pub struct FormPreview {
     pub schema: FormSchema,
     pub suggestions: Vec<ProposedMapping>,

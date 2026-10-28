@@ -282,6 +282,47 @@ fn reviewed_form_answers(
     Ok(result)
 }
 
+fn prepare_reviewed_fill(
+    preview: &form_preview::FormPreview,
+    body: &Value,
+) -> Result<(form_preview::FormPreview, bool), String> {
+    let mut prepared = preview.clone();
+    if let Some(selection) = body.get("selectors") {
+        let selected = selection
+            .as_array()
+            .ok_or("Selected fields must be a list")?;
+        let mut selectors = std::collections::HashSet::new();
+        for value in selected {
+            let selector = value.as_str().ok_or("Invalid selected field")?;
+            if !selectors.insert(selector)
+                || !preview
+                    .suggestions
+                    .iter()
+                    .any(|mapping| mapping.field_selector == selector)
+            {
+                return Err("Selected fields contain a duplicate or unknown field".into());
+            }
+        }
+        prepared
+            .suggestions
+            .retain(|mapping| selectors.contains(mapping.field_selector.as_str()));
+    }
+    if let Some(answers) = body.get("answers") {
+        let answers = reviewed_form_answers(answers, &prepared)?;
+        prepared.suggestions.extend(answers);
+    }
+    if prepared.suggestions.is_empty() {
+        return Err("Select at least one field to fill".into());
+    }
+    let omitted = preview.suggestions.iter().any(|original| {
+        !prepared
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == original.field_selector)
+    });
+    Ok((prepared, omitted))
+}
+
 fn answer_inputs(
     ws: &Workspace,
     session: &ReviewSession,
@@ -2045,63 +2086,6 @@ fn serve(
                     "This session has already been filled; inspect again to start over".into(),
                 );
             }
-            let mut current = session.take().ok_or("Form session expired")?;
-            if current.created.elapsed() > current.ttl {
-                return Err("Form session expired; inspect it again".into());
-            }
-            if let Some(selection) = body.get("selectors") {
-                let selected = selection
-                    .as_array()
-                    .ok_or("Selected fields must be a list")?;
-                let mut selectors = std::collections::HashSet::new();
-                for value in selected {
-                    let Some(selector) = value.as_str() else {
-                        *session = Some(current);
-                        return Err("Invalid selected field".into());
-                    };
-                    if !selectors.insert(selector)
-                        || !current
-                            .preview
-                            .suggestions
-                            .iter()
-                            .any(|m| m.field_selector == selector)
-                    {
-                        *session = Some(current);
-                        return Err("Selected fields contain a duplicate or unknown field".into());
-                    }
-                }
-                if selectors.len() < current.preview.suggestions.len() {
-                    if let Err(error) = ws.mark_manual_review(
-                        &current.job_id,
-                        "Application needs manual review",
-                        now(),
-                    ) {
-                        *session = Some(current);
-                        return Err(error.to_string());
-                    }
-                    current
-                        .preview
-                        .manual_review
-                        .push("Some suggested fields were left for manual review".into());
-                }
-                current
-                    .preview
-                    .suggestions
-                    .retain(|m| selectors.contains(m.field_selector.as_str()));
-            }
-            if let Some(answers) = body.get("answers") {
-                match reviewed_form_answers(answers, &current.preview) {
-                    Ok(answers) => current.preview.suggestions.extend(answers),
-                    Err(error) => {
-                        *session = Some(current);
-                        return Err(error);
-                    }
-                }
-            }
-            if current.preview.suggestions.is_empty() {
-                *session = Some(current);
-                return Err("Select at least one field to fill".into());
-            }
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(profile) => {
                     serde_json::from_str(&profile).map_err(|_| "stored profile is invalid")?
@@ -2109,8 +2093,26 @@ fn serve(
                 None => json!({}),
             };
             if Sha256Digest::of(&profile.to_string()) != current.profile_digest {
-                return Err("Profile changed; inspect the form again".into());
+                return Err("Profile changed; inspect the current page again".into());
             }
+            let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
+            let mut current = session.take().ok_or("Form session expired")?;
+            if current.created.elapsed() > current.ttl {
+                return Err("Form session expired; inspect it again".into());
+            }
+            if omitted {
+                if let Err(error) =
+                    ws.mark_manual_review(&current.job_id, "Application needs manual review", now())
+                {
+                    *session = Some(current);
+                    return Err(error.to_string());
+                }
+                current
+                    .preview
+                    .manual_review
+                    .push("Some suggested fields were left for manual review".into());
+            }
+            current.preview.suggestions = prepared.suggestions;
             let intent =
                 IntentId::new(format!("prefill-{}", current.id)).map_err(|e| e.to_string())?;
             let grant_id = GrantId::new(random_id()?).map_err(|e| e.to_string())?;
@@ -3302,9 +3304,42 @@ mod tests {
             assert_eq!(session.as_ref().unwrap().id, "test-session");
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
+            ws.save_candidate_profile(&json!({"first_name":"Updated"}).to_string())
+                .unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("Profile changed"), "{error}");
+            assert_eq!(session.as_ref().unwrap().id, "test-session");
+            assert!(!session.as_ref().unwrap().filled);
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
+            ws.save_candidate_profile(&profile.to_string()).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("invalid value"), "{error}");
+            let current = session.as_ref().unwrap();
+            assert!(!current.filled);
+            assert_eq!(current.preview.suggestions.len(), 3);
+            assert!(current
+                .preview
+                .suggestions
+                .iter()
+                .any(|mapping| mapping.field_selector == "#candidate"));
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
             let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
             assert!(session.as_ref().unwrap().filled);
+            assert_eq!(
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
+                    .read_attribute("#candidate", "data-seen")
+                    .unwrap()
+                    .as_deref(),
+                Some("Revised")
+            );
             assert_eq!(
                 session
                     .as_mut()
@@ -3355,7 +3390,7 @@ mod tests {
                     .as_deref(),
                 Some("manual@example.invalid")
             );
-            assert!(!ws.manual_reviews().unwrap().is_empty());
+            assert!(ws.manual_reviews().unwrap().is_empty());
             assert_eq!(
                 session
                     .as_mut()
@@ -3408,7 +3443,7 @@ mod tests {
                 .path();
             let events = std::fs::read_to_string(record.join("events.jsonl")).unwrap();
             assert!(
-                events.contains("Synthetic")
+                events.contains("Revised")
                     && events.contains("manual@example.invalid")
                     && events.contains("document_attached")
             );
@@ -3450,7 +3485,18 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("Close the active review session"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#candidate","#country"],"answers":[{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"}]}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"}]}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Profile changed"), "{response}");
+        let invalid = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#available","value":"not-a-date"}]}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{invalid}", invalid.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("invalid value"), "{response}");
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();

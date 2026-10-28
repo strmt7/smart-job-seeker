@@ -383,6 +383,40 @@ fn a_captcha_on_a_real_page_is_reported_as_a_wall() {
 }
 
 #[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn a_turnstile_widget_is_reported_as_a_wall() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_turnstile.html"))
+        .expect("open fixture");
+    assert!(
+        live.walls.iter().any(|w| w.contains("captcha")),
+        "the challenge must be reported: {:?}",
+        live.walls
+    );
+}
+
+#[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn a_required_custom_control_is_reported_alongside_native_fields() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_custom_control.html"))
+        .expect("open fixture");
+    assert!(
+        !live.schema.fields.is_empty(),
+        "native fields must still be detected"
+    );
+    assert!(
+        live.walls
+            .iter()
+            .any(|w| w.contains("required custom control")),
+        "the unsupported required question must be reported: {:?}",
+        live.walls
+    );
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_changed_page_voids_the_approval_against_a_real_site() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");

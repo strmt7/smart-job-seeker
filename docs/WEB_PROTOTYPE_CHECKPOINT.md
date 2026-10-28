@@ -235,3 +235,17 @@ The guided review queue now persists job IDs in the current browser session acro
 The application review and recovery cards now precede the optional local-tool setup controls, which are grouped under a disclosure. Queue and recovery actions have explicit spacing and wrap on narrow screens. A local Playwright fixture exercised queue, reload, close and next-job flow at desktop and 390 px viewports; it used fictional data and no external application.
 
 Checkpoint validation (2026-10-28): workspace formatting, offline tests with the normal parallel test runner, and workspace Clippy with warnings denied passed after coordinating the single-search and batch-search fixtures. The web-app suite reported 60 passed and 28 ignored. These checks do not resolve the earlier hosted browser timeouts or hosted supply-chain failure.
+
+The review queue controls can now select visible shortlisted or prepared jobs and clear that selection separately from the discovery shortlist selection. Selection is capped at 20 and reports when visible jobs were omitted. Selection alone does not inspect, fill or submit any application.
+
+Form inspection also recognizes common Cloudflare Turnstile widget markers as a challenge requiring manual review. A local browser fixture verifies detection without contacting a challenge service. This heuristic cannot identify every challenge implementation.
+
+Required custom ARIA controls, such as a non-native combobox, are flagged for manual review rather than omitted silently when native fields are also present. Their detection depends on the page exposing a supported role and aria-required; custom widgets are not yet filled by the driver.
+
+When a local model omits a field from its mapping, exact label and standard autocomplete matches can supplement its suggestions. Existing model mappings retain precedence, and all suggestions still require review before filling.
+
+If the saved profile changes during a review, a fill request now leaves the browser session open and asks for the current page to be inspected again. This lets the candidate retain their place and review suggestions based on the updated profile.
+
+Suggested form values can be edited or omitted in the review panel before filling. An edited choice is checked against the live form's available options, and the actual reviewed answer is saved in the attempt record.
+
+An invalid reviewed answer leaves the current session and original suggestions intact, so it can be corrected and retried without reopening the application.

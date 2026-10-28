@@ -114,6 +114,7 @@ pub fn suggest(
     if schema.fields.len() > MAX_FIELDS {
         return Err("Form has too many fields for one mapping request".into());
     }
+    let exact = suggest_exact(schema, profile)?;
     let profile = profile.as_object().ok_or("Profile must be an object")?;
     // No field reference is needed for available keys; handle an empty form too.
     let keys: Vec<&str> = profile
@@ -157,7 +158,16 @@ pub fn suggest(
     let (output, _) = inference
         .generate_structured("form_mapping", &prompt, 1024)
         .map_err(|e| e.to_string())?;
-    let mappings = validate_suggestions(schema, profile, &output)?;
+    let mut mappings = validate_suggestions(schema, profile, &output)?;
+    let mut selected: HashSet<String> = mappings
+        .iter()
+        .map(|mapping| mapping.field_selector.clone())
+        .collect();
+    for mapping in exact {
+        if selected.insert(mapping.field_selector.clone()) {
+            mappings.push(mapping);
+        }
+    }
     resolve_choice_options(inference, schema, mappings)
 }
 
@@ -475,6 +485,41 @@ mod tests {
         );
         assert!(!model.last_prompt.contains("Confidential Name"));
         assert!(!model.last_prompt.contains("Visa status"));
+    }
+
+    #[test]
+    fn model_omissions_can_use_exact_fallback_without_overriding_its_choices() {
+        let mut schema = form();
+        schema.fields[0].label = "First name".into();
+        schema.fields.push(FormField {
+            selector: "#email".into(),
+            label: "Email".into(),
+            field_type: FormFieldType::Email,
+            required: true,
+            sensitive: false,
+            autocomplete: Some("email".into()),
+        });
+        let mut model = FakeInference {
+            response: json!({"mappings":[{"selector":"#candidate","profile_key":"last_name"}]}),
+            last_prompt: String::new(),
+        };
+        let matches = suggest(
+            &mut model,
+            &schema,
+            &json!({
+                "first_name":"Example", "last_name":"Person", "email":"example@example.invalid"
+            }),
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].value, PacketValue::Text("Person".into()));
+        assert!(matches
+            .iter()
+            .any(|mapping| mapping.field_selector == "#email"
+                && mapping.value == PacketValue::Text("example@example.invalid".into())));
+        assert!(!matches
+            .iter()
+            .any(|mapping| mapping.field_selector == "#visa"));
     }
     #[test]
     fn select_suggestion_requires_a_unique_matching_option() {
