@@ -174,6 +174,19 @@ const MIGRATIONS: &[&str] = &[
     // v17 — separate one-use, hash-bound approval for an email handoff.
     "CREATE TABLE email_handoff_approvals(id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), message_hash TEXT NOT NULL, sender_hash TEXT NOT NULL, recipient_hash TEXT NOT NULL, created_at INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)));
      UPDATE meta SET value='17' WHERE key='schema_version';",
+    // v18 — invalidate older email approvals and bind new ones to their context.
+    "ALTER TABLE email_handoff_approvals ADD COLUMN context_hash TEXT NOT NULL DEFAULT '';
+     CREATE TRIGGER email_approval_profile_insert AFTER INSERT ON candidate_profile BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE consumed=0; END;
+     CREATE TRIGGER email_approval_profile_update AFTER UPDATE ON candidate_profile BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE consumed=0; END;
+     CREATE TRIGGER email_approval_profile_delete AFTER DELETE ON candidate_profile BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE consumed=0; END;
+     CREATE TRIGGER email_approval_claim_insert AFTER INSERT ON claims BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE consumed=0; END;
+     CREATE TRIGGER email_approval_claim_update AFTER UPDATE ON claims BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE consumed=0; END;
+     CREATE TRIGGER email_approval_claim_delete AFTER DELETE ON claims BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE consumed=0; END;
+     CREATE TRIGGER email_approval_job_update AFTER UPDATE ON jobs BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE job_id=NEW.id AND consumed=0; END;
+     CREATE TRIGGER email_approval_description_insert AFTER INSERT ON job_descriptions BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE job_id=NEW.job_id AND consumed=0; END;
+     CREATE TRIGGER email_approval_description_update AFTER UPDATE ON job_descriptions BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE job_id=NEW.job_id AND consumed=0; END;
+     CREATE TRIGGER email_approval_description_delete AFTER DELETE ON job_descriptions BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE job_id=OLD.job_id AND consumed=0; END;
+     UPDATE meta SET value='18' WHERE key='schema_version';",
 ];
 
 pub mod documents;

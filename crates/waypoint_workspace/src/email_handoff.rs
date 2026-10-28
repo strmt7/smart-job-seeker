@@ -35,6 +35,20 @@ fn digests(email: &ReviewedEmail<'_>) -> Result<Digests, String> {
 }
 
 impl Workspace {
+    /// A conservative snapshot of the job and candidate data used for review.
+    /// Any change requires the email to be reviewed and approved again.
+    pub fn email_review_context(&self, job: &JobIdentityId) -> Result<Sha256Digest, String> {
+        let job_data = self
+            .job(job)
+            .map_err(|e| e.to_string())?
+            .ok_or("Job not found")?;
+        let description = self.job_description(job).map_err(|e| e.to_string())?;
+        let profile = self.candidate_profile().map_err(|e| e.to_string())?;
+        let mut facts = self.facts().map_err(|e| e.to_string())?;
+        facts.sort_by(|a, b| a.id.cmp(&b.id));
+        let facts: Vec<_> = facts.into_iter().map(|fact| serde_json::json!({"id":fact.id,"revision":fact.profile_revision,"text":fact.text,"status":format!("{:?}",fact.status),"source":format!("{:?}",fact.source_kind),"requires_review":fact.requires_review})).collect();
+        Ok(Sha256Digest::of(&serde_json::json!({"job":job_data,"description":description,"profile":profile,"facts":facts}).to_string()))
+    }
     /// The caller must present the exact email and receive a user gesture.
     pub fn approve_reviewed_email(
         &mut self,
@@ -45,12 +59,14 @@ impl Workspace {
         explicit_user_gesture: bool,
     ) -> Result<(), String> {
         let digest = digests(email)?;
+        let context = self.email_review_context(job)?;
         self.store.approve_email_handoff(&EmailHandoffApproval {
             id: approval_id,
             job_id: job,
             message_hash: &digest.message,
             sender_hash: &digest.sender,
             recipient_hash: &digest.recipient,
+            context_hash: &context,
             created_at: now,
             explicit_user_gesture,
         })
@@ -72,6 +88,7 @@ impl Workspace {
         F: FnOnce(&ReviewedEmail<'_>) -> EmailHandoffOutcome,
     {
         let digest = digests(email)?;
+        let context = self.email_review_context(job)?;
         self.store.reserve_email_handoff(&EmailHandoffReservation {
             id: handoff_id,
             job_id: job,
@@ -79,6 +96,7 @@ impl Workspace {
             message_hash: &digest.message,
             sender_hash: &digest.sender,
             recipient_hash: &digest.recipient,
+            context_hash: &context,
             created_at: now,
         })?;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| transport(email)))
@@ -106,11 +124,38 @@ mod tests {
     use std::cell::Cell;
     use waypoint_domain::ApplicationState;
     #[test]
+    fn changing_candidate_facts_invalidates_email_approval() {
+        let mut ws = Workspace::in_memory().unwrap();
+        ws.test_insert_job("fact-fixture", "Role", "Fixture");
+        let job = JobIdentityId::new("fact-fixture").unwrap();
+        ws.set_state(&job, ApplicationState::Shortlisted).unwrap();
+        let email = ReviewedEmail {
+            sender: "sender@example.invalid",
+            recipient: "recipient@example.invalid",
+            mime: b"Subject: Fixture\r\n\r\nHi\r\n",
+        };
+        ws.approve_reviewed_email(&job, "fact-approval", &email, 1, true)
+            .unwrap();
+        ws.add_fact("Fictional qualification", crate::FactOrigin::UserAttested)
+            .unwrap();
+        assert!(ws
+            .handoff_reviewed_email(
+                &job,
+                "fact-approval",
+                "fact-attempt",
+                &email,
+                2,
+                |_| panic!("changed facts must invalidate the approval")
+            )
+            .is_err());
+    }
+    #[test]
     fn exact_approval_is_spent_before_one_transport_and_panic_is_uncertain() {
         let mut ws = Workspace::in_memory().unwrap();
         ws.test_insert_job("fixture", "Role", "Fixture");
         let job = JobIdentityId::new("fixture").unwrap();
         ws.set_state(&job, ApplicationState::Shortlisted).unwrap();
+        ws.save_candidate_profile("{\"name\":\"Initial\"}").unwrap();
         let email = ReviewedEmail {
             sender: "sender@example.invalid",
             recipient: "recipient@example.invalid",
@@ -121,20 +166,34 @@ mod tests {
             .is_err());
         ws.approve_reviewed_email(&job, "approval", &email, 1, true)
             .unwrap();
+        ws.save_candidate_profile("{\"name\":\"Changed\"}").unwrap();
+        assert!(ws
+            .handoff_reviewed_email(&job, "approval", "stale", &email, 2, |_| panic!(
+                "stale context must not call transport"
+            ))
+            .is_err());
+        ws.save_candidate_profile("{\"name\":\"Initial\"}").unwrap();
+        assert!(ws
+            .handoff_reviewed_email(&job, "approval", "restored", &email, 2, |_| panic!(
+                "old approval must remain invalidated"
+            ))
+            .is_err());
+        ws.approve_reviewed_email(&job, "fresh-approval", &email, 1, true)
+            .unwrap();
         let changed = ReviewedEmail {
             recipient: "other@example.invalid",
             ..email
         };
         let called = Cell::new(false);
         assert!(ws
-            .handoff_reviewed_email(&job, "approval", "attempt", &changed, 2, |_| {
+            .handoff_reviewed_email(&job, "fresh-approval", "attempt", &changed, 2, |_| {
                 called.set(true);
                 EmailHandoffOutcome::Accepted
             })
             .is_err());
         assert!(!called.get());
         let outcome = ws
-            .handoff_reviewed_email(&job, "approval", "attempt", &email, 2, |_| {
+            .handoff_reviewed_email(&job, "fresh-approval", "attempt", &email, 2, |_| {
                 called.set(true);
                 panic!("simulated transport failure")
             })

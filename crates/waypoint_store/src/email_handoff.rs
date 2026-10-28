@@ -79,6 +79,7 @@ pub struct EmailHandoffReservation<'a> {
     pub message_hash: &'a Sha256Digest,
     pub sender_hash: &'a Sha256Digest,
     pub recipient_hash: &'a Sha256Digest,
+    pub context_hash: &'a Sha256Digest,
     pub created_at: i64,
 }
 
@@ -88,6 +89,7 @@ pub struct EmailHandoffApproval<'a> {
     pub message_hash: &'a Sha256Digest,
     pub sender_hash: &'a Sha256Digest,
     pub recipient_hash: &'a Sha256Digest,
+    pub context_hash: &'a Sha256Digest,
     pub created_at: i64,
     pub explicit_user_gesture: bool,
 }
@@ -144,7 +146,7 @@ impl Store {
         ) {
             return Err("Job is not eligible for email approval".into());
         }
-        self.conn.execute("INSERT INTO email_handoff_approvals(id,job_id,message_hash,sender_hash,recipient_hash,created_at) VALUES(?1,?2,?3,?4,?5,?6)", params![approval.id, approval.job_id.as_str(), approval.message_hash.as_str(), approval.sender_hash.as_str(), approval.recipient_hash.as_str(), approval.created_at]).map_err(|e| format!("Cannot save email approval: {e}"))?;
+        self.conn.execute("INSERT INTO email_handoff_approvals(id,job_id,message_hash,sender_hash,recipient_hash,created_at,context_hash) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![approval.id, approval.job_id.as_str(), approval.message_hash.as_str(), approval.sender_hash.as_str(), approval.recipient_hash.as_str(), approval.created_at, approval.context_hash.as_str()]).map_err(|e| format!("Cannot save email approval: {e}"))?;
         Ok(())
     }
 
@@ -185,7 +187,7 @@ impl Store {
             return Err("Review duplicate jobs or an existing email handoff first".into());
         }
         check_related_jobs(&tx, reservation.job_id.as_str())?;
-        let consumed = tx.execute("UPDATE email_handoff_approvals SET consumed=1 WHERE id=?1 AND job_id=?2 AND message_hash=?3 AND sender_hash=?4 AND recipient_hash=?5 AND consumed=0 AND created_at<=?6 AND created_at>=?7", params![reservation.approval_id,reservation.job_id.as_str(),reservation.message_hash.as_str(),reservation.sender_hash.as_str(),reservation.recipient_hash.as_str(),reservation.created_at,reservation.created_at.saturating_sub(600)]).map_err(|e| e.to_string())?;
+        let consumed = tx.execute("UPDATE email_handoff_approvals SET consumed=1 WHERE id=?1 AND job_id=?2 AND message_hash=?3 AND sender_hash=?4 AND recipient_hash=?5 AND consumed=0 AND created_at<=?6 AND created_at>=?7 AND context_hash=?8", params![reservation.approval_id,reservation.job_id.as_str(),reservation.message_hash.as_str(),reservation.sender_hash.as_str(),reservation.recipient_hash.as_str(),reservation.created_at,reservation.created_at.saturating_sub(600),reservation.context_hash.as_str()]).map_err(|e| e.to_string())?;
         if consumed != 1 {
             return Err(
                 "Email approval is missing, expired, spent or does not match the reviewed message"
@@ -278,6 +280,7 @@ mod tests {
             message_hash: &digest,
             sender_hash: &digest,
             recipient_hash: &digest,
+            context_hash: &digest,
             created_at: 1,
         };
         {
@@ -305,6 +308,7 @@ mod tests {
                 message_hash: &digest,
                 sender_hash: &digest,
                 recipient_hash: &digest,
+                context_hash: &digest,
                 created_at: 1,
                 explicit_user_gesture: false,
             };
@@ -363,6 +367,7 @@ mod tests {
                     message_hash: &digest,
                     sender_hash: &digest,
                     recipient_hash: &digest,
+                    context_hash: &digest,
                     created_at: 1,
                     explicit_user_gesture: true,
                 })
@@ -374,6 +379,7 @@ mod tests {
                 message_hash: &digest,
                 sender_hash: &digest,
                 recipient_hash: &digest,
+                context_hash: &digest,
                 created_at: 2,
             };
             assert!(store.reserve_email_handoff(&conflicting_id).is_err());
@@ -401,6 +407,7 @@ mod tests {
                 message_hash: &digest,
                 sender_hash: &digest,
                 recipient_hash: &digest,
+                context_hash: &digest,
                 created_at: 2,
             };
             assert!(store.reserve_email_handoff(&browser_blocked).is_err());
@@ -420,6 +427,7 @@ mod tests {
                 message_hash: &digest,
                 sender_hash: &digest,
                 recipient_hash: &digest,
+                context_hash: &digest,
                 created_at: 3,
             };
             store
@@ -429,6 +437,7 @@ mod tests {
                     message_hash: &digest,
                     sender_hash: &digest,
                     recipient_hash: &digest,
+                    context_hash: &digest,
                     created_at: 1,
                     explicit_user_gesture: true,
                 })
@@ -446,6 +455,7 @@ mod tests {
                     message_hash: &digest,
                     sender_hash: &digest,
                     recipient_hash: &digest,
+                    context_hash: &digest,
                     created_at: 1,
                     explicit_user_gesture: true,
                 })
@@ -457,6 +467,7 @@ mod tests {
                 message_hash: &digest,
                 sender_hash: &digest,
                 recipient_hash: &digest,
+                context_hash: &digest,
                 created_at: 3,
             };
             assert!(store.reserve_email_handoff(&transitive).is_err());

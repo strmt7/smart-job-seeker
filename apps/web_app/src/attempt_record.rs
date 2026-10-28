@@ -26,6 +26,24 @@ pub struct GmailReviewAttachment {
 /// Rebuild the packet from its saved review details and materials before
 /// returning those details. This is a review aid, not submission approval.
 pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {
+    let (review, _) = load_gmail_review(ws, job, attempt)?;
+    let mut value =
+        serde_json::to_value(review).map_err(|_| "Cannot display saved Gmail review")?;
+    value["context_sha256"] = json!(ws.email_review_context(job)?.as_str());
+    Ok(value)
+}
+
+pub fn load_gmail_review(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+) -> Result<
+    (
+        GmailReview,
+        crate::application_email::PreparedApplicationEmail,
+    ),
+    String,
+> {
     if attempt.len() != 32 || !attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid application record".into());
     }
@@ -89,7 +107,7 @@ pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Resul
     if packet.mime() != saved || waypoint_domain::sha256_hex(&saved) != review.mime_sha256 {
         return Err("Saved message or materials changed; prepare a new packet".into());
     }
-    serde_json::to_value(review).map_err(|_| "Cannot display saved Gmail review".into())
+    Ok((review, packet))
 }
 
 pub struct AttemptRecord {

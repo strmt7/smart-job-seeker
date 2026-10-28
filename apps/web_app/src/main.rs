@@ -606,6 +606,36 @@ fn template_suggestion_inputs(
     })
 }
 
+fn approve_saved_gmail(ws: &mut Workspace, body: &Value) -> Result<Value, String> {
+    if body["reviewed"].as_bool() != Some(true) {
+        return Err("Explicit review is required".into());
+    }
+    let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+        .map_err(|e| e.to_string())?;
+    let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+    let expected_message = body["mime_sha256"]
+        .as_str()
+        .ok_or("missing reviewed message hash")?;
+    let expected_context = body["context_sha256"]
+        .as_str()
+        .ok_or("missing reviewed context hash")?;
+    let (review, packet) = attempt_record::load_gmail_review(ws, &id, attempt)?;
+    if review.mime_sha256 != expected_message
+        || ws.email_review_context(&id)?.as_str() != expected_context
+    {
+        return Err("The packet or supporting information changed; review again".into());
+    }
+    if application_email::connected_sender(ws)? != review.sender {
+        return Err("The connected Gmail account changed; prepare a new packet".into());
+    }
+    if ws.has_duplicate_hold(&id).map_err(|e| e.to_string())? {
+        return Err("Review possible duplicate jobs before approving".into());
+    }
+    let approval = random_id()?;
+    packet.approve(ws, &id, &approval, now(), true)?;
+    Ok(json!({"approval_id":approval,"expires_in_seconds":600,"sent":false}))
+}
+
 fn check_answer_page(session: &mut ReviewSession) -> Result<(), String> {
     let live = session
         .driver
@@ -1611,6 +1641,9 @@ fn serve(
                 "200 OK",
                 attempt_record::gmail_review(ws, &id, attempt)?,
             );
+        }
+        "/api/gmail/approve-application" => {
+            json_reply(stream, "200 OK", approve_saved_gmail(ws, &body)?);
         }
         "/api/email-answer/start" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
@@ -3118,11 +3151,23 @@ mod tests {
         let meta: Value =
             serde_json::from_slice(&std::fs::read(attempt.join("attempt.json")).unwrap()).unwrap();
         let attempt_id = meta["attempt_id"].as_str().unwrap();
-        let ws = Workspace::open(directory.path()).unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
         let job = JobIdentityId::new("fictional-email").unwrap();
         let review = attempt_record::gmail_review(&ws, &job, attempt_id).unwrap();
         assert_eq!(review["message"], "Hello");
         assert_eq!(review["attachments"][0]["name"], "resume.pdf");
+        let request = json!({"id":"fictional-email","attempt_id":attempt_id,"mime_sha256":review["mime_sha256"],"context_sha256":review["context_sha256"],"reviewed":true});
+        let mut without_gesture = request.clone();
+        without_gesture["reviewed"] = json!(false);
+        assert!(approve_saved_gmail(&mut ws, &without_gesture).is_err());
+        ws.save_candidate_profile("{\"city\":\"Changed\"}").unwrap();
+        assert!(approve_saved_gmail(&mut ws, &request).is_err());
+        let fresh = attempt_record::gmail_review(&ws, &job, attempt_id).unwrap();
+        let fresh_request = json!({"id":"fictional-email","attempt_id":attempt_id,"mime_sha256":fresh["mime_sha256"],"context_sha256":fresh["context_sha256"],"reviewed":true});
+        assert_eq!(
+            approve_saved_gmail(&mut ws, &fresh_request).unwrap()["sent"],
+            false
+        );
         std::fs::write(
             attempt.join("materials").join("0001-resume.pdf"),
             b"%PDF-changed",
