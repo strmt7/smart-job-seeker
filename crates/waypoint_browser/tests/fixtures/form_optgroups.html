@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Grouped options fixture</title></head>
+<body><form>
+  <label for="location">Country</label>
+  <select id="location" required onchange="this.setAttribute('data-seen', this.value)">
+    <option value="" disabled>Choose a country</option>
+    <optgroup label="Europe"><option value="de">Germany</option><option value="fr" label="French Republic">France</option><option disabled>Unavailable</option></optgroup>
+    <optgroup label="Unavailable" disabled><option>Hidden choice</option></optgroup>
+  </select>
+  <label for="skills">Skills</label>
+  <select id="skills" multiple required onchange="this.setAttribute('data-seen', Array.from(this.selectedOptions, option => option.value).join(','))">
+    <optgroup label="Available"><option value="rust">Rust</option><option value="python">Python</option><option disabled>Unavailable</option></optgroup>
+    <optgroup label="Disabled" disabled><option>Hidden choice</option></optgroup>
+  </select>
+  <button type="submit">Submit</button>
+</form></body></html>

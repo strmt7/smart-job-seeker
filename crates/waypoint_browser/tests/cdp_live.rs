@@ -417,6 +417,104 @@ fn a_required_custom_control_is_reported_alongside_native_fields() {
 }
 
 #[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn grouped_select_options_can_be_inspected_and_filled() {
+    use waypoint_applications::form_mapping::{BrowserCommand, FormFieldType};
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_optgroups.html"))
+        .expect("open fixture");
+    let field = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#location")
+        .unwrap();
+    assert_eq!(
+        field.field_type,
+        FormFieldType::Select {
+            options: vec!["Germany".into(), "French Republic".into()]
+        }
+    );
+    driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#location".into(),
+            label: "French Republic".into(),
+        })
+        .expect("choose enabled grouped option");
+    assert_eq!(
+        driver
+            .read_attribute("#location", "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("fr")
+    );
+    assert!(driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#location".into(),
+            label: "Unavailable".into()
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn multiple_choice_fill_detects_later_changes_and_rejects_unavailable_options() {
+    use waypoint_applications::form_mapping::{BrowserCommand, FormFieldType};
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_optgroups.html"))
+        .expect("open fixture");
+    let skills = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#skills")
+        .unwrap();
+    assert_eq!(
+        skills.field_type,
+        FormFieldType::MultiSelect {
+            options: vec!["Rust".into(), "Python".into()]
+        }
+    );
+    let first = BrowserCommand::SelectOptions {
+        selector: "#skills".into(),
+        labels: vec!["Rust".into(), "Python".into()],
+    };
+    driver.execute(&first).expect("select reviewed options");
+    driver.verify_choice(&first).expect("verify selection");
+    assert_eq!(
+        driver
+            .read_attribute("#skills", "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("rust,python")
+    );
+    let invalid = BrowserCommand::SelectOptions {
+        selector: "#skills".into(),
+        labels: vec!["Unavailable".into()],
+    };
+    assert!(driver.execute(&invalid).is_err());
+    driver
+        .verify_choice(&first)
+        .expect("rejected change leaves selection intact");
+    let changed = BrowserCommand::SelectOptions {
+        selector: "#skills".into(),
+        labels: vec!["Python".into()],
+    };
+    driver.execute(&changed).expect("change selected options");
+    assert!(driver.verify_choice(&first).is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_changed_page_voids_the_approval_against_a_real_site() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");

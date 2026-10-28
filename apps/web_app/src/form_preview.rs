@@ -115,6 +115,9 @@ pub fn apply_reviewed_text_fields(
                 waypoint_applications::form_mapping::valid_iso_date(value)
             }
             (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
+            (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
+                waypoint_applications::form_mapping::valid_multi_select(options, values)
+            }
             (
                 FormFieldType::Select { options } | FormFieldType::Radio { options },
                 PacketValue::Text(value),
@@ -163,6 +166,12 @@ pub fn apply_reviewed_text_fields(
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
         let command = match (&field.field_type, &mapping.value) {
+            (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
+                BrowserCommand::SelectOptions {
+                    selector: mapping.field_selector.clone(),
+                    labels: labels.clone(),
+                }
+            }
             (FormFieldType::Select { .. }, PacketValue::Text(label)) => {
                 BrowserCommand::SelectOption {
                     selector: mapping.field_selector.clone(),
@@ -206,6 +215,12 @@ pub fn apply_reviewed_text_fields(
                 .map_err(|error| format!("After filling, {} needs review: {error}", field.label))?;
         } else {
             let command = match (&field.field_type, &mapping.value) {
+                (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
+                    Some(BrowserCommand::SelectOptions {
+                        selector: mapping.field_selector.clone(),
+                        labels: labels.clone(),
+                    })
+                }
                 (FormFieldType::Select { .. }, PacketValue::Text(label)) => {
                     Some(BrowserCommand::SelectOption {
                         selector: mapping.field_selector.clone(),

@@ -724,6 +724,11 @@ impl CdpDriver {
                 (_, "file") => FormFieldType::File,
                 (_, "checkbox") => FormFieldType::Checkbox,
                 (_, "radio") => FormFieldType::Radio { options: vec![] },
+                (_, "select") if control.attrs.contains_key("multiple") => {
+                    FormFieldType::MultiSelect {
+                        options: control.options.clone(),
+                    }
+                }
                 (_, "select") => FormFieldType::Select {
                     options: control.options.clone(),
                 },
@@ -868,6 +873,7 @@ impl CdpDriver {
                 }
                 Ok(())
             }
+            PacketValue::TextList(_) => Err(DriverError("Use a multiple-choice command".into())),
             PacketValue::None => Ok(()),
         }
     }
@@ -892,7 +898,7 @@ impl CdpDriver {
             .and_then(|v| v.get("objectId"))
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this.tagName !== 'SELECT' || this.multiple || this.disabled || !this.isConnected) return false; const matches = Array.from(this.options).filter(o => o.textContent.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this.tagName !== 'SELECT' || this.multiple || this.disabled || !this.isConnected) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result
                 .get("result")
@@ -902,6 +908,53 @@ impl CdpDriver {
         {
             return Err(DriverError(
                 "Select option is unavailable, ambiguous, or was not retained".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn select_options(
+        &mut self,
+        selector: &str,
+        labels: &[String],
+        apply: bool,
+    ) -> Result<(), DriverError> {
+        if labels.is_empty() || labels.len() > 100 {
+            return Err(DriverError("Choose between one and 100 options".into()));
+        }
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Select field not found".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(labels, apply) {
+            if (!(this instanceof HTMLSelectElement) || !this.multiple || this.matches(':disabled') || !this.isConnected) return false;
+            const norm = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
+            const options = Array.from(this.options);
+            const chosen = [];
+            for (const label of labels) {
+                const matches = options.filter(o => norm(o.label) === norm(label) && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled));
+                if (matches.length !== 1 || chosen.includes(matches[0])) return false;
+                chosen.push(matches[0]);
+            }
+            if (apply) {
+                for (const option of options) option.selected = chosen.includes(option);
+                this.dispatchEvent(new Event('input', {bubbles:true}));
+                this.dispatchEvent(new Event('change', {bubbles:true}));
+            }
+            return this.isConnected && !this.matches(':disabled') && this.validity.valid && options.every(o => o.selected === chosen.includes(o));
+        }"#,"arguments":[{"value":labels},{"value":apply}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Multiple-choice options are unavailable, ambiguous, or were not retained".into(),
             ));
         }
         Ok(())
@@ -1114,6 +1167,9 @@ impl BrowserDriver for CdpDriver {
 
     fn verify_choice(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
         match command {
+            BrowserCommand::SelectOptions { selector, labels } => {
+                self.select_options(selector, labels, false)
+            }
             BrowserCommand::SelectOption { selector, label } => {
                 self.select_option(selector, label, false)
             }
@@ -1156,6 +1212,9 @@ impl BrowserDriver for CdpDriver {
             BrowserCommand::Fill { selector, value } => self.fill(selector, value),
             BrowserCommand::SelectOption { selector, label } => {
                 self.select_option(selector, label, true)
+            }
+            BrowserCommand::SelectOptions { selector, labels } => {
+                self.select_options(selector, labels, true)
             }
             BrowserCommand::SelectRadio { selector, label } => {
                 self.select_radio(selector, label, true)
@@ -1314,9 +1373,19 @@ fn options_of(node: &Value) -> Vec<String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if tag == "option" {
+            let attrs = attributes(child);
+            if attrs.contains_key("disabled") {
+                continue;
+            }
+            if tag == "optgroup" {
+                options.extend(options_of(child));
+            } else if tag == "option" {
                 let mut text = String::new();
-                collect_text(child, false, &mut text);
+                if let Some(label) = attrs.get("label") {
+                    text.push_str(label);
+                } else {
+                    collect_text(child, false, &mut text);
+                }
                 let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
                 if !cleaned.is_empty() {
                     options.push(cleaned);

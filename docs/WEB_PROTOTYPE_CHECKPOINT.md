@@ -249,3 +249,9 @@ If the saved profile changes during a review, a fill request now leaves the brow
 Suggested form values can be edited or omitted in the review panel before filling. An edited choice is checked against the live form's available options, and the actual reviewed answer is saved in the attempt record.
 
 An invalid reviewed answer leaves the current session and original suggestions intact, so it can be corrected and retried without reopening the application.
+
+Native select fields now expose enabled options inside option groups for review and autofill, including explicit display labels. Disabled options and disabled groups are excluded; a local browser fixture exercised selection without submission.
+
+Native multiple-select questions can now be answered in the review panel using individual checkboxes. The driver checks that each choice is unique and available, fills the selection, and verifies that the page retained it. Local fixtures exercised the panel and browser without submitting; custom multi-select widgets still require manual handling.
+
+For long multi-select lists, the review panel renders at most 40 choices at a time and offers paging and a filter. Selections remain checked while the filter or page changes. This limits the panel's rendered controls; it does not bound the memory consumed by the page or browser itself.

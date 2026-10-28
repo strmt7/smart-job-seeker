@@ -15,6 +15,7 @@ pub enum FormFieldType {
     Email,
     TextArea,
     Select { options: Vec<String> },
+    MultiSelect { options: Vec<String> },
     Checkbox,
     File,
     Date,
@@ -63,10 +64,29 @@ impl FormSchema {
 #[serde(rename_all = "snake_case")]
 pub enum PacketValue {
     Text(String),
+    TextList(Vec<String>),
     Bool(bool),
     Date(String),
     FileRef { name: String },
     None,
+}
+
+pub fn valid_multi_select(options: &[String], values: &[String]) -> bool {
+    !values.is_empty()
+        && values.len() <= 100
+        && values.iter().all(|value| {
+            !value.trim().is_empty()
+                && options
+                    .iter()
+                    .filter(|option| option.trim().eq_ignore_ascii_case(value.trim()))
+                    .count()
+                    == 1
+        })
+        && values.iter().enumerate().all(|(i, value)| {
+            !values[..i]
+                .iter()
+                .any(|previous| previous.trim().eq_ignore_ascii_case(value.trim()))
+        })
 }
 
 /// Accept a complete Gregorian calendar date in the format used by native date inputs.
@@ -165,6 +185,9 @@ pub fn validate_mapping(
             | (FormFieldType::Date, PacketValue::Date(_))
             | (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::Select { options }, PacketValue::Text(t)) => options.contains(t),
+            (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
+                valid_multi_select(options, values)
+            }
             (FormFieldType::Radio { options }, PacketValue::Text(t)) => options.contains(t),
             (FormFieldType::File, PacketValue::FileRef { .. }) => true,
             _ => false,
@@ -218,6 +241,10 @@ pub enum BrowserCommand {
     SelectOption {
         selector: String,
         label: String,
+    },
+    SelectOptions {
+        selector: String,
+        labels: Vec<String>,
     },
     /// Choose a reviewed option within a native fieldset radio group.
     SelectRadio {

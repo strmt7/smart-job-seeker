@@ -9,6 +9,7 @@
 .field-selection { display: block; margin: .6rem 0; overflow-wrap: anywhere; }
 .field-selection input[type="checkbox"] { width: auto; margin-right: .35rem; }
 .field-selection > input, .field-selection > textarea, .field-selection > select { display: block; width: min(100%, 36rem); margin-top: .35rem; }
+.multi-answer{margin:12px 0;padding:12px;border:1px solid #ccd8e6;border-radius:6px;min-width:0}.multi-answer legend{color:#405574;font-size:13px;font-weight:600}.multi-answer .footnote{padding:0 0 8px}.multi-options{display:grid;gap:4px}.multi-choice{display:flex;align-items:center;gap:8px;min-height:36px;min-width:0;font-weight:400;overflow-wrap:anywhere}.multi-choice input{display:inline-block;flex:none;width:auto;margin:0}
 
 .job-selection-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}.job-selection-toolbar button{padding:8px 10px;font-size:13px}.job-selection-toolbar button:not(:last-of-type){background:#eef5ff;color:#176de2}.job-selection-toolbar span{font-size:13px;color:#526583}.job-select,.job-review-select{display:flex;align-items:center;gap:6px;min-width:0;margin:0 0 7px;font-size:12px;font-weight:400}.job-select input,.job-review-select input{width:auto;margin:0}
 
@@ -70,6 +71,9 @@ nav a.active{padding:22px 0}
 .ai-score{background:#eaeafa;color:#4b4685}.ai-score[hidden]{display:none}
 
 .manual-answer{display:block;margin:10px 0;color:#344b58;font-size:13px}.manual-answer input,.manual-answer textarea,.manual-answer select{display:block;width:100%;margin-top:5px}
+.multi-answer .multi-choice input{display:inline-block;flex:none;width:auto;margin:0}
+.multi-options input[hidden]{display:none}.multi-choice-list{display:grid;gap:4px}.multi-choice-count{font-size:12px;margin:4px 0;color:#526479}
+.multi-paging{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.multi-paging[hidden]{display:none}.multi-paging button{padding:7px 10px;font-size:12px}
 
 .answer-draft{padding:4px 0;font-size:13px;overflow-wrap:anywhere}.answer-draft:empty{display:none}
 

@@ -248,6 +248,21 @@ fn reviewed_form_answers(
         }
         let value = match (&field.field_type, &answer["value"]) {
             (FormFieldType::Checkbox, Value::Bool(value)) => PacketValue::Bool(*value),
+            (FormFieldType::MultiSelect { options }, Value::Array(items)) => {
+                let values: Option<Vec<String>> = items
+                    .iter()
+                    .map(|item| {
+                        item.as_str()
+                            .filter(|value| value.len() <= 4000)
+                            .map(str::to_owned)
+                    })
+                    .collect();
+                let values = values.ok_or("Invalid multiple-choice answer")?;
+                if !waypoint_applications::form_mapping::valid_multi_select(options, &values) {
+                    return Err("Multiple-choice answer is invalid or ambiguous".into());
+                }
+                PacketValue::TextList(values)
+            }
             (kind, Value::String(value)) if !value.trim().is_empty() && value.len() <= 4000 => {
                 match kind {
                     FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => {
@@ -2790,6 +2805,16 @@ mod tests {
                         sensitive: false,
                         autocomplete: None,
                     },
+                    FormField {
+                        selector: "#skills".into(),
+                        label: "Skills".into(),
+                        field_type: FormFieldType::MultiSelect {
+                            options: vec!["Rust".into(), "Python".into()],
+                        },
+                        required: true,
+                        sensitive: false,
+                        autocomplete: None,
+                    },
                 ],
             },
             suggestions: vec![],
@@ -2816,6 +2841,21 @@ mod tests {
         .is_ok());
         assert!(reviewed_form_answers(
             &json!([{"selector":"#start","value":"2029-02-29"}]),
+            &preview
+        )
+        .is_err());
+        assert!(reviewed_form_answers(
+            &json!([{"selector":"#skills","value":["Rust","Python"]}]),
+            &preview
+        )
+        .is_ok());
+        assert!(reviewed_form_answers(
+            &json!([{"selector":"#skills","value":["Rust","rust"]}]),
+            &preview
+        )
+        .is_err());
+        assert!(reviewed_form_answers(
+            &json!([{"selector":"#skills","value":["Rust","Unknown"]}]),
             &preview
         )
         .is_err());
@@ -3335,6 +3375,16 @@ mod tests {
                     .as_mut()
                     .unwrap()
                     .driver
+                    .read_attribute("#skills", "data-seen")
+                    .unwrap()
+                    .as_deref(),
+                Some("rust,python")
+            );
+            assert_eq!(
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
                     .read_attribute("#candidate", "data-seen")
                     .unwrap()
                     .as_deref(),
@@ -3485,7 +3535,7 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("Close the active review session"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"}]}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
@@ -3503,7 +3553,7 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
         let payload: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(payload["filled"], 6);
+        assert_eq!(payload["filled"], 7);
         assert!(payload["filled_fields"]
             .as_array()
             .unwrap()
