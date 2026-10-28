@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fictional application</title></head><body>
+<form>
+<span id="group-heading">Work location</span>
+<div role="radiogroup" aria-labelledby="group-heading">
+  <span id="option-one">On site</span><input id="onsite" type="radio" name="place" aria-labelledby="option-one" checked>
+  <span id="option-two">Remote</span><input id="remote" type="radio" name="place" aria-labelledby="option-two" onchange="this.setAttribute('data-seen',String(this.checked))">
+</div>
+<fieldset><legend>Schedule</legend>
+  <span id="schedule-one">Day</span><input id="day" type="radio" name="schedule" aria-labelledby="schedule-one" checked>
+  <span id="schedule-two">Evening</span><input id="evening" type="radio" name="schedule" aria-labelledby="schedule-two" onchange="this.setAttribute('data-seen',String(this.checked))">
+</fieldset>
+<div role="radiogroup" aria-label="Ambiguous option">
+  <input id="duplicate-one" type="radio" name="duplicate" aria-label="Same">
+  <input id="duplicate-two" type="radio" name="duplicate" aria-label="Same">
+</div>
+<div role="radiogroup" aria-label="Work authorization">
+  <input id="eligible-yes" type="radio" name="eligible" aria-label="Yes">
+  <input id="eligible-no" type="radio" name="eligible" aria-label="No">
+</div>
+<button type="submit">Submit</button>
+</form></body></html>

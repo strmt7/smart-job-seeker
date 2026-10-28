@@ -10,7 +10,7 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
-pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
+pub fn start(id: String, name: String, bytes: Vec<u8>, image: bool) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Conversion state unavailable")?;
     if tasks.is_some() {
         return Err("A conversion is running or awaiting its result".into());
@@ -22,8 +22,14 @@ pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
     });
     drop(tasks);
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| crate::document_convert::docx_to_pdf(&bytes))
-            .unwrap_or_else(|_| Err("Conversion stopped unexpectedly".into()));
+        let result = std::panic::catch_unwind(|| {
+            if image {
+                crate::pdf_extract::image_to_pdf(&bytes)
+            } else {
+                crate::document_convert::docx_to_pdf(&bytes)
+            }
+        })
+        .unwrap_or_else(|_| Err("Conversion stopped unexpectedly".into()));
         if let Ok(mut tasks) = TASK.lock() {
             if let Some(task) = tasks.as_mut().filter(|task| task.id == id) {
                 task.result = Some(result);
@@ -78,6 +84,35 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "converts a fictional certificate image with local Pillow"]
+    fn background_image_conversion_saves_a_reviewable_pdf() {
+        let fixture = std::env::var("WAYPOINT_IMAGE_FIXTURE").unwrap();
+        let bytes = std::fs::read(fixture).unwrap();
+        assert!(crate::pdf_extract::image_to_pdf(b"invalid image").is_err());
+        let ws = Workspace::in_memory().unwrap();
+        start("image-task".into(), "certificate.pdf".into(), bytes, true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        loop {
+            let result = poll("image-task", &ws).unwrap();
+            if result["status"] == "complete" {
+                let pdf = ws
+                    .document_content(result["id"].as_str().unwrap())
+                    .unwrap()
+                    .unwrap();
+                assert!(pdf.starts_with(b"%PDF-"));
+                let rendered = crate::pdf_extract::render_page(&pdf, 0).unwrap();
+                assert_eq!(rendered["pages"], 1);
+                if let Some(path) = std::env::var_os("WAYPOINT_IMAGE_PDF_OUTPUT") {
+                    std::fs::write(path, pdf).unwrap();
+                }
+                break;
+            }
+            assert_eq!(result["status"], "running", "{result}");
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    #[test]
     #[ignore = "uses an installed LibreOffice and a fictional DOCX fixture"]
     fn background_conversion_saves_a_pdf() {
         let fixture = std::env::var("WAYPOINT_CONVERSION_FIXTURE").unwrap();
@@ -86,6 +121,7 @@ mod tests {
             "fixture-task".into(),
             "fictional.pdf".into(),
             std::fs::read(fixture).unwrap(),
+            false,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);

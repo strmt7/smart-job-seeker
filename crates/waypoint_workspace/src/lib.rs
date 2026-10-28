@@ -291,6 +291,7 @@ fn lock_workspace(dir: &Path) -> Result<std::fs::File, WorkspaceError> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(dir.join(".workspace.lock"))?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|_| {
         WorkspaceError::Export("Workspace is already open by another process".into())
@@ -414,6 +415,13 @@ impl Workspace {
         Ok(self.store.document_content(id)?)
     }
 
+    pub fn add_documents_atomic(
+        &self,
+        documents: &[(&str, &str, &[u8], i64)],
+    ) -> Result<(), WorkspaceError> {
+        Ok(self.store.add_documents_atomic(documents)?)
+    }
+
     pub fn candidate_profile(&self) -> Result<Option<String>, WorkspaceError> {
         Ok(self.store.candidate_profile()?)
     }
@@ -480,6 +488,24 @@ impl Workspace {
 
     pub fn job_description(&self, id: &JobIdentityId) -> Result<Option<String>, WorkspaceError> {
         Ok(self.store.job_description(id)?)
+    }
+
+    pub fn save_job_capture(
+        &self,
+        id: &JobIdentityId,
+        metadata: &[u8],
+        segments: &[Vec<u8>],
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .save_job_capture(id.as_str(), metadata, segments)?)
+    }
+
+    pub fn job_capture(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<Option<waypoint_store::job_capture::JobCapture>, WorkspaceError> {
+        Ok(self.store.job_capture(id.as_str())?)
     }
 
     pub fn save_gmail_credentials(&self, value: &[u8]) -> Result<(), WorkspaceError> {

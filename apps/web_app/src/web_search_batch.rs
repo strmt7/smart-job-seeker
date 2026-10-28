@@ -17,8 +17,8 @@ struct Task {
     processed: usize,
 }
 enum Message {
-    Query(String, Result<Value, String>),
-    Done,
+    Query(String, u8, Result<Value, String>),
+    Done(bool),
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 pub fn busy() -> bool {
@@ -40,12 +40,12 @@ fn send(tx: &SyncSender<Message>, mut message: Message, cancel: &AtomicBool) -> 
         }
     }
 }
-pub fn start(id: String, provider: String, queries: Vec<String>) -> Result<(), String> {
+pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> Result<(), String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
     }
-    if queries.is_empty() || queries.len() > 10 {
-        return Err("Enter 1 to 10 search phrases".into());
+    if queries.is_empty() || queries.len() > 10 || !(1..=5).contains(&pages) {
+        return Err("Enter 1 to 10 search phrases and 1 to 5 pages per phrase".into());
     }
     let mut seen = HashSet::new();
     let mut requests = Vec::new();
@@ -55,7 +55,13 @@ pub fn start(id: String, provider: String, queries: Vec<String>) -> Result<(), S
             return Err("Search phrases must be distinct".into());
         }
         let url = crate::web_search::request_url(&provider, &query)?;
-        requests.push((query, url));
+        for page in 1..=pages {
+            let mut page_url = url.clone();
+            page_url
+                .query_pairs_mut()
+                .append_pair("pageno", &page.to_string());
+            requests.push((query.clone(), page, page_url));
+        }
     }
     let mut task = TASK.lock().map_err(|_| "Web search unavailable")?;
     if task.is_some() {
@@ -75,7 +81,8 @@ pub fn start(id: String, provider: String, queries: Vec<String>) -> Result<(), S
     drop(task);
     std::thread::spawn(move || {
         let mut seen = HashSet::new();
-        for (index, (query, url)) in requests.into_iter().enumerate() {
+        let mut limit_reached = false;
+        for (index, (query, page, url)) in requests.into_iter().enumerate() {
             if stop.load(Ordering::Acquire) {
                 break;
             }
@@ -97,18 +104,28 @@ pub fn start(id: String, provider: String, queries: Vec<String>) -> Result<(), S
             .map(|mut data| {
                 if let Some(items) = data["results"].as_array_mut() {
                     items.retain(|item| {
-                        item["url"]
-                            .as_str()
-                            .is_some_and(|url| seen.insert(url.to_owned()))
+                        item["url"].as_str().is_some_and(|url| {
+                            if seen.contains(url) {
+                                return false;
+                            }
+                            if seen.len() >= 600 {
+                                limit_reached = true;
+                                return false;
+                            }
+                            seen.insert(url.to_owned())
+                        })
                     });
                 }
                 data
             });
-            if !send(&tx, Message::Query(query, result), &stop) {
+            if !send(&tx, Message::Query(query, page, result), &stop) {
                 return;
             }
+            if limit_reached {
+                break;
+            }
         }
-        let _ = send(&tx, Message::Done, &AtomicBool::new(false));
+        let _ = send(&tx, Message::Done(limit_reached), &AtomicBool::new(false));
     });
     Ok(())
 }
@@ -119,18 +136,18 @@ pub fn poll(id: &str) -> Result<Value, String> {
         .filter(|t| t.id == id)
         .ok_or("Batch web search not found")?;
     match task.rx.try_recv() {
-        Ok(Message::Query(query, result)) => {
+        Ok(Message::Query(query, page, result)) => {
             task.processed += 1;
             Ok(match result {
                 Ok(data) => {
-                    json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"data":data})
+                    json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"page":page,"data":data})
                 }
                 Err(error) => {
-                    json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"error":error})
+                    json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"page":page,"error":error})
                 }
             })
         }
-        Ok(Message::Done) => {
+        Ok(Message::Done(limit_reached)) => {
             let (processed, total, cancelled) = (
                 task.processed,
                 task.total,
@@ -138,7 +155,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
             );
             *tasks = None;
             Ok(
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled}),
+                json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached}),
             )
         }
         Err(TryRecvError::Empty) => {
@@ -203,6 +220,7 @@ mod tests {
             "test-batch".into(),
             format!("http://127.0.0.1:{port}/"),
             vec!["first".into(), "second".into()],
+            1,
         )
         .unwrap();
         let deadline = Instant::now() + Duration::from_secs(8);
@@ -224,6 +242,58 @@ mod tests {
         assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 1);
         assert_eq!(batches[1]["data"]["results"].as_array().unwrap().len(), 1);
         assert_eq!(batches[1]["data"]["results"][0]["title"], "Two");
+        provider.join().unwrap();
+    }
+
+    #[test]
+    fn searches_requested_pages_and_deduplicates_between_them() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let provider = std::thread::spawn(move || {
+            for page in 1..=2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096];
+                let n = stream.read(&mut request).unwrap();
+                let request = std::str::from_utf8(&request[..n]).unwrap();
+                assert!(request.contains(&format!("pageno={page}")), "{request}");
+                let body = if page == 1 {
+                    r#"{"results":[{"title":"One","url":"https://example.org/a"}]}"#
+                } else {
+                    r#"{"results":[{"title":"One","url":"https://example.org/a"},{"title":"Two","url":"https://example.org/b"}]}"#
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        start(
+            "page-test".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec!["engineer".into()],
+            2,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut results = Vec::new();
+        loop {
+            let result = poll("page-test").unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["processed"], 2);
+                break;
+            }
+            if result.get("data").is_some() {
+                results.push(result);
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(results[0]["page"], 1);
+        assert_eq!(results[1]["page"], 2);
+        assert_eq!(results[1]["data"]["results"].as_array().unwrap().len(), 1);
+        assert_eq!(results[1]["data"]["results"][0]["title"], "Two");
         provider.join().unwrap();
     }
 }

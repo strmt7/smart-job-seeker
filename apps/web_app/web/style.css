@@ -73,3 +73,9 @@ nav a.active{padding:22px 0}
 .answer-draft{padding:4px 0;font-size:13px;overflow-wrap:anywhere}.answer-draft:empty{display:none}
 
 .duplicate-comparison{font-size:13px;overflow-wrap:anywhere}.duplicate-comparison:empty{display:none}
+
+.candidate-select{display:block;margin:4px 0;font-size:12px;color:#415b61}.candidate-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.candidate-toolbar label{font-size:13px}#candidate-batch-log{max-height:220px;overflow:auto;overflow-wrap:anywhere}
+
+.template-edit{border-top:1px solid #dce5e3;margin:14px 0;padding-top:8px}.template-edit input,.template-edit textarea{display:block;width:100%;margin:7px 0}
+
+#pdf-preview img{display:block;width:100%;height:auto;border:1px solid #ccd8e6;margin:12px 0;background:white}.pdf-controls{display:flex;flex-wrap:wrap;gap:8px}

@@ -161,11 +161,15 @@ const MIGRATIONS: &[&str] = &[
      CREATE INDEX job_employer_token_lookup ON job_employer_tokens(token,job_id);
      CREATE TABLE job_employer_indexed(job_id TEXT PRIMARY KEY REFERENCES jobs(id));
      UPDATE meta SET value='14' WHERE key='schema_version';",
+    "CREATE TABLE job_capture_metadata(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_metadata BLOB NOT NULL);
+     CREATE TABLE job_capture_segments(job_id TEXT NOT NULL REFERENCES jobs(id), sequence INTEGER NOT NULL, sealed_png BLOB NOT NULL, PRIMARY KEY(job_id,sequence));
+     UPDATE meta SET value='15' WHERE key='schema_version';",
 ];
 
 pub mod documents;
 pub mod duplicates;
 pub mod fit_assessments;
+pub mod job_capture;
 pub mod mail_credentials;
 pub mod prefill_grants;
 pub mod profile;

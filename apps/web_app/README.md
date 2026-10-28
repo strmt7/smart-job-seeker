@@ -12,6 +12,8 @@ Start the resulting executable to open the local browser workspace. The Windows 
 
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.
 
+The project uses free local tools and must not require paid APIs. Wider-web search uses a user-configured SearXNG-compatible provider; use a free or self-hosted instance. The app cannot determine an independent provider's pricing or guarantee its availability. Local-model features use Ollama rather than a paid inference API.
+
 To create a local prototype ZIP after a build, use Python 3.11 or newer:
 
 ```powershell

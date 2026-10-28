@@ -134,6 +134,26 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
     Ok(())
 }
 
+pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
+    let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
+    let current = task
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Application check not found")?;
+    match current.receiver.try_recv() {
+        Ok((result, review)) => {
+            let job_id = current.job_id.clone();
+            *task = None;
+            Ok(Some((job_id, result, review)))
+        }
+        Err(mpsc::TryRecvError::Empty) => Ok(None),
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *task = None;
+            Err("Application check stopped unexpectedly".into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::application_destination;
@@ -182,25 +202,5 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
-    }
-}
-
-pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
-    let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
-    let current = task
-        .as_ref()
-        .filter(|task| task.id == id)
-        .ok_or("Application check not found")?;
-    match current.receiver.try_recv() {
-        Ok((result, review)) => {
-            let job_id = current.job_id.clone();
-            *task = None;
-            Ok(Some((job_id, result, review)))
-        }
-        Err(mpsc::TryRecvError::Empty) => Ok(None),
-        Err(mpsc::TryRecvError::Disconnected) => {
-            *task = None;
-            Err("Application check stopped unexpectedly".into())
-        }
     }
 }

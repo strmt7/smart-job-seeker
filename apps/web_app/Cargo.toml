@@ -41,3 +41,5 @@ workspace = true
 [target.'cfg(windows)'.dependencies]
 tray-icon = { version = "=0.26.1", default-features = false }
 winit = { version = "=0.30.13", default-features = false }
+processkit = { version = "=3.3.4", default-features = false, features = ["limits", "process-control"] }
+tokio = { version = "1", features = ["rt", "time", "process", "io-util"] }

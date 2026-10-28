@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use waypoint_applications::driver::BrowserDriver;
 use waypoint_applications::form_mapping::FormFieldType;
+use waypoint_applications::form_mapping::{BrowserCommand, PacketValue};
 use waypoint_browser::CdpDriver;
 use waypoint_domain::{ApplicationState, JobIdentityId, Sha256Digest};
 use waypoint_store::StoredJob;
@@ -41,6 +42,19 @@ fn file_url(name: &str) -> String {
     )
 }
 
+#[test]
+#[ignore = "launches one browser against a local fixture without navigating or submitting"]
+fn flags_a_possible_next_step_without_clicking_it() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver.open(&file_url("form_possible_steps.html")).unwrap();
+    assert!(live.schema.multi_step);
+    assert_eq!(
+        driver.read_attribute("#next", "data-clicked").unwrap(),
+        None
+    );
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
 fn job(id: &str, title: &str, employer: &str, url: &str) -> StoredJob {
     StoredJob {
         id: JobIdentityId::new(id).unwrap(),
@@ -70,6 +84,127 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
     let packet = ws.prepare_packet(&id, NOW).unwrap();
     assert!(packet.is_approvable(), "{:?}", packet.unsupported);
     (ws, id)
+}
+
+#[test]
+#[ignore = "launches one browser against a local fixture without submitting"]
+fn text_fill_checks_that_the_site_retains_the_complete_value() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    driver.open(&file_url("form_value_retention.html")).unwrap();
+    let fill = |selector: &str, value: &str| BrowserCommand::Fill {
+        selector: selector.into(),
+        value: PacketValue::Text(value.into()),
+    };
+    driver
+        .execute(&fill("#normal", "Fictional candidate"))
+        .unwrap();
+    assert!(driver.execute(&fill("#limited", "Too long")).is_err());
+    assert!(driver.execute(&fill("#cleared", "Not retained")).is_err());
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser against a local fixture without submitting"]
+fn resolves_accessible_label_references_and_flags_ambiguous_ids() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_accessible_labels.html"))
+        .unwrap();
+    let name = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#candidate")
+        .unwrap();
+    assert_eq!(name.label, "Given name");
+    let permit = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#permit")
+        .unwrap();
+    assert_eq!(permit.label, "Work authorization");
+    assert!(permit.sensitive);
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("ambiguous accessible label")));
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser against a local fixture without submitting"]
+fn selects_accessibly_labelled_native_radio_groups() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_radio_accessible.html"))
+        .unwrap();
+    assert!(live.walls.is_empty(), "{:?}", live.walls);
+    let group = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Work location")
+        .unwrap();
+    assert_eq!(
+        group.field_type,
+        FormFieldType::Radio {
+            options: vec!["On site".into(), "Remote".into()]
+        }
+    );
+    driver
+        .execute(&BrowserCommand::SelectRadio {
+            selector: group.selector.clone(),
+            label: "Remote".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        driver
+            .read_attribute("#remote", "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+    let schedule = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Schedule")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::SelectRadio {
+            selector: schedule.selector.clone(),
+            label: "Evening".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        driver
+            .read_attribute("#evening", "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+    let duplicate = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Ambiguous option")
+        .unwrap();
+    assert!(
+        live.schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Work authorization")
+            .unwrap()
+            .sensitive
+    );
+    assert!(driver
+        .execute(&BrowserCommand::SelectRadio {
+            selector: duplicate.selector.clone(),
+            label: "Same".into()
+        })
+        .is_err());
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
 }
 
 #[test]

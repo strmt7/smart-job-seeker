@@ -30,7 +30,7 @@ fn overlap(a: &BTreeSet<String>, b: &BTreeSet<String>) -> u32 {
     if a.is_empty() || b.is_empty() {
         return 0;
     }
-    (200 * a.intersection(&b).count() / (a.len() + b.len())) as u32
+    (200 * a.intersection(b).count() / (a.len() + b.len())) as u32
 }
 
 fn title_score(a: &str, b: &str) -> u32 {

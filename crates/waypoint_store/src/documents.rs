@@ -15,6 +15,17 @@ fn conversion(error: impl std::error::Error + Send + Sync + 'static) -> StoreErr
 }
 
 impl Store {
+    pub fn add_documents_atomic(
+        &self,
+        documents: &[(&str, &str, &[u8], i64)],
+    ) -> Result<(), StoreError> {
+        let transaction = self.conn.unchecked_transaction()?;
+        for (id, name, bytes, created_at) in documents {
+            self.add_document(id, name, bytes, *created_at)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
     pub fn add_document(
         &self,
         id: &str,
@@ -112,6 +123,20 @@ mod tests {
             Some(contents.to_vec())
         );
         assert_eq!(store.document_content("missing").unwrap(), None);
+    }
+
+    #[test]
+    fn paired_export_rolls_back_if_either_document_cannot_be_saved() {
+        let store = Store::in_memory().unwrap();
+        store.add_document("existing", "original", b"x", 1).unwrap();
+        assert!(store
+            .add_documents_atomic(&[
+                ("new", "draft.docx", b"docx", 2),
+                ("existing", "draft.pdf", b"pdf", 2)
+            ])
+            .is_err());
+        assert!(store.document_content("new").unwrap().is_none());
+        assert_eq!(store.document_content("existing").unwrap().unwrap(), b"x");
     }
 
     #[cfg(windows)]

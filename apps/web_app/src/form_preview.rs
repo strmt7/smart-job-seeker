@@ -18,6 +18,37 @@ pub struct FormPreview {
     pub manual_review: Vec<String>,
 }
 
+/// Describe the commands in this fill operation, not the form's current validity.
+pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
+    let selected: std::collections::HashSet<_> = preview
+        .suggestions
+        .iter()
+        .map(|mapping| mapping.field_selector.as_str())
+        .collect();
+    let filled = preview
+        .schema
+        .fields
+        .iter()
+        .filter(|field| selected.contains(field.selector.as_str()))
+        .map(|field| field.label.clone())
+        .collect();
+    let remaining = preview
+        .schema
+        .fields
+        .iter()
+        .filter(|field| field.required && !selected.contains(field.selector.as_str()))
+        .map(|field| field.label.clone())
+        .collect();
+    (filled, remaining)
+}
+
+pub struct FillContext<'a> {
+    pub intent: &'a IntentId,
+    pub packet_digest: &'a Sha256Digest,
+    pub source_reviewed: bool,
+    pub timestamp: i64,
+}
+
 /// Apply only the exact reviewed mappings, using one prefill grant. This path
 /// has no submit or arbitrary click operation. The caller must keep the same
 /// browser session and acquire permission for the actual destination first.
@@ -28,11 +59,14 @@ pub fn apply_reviewed_text_fields(
     url: &str,
     preview: &FormPreview,
     grant: &mut ApprovalGrant,
-    intent: &IntentId,
-    packet_digest: &Sha256Digest,
-    source_reviewed: bool,
-    timestamp: i64,
+    context: FillContext<'_>,
 ) -> Result<usize, String> {
+    let FillContext {
+        intent,
+        packet_digest,
+        source_reviewed,
+        timestamp,
+    } = context;
     if grant.operation != GrantOperation::Prefill {
         return Err("A prefill grant is required".into());
     }
@@ -172,7 +206,7 @@ pub fn suggest_for_live_form(
         manual_review.push("No form fields were detected; navigation, login, an embedded frame, or manual review may be required".into());
     }
     if live.schema.multi_step {
-        manual_review.push("Multi-step application requires manual review".into());
+        manual_review.push("A possible next-step control was found. Navigate and inspect the next page manually; the total number of steps is unknown".into());
     }
     let suggestions = if !blocked {
         match crate::suggestions::suggest(inference, &live.schema, profile) {
@@ -268,6 +302,108 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a local browser with a fictional profile and does not submit"]
+    fn model_radio_suggestion_can_be_reviewed_and_filled() {
+        use waypoint_domain::GrantId;
+        struct RadioModel;
+        impl Inference for RadioModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    json!({"mappings":[{"selector":"#de","profile_key":"country"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/radio-profile.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let preview = inspect_and_suggest(
+            &mut driver,
+            &mut RadioModel,
+            &url,
+            &json!({"country":"Germany"}),
+        )
+        .unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        assert!(preview.manual_review.is_empty());
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("radio-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Fixture".into(),
+            location: "".into(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("radio-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("radio-grant").unwrap(),
+            intent_id: IntentId::new(intent.as_str()).unwrap(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        assert_eq!(
+            apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                &url,
+                &preview,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1
+                }
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            driver
+                .read_attribute("#de", "data-seen")
+                .unwrap()
+                .as_deref(),
+            Some("true")
+        );
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts one local headless browser; no employer page or model is used"]
     fn reads_actual_fixture_and_proposes_mapping_without_submitting() {
         use waypoint_domain::GrantId;
@@ -285,10 +421,17 @@ mod tests {
             &json!({"first_name":"Synthetic"}),
         )
         .unwrap();
-        assert_eq!(result.schema.fields.len(), 2);
+        assert!(result
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#candidate"));
         assert_eq!(result.suggestions.len(), 1);
         assert_eq!(result.suggestions[0].field_selector, "#candidate");
-        assert!(result.manual_review.is_empty());
+        assert!(result
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Work authorization")));
         let intent = IntentId::new("fixture-intent").unwrap();
         let packet = Sha256Digest::of("fictional candidate packet");
         let payload = Sha256Digest::of(&serde_json::to_string(&result.suggestions).unwrap());
@@ -333,10 +476,12 @@ mod tests {
                 &url,
                 &result,
                 &mut grant,
-                &intent,
-                &packet,
-                true,
-                1
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1
+                }
             )
             .unwrap(),
             1
@@ -356,10 +501,12 @@ mod tests {
             &url,
             &result,
             &mut grant,
-            &intent,
-            &packet,
-            true,
-            2
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 2
+            }
         )
         .is_err());
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));

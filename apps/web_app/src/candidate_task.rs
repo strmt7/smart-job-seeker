@@ -1,12 +1,21 @@
 //! Inspect one selected public search result for schema.org JobPosting data.
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::sync::{mpsc, Mutex};
 use waypoint_applications::driver::BrowserDriver;
 use waypoint_inference::{Inference, OllamaInference};
 
+pub struct ListingCapture {
+    pub metadata: Value,
+    pub segments: Vec<Vec<u8>>,
+}
+pub struct InspectedListing {
+    pub job: Value,
+    pub capture: ListingCapture,
+}
 struct Task {
     id: String,
-    rx: mpsc::Receiver<Result<Value, String>>,
+    rx: mpsc::Receiver<Result<InspectedListing, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
@@ -146,6 +155,77 @@ fn extract_page_text(
     )
 }
 
+fn capture_listing(
+    browser: &mut waypoint_browser::CdpDriver,
+    url: &str,
+    scripts: &[String],
+) -> ListingCapture {
+    let mut segments = Vec::new();
+    let mut error = None;
+    let mut dimensions = None;
+    match browser.page_dimensions() {
+        Ok((width, height)) => {
+            dimensions = Some((width, height));
+            let mut y = 0.0;
+            let mut bytes = 0usize;
+            while y < height.min(8000.0) && segments.len() < 5 {
+                let part = (height.min(8000.0) - y).min(1600.0);
+                let image = browser
+                    .screenshot_segment(width.min(1600.0), y, part)
+                    .and_then(|encoded| {
+                        if encoded.len() > 3 * 1024 * 1024 {
+                            return Err(waypoint_applications::driver::DriverError(
+                                "Listing capture segment exceeded size limit".into(),
+                            ));
+                        }
+                        STANDARD.decode(encoded).map_err(|_| {
+                            waypoint_applications::driver::DriverError(
+                                "Listing capture could not be decoded".into(),
+                            )
+                        })
+                    });
+                match image {
+                    Ok(image)
+                        if image.len() <= 2 * 1024 * 1024
+                            && bytes + image.len() <= 6 * 1024 * 1024 =>
+                    {
+                        bytes += image.len();
+                        segments.push(image);
+                        y += part;
+                    }
+                    Ok(_) => {
+                        error = Some("Listing capture exceeded the byte limit".to_owned());
+                        break;
+                    }
+                    Err(e) => {
+                        error = Some(e.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => error = Some(e.to_string()),
+    }
+    let full = dimensions.is_some_and(|(w, h)| w <= 1600.0 && h <= 8000.0) && error.is_none();
+    let mut metadata = json!({"source_url":url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
+    let raw_size: usize = scripts.iter().map(String::len).sum();
+    let encoded = serde_json::to_vec(scripts).ok();
+    if scripts.is_empty() {
+        metadata["structured_source_status"] = json!("unavailable");
+    } else if scripts.len() > 8
+        || raw_size > 256 * 1024
+        || encoded
+            .as_ref()
+            .is_none_or(|bytes| bytes.len() > 500 * 1024)
+    {
+        metadata["structured_source_status"] = json!("omitted_size_limit");
+    } else {
+        metadata["structured_source_status"] = json!("captured");
+        metadata["structured_source_scripts"] = json!(scripts);
+    }
+    ListingCapture { metadata, segments }
+}
+
 pub fn start(id: String, url: String) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Listing inspection unavailable")?;
     if tasks.is_some() {
@@ -155,7 +235,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
     *tasks = Some(Task { id, rx });
     drop(tasks);
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| -> Result<Value, String> {
+        let result = std::panic::catch_unwind(|| -> Result<InspectedListing, String> {
             let parsed = waypoint_net::parse_url(&url).map_err(|e| e.to_string())?;
             waypoint_net::resolve_public(&parsed).map_err(|e| e.to_string())?;
             let mut browser =
@@ -170,27 +250,19 @@ pub fn start(id: String, url: String) -> Result<(), String> {
             if original.origin() != reached.origin() {
                 return Err("The listing redirected to another site; review it manually".into());
             }
-            let structured = parse(
-                &browser
-                    .structured_data_scripts()
-                    .map_err(|e| e.to_string())?,
-                &current,
-            )?;
-            if let Some(job) = structured {
-                return Ok(job);
-            }
-            let model = crate::resident_model().ok().flatten().ok_or(
-                "No structured job found and no eligible local model is loaded; review manually",
-            )?;
-            let _lease = crate::doc_suggest::lease()?;
-            let (page_text, truncated) = browser
-                .page_text_bounded(16_000)
-                .map_err(|e| e.to_string())?;
-            let mut inference =
-                OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
-            let mut job = extract_page_text(&mut inference, &page_text, &current)?;
-            job["page_text_truncated"] = json!(truncated);
-            Ok(job)
+            let scripts = browser.structured_data_scripts().map_err(|e| e.to_string())?;
+            let structured = parse(&scripts, &current)?;
+            let job = if let Some(job) = structured { job } else {
+                let model = crate::resident_model().ok().flatten().ok_or("No structured job found and no eligible local model is loaded; review manually")?;
+                let _lease = crate::doc_suggest::lease()?;
+                let (page_text, truncated) = browser.page_text_bounded(16_000).map_err(|e|e.to_string())?;
+                let mut inference = OllamaInference::new("http://127.0.0.1:11434",model).map_err(|e|e.to_string())?;
+                let mut job=extract_page_text(&mut inference,&page_text,&current)?;
+                job["page_text_truncated"]=json!(truncated);
+                job
+            };
+            let capture=capture_listing(&mut browser,&current,&scripts);
+            Ok(InspectedListing { job, capture })
         })
         .unwrap_or_else(|_| Err("Listing inspection stopped unexpectedly".into()));
         let _ = tx.send(result);
@@ -198,7 +270,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
     Ok(())
 }
 
-pub fn poll(id: &str) -> Result<Option<Result<Value, String>>, String> {
+pub fn poll(id: &str) -> Result<Option<Result<InspectedListing, String>>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Listing inspection unavailable")?;
     let task = tasks
         .as_ref()
@@ -220,10 +292,34 @@ pub fn poll(id: &str) -> Result<Option<Result<Value, String>>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "starts one browser against a fictional local listing"]
+    fn captures_listing_page_in_bounded_segments() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/structured-listing.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(&url).unwrap();
+        let scripts = browser.structured_data_scripts().unwrap();
+        let capture = capture_listing(&mut browser, &url, &scripts);
+        assert!(!capture.segments.is_empty());
+        assert!(capture
+            .segments
+            .iter()
+            .all(|png| png.starts_with(b"\x89PNG\r\n\x1a\n")));
+        assert_eq!(capture.metadata["source_url"], url);
+        assert_eq!(capture.metadata["structured_source_status"], "captured");
+        assert_eq!(capture.metadata["structured_source_scripts"][0], scripts[0]);
+        assert_eq!(
+            capture.metadata["segments"].as_u64(),
+            Some(capture.segments.len() as u64)
+        );
+    }
     #[test]
     fn extracts_single_job_and_rejects_ambiguous_pages() {
         let one=json!({"@context":"https://schema.org","@graph":[{"@type":"JobPosting","title":"Fictional engineer","hiringOrganization":{"name":"Example"},"description":"<p>Build systems</p>","jobLocation":{"address":{"addressLocality":"Berlin","addressCountry":"DE"}}}]}).to_string();
-        let value = parse(&[one.clone()], "https://example.org/job")
+        let value = parse(std::slice::from_ref(&one), "https://example.org/job")
             .unwrap()
             .unwrap();
         assert_eq!(value["employer"], "Example");

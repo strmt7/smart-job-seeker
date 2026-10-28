@@ -68,7 +68,7 @@ pub fn build(
     }
     let mut message = format!("To: {email}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{boundary}\"\r\n\r\n--{boundary}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", subject_words(subject), lines(body.as_bytes()));
     for (name, bytes) in attachments {
-        if !name.to_ascii_lowercase().ends_with(".pdf") || !bytes.starts_with(b"%PDF-") {
+        if !is_pdf_attachment(name, bytes) {
             return Err("Attachments must be PDF files".into());
         }
         let safe: String = name
@@ -88,9 +88,20 @@ pub fn build(
     Ok(message.into_bytes())
 }
 
+/// Check the filename and signature; this does not validate PDF contents or layout.
+pub fn is_pdf_attachment(name: &str, bytes: &[u8]) -> bool {
+    name.to_ascii_lowercase().ends_with(".pdf") && bytes.starts_with(b"%PDF-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn attachment_requires_pdf_name_and_signature() {
+        assert!(is_pdf_attachment("resume.PDF", b"%PDF-fictional"));
+        assert!(!is_pdf_attachment("resume.docx", b"%PDF-fictional"));
+        assert!(!is_pdf_attachment("resume.pdf", b"not a PDF"));
+    }
     #[test]
     fn email_is_unsent_and_rejects_header_injection() {
         let draft = build(

@@ -97,13 +97,16 @@ pub fn start(
     mut session: ReviewSession,
     target: Option<String>,
     profile: serde_json::Value,
-) -> Result<(), (ReviewSession, String)> {
+) -> Result<(), (Box<ReviewSession>, String)> {
     let mut tasks = match TASK.lock() {
         Ok(tasks) => tasks,
-        Err(_) => return Err((session, "Navigation unavailable".into())),
+        Err(_) => return Err((Box::new(session), "Navigation unavailable".into())),
     };
     if tasks.is_some() {
-        return Err((session, "Application navigation is already running".into()));
+        return Err((
+            Box::new(session),
+            "Application navigation is already running".into(),
+        ));
     }
     let (tx, rx) = mpsc::channel();
     *tasks = Some(Task { id, rx });

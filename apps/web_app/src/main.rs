@@ -9,6 +9,8 @@ mod discovery_task;
 mod doc_suggest;
 mod document_convert;
 mod document_extract;
+mod docx_edit;
+mod docx_edit_task;
 mod draft_task;
 mod duplicate_compare;
 mod duplicate_search;
@@ -24,9 +26,13 @@ mod gmail_oauth;
 mod letter_export;
 mod manual_job;
 mod pdf_extract;
+mod pdf_job;
+mod pdf_preview_task;
+mod pdf_setup;
 mod search_planner;
 mod storage_settings;
 mod suggestions;
+mod template_suggest;
 #[cfg(windows)]
 mod tray;
 mod web_search;
@@ -62,6 +68,27 @@ struct ReviewSession {
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
     record: Option<attempt_record::AttemptRecord>,
+}
+
+fn interrupt_session(
+    ws: &mut Workspace,
+    session: &mut Option<ReviewSession>,
+    reason: &str,
+) -> Result<(), String> {
+    if let Some(current) = session.as_mut() {
+        ws.mark_manual_review(
+            &current.job_id,
+            "Application review session interrupted",
+            now(),
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(record) = &mut current.record {
+            record.event(json!({"type":"review_interrupted","time":now(),"reason":reason}))?;
+            record.status("manual_review", now())?;
+        }
+    }
+    *session = None;
+    Ok(())
 }
 
 fn random_id() -> Result<String, String> {
@@ -379,6 +406,58 @@ fn duplicate_search_inputs(
         candidates,
         digest,
         truncated,
+    })
+}
+
+fn template_suggestion_inputs(
+    ws: &Workspace,
+    document_id: &str,
+    job_id: &JobIdentityId,
+    before: &str,
+) -> Result<template_suggest::Inputs, String> {
+    if before.is_empty() || before.len() > 1000 || before.chars().any(char::is_control) {
+        return Err("Choose a single-line passage up to 1000 bytes".into());
+    }
+    let document = ws
+        .documents()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|d| d.id == document_id)
+        .ok_or("Document not found")?;
+    if !document.name.to_ascii_lowercase().ends_with(".docx")
+        && !document.name.to_ascii_lowercase().ends_with(".pdf")
+    {
+        return Err("Choose a PDF or DOCX template".into());
+    }
+    let source = ws
+        .document_content(document_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Document not found")?;
+    let (facts, _, listing, _) = fit_inputs(ws, job_id)?;
+    if facts.is_empty() {
+        return Err("Add reviewed qualifications before requesting a suggestion".into());
+    }
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(value) => serde_json::from_str(&value).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let instructions: String = profile["document_instructions"]
+        .as_str()
+        .unwrap_or("")
+        .chars()
+        .take(2000)
+        .collect();
+    let digest=Sha256Digest::of(&json!({"source":waypoint_domain::sha256_hex(&source),"before":before,"job":job_id.as_str(),"listing":listing,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
+    Ok(template_suggest::Inputs {
+        document_id: document_id.to_owned(),
+        document_name: document.name,
+        job_id: job_id.as_str().to_owned(),
+        digest,
+        source,
+        before: before.to_owned(),
+        listing,
+        facts,
+        instructions,
     })
 }
 
@@ -882,7 +961,14 @@ fn serve(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let id = random_id()?;
-            web_search_batch::start(id.clone(), provider.to_owned(), queries)?;
+            let pages = body
+                .get("pages")
+                .map_or(Some(1), Value::as_u64)
+                .ok_or("Invalid page count")?;
+            if !(1..=5).contains(&pages) {
+                return Err("Choose 1 to 5 pages per search phrase".into());
+            }
+            web_search_batch::start(id.clone(), provider.to_owned(), queries, pages as u8)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/web-search/batch-status" => {
@@ -941,12 +1027,38 @@ fn serve(
                 Some(Err(error)) => {
                     json_reply(stream, "200 OK", json!({"status":"failed","error":error}))
                 }
-                Some(Ok(job)) => {
+                Some(Ok(inspected)) => {
+                    let job = inspected.job;
                     let result = manual_job::add(ws, &job, now())?;
+                    let job_id =
+                        JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)
+                            .map_err(|e| e.to_string())?;
+                    let capture = if inspected.capture.segments.is_empty() {
+                        json!({"saved":false,"complete":false,"reason":"Listing capture unavailable"})
+                    } else {
+                        let metadata = serde_json::to_vec(&inspected.capture.metadata)
+                            .map_err(|e| e.to_string())?;
+                        match ws.save_job_capture(&job_id, &metadata, &inspected.capture.segments) {
+                            Ok(true) => {
+                                json!({"saved":true,"complete":inspected.capture.metadata["full_dimensions_captured"],"structured_source":inspected.capture.metadata["structured_source_status"]})
+                            }
+                            Ok(false) => {
+                                let existing = ws
+                                    .job_capture(&job_id)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|(metadata, _)| {
+                                        serde_json::from_slice::<Value>(&metadata).ok()
+                                    })
+                                    .unwrap_or(Value::Null);
+                                json!({"saved":true,"preserved_existing":true,"complete":existing["full_dimensions_captured"].as_bool().unwrap_or(false),"structured_source":existing["structured_source_status"].as_str().unwrap_or("unavailable")})
+                            }
+                            Err(_) => {
+                                json!({"saved":false,"complete":false,"reason":"Listing capture could not be saved securely"})
+                            }
+                        }
+                    };
                     if result["existing"].as_bool() == Some(false) {
-                        let job_id =
-                            JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)
-                                .map_err(|e| e.to_string())?;
                         let reason = if job["extraction"] == "local_model" {
                             if job["page_text_truncated"] == true {
                                 "Review locally extracted listing; page text was truncated and application route is unverified"
@@ -959,10 +1071,18 @@ fn serve(
                         ws.mark_manual_review(&job_id, reason, now())
                             .map_err(|e| e.to_string())?;
                     }
+                    if capture["saved"] == false || capture["complete"] == false {
+                        ws.mark_manual_review(
+                            &job_id,
+                            "Original listing capture is incomplete or unavailable",
+                            now(),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","job":job,"saved":result}),
+                        json!({"status":"complete","job":job,"saved":result,"capture":capture}),
                     );
                 }
             }
@@ -1147,7 +1267,7 @@ fn serve(
             }
             ws.save_candidate_profile(&Value::Object(profile).to_string())
                 .map_err(|e| e.to_string())?;
-            *session = None;
+            interrupt_session(ws, session, "Profile changed")?;
             json_reply(stream, "200 OK", json!({"ok":true}));
         }
         "/api/documents/download" => {
@@ -1195,9 +1315,7 @@ fn serve(
                     .iter()
                     .find(|doc| doc.id == doc_id)
                     .ok_or("document not found")?;
-                total = total
-                    .checked_add(doc.size as usize)
-                    .ok_or("Attachments too large")?;
+                total = total.checked_add(doc.size).ok_or("Attachments too large")?;
                 if total > 10 * 1024 * 1024 {
                     return Err("Attachments exceed 10 MiB".into());
                 }
@@ -1233,8 +1351,11 @@ fn serve(
                 .into_iter()
                 .find(|d| d.id == id)
                 .ok_or("document not found")?;
-            if !doc.name.to_ascii_lowercase().ends_with(".docx") {
-                return Err("Only DOCX conversion is supported".into());
+            let lower = doc.name.to_ascii_lowercase();
+            let image =
+                lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg");
+            if !lower.ends_with(".docx") && !image {
+                return Err("Only DOCX, PNG and JPEG conversion is supported".into());
             }
             let bytes = ws
                 .document_content(id)
@@ -1248,12 +1369,144 @@ fn serve(
                     .unwrap_or("document")
             );
             let task_id = random_id()?;
-            convert_task::start(task_id.clone(), name, bytes)?;
+            convert_task::start(task_id.clone(), name, bytes, image)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/documents/convert-pdf-status" => {
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", convert_task::poll(task_id, ws)?);
+        }
+        "/api/documents/template-suggest-start" => {
+            let id = body["id"].as_str().ok_or("missing document id")?;
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job")?)
+                .map_err(|e| e.to_string())?;
+            let before = body["before"].as_str().ok_or("missing passage")?;
+            let input = template_suggestion_inputs(ws, id, &job, before)?;
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            template_suggest::start(task_id.clone(), model, input)?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/template-suggest-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let mut result = template_suggest::poll(id)?;
+            if result["status"] == "complete" {
+                let current = result["document_id"]
+                    .as_str()
+                    .zip(result["job_id"].as_str())
+                    .zip(result["before"].as_str())
+                    .and_then(|((doc, job), before)| {
+                        JobIdentityId::new(job)
+                            .ok()
+                            .and_then(|id| template_suggestion_inputs(ws, doc, &id, before).ok())
+                    });
+                if current.as_ref().map(|input| input.digest.as_str()) != result["digest"].as_str()
+                {
+                    result = json!({"status":"failed","error":"The document, job or supporting information changed; suggest again"});
+                }
+            }
+            json_reply(stream, "200 OK", result);
+        }
+        "/api/documents/edit-template-start" => {
+            if body["reviewed"].as_bool() != Some(true) {
+                return Err("Review the replacement before exporting".into());
+            }
+            let id = body["id"].as_str().ok_or("missing document id")?;
+            let info = ws
+                .documents()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|d| d.id == id)
+                .ok_or("Document not found")?;
+            if !info.name.to_ascii_lowercase().ends_with(".docx")
+                && !info.name.to_ascii_lowercase().ends_with(".pdf")
+            {
+                return Err("Choose a PDF or DOCX template".into());
+            }
+            let source = ws
+                .document_content(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Document not found")?;
+            let edits = if let Some(items) = body.get("edits") {
+                let items = items.as_array().ok_or("Invalid changes")?;
+                if items.is_empty() || items.len() > 5 {
+                    return Err("Queue between one and five changes".into());
+                }
+                items
+                    .iter()
+                    .map(|item| {
+                        Ok((
+                            item["before"]
+                                .as_str()
+                                .ok_or("missing original text")?
+                                .to_owned(),
+                            item["after"]
+                                .as_str()
+                                .ok_or("missing replacement text")?
+                                .to_owned(),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?
+            } else {
+                vec![(
+                    body["before"]
+                        .as_str()
+                        .ok_or("missing original text")?
+                        .to_owned(),
+                    body["after"]
+                        .as_str()
+                        .ok_or("missing replacement text")?
+                        .to_owned(),
+                )]
+            };
+            let task_id = random_id()?;
+            docx_edit_task::start_batch(task_id.clone(), id.to_owned(), info.name, source, edits)?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/edit-template-status" => {
+            let task_id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", docx_edit_task::poll(task_id, ws)?);
+        }
+        "/api/pdf-setup/start" => {
+            let python = body["python"]
+                .as_str()
+                .ok_or("Choose a Python executable")?;
+            let id = random_id()?;
+            pdf_setup::start(id.clone(), std::path::PathBuf::from(python))?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/pdf-setup/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", pdf_setup::poll(id)?);
+        }
+        "/api/documents/preview-start" => {
+            let id = body["id"].as_str().ok_or("missing document id")?;
+            let page = body["page"].as_u64().ok_or("missing page number")?;
+            if page >= 30 {
+                return Err("Page number exceeds 30-page limit".into());
+            }
+            let info = ws
+                .documents()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|doc| doc.id == id)
+                .ok_or("document not found")?;
+            if !info.name.to_ascii_lowercase().ends_with(".pdf") {
+                return Err("Choose a PDF".into());
+            }
+            let bytes = ws
+                .document_content(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("document not found")?;
+            let task_id = random_id()?;
+            pdf_preview_task::start(task_id.clone(), bytes, page as usize)?;
+            json_reply(stream, "200 OK", json!({"task_id": task_id}));
+        }
+        "/api/documents/preview-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", pdf_preview_task::poll(id)?);
         }
         "/api/documents/extract-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
@@ -1382,7 +1635,7 @@ fn serve(
                 None if visible && model.is_none() => json!({}),
                 None => return Err("Save your personal details before inspecting a form".into()),
             };
-            *session = None;
+            interrupt_session(ws, session, "Another application was opened")?;
             let task_id = random_id()?;
             form_task::start(task_id.clone(), id, url, profile, model, visible)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
@@ -1400,11 +1653,25 @@ fn serve(
                 visible,
                 result,
             } = finished;
-            let (mut driver, preview) = match result {
+            let (mut driver, mut preview) = match result {
                 Ok(value) => value,
                 Err(error) => {
                     ws.mark_manual_review(&job_id, "Application needs manual review", now())
                         .map_err(|e| e.to_string())?;
+                    let record_error = match random_id().and_then(|id| {
+                        attempt_record::AttemptRecord::start(ws, &job_id, &id, now())
+                    }) {
+                        Ok(Some(mut record)) => record
+                            .inspection("", std::slice::from_ref(&error), None, now())
+                            .err(),
+                        Ok(None) => Some("Attempt record requires a disk-backed workspace".into()),
+                        Err(problem) => Some(problem),
+                    };
+                    let error = if let Some(problem) = record_error {
+                        format!("{error}; attempt record unavailable: {problem}")
+                    } else {
+                        error
+                    };
                     json_reply(stream, "200 OK", json!({"status":"failed","error":error}));
                     return Ok(());
                 }
@@ -1431,7 +1698,39 @@ fn serve(
             };
             let session_id = random_id()?;
             let screenshot = driver.screenshot_base64().ok();
+            if screenshot.is_none() {
+                preview
+                    .manual_review
+                    .push("Inspection screenshot is unavailable".into());
+            }
             let links = form_links::candidates(&mut driver).unwrap_or_default();
+            let mut record = match random_id()
+                .and_then(|id| attempt_record::AttemptRecord::start(ws, &job_id, &id, now()))
+            {
+                Ok(record) => record,
+                Err(error) => {
+                    preview
+                        .manual_review
+                        .push(format!("Attempt record unavailable: {error}"));
+                    None
+                }
+            };
+            if let Some(record) = &mut record {
+                if let Err(error) = record.inspection(
+                    &preview.schema.origin,
+                    &preview.manual_review,
+                    screenshot.as_deref(),
+                    now(),
+                ) {
+                    preview
+                        .manual_review
+                        .push(format!("Inspection evidence incomplete: {error}"));
+                }
+            }
+            if !preview.manual_review.is_empty() {
+                ws.mark_manual_review(&job_id, "Application needs manual review", now())
+                    .map_err(|e| e.to_string())?;
+            }
             json_reply(
                 stream,
                 "200 OK",
@@ -1449,7 +1748,7 @@ fn serve(
                 filled: false,
                 visible,
                 staged_files: vec![],
-                record: None,
+                record,
             });
         }
         "/api/form/open-link-start" => {
@@ -1478,7 +1777,7 @@ fn serve(
             if let Err((current, error)) =
                 form_links::start(task_id.clone(), current, Some(target.to_owned()), profile)
             {
-                *session = Some(current);
+                *session = Some(*current);
                 return Err(error);
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
@@ -1521,6 +1820,37 @@ fn serve(
                     }
                     let links = form_links::candidates(&mut current.driver).unwrap_or_default();
                     let screenshot = current.driver.screenshot_base64().ok();
+                    if screenshot.is_none() {
+                        current
+                            .preview
+                            .manual_review
+                            .push("Inspection screenshot is unavailable".into());
+                        ws.mark_manual_review(
+                            &current.job_id,
+                            "Application needs manual review",
+                            now(),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    if let Some(record) = &mut current.record {
+                        if let Err(error) = record.inspection(
+                            &current.preview.schema.origin,
+                            &current.preview.manual_review,
+                            screenshot.as_deref(),
+                            now(),
+                        ) {
+                            current
+                                .preview
+                                .manual_review
+                                .push(format!("Inspection evidence incomplete: {error}"));
+                            ws.mark_manual_review(
+                                &current.job_id,
+                                "Application needs manual review",
+                                now(),
+                            )
+                            .map_err(|e| e.to_string())?;
+                        }
+                    }
                     json_reply(
                         stream,
                         "200 OK",
@@ -1549,7 +1879,7 @@ fn serve(
             if let Err((current, error)) =
                 form_links::start(task_id.clone(), current, None, profile)
             {
-                *session = Some(current);
+                *session = Some(*current);
                 return Err(error);
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
@@ -1719,10 +2049,12 @@ fn serve(
                 &current.url,
                 &current.preview,
                 &mut grant,
-                &intent,
-                &current.profile_digest,
-                true,
-                now(),
+                form_preview::FillContext {
+                    intent: &intent,
+                    packet_digest: &current.profile_digest,
+                    source_reviewed: true,
+                    timestamp: now(),
+                },
             );
             let filled = match result {
                 Ok(count) => count,
@@ -1786,10 +2118,12 @@ fn serve(
                 }
             }
             current.created = Instant::now();
+            let (filled_fields, required_not_filled) =
+                form_preview::fill_coverage(&current.preview);
             json_reply(
                 stream,
                 "200 OK",
-                json!({"filled":filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":current.ttl.as_secs()}),
+                json!({"filled":filled,"filled_fields":filled_fields,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":current.ttl.as_secs()}),
             );
             *session = Some(current);
         }
@@ -1867,6 +2201,12 @@ fn serve(
                 .ok_or("Document not found")?;
             if bytes.is_empty() || bytes.len() > MAX_DOCUMENT {
                 return Err("Document size is outside the permitted range".into());
+            }
+            if !email_draft::is_pdf_attachment(&doc.name, &bytes) {
+                return Err(
+                    "Choose a PDF. Convert DOCX, PNG or JPEG files to PDF and review them before attaching"
+                        .into(),
+                );
             }
             if current.record.is_none() {
                 current.record = attempt_record::AttemptRecord::start(
@@ -1962,6 +2302,12 @@ fn serve(
             let requested = body["session_id"].as_str().ok_or("missing session")?;
             if session.as_ref().is_none_or(|s| s.id != requested) {
                 return Err("Form session expired or does not match".into());
+            }
+            if let Some(current) = session.as_mut() {
+                if let Some(record) = &mut current.record {
+                    record.event(json!({"type":"review_session_closed","time":now(),"submitted_by_waypoint":false}))?;
+                    record.status("review_session_closed", now())?;
+                }
             }
             *session = None;
             json_reply(stream, "200 OK", json!({"ok":true}));
@@ -2193,7 +2539,10 @@ fn serve_loop(
             .as_ref()
             .is_some_and(|s| s.created.elapsed() > s.ttl)
         {
-            session = None;
+            if let Err(error) = interrupt_session(&mut ws, &mut session, "Review session expired") {
+                eprintln!("Could not record expired review session: {error}");
+                session = None;
+            }
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
@@ -2599,8 +2948,13 @@ mod tests {
             .unwrap();
             let profile = json!({"first_name":"Synthetic","country":"Germany"});
             ws.save_candidate_profile(&profile.to_string()).unwrap();
-            ws.add_document("fictional-doc", "fictional-cv.txt", b"Fictional resume", 1)
-                .unwrap();
+            ws.add_document(
+                "fictional-doc",
+                "fictional-cv.pdf",
+                b"%PDF-fictional resume",
+                1,
+            )
+            .unwrap();
             let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
             let form = driver.open(&url).unwrap();
             assert!(driver
@@ -2738,10 +3092,13 @@ mod tests {
                     .read_attribute("#resume", "data-attached")
                     .unwrap()
                     .as_deref(),
-                Some("fictional-cv.txt")
+                Some("fictional-cv.pdf")
             );
-            let staged_path = current.staged_files[0].path().join("fictional-cv.txt");
-            assert_eq!(std::fs::read(&staged_path).unwrap(), b"Fictional resume");
+            let staged_path = current.staged_files[0].path().join("fictional-cv.pdf");
+            assert_eq!(
+                std::fs::read(&staged_path).unwrap(),
+                b"%PDF-fictional resume"
+            );
             drop(stream);
             drop(session);
             assert!(!staged_path.exists());
@@ -2775,6 +3132,16 @@ mod tests {
         let payload: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(payload["filled"], 6);
+        assert!(payload["filled_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "Given name"));
+        assert!(payload["required_not_filled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "Work authorization"));
         assert!(payload["screenshot"].as_str().unwrap().starts_with("iVBOR"));
         let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc"}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();

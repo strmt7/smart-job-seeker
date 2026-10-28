@@ -59,7 +59,7 @@ fn start_with_fetcher(
     id: String,
     targets: Vec<DiscoveryTarget>,
     fetcher: Arc<dyn Fetcher>,
-    mut workspace: Option<&mut Workspace>,
+    workspace: Option<&mut Workspace>,
 ) -> Result<(), String> {
     if targets.is_empty() || targets.len() > MAX_TARGETS {
         return Err("Choose 1 to 10 job boards".into());
@@ -93,9 +93,7 @@ fn start_with_fetcher(
         return Err("A discovery run is already active or has uncollected results".into());
     }
     if targets.iter().any(|t| t.source == "jobicy") {
-        let ws = workspace
-            .as_deref_mut()
-            .ok_or("Jobicy rate limit storage unavailable")?;
+        let ws = workspace.ok_or("Jobicy rate limit storage unavailable")?;
         if !ws
             .reserve_jobicy_fetch(crate::now())
             .map_err(|e| e.to_string())?
@@ -172,7 +170,7 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
                 Ok(body) => StaticFetcher::default().route(&url, &body),
                 Err(error) => StaticFetcher::default().failing(&url, error),
             };
-            let outcome = ws.discover(&[target.clone()], &fetcher, crate::now());
+            let outcome = ws.discover(std::slice::from_ref(&target), &fetcher, crate::now());
             task.processed += 1;
             Ok(
                 json!({"status":"running","source":target.source,"board":target.board,"processed":task.processed,"total":task.total,"summary":outcome.summary(),"coverage":outcome.coverage,"has_more":more}),

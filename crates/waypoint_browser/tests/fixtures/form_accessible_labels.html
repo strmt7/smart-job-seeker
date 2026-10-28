@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Accessible fictional form</title></head>
+<body><form>
+<input id="candidate" aria-labelledby="candidate-label candidate-detail">
+<span id="candidate-label">Given</span><span id="candidate-detail">name</span>
+<span id="authorization-label">Work authorization</span><input id="permit" aria-labelledby="authorization-label">
+<span id="duplicate">First ambiguous label</span><span id="duplicate">Second ambiguous label</span>
+<input id="ambiguous" aria-labelledby="duplicate">
+<button type="submit">Submit</button>
+</form></body></html>

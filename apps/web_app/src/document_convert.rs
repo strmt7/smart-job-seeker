@@ -1,8 +1,9 @@
 //! Bounded local conversion using an installed LibreOffice; no user profile is reused.
+#[cfg(not(windows))]
+use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, Instant},
 };
 
 pub fn office_path() -> Option<PathBuf> {
@@ -46,6 +47,7 @@ pub fn docx_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
         )
         .map_err(|_| "A document conversion is already running")?;
     let _lease = ConvertLease;
+    let _document_lease = crate::pdf_extract::acquire()?;
     if bytes.is_empty() || bytes.len() > 10 * 1024 * 1024 {
         return Err("Document size is outside the permitted range".into());
     }
@@ -80,26 +82,32 @@ pub fn docx_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
         .stderr(Stdio::null());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        let result = crate::pdf_job::run(&command, None, 768 * 1024 * 1024, 30, 0)
+            .map_err(|e| format!("LibreOffice conversion: {e}"))?;
+        if !result.success {
+            return Err(format!("LibreOffice conversion failed ({:?})", result.code));
+        }
     }
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Could not start LibreOffice: {e}"))?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            if !status.success() {
-                return Err("LibreOffice conversion failed".into());
+    #[cfg(not(windows))]
+    {
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Could not start LibreOffice: {e}"))?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                if !status.success() {
+                    return Err("LibreOffice conversion failed".into());
+                }
+                break;
             }
-            break;
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("LibreOffice conversion timed out".into());
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("LibreOffice conversion timed out".into());
-        }
-        std::thread::sleep(Duration::from_millis(100));
     }
     read_pdf(&output.join("source.pdf"))
 }
@@ -117,6 +125,13 @@ fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conversion_does_not_overlap_another_pdf_operation() {
+        let lease = crate::pdf_extract::acquire().unwrap();
+        let error = super::docx_to_pdf(b"fictional").unwrap_err();
+        assert!(error.contains("PDF operation is already running"));
+        drop(lease);
+    }
     #[test]
     #[ignore = "runs an installed LibreOffice against an explicit local fixture"]
     fn converts_local_fixture() {

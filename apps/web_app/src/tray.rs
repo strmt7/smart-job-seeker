@@ -65,7 +65,7 @@ pub fn run(url: String, stop: Arc<AtomicBool>, worker: JoinHandle<()>) -> Result
                 if event.id == *quit.id() {
                     stop.store(true, Ordering::Release);
                     shutting_down = true;
-                    let _ = quit.set_text("Closing server…");
+                    quit.set_text("Closing server…");
                 }
             }
             if worker.is_finished() {

@@ -12,7 +12,7 @@ const MAX_PROFILE_VALUE: usize = 2000;
 
 /// Send labels and available profile keys to a local inference provider. The
 /// first request contains no candidate values and chooses only key-to-field
-/// associations. Non-exact dropdowns may then send the relevant value and
+/// associations. Non-exact choices may then send the relevant value and
 /// concrete options to the same local inference provider for reviewable choices.
 pub fn suggest(
     inference: &mut dyn Inference,
@@ -53,6 +53,7 @@ pub fn suggest(
                         | FormFieldType::Email
                         | FormFieldType::TextArea
                         | FormFieldType::Select { .. }
+                        | FormFieldType::Radio { .. }
                 )
         })
         .map(|field| json!({"selector":field.selector,"label":field.label,"type":field.field_type}))
@@ -65,12 +66,12 @@ pub fn suggest(
         .generate_structured("form_mapping", &prompt, 1024)
         .map_err(|e| e.to_string())?;
     let mappings = validate_suggestions(schema, profile, &output)?;
-    resolve_select_options(inference, schema, mappings)
+    resolve_choice_options(inference, schema, mappings)
 }
 
-/// Resolve non-exact select values using only a concrete option on the page.
+/// Resolve non-exact values using only a concrete option on the page.
 /// The reviewed UI still displays the selected option before any fill occurs.
-fn resolve_select_options(
+fn resolve_choice_options(
     inference: &mut dyn Inference,
     schema: &FormSchema,
     mappings: Vec<ProposedMapping>,
@@ -84,7 +85,9 @@ fn resolve_select_options(
             .iter()
             .find(|field| field.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
-        let FormFieldType::Select { options } = &field.field_type else {
+        let (FormFieldType::Select { options } | FormFieldType::Radio { options }) =
+            &field.field_type
+        else {
             resolved.push(mapping);
             continue;
         };
@@ -154,7 +157,9 @@ fn resolve_select_options(
         else {
             continue;
         };
-        let FormFieldType::Select { options } = &field.field_type else {
+        let (FormFieldType::Select { options } | FormFieldType::Radio { options }) =
+            &field.field_type
+        else {
             continue;
         };
         if options
@@ -229,7 +234,7 @@ fn validate_suggestions(
             .ok_or("Model selected an unavailable profile value")?;
         match &field.field_type {
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => (),
-            FormFieldType::Select { .. } => (),
+            FormFieldType::Select { .. } | FormFieldType::Radio { .. } => (),
             _ => return Err("Model selected an unsupported field or option".into()),
         }
         result.push(ProposedMapping {
@@ -415,5 +420,64 @@ mod tests {
         assert!(suggest(&mut model, &schema, &json!({"country":"Germany"}))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn radio_suggestions_use_profile_and_unique_real_options() {
+        let mut schema = form();
+        schema.fields.push(FormField {
+            selector: "#location".into(),
+            label: "Country".into(),
+            field_type: FormFieldType::Radio {
+                options: vec!["Deutschland".into(), "France".into()],
+            },
+            required: true,
+            sensitive: false,
+        });
+        let mapping = json!({"mappings":[{"selector":"#location","profile_key":"country"}]});
+        let mut exact = FakeInference {
+            response: mapping.clone(),
+            last_prompt: String::new(),
+        };
+        assert_eq!(
+            suggest(&mut exact, &schema, &json!({"country":"France"})).unwrap()[0].value,
+            PacketValue::Text("France".into())
+        );
+        let mut equivalent = SequenceInference(vec![
+            mapping.clone(),
+            json!({"selections":[{"selector":"#location","option":"Deutschland"}]}),
+        ]);
+        assert_eq!(
+            suggest(&mut equivalent, &schema, &json!({"country":"Germany"})).unwrap()[0].value,
+            PacketValue::Text("Deutschland".into())
+        );
+        let mut invented = SequenceInference(vec![
+            mapping.clone(),
+            json!({"selections":[{"selector":"#location","option":"Invented"}]}),
+        ]);
+        assert!(
+            suggest(&mut invented, &schema, &json!({"country":"Germany"}))
+                .unwrap()
+                .is_empty()
+        );
+        if let FormFieldType::Radio { options } = &mut schema.fields.last_mut().unwrap().field_type
+        {
+            options.push("france".into());
+        }
+        let mut ambiguous = FakeInference {
+            response: mapping.clone(),
+            last_prompt: String::new(),
+        };
+        assert!(
+            suggest(&mut ambiguous, &schema, &json!({"country":"France"}))
+                .unwrap()
+                .is_empty()
+        );
+        schema.fields.last_mut().unwrap().sensitive = true;
+        let mut sensitive = FakeInference {
+            response: mapping,
+            last_prompt: String::new(),
+        };
+        assert!(suggest(&mut sensitive, &schema, &json!({"country":"France"})).is_err());
     }
 }

@@ -24,6 +24,7 @@ impl AttemptRecord {
             .map_err(|e| e.to_string())?
             .ok_or("Job not found")?;
         let description = ws.job_description(id).map_err(|e| e.to_string())?;
+        let captured = ws.job_capture(id).map_err(|e| e.to_string())?;
         let hash = Sha256Digest::of(id.as_str());
         let dir = root
             .join("application-records")
@@ -46,6 +47,7 @@ impl AttemptRecord {
             "description_available": description.is_some(),
             "description_sha256": description.as_deref().map(|text| Sha256Digest::of(text).as_str().to_owned()),
             "description": description,
+            "page_capture_available": captured.is_some(),
             "note": "Workspace listing text as saved at the start of this attempt; it may have been extracted or pasted and is not a capture of the original page."
         });
         fs::write(
@@ -57,7 +59,33 @@ impl AttemptRecord {
             "No job description was available in the workspace when this attempt started.",
         );
         fs::write(dir.join("original-job.txt"), listing_text).map_err(|e| e.to_string())?;
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":false,"note":"This record does not prove submission."});
+        if let Some((metadata, segments)) = captured {
+            let source_dir = dir.join("original-job-page");
+            fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
+            fs::write(source_dir.join("capture.json"), &metadata).map_err(|e| e.to_string())?;
+            if let Ok(capture) = serde_json::from_slice::<Value>(&metadata) {
+                if capture["structured_source_status"] == "captured" {
+                    let scripts = capture["structured_source_scripts"]
+                        .as_array()
+                        .ok_or("Invalid structured source capture")?;
+                    if scripts.len() > 8 || scripts.iter().any(|s| s.as_str().is_none()) {
+                        return Err("Invalid structured source capture".into());
+                    }
+                    for (index, script) in scripts.iter().enumerate() {
+                        fs::write(
+                            source_dir.join(format!("structured-{:04}.json.txt", index + 1)),
+                            script.as_str().unwrap().as_bytes(),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+            for (index, png) in segments.iter().enumerate() {
+                fs::write(source_dir.join(format!("{:04}.png", index + 1)), png)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":null,"submitted_by_waypoint":false,"note":"External submission is not monitored; this record does not prove whether an application was submitted."});
         fs::write(
             dir.join("attempt.json"),
             serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?,
@@ -81,6 +109,49 @@ impl AttemptRecord {
         serde_json::to_writer(&mut f, &value).map_err(|e| e.to_string())?;
         f.write_all(b"\n").map_err(|e| e.to_string())?;
         f.flush().map_err(|e| e.to_string())
+    }
+    pub fn status(&mut self, status: &str, timestamp: i64) -> Result<(), String> {
+        if !matches!(
+            status,
+            "preparation_in_progress" | "manual_review" | "review_session_closed"
+        ) {
+            return Err("Invalid attempt status".into());
+        }
+        let path = self.dir.join("attempt.json");
+        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        if bytes.len() > 65536 {
+            return Err("Attempt metadata exceeds limit".into());
+        }
+        let mut meta: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if meta["status"] != "manual_review" || status == "manual_review" {
+            meta["status"] = json!(status);
+        }
+        meta["updated_at"] = json!(timestamp);
+        let mut tmp = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
+        serde_json::to_writer_pretty(&mut tmp, &meta).map_err(|e| e.to_string())?;
+        tmp.flush().map_err(|e| e.to_string())?;
+        tmp.persist(path).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub fn inspection(
+        &mut self,
+        origin: &str,
+        reasons: &[String],
+        screenshot: Option<&str>,
+        timestamp: i64,
+    ) -> Result<(), String> {
+        if let Some(image) = screenshot {
+            self.screenshot(image)?;
+        }
+        self.event(json!({"type":"page_inspected","time":timestamp,"origin":origin,"manual_review":reasons,"screenshot_available":screenshot.is_some()}))?;
+        self.status(
+            if reasons.is_empty() {
+                "preparation_in_progress"
+            } else {
+                "manual_review"
+            },
+            timestamp,
+        )
     }
     pub fn email_draft(&mut self, bytes: &[u8]) -> Result<(), String> {
         fs::write(self.dir.join("email-draft.eml"), bytes).map_err(|e| e.to_string())
@@ -182,7 +253,18 @@ mod tests {
             Some("Fictional job description."),
         )
         .unwrap();
-        let record = AttemptRecord::start(&ws, &id, "attempt-fixture", 123)
+        #[cfg(windows)]
+        {
+            let png = b"\x89PNG\r\n\x1a\nfictional-data".to_vec();
+            let metadata=json!({"source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
+            assert!(ws
+                .save_job_capture(&id, metadata.as_bytes(), std::slice::from_ref(&png))
+                .unwrap());
+            assert!(!ws
+                .save_job_capture(&id, metadata.as_bytes(), std::slice::from_ref(&png))
+                .unwrap());
+        }
+        let mut record = AttemptRecord::start(&ws, &id, "attempt-fixture", 123)
             .unwrap()
             .unwrap();
         let listing: Value =
@@ -191,6 +273,24 @@ mod tests {
         assert_eq!(listing["description"], "Fictional job description.");
         assert_eq!(listing["source_url"], "https://example.org/jobs/1");
         assert_eq!(listing["description_available"], true);
+        #[cfg(windows)]
+        {
+            assert_eq!(listing["page_capture_available"], true);
+            assert_eq!(
+                fs::read(record.dir.join("original-job-page/0001.png")).unwrap(),
+                b"\x89PNG\r\n\x1a\nfictional-data"
+            );
+            assert!(record.dir.join("original-job-page/capture.json").exists());
+            assert_eq!(
+                fs::read_to_string(
+                    record
+                        .dir
+                        .join("original-job-page/structured-0001.json.txt")
+                )
+                .unwrap(),
+                "{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"
+            );
+        }
         assert_eq!(
             fs::read_to_string(record.dir.join("original-job.txt")).unwrap(),
             "Fictional job description."
@@ -199,5 +299,21 @@ mod tests {
             listing["description_sha256"],
             Sha256Digest::of("Fictional job description.").as_str()
         );
+        record
+            .inspection(
+                "https://example.org",
+                &["Sign-in required".into()],
+                None,
+                124,
+            )
+            .unwrap();
+        record.status("review_session_closed", 125).unwrap();
+        let meta: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(meta["status"], "manual_review");
+        assert!(meta["submitted"].is_null());
+        assert_eq!(meta["submitted_by_waypoint"], false);
+        let events = fs::read_to_string(record.dir.join("events.jsonl")).unwrap();
+        assert!(events.contains("Sign-in required"));
     }
 }
