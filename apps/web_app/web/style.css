@@ -103,3 +103,5 @@ dialog{width:min(680px,calc(100vw - 32px));max-height:min(80vh,720px);border:1px
 .bulk-actions{margin:0 0 16px;border:1px solid #e0eae5;border-radius:12px;background:#f7faf8;padding:12px 14px}.bulk-actions>summary{cursor:pointer;font-weight:650;color:#156c64}.bulk-actions[open]>summary{margin-bottom:12px}.bulk-actions p{font-size:13px}.bulk-actions .job-selection-toolbar{gap:6px}.bulk-actions .job-selection-toolbar button{font-size:12px}
 aside>nav{position:sticky;top:0;z-index:2;background:#f4f6f4}
 aside>section{scroll-margin-top:76px}
+/* Keep both work areas reachable when either contains a long list. */
+@media(min-width:851px){main{height:calc(100dvh - 68px);min-height:0;overflow:hidden}.jobs,aside{overflow:auto;overscroll-behavior:contain;min-height:0;scrollbar-gutter:stable}.jobs:focus-visible,aside:focus-visible{outline:3px solid #68bfc1;outline-offset:-3px}}
