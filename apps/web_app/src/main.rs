@@ -1898,8 +1898,29 @@ fn serve(
                         .to_owned(),
                 )]
             };
+            let job_id = match body
+                .get("job_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                Some(value) => {
+                    let job = JobIdentityId::new(value).map_err(|e| e.to_string())?;
+                    if ws.job(&job).map_err(|e| e.to_string())?.is_none() {
+                        return Err("Selected job not found".into());
+                    }
+                    Some(value.to_owned())
+                }
+                None => None,
+            };
             let task_id = random_id()?;
-            docx_edit_task::start_batch(task_id.clone(), id.to_owned(), info.name, source, edits)?;
+            docx_edit_task::start_batch(
+                task_id.clone(),
+                id.to_owned(),
+                info.name,
+                source,
+                job_id,
+                edits,
+            )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/documents/edit-template-status" => {

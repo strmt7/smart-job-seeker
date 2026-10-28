@@ -8,6 +8,8 @@ struct Task {
     document_id: String,
     digest: String,
     name: String,
+    job_id: Option<String>,
+    edits: Vec<(String, String)>,
     result: Option<Result<EditedFiles, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -16,6 +18,7 @@ pub fn start_batch(
     document_id: String,
     name: String,
     source: Vec<u8>,
+    job_id: Option<String>,
     edits: Vec<(String, String)>,
 ) -> Result<(), String> {
     if edits.is_empty() || edits.len() > 5 {
@@ -43,6 +46,8 @@ pub fn start_batch(
         document_id,
         digest: sha256_hex(&source),
         name,
+        job_id,
+        edits: edits.clone(),
         result: None,
     });
     drop(task);
@@ -137,9 +142,22 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
             })();
             match saved {
                 Ok((docx_id, pdf_id)) => {
+                    let record = task.job_id.as_deref().map(|job_id| {
+                        record_edit(
+                            ws,
+                            job_id,
+                            &task.name,
+                            &current,
+                            docx.as_deref(),
+                            &pdf,
+                            &task.edits,
+                        )
+                    });
+                    let record_saved = record.as_ref().map(|result| result.is_ok());
+                    let record_error = record.and_then(Result::err);
                     *tasks = None;
                     Ok(
-                        json!({"status":"complete","docx_id":docx_id,"docx_name":docx_id.as_ref().map(|_| docx_name),"pdf_id":pdf_id,"pdf_name":pdf_name}),
+                        json!({"status":"complete","docx_id":docx_id,"docx_name":docx_id.as_ref().map(|_| docx_name),"pdf_id":pdf_id,"pdf_name":pdf_name,"record_saved":record_saved,"record_error":record_error}),
                     )
                 }
                 Err(error) => {
@@ -153,9 +171,156 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
     }
 }
 
+fn record_edit(
+    ws: &waypoint_workspace::Workspace,
+    job_id: &str,
+    name: &str,
+    original: &[u8],
+    docx: Option<&[u8]>,
+    pdf: &[u8],
+    edits: &[(String, String)],
+) -> Result<(), String> {
+    let job = waypoint_domain::JobIdentityId::new(job_id).map_err(|e| e.to_string())?;
+    let mut record =
+        crate::attempt_record::AttemptRecord::start(ws, &job, &crate::random_id()?, crate::now())?
+            .ok_or("Application record requires a disk workspace")?;
+    let original_name = record.material(&format!("original-{name}"), original)?;
+    let docx_name = docx
+        .map(|bytes| record.material("edited-template.docx", bytes))
+        .transpose()?;
+    let pdf_name = record.material("edited-template.pdf", pdf)?;
+    record.event(json!({"type":"template_edited","time":crate::now(),"original":original_name,"docx":docx_name,"pdf":pdf_name,"original_sha256":sha256_hex(original),"pdf_sha256":sha256_hex(pdf),"edits":edits,"note":"Reviewed template edit; no application was submitted."}))?;
+    record.status("manual_review", crate::now())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn job_record_preserves_original_edits_and_output() {
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = waypoint_workspace::Workspace::open(root.path()).unwrap();
+        let job = JobIdentityId::new("fictional-template-job").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: job.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: "".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional job description"),
+        )
+        .unwrap();
+        record_edit(
+            &ws,
+            job.as_str(),
+            "template.docx",
+            b"original",
+            Some(b"edited"),
+            b"%PDF-example",
+            &[("before".into(), "after".into())],
+        )
+        .unwrap();
+        let records = crate::attempt_record::list(&ws, &job).unwrap();
+        assert_eq!(records["attempts"].as_array().unwrap().len(), 1);
+        let entry = std::fs::read_dir(root.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let event: Value =
+            serde_json::from_slice(&std::fs::read(entry.join("events.jsonl")).unwrap()).unwrap();
+        assert_eq!(event["type"], "template_edited");
+        assert_eq!(event["edits"][0], json!(["before", "after"]));
+        for (key, bytes) in [
+            ("original", b"original".as_slice()),
+            ("docx", b"edited".as_slice()),
+            ("pdf", b"%PDF-example".as_slice()),
+        ] {
+            assert_eq!(
+                std::fs::read(entry.join("materials").join(event[key].as_str().unwrap())).unwrap(),
+                bytes
+            );
+        }
+        let attempt: Value =
+            serde_json::from_slice(&std::fs::read(entry.join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(attempt["status"], "manual_review");
+        assert_eq!(attempt["submitted_by_waypoint"], false);
+    }
+    #[test]
+    #[ignore = "edits a fictional DOCX using local LibreOffice"]
+    fn job_linked_edit_saves_record_after_conversion() {
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = waypoint_workspace::Workspace::open(root.path()).unwrap();
+        let job = JobIdentityId::new("fictional-linked-edit").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: job.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: "".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional listing"),
+        )
+        .unwrap();
+        let source = std::fs::read(std::env::var("WAYPOINT_HEADER_FIXTURE").unwrap()).unwrap();
+        ws.add_document("source", "fixture.docx", &source, 1)
+            .unwrap();
+        start_batch(
+            "linked-edit".into(),
+            "source".into(),
+            "fixture.docx".into(),
+            source,
+            Some(job.as_str().to_owned()),
+            vec![(
+                "Synthetic Header Name".into(),
+                "Fictional Header Name".into(),
+            )],
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
+        loop {
+            let result = poll("linked-edit", &ws).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["record_saved"], true);
+                break;
+            }
+            assert_eq!(result["status"], "running", "{result}");
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert_eq!(
+            crate::attempt_record::list(&ws, &job).unwrap()["attempts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
     #[test]
     #[ignore = "uses a fictional DOCX fixture"]
     fn failed_batch_saves_nothing() {
@@ -168,6 +333,7 @@ mod tests {
             "source".into(),
             "fictional.docx".into(),
             original.clone(),
+            None,
             vec![
                 ("Fictional CV".into(), "Example CV".into()),
                 ("missing text".into(), "replacement".into()),
@@ -208,6 +374,7 @@ mod tests {
             "pdf-source".into(),
             "fictional.pdf".into(),
             original.clone(),
+            None,
             vec![
                 ("research".into(), "search".into()),
                 ("qualifications".into(), "qualification".into()),
@@ -253,6 +420,7 @@ mod tests {
             "source".into(),
             "fictional.docx".into(),
             original.clone(),
+            None,
             vec![
                 ("Fictional CV".into(), "Example CV".into()),
                 (
