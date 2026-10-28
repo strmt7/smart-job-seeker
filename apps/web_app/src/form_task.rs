@@ -49,6 +49,10 @@ pub struct Finished {
 struct Task {
     id: String,
     receiver: mpsc::Receiver<Finished>,
+    job_id: JobIdentityId,
+    url: String,
+    profile_digest: Sha256Digest,
+    visible: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
@@ -76,11 +80,18 @@ pub fn start(
         return Err("A form inspection is running or awaiting its result".into());
     }
     let (sender, receiver) = mpsc::channel();
-    *task = Some(Task { id, receiver });
+    let profile_digest = Sha256Digest::of(&profile.to_string());
+    *task = Some(Task {
+        id,
+        receiver,
+        job_id: job_id.clone(),
+        url: url.clone(),
+        profile_digest: profile_digest.clone(),
+        visible,
+    });
     drop(task);
     std::thread::spawn(move || {
         let _lease = lease;
-        let profile_digest = Sha256Digest::of(&profile.to_string());
         let result = std::panic::catch_unwind(|| -> Result<_, String> {
             let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
                 .map_err(|e| e.to_string())?;
@@ -119,8 +130,15 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
         }
         Err(mpsc::TryRecvError::Empty) => Ok(None),
         Err(mpsc::TryRecvError::Disconnected) => {
+            let failed = Finished {
+                job_id: task.job_id.clone(),
+                url: task.url.clone(),
+                profile_digest: task.profile_digest.clone(),
+                visible: task.visible,
+                result: Err("Form inspection stopped unexpectedly".into()),
+            };
             *tasks = None;
-            Err("Form inspection stopped unexpectedly".into())
+            Ok(Some(failed))
         }
     }
 }
@@ -132,6 +150,52 @@ mod tests {
     use waypoint_applications::form_mapping::{
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
+
+    #[test]
+    fn disconnected_worker_keeps_job_context_for_manual_review() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(
+            &mut ws,
+            &serde_json::json!({
+                "url":"https://example.org/job", "title":"Engineer", "employer":"Fixture"
+            }),
+            1,
+        )
+        .unwrap();
+        let job_id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-task".into(),
+            receiver,
+            job_id: job_id.clone(),
+            url: "https://example.org/job".into(),
+            profile_digest: Sha256Digest::of("fictional-profile"),
+            visible: false,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = serde_json::json!({"task_id":"fictional-task"}).to_string();
+        write!(client, "POST /api/form/inspect-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["status"], "failed");
+        let reviews = ws.manual_reviews().unwrap();
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].job_id, job_id.as_str());
+        assert!(reviews[0]
+            .reason
+            .contains("Form inspection stopped unexpectedly"));
+        assert!(!busy());
+    }
 
     #[test]
     #[ignore = "starts a local browser while holding the model lease"]
