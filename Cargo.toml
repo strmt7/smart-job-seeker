@@ -17,6 +17,7 @@ members = [
   "crates/waypoint_browser",
   "crates/waypoint_lifecycle",
   "apps/windows_app",
+  "apps/web_app",
 ]
 resolver = "2"
 

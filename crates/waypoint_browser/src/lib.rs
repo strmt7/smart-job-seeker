@@ -54,8 +54,115 @@ pub struct CdpDriver {
 }
 
 impl CdpDriver {
+    /// Extract a bounded text sample from the current DOM for local review.
+    /// Scripts, styles, templates and text inside form controls are excluded.
+    pub fn page_text_bounded(&mut self, limit: usize) -> Result<(String, bool), DriverError> {
+        if limit == 0 || limit > 32_000 {
+            return Err(DriverError("Invalid page-text limit".into()));
+        }
+        let root = self.document()?;
+        let mut text = String::new();
+        let mut truncated = false;
+        walk(&root, false, &mut |node, in_control| {
+            let tag = node
+                .get("nodeName")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(tag.as_str(), "script" | "style" | "noscript" | "template") {
+                return false;
+            }
+            if tag == "#text" && !in_control {
+                if let Some(value) = node.get("nodeValue").and_then(Value::as_str) {
+                    for c in value.chars() {
+                        if text.len() + c.len_utf8() + 1 > limit {
+                            truncated = true;
+                            break;
+                        }
+                        text.push(c);
+                    }
+                    if text.len() < limit {
+                        text.push(' ');
+                    }
+                }
+            }
+            true
+        });
+        Ok((
+            text.split_whitespace().collect::<Vec<_>>().join(" "),
+            truncated,
+        ))
+    }
+    /// Read bounded JSON-LD script bodies from the current DOM without running scripts.
+    pub fn structured_data_scripts(&mut self) -> Result<Vec<String>, DriverError> {
+        let root = self.document()?;
+        let mut scripts = Vec::new();
+        let mut total = 0usize;
+        walk(&root, false, &mut |node, _| {
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            if tag.eq_ignore_ascii_case("script") {
+                let attrs = attributes(node);
+                if attrs
+                    .get("type")
+                    .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/ld+json"))
+                {
+                    let mut text = String::new();
+                    if let Some(children) = node.get("children").and_then(Value::as_array) {
+                        for child in children {
+                            if child.get("nodeName").and_then(Value::as_str) == Some("#text") {
+                                if let Some(value) = child.get("nodeValue").and_then(Value::as_str)
+                                {
+                                    text.push_str(value);
+                                }
+                            }
+                        }
+                    }
+                    total = total.saturating_add(text.len());
+                    if scripts.len() < 8 && total <= 1024 * 1024 {
+                        scripts.push(text);
+                    }
+                }
+                return false;
+            }
+            true
+        });
+        if total > 1024 * 1024 {
+            return Err(DriverError("Structured data exceeds the size limit".into()));
+        }
+        Ok(scripts)
+    }
+    /// Return the current page URL after any redirects.
+    pub fn current_url(&mut self) -> Result<String, DriverError> {
+        let history = self
+            .cdp
+            .call("Page.getNavigationHistory", json!({}))
+            .map_err(derr)?;
+        let index = history
+            .get("currentIndex")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| DriverError("browser did not report the current page".into()))?
+            as usize;
+        history
+            .get("entries")
+            .and_then(Value::as_array)
+            .and_then(|items| items.get(index))
+            .and_then(|entry| entry.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| DriverError("browser did not report the current URL".into()))
+    }
+
+    /// Read application-looking anchor destinations without clicking or executing script.
+    pub fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+        Ok(application_links_from_document(&self.document()?))
+    }
     pub fn launch(upload_dirs: Vec<PathBuf>) -> Result<Self, DriverError> {
-        let browser = BrowserProcess::launch(Duration::from_secs(20)).map_err(derr)?;
+        Self::launch_with_mode(upload_dirs, false)
+    }
+
+    pub fn launch_with_mode(upload_dirs: Vec<PathBuf>, visible: bool) -> Result<Self, DriverError> {
+        let browser =
+            BrowserProcess::launch_with_mode(Duration::from_secs(20), visible).map_err(derr)?;
         let ws = browser.connect().map_err(derr)?;
         let cdp = Cdp::new(ws).map_err(derr)?;
         let mut driver = Self {
@@ -80,6 +187,118 @@ impl CdpDriver {
             .and_then(|p| p.as_str())
             .unwrap_or("")
             .to_string())
+    }
+
+    /// Capture the current viewport for the candidate's review.
+    pub fn screenshot_base64(&mut self) -> Result<String, DriverError> {
+        let result = self
+            .cdp
+            .call("Page.captureScreenshot", json!({"format":"png"}))
+            .map_err(derr)?;
+        let data = result
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("browser returned no screenshot".into()))?;
+        if data.len() > 8 * 1024 * 1024 {
+            return Err(DriverError("browser screenshot is too large".into()));
+        }
+        Ok(data.to_owned())
+    }
+
+    /// Attach a caller-selected local file to a known form control.
+    pub fn attach_local_file(
+        &mut self,
+        selector: &str,
+        path: &std::path::Path,
+    ) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("File field not found".into()))?;
+        self.cdp
+            .call(
+                "DOM.setFileInputFiles",
+                json!({ "files": [path.to_string_lossy()], "nodeId": node }),
+            )
+            .map_err(derr)?;
+        Ok(())
+    }
+
+    /// Return CSS page dimensions for bounded evidence capture.
+    pub fn page_dimensions(&mut self) -> Result<(f64, f64), DriverError> {
+        let result = self
+            .cdp
+            .call("Page.getLayoutMetrics", json!({}))
+            .map_err(derr)?;
+        let size = result
+            .get("cssContentSize")
+            .ok_or_else(|| DriverError("Page dimensions unavailable".into()))?;
+        let width = size
+            .get("width")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| DriverError("Page width unavailable".into()))?;
+        let height = size
+            .get("height")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| DriverError("Page height unavailable".into()))?;
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return Err(DriverError("Invalid page dimensions".into()));
+        }
+        Ok((width.ceil(), height.ceil()))
+    }
+
+    /// Capture a bounded page segment without navigating or clicking.
+    pub fn screenshot_segment(
+        &mut self,
+        width: f64,
+        y: f64,
+        height: f64,
+    ) -> Result<String, DriverError> {
+        if !width.is_finite()
+            || !y.is_finite()
+            || !height.is_finite()
+            || width <= 0.0
+            || width > 2048.0
+            || y < 0.0
+            || height <= 0.0
+            || height > 2000.0
+        {
+            return Err(DriverError(
+                "Screenshot segment exceeds capture limits".into(),
+            ));
+        }
+        let result = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":0,"y":y,"width":width,"height":height,"scale":1}})).map_err(derr)?;
+        let data = result
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Browser returned no screenshot".into()))?;
+        if data.len() > 8 * 1024 * 1024 {
+            return Err(DriverError("Screenshot is too large".into()));
+        }
+        Ok(data.to_owned())
+    }
+
+    /// Read one DOM attribute for review or fixture verification.
+    pub fn read_attribute(
+        &mut self,
+        selector: &str,
+        name: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError(format!("{selector} not found")))?;
+        let result = self
+            .cdp
+            .call("DOM.getAttributes", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let values = result
+            .get("attributes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("missing DOM attributes".into()))?;
+        Ok(values.chunks_exact(2).find_map(|pair| {
+            (pair[0].as_str() == Some(name))
+                .then(|| pair[1].as_str().map(str::to_owned))
+                .flatten()
+        }))
     }
 
     /* ------------------------------ page reading --------------------------- */
@@ -129,6 +348,8 @@ impl CdpDriver {
         let root = self.document()?;
         let mut controls = vec![];
         let mut labels: HashMap<String, String> = HashMap::new();
+        let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
+        let mut radio_fieldsets: HashMap<u64, (u64, String)> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
         let mut text = String::new();
         walk(&root, false, &mut |node, in_control| {
@@ -150,12 +371,67 @@ impl CdpDriver {
                 }
             }
             if tag == "label" {
-                let for_id = attrs.get("for").cloned();
-                if let Some(for_id) = for_id {
-                    let mut label_text = String::new();
-                    collect_text(node, false, &mut label_text);
-                    labels.entry(for_id).or_insert_with(|| {
-                        label_text.split_whitespace().collect::<Vec<_>>().join(" ")
+                let mut label_text = String::new();
+                collect_text(node, false, &mut label_text);
+                let label_text = label_text.split_whitespace().collect::<Vec<_>>().join(" ");
+                if let Some(for_id) = attrs.get("for") {
+                    labels
+                        .entry(for_id.clone())
+                        .or_insert_with(|| label_text.clone());
+                }
+                if !label_text.is_empty() {
+                    walk(node, false, &mut |child, _| {
+                        let tag = child
+                            .get("nodeName")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        if matches!(tag.as_str(), "input" | "textarea" | "select") {
+                            if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                wrapping_labels
+                                    .entry(id)
+                                    .or_insert_with(|| label_text.clone());
+                            }
+                            return false;
+                        }
+                        true
+                    });
+                }
+            }
+            if tag == "fieldset" {
+                let legend = node
+                    .get("children")
+                    .and_then(Value::as_array)
+                    .and_then(|children| {
+                        children.iter().find(|child| {
+                            child
+                                .get("nodeName")
+                                .and_then(Value::as_str)
+                                .is_some_and(|name| name.eq_ignore_ascii_case("legend"))
+                        })
+                    })
+                    .map(|node| {
+                        let mut value = String::new();
+                        collect_text(node, false, &mut value);
+                        value.split_whitespace().collect::<Vec<_>>().join(" ")
+                    })
+                    .unwrap_or_default();
+                if let Some(fieldset_id) = node
+                    .get("nodeId")
+                    .and_then(Value::as_u64)
+                    .filter(|_| !legend.is_empty())
+                {
+                    walk(node, false, &mut |child, _| {
+                        if child
+                            .get("nodeName")
+                            .and_then(Value::as_str)
+                            .is_some_and(|name| name.eq_ignore_ascii_case("input"))
+                        {
+                            if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                radio_fieldsets.insert(id, (fieldset_id, legend.clone()));
+                            }
+                        }
+                        true
                     });
                 }
             }
@@ -165,6 +441,10 @@ impl CdpDriver {
             if matches!(tag.as_str(), "input" | "textarea" | "select") && !in_control {
                 if node.get("nodeId").and_then(|v| v.as_u64()).is_some() {
                     controls.push(Control {
+                        node_id: node
+                            .get("nodeId")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
                         tag: tag.clone(),
                         attrs: attrs.clone(),
                         options: options_of(node),
@@ -195,6 +475,7 @@ impl CdpDriver {
             walls.push("captcha present".to_string());
         }
 
+        let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
         for control in controls {
             let input_type = control
                 .attrs
@@ -220,6 +501,7 @@ impl CdpDriver {
                 .get("aria-label")
                 .cloned()
                 .or_else(|| labels.get(&id).cloned())
+                .or_else(|| wrapping_labels.get(&control.node_id).cloned())
                 .or_else(|| control.attrs.get("placeholder").cloned())
                 .or_else(|| control.attrs.get("name").cloned())
                 .or_else(|| {
@@ -240,7 +522,43 @@ impl CdpDriver {
                     .attrs
                     .get("aria-required")
                     .is_some_and(|v| v == "true");
+            if control.attrs.contains_key("disabled") || control.attrs.contains_key("readonly") {
+                if required {
+                    walls.push("a required field is disabled or read-only".into());
+                }
+                continue;
+            }
             let sensitive = is_sensitive_label(&label) || input_type == "password";
+            if input_type == "radio" {
+                if let (Some((fieldset_id, legend)), Some(name)) = (
+                    radio_fieldsets.get(&control.node_id),
+                    control.attrs.get("name").filter(|name| !name.is_empty()),
+                ) {
+                    let key = (*fieldset_id, name.clone());
+                    if let Some(index) = radio_groups.get(&key).copied() {
+                        let field: &mut waypoint_applications::form_mapping::FormField =
+                            &mut fields[index];
+                        if let FormFieldType::Radio { options } = &mut field.field_type {
+                            options.push(label.clone());
+                        }
+                        field.sensitive |= sensitive;
+                        field.required |= required;
+                    } else {
+                        let index = fields.len();
+                        radio_groups.insert(key, index);
+                        fields.push(FormField {
+                            selector: selector_for(&control),
+                            label: legend.clone(),
+                            field_type: FormFieldType::Radio {
+                                options: vec![label],
+                            },
+                            required,
+                            sensitive: sensitive || is_sensitive_label(legend),
+                        });
+                    }
+                    continue;
+                }
+            }
             let field_type = match (control.tag.as_str(), input_type.as_str()) {
                 (_, "file") => FormFieldType::File,
                 (_, "checkbox") => FormFieldType::Checkbox,
@@ -260,6 +578,14 @@ impl CdpDriver {
                 required,
                 sensitive,
             });
+        }
+
+        let mut selectors = std::collections::HashSet::new();
+        if fields
+            .iter()
+            .any(|field| !selectors.insert(field.selector.clone()))
+        {
+            walls.push("ambiguous form controls need manual review".into());
         }
 
         walls.sort();
@@ -293,10 +619,15 @@ impl CdpDriver {
             }
             PacketValue::Text(t) => {
                 // Real focus + real typing: the page sees the same events a
-                // human would produce.
+                // human would produce. Replace existing content instead of
+                // appending to a prefilled or browser-restored value.
                 self.cdp
                     .call("DOM.focus", json!({ "nodeId": node }))
                     .map_err(derr)?;
+                self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
+                self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
+                self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
+                self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
                 self.cdp
                     .call("Input.insertText", json!({ "text": t }))
                     .map_err(derr)?;
@@ -305,22 +636,102 @@ impl CdpDriver {
                 Ok(())
             }
             PacketValue::Bool(b) => {
-                if *b {
-                    self.click_node(node, selector)?;
+                let resolved = self
+                    .cdp
+                    .call("DOM.resolveNode", json!({"nodeId":node}))
+                    .map_err(derr)?;
+                let object = resolved
+                    .pointer("/object/objectId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| DriverError("Cannot inspect checkbox".into()))?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (this.tagName !== 'INPUT' || this.type !== 'checkbox' || this.disabled) return false; if (this.checked !== value) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set; set.call(this, value); this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.checked === value; }","arguments":[{"value":b}],"returnByValue":true})).map_err(derr)?;
+                if result.get("exceptionDetails").is_some()
+                    || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+                {
+                    return Err(DriverError(
+                        "Checkbox was unavailable or its value was not retained".into(),
+                    ));
                 }
                 Ok(())
             }
             PacketValue::Date(d) => {
-                self.cdp
-                    .call("DOM.focus", json!({ "nodeId": node }))
+                if !waypoint_applications::form_mapping::valid_iso_date(d) {
+                    return Err(DriverError("Invalid calendar date".into()));
+                }
+                let resolved = self
+                    .cdp
+                    .call("DOM.resolveNode", json!({"nodeId":node}))
                     .map_err(derr)?;
-                self.cdp
-                    .call("Input.insertText", json!({ "text": d }))
-                    .map_err(derr)?;
+                let object = resolved
+                    .pointer("/object/objectId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| DriverError("Cannot inspect date field".into()))?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (this.tagName !== 'INPUT' || this.type !== 'date' || this.disabled || this.readOnly) return false; const previous = this.value; const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(this, value); if (this.value !== value || !this.validity.valid) { set.call(this, previous); return false; } this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); return this.value === value; }","arguments":[{"value":d}],"returnByValue":true})).map_err(derr)?;
+                if result.get("exceptionDetails").is_some()
+                    || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+                {
+                    return Err(DriverError(
+                        "Date is unavailable, outside the field's limits, or was not retained"
+                            .into(),
+                    ));
+                }
                 Ok(())
             }
             PacketValue::None => Ok(()),
         }
+    }
+
+    /// A fixed, narrow operation for native single-select controls. It rejects
+    /// ambiguous or disabled labels and dispatches the usual form events.
+    fn select_option(&mut self, selector: &str, label: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Select field not found".into()))?;
+        let result = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object_id = result
+            .get("object")
+            .and_then(|v| v.get("objectId"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label) { if (this.tagName !== 'SELECT' || this.multiple || this.disabled) return false; const matches = Array.from(this.options).filter(o => o.textContent.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); return this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0]; }","arguments":[{"value":label}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result
+                .get("result")
+                .and_then(|v| v.get("value"))
+                .and_then(Value::as_bool)
+                != Some(true)
+        {
+            return Err(DriverError(
+                "Select option is unavailable, ambiguous, or was not retained".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn select_radio(&mut self, selector: &str, label: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Radio group not found".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect radio group".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(label) { if (this.tagName !== 'INPUT' || this.type !== 'radio' || !this.name) return false; const fieldset = this.closest('fieldset'); if (!fieldset) return false; const norm = s => s.trim().replace(/\\s+/g, ' ').toLowerCase(); const radios = Array.from(fieldset.querySelectorAll('input[type=radio]')).filter(r => r.closest('fieldset') === fieldset && r.name === this.name && r.form === this.form && !r.matches(':disabled')); const choices = radios.filter(r => norm(r.getAttribute('aria-label') || (r.labels && r.labels[0] && r.labels[0].textContent) || r.getAttribute('name') || '') === norm(label)); if (choices.length !== 1) return false; const chosen = choices[0]; if (!chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); } return chosen.checked; }","arguments":[{"value":label}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Radio option is unavailable, ambiguous, or was not retained".into(),
+            ));
+        }
+        Ok(())
     }
 
     fn resolve_upload(&self, name: &str) -> Result<PathBuf, DriverError> {
@@ -407,6 +818,14 @@ impl CdpDriver {
 }
 
 impl BrowserDriver for CdpDriver {
+    fn current_url(&mut self) -> Result<String, DriverError> {
+        CdpDriver::current_url(self)
+    }
+
+    fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+        CdpDriver::application_links(self)
+    }
+
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
         self.cdp
             .call("Page.navigate", json!({ "url": url }))
@@ -422,9 +841,17 @@ impl BrowserDriver for CdpDriver {
                 break;
             }
         }
-        let (schema, walls) = self.read_form(url)?;
-        self.trace
-            .push(format!("opened {url} ({} fields)", schema.fields.len()));
+        let result = self.inspect_current()?;
+        self.trace.push(format!(
+            "opened {url} ({} fields)",
+            result.schema.fields.len()
+        ));
+        Ok(result)
+    }
+
+    fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
+        let current_url = self.current_url()?;
+        let (schema, walls) = self.read_form(&current_url)?;
         Ok(LiveForm {
             origin: schema.origin.clone(),
             schema,
@@ -439,6 +866,8 @@ impl BrowserDriver for CdpDriver {
                 Ok(())
             }
             BrowserCommand::Fill { selector, value } => self.fill(selector, value),
+            BrowserCommand::SelectOption { selector, label } => self.select_option(selector, label),
+            BrowserCommand::SelectRadio { selector, label } => self.select_radio(selector, label),
             BrowserCommand::UploadFile {
                 selector,
                 file_name,
@@ -524,6 +953,7 @@ impl Drop for CdpDriver {
 
 #[derive(Debug, Clone)]
 struct Control {
+    node_id: u64,
     tag: String,
     attrs: HashMap<String, String>,
     options: Vec<String>,
@@ -540,6 +970,47 @@ fn attributes(node: &Value) -> HashMap<String, String> {
         }
     }
     out
+}
+
+fn application_links_from_document(root: &Value) -> Vec<String> {
+    let mut links = Vec::new();
+    walk(root, false, &mut |node, _| {
+        let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+        if tag.eq_ignore_ascii_case("a") {
+            let attrs = attributes(node);
+            let mut label = String::new();
+            collect_text(node, false, &mut label);
+            if let Some(aria) = attrs.get("aria-label") {
+                label.push_str(aria);
+            }
+            let label = label
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            let candidate = [
+                "apply",
+                "apply now",
+                "apply for this job",
+                "apply for this position",
+                "start application",
+                "start your application",
+            ]
+            .contains(&label.as_str());
+            if candidate {
+                if let Some(href) = attrs.get("href").filter(|href| !href.trim().is_empty()) {
+                    if !links.contains(href) {
+                        links.push(href.clone());
+                    }
+                }
+            }
+        }
+        !matches!(
+            tag.to_ascii_lowercase().as_str(),
+            "script" | "style" | "template" | "noscript"
+        )
+    });
+    links
 }
 
 fn options_of(node: &Value) -> Vec<String> {

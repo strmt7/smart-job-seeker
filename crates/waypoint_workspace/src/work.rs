@@ -477,12 +477,18 @@ impl Workspace {
         root.children.push(DocNode::heading("Professional summary"));
         for c in claims {
             let claim_id = ClaimId::new(c.id.clone()).expect("stored claim ids are valid");
-            root.children
-                .push(DocNode::text_span(c.text.clone(), Some(claim_id)));
+            root.children.push(DocNode {
+                id: format!("fact-paragraph-{}", c.id),
+                kind: DocNodeKind::Paragraph,
+                text: String::new(),
+                claim_ids: vec![],
+                locked: false,
+                children: vec![DocNode::text_span(c.text.clone(), Some(claim_id))],
+            });
         }
         root.children.push(DocNode::heading("Target"));
         root.children.push(DocNode::text_span(
-            format!("Applied for {} at {}.", job.title, job.employer),
+            format!("Position: {} at {}.", job.title, job.employer),
             None,
         ));
         SemanticDocument {

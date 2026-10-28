@@ -89,15 +89,25 @@ impl OllamaInference {
     ) -> Result<Value, InferenceError> {
         let payload = serde_json::to_vec(body)
             .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))?;
-        let (_status, bytes) = http_request(self.addr, "POST", path, Some(&payload), timeout_ms)
+        let (status, bytes) = http_request(self.addr, "POST", path, Some(&payload), timeout_ms)
             .map_err(InferenceError::RuntimeUnreachable)?;
+        if !(200..300).contains(&status) {
+            return Err(InferenceError::RuntimeUnreachable(format!(
+                "local runtime returned HTTP {status}"
+            )));
+        }
         serde_json::from_slice(&bytes)
             .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))
     }
 
     fn get_json(&self, path: &str, timeout_ms: u64) -> Result<Value, InferenceError> {
-        let (_status, bytes) = http_request(self.addr, "GET", path, None, timeout_ms)
+        let (status, bytes) = http_request(self.addr, "GET", path, None, timeout_ms)
             .map_err(InferenceError::RuntimeUnreachable)?;
+        if !(200..300).contains(&status) {
+            return Err(InferenceError::RuntimeUnreachable(format!(
+                "local runtime returned HTTP {status}"
+            )));
+        }
         serde_json::from_slice(&bytes)
             .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))
     }
@@ -285,6 +295,7 @@ impl Inference for OllamaInference {
         if self.cancelled() {
             return Err(InferenceError::Cancelled);
         }
+        require_natural_stop(&out)?;
         let text = out
             .get("response")
             .and_then(|r| r.as_str())
@@ -311,6 +322,17 @@ impl Inference for OllamaInference {
         self.cancel_flag.store(true, Ordering::Relaxed);
         Ok(())
     }
+}
+
+fn require_natural_stop(out: &Value) -> Result<(), InferenceError> {
+    if out.get("done").and_then(Value::as_bool) != Some(true)
+        || out.get("done_reason").and_then(Value::as_str) != Some("stop")
+    {
+        return Err(InferenceError::StructuredOutputFailed(
+            "generation did not finish with a natural stop".into(),
+        ));
+    }
+    Ok(())
 }
 
 /* ------------------------------ origin guard ------------------------------- */
@@ -365,12 +387,16 @@ pub fn http_request(
         .map_err(|e| format!("write: {e}"))?;
 
     let mut raw = Vec::with_capacity(8 * 1024);
+    const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
     let mut buf = [0u8; 16 * 1024];
     loop {
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 raw.extend_from_slice(&buf[..n]);
+                if raw.len() > MAX_RESPONSE_BYTES {
+                    return Err("runtime response exceeds the 8 MiB limit".into());
+                }
                 if let Some(split) = find_headers_end(&raw) {
                     let headers = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
                     if headers.contains("transfer-encoding: chunked") {
@@ -457,6 +483,21 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_generation_requires_explicit_natural_completion() {
+        assert!(
+            require_natural_stop(&serde_json::json!({"done":true,"done_reason":"stop"})).is_ok()
+        );
+        for response in [
+            serde_json::json!({"done":true,"done_reason":"length"}),
+            serde_json::json!({"done":false,"done_reason":"stop"}),
+            serde_json::json!({"done":true}),
+            serde_json::json!({}),
+        ] {
+            assert!(require_natural_stop(&response).is_err());
+        }
+    }
 
     #[test]
     fn origin_guard_refuses_everything_but_loopback_literal() {

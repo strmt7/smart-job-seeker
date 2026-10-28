@@ -81,6 +81,10 @@ impl BrowserProcess {
 
     /// Launch with a throwaway profile and wait until it is actually talking.
     pub fn launch(timeout: Duration) -> Result<Self, CdpError> {
+        Self::launch_with_mode(timeout, false)
+    }
+
+    pub fn launch_with_mode(timeout: Duration, visible: bool) -> Result<Self, CdpError> {
         let binaries = Self::discover_binaries();
         let Some(exe) = binaries.first() else {
             return err("no Chromium-family browser found (Edge/Chrome/Chromium)");
@@ -96,8 +100,10 @@ impl BrowserProcess {
         std::fs::create_dir_all(&user_data_dir).map_err(|e| CdpError(e.to_string()))?;
 
         let mut cmd = Command::new(exe);
-        cmd.arg("--headless=new")
-            .arg("--remote-debugging-port=0")
+        if !visible {
+            cmd.arg("--headless=new");
+        }
+        cmd.arg("--remote-debugging-port=0")
             .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
@@ -239,6 +245,8 @@ impl Cdp {
             .and_then(|v| v.as_str())
             .ok_or_else(|| CdpError("Target.createTarget returned no targetId".into()))?
             .to_string();
+        // Bring the controlled tab forward in visible review sessions.
+        cdp.call_browser("Target.activateTarget", json!({ "targetId": target_id }))?;
         let attached = cdp.call_browser(
             "Target.attachToTarget",
             json!({ "targetId": target_id, "flatten": true }),

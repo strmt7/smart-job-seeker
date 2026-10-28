@@ -4,9 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+sqlcipher = ["waypoint_store/sqlcipher", "dep:getrandom", "dep:zeroize"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+fs2 = "0.4"
+getrandom = { version = "0.3", optional = true }
+zeroize = { version = "1", optional = true }
 waypoint_applications = { path = "../waypoint_applications" }
 waypoint_connectors = { path = "../waypoint_connectors" }
 waypoint_domain = { path = "../waypoint_domain" }

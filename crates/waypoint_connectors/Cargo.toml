@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+url = "2"
 waypoint_domain = { path = "../waypoint_domain" }
 waypoint_policy = { path = "../waypoint_policy" }
 waypoint_search = { path = "../waypoint_search" }

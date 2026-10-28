@@ -121,6 +121,9 @@ impl SemanticDocument {
             for c in &n.children {
                 walk(c, out);
             }
+            if n.kind == DocNodeKind::Paragraph && !n.children.is_empty() {
+                out.push('\n');
+            }
         }
         let mut s = String::new();
         walk(&self.root, &mut s);

@@ -18,7 +18,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use waypoint_connectors::{
-    discovery_plan, is_public_host_url, parse_ashby, parse_greenhouse, parse_lever, RawPosting,
+    discovery_plan, is_public_host_url, parse_ashby, parse_greenhouse, parse_jobicy, parse_lever,
+    RawPosting,
 };
 use waypoint_domain::{sha256_hex, ApplicationState, DomainError, JobIdentityId};
 use waypoint_inference::ResourceBudgets;
@@ -277,6 +278,24 @@ pub struct Workspace {
     last_outcome: Option<DiscoveryOutcome>,
     pub db_path: Option<PathBuf>,
     sealed_now: usize,
+    database_encrypted: bool,
+    legacy_plaintext: bool,
+    _workspace_lock: Option<std::fs::File>,
+}
+
+#[cfg(feature = "sqlcipher")]
+mod encrypted;
+
+fn lock_workspace(dir: &Path) -> Result<std::fs::File, WorkspaceError> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(dir.join(".workspace.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| {
+        WorkspaceError::Export("Workspace is already open by another process".into())
+    })?;
+    Ok(file)
 }
 
 impl Workspace {
@@ -290,6 +309,12 @@ impl Workspace {
     /// have. Any rows written before sealing was available are migrated here.
     pub fn open(dir: &Path) -> Result<Self, WorkspaceError> {
         std::fs::create_dir_all(dir)?;
+        let workspace_lock = lock_workspace(dir)?;
+        if dir.join("jobs.encrypted.sqlite3").exists() {
+            return Err(WorkspaceError::Export(
+                "An encrypted workspace already exists here; use a SQLCipher-enabled build".into(),
+            ));
+        }
         let db_path = dir.join("jobs.sqlite3");
         let mut store = Store::open(&db_path)?;
         let mut sealed_now = 0usize;
@@ -305,12 +330,22 @@ impl Workspace {
             last_outcome: None,
             db_path: Some(db_path),
             sealed_now,
+            database_encrypted: false,
+            legacy_plaintext: false,
+            _workspace_lock: Some(workspace_lock),
         })
     }
 
     /// How the candidate's own material is protected at rest, in words they can
     /// act on. Never overstated: with no backend it says so.
     pub fn sealing_status(&self) -> String {
+        if self.database_encrypted {
+            return if self.legacy_plaintext {
+                "Active database encrypted with SQLCipher; an older plaintext database remains in this folder.".into()
+            } else {
+                "Database encrypted with SQLCipher; key protected by Windows DPAPI".into()
+            };
+        }
         match self.store.sealing_kind() {
             Some(kind) => kind.label().to_string(),
             None => "NOT encrypted: no sealing backend is available on this platform".to_string(),
@@ -333,6 +368,9 @@ impl Workspace {
             last_outcome: None,
             db_path: None,
             sealed_now: 0,
+            database_encrypted: false,
+            legacy_plaintext: false,
+            _workspace_lock: None,
         })
     }
 
@@ -354,8 +392,115 @@ impl Workspace {
         Ok(self.store.all_jobs()?)
     }
 
+    /// Store an applicant-supplied document using the workspace sealer.
+    pub fn add_document(
+        &self,
+        id: &str,
+        name: &str,
+        data: &[u8],
+        timestamp: i64,
+    ) -> Result<(), WorkspaceError> {
+        self.store.add_document(id, name, data, timestamp)?;
+        Ok(())
+    }
+
+    pub fn documents(
+        &self,
+    ) -> Result<Vec<waypoint_store::documents::DocumentInfo>, WorkspaceError> {
+        Ok(self.store.documents()?)
+    }
+
+    pub fn document_content(&self, id: &str) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        Ok(self.store.document_content(id)?)
+    }
+
+    pub fn candidate_profile(&self) -> Result<Option<String>, WorkspaceError> {
+        Ok(self.store.candidate_profile()?)
+    }
+
+    pub fn save_candidate_profile(&self, content: &str) -> Result<(), WorkspaceError> {
+        self.store.save_candidate_profile(content)?;
+        Ok(())
+    }
+
+    pub fn save_fit_assessment(
+        &self,
+        id: &JobIdentityId,
+        content: &[u8],
+    ) -> Result<(), WorkspaceError> {
+        Ok(self.store.save_fit_assessment(id.as_str(), content)?)
+    }
+
+    pub fn fit_assessment(&self, id: &JobIdentityId) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        Ok(self.store.fit_assessment(id.as_str())?)
+    }
+
+    /// Persist a consumed prefill record before any browser field writes.
+    pub fn record_consumed_prefill_grant(
+        &mut self,
+        grant: &waypoint_store::prefill_grants::PrefillGrantRecord,
+    ) -> Result<(), WorkspaceError> {
+        self.store.record_consumed_prefill_grant(grant)?;
+        Ok(())
+    }
+
+    pub fn mark_manual_review(
+        &self,
+        id: &JobIdentityId,
+        reason: &str,
+        timestamp: i64,
+    ) -> Result<(), WorkspaceError> {
+        if self.store.get_job(id)?.is_none() {
+            return Err(WorkspaceError::NotFound(id.as_str().to_string()));
+        }
+        if reason.trim().is_empty() {
+            return Err(WorkspaceError::Export(
+                "Review reason must not be empty".into(),
+            ));
+        }
+        self.store
+            .mark_manual_review(id.as_str(), reason, timestamp)?;
+        Ok(())
+    }
+
+    pub fn manual_reviews(
+        &self,
+    ) -> Result<Vec<waypoint_store::review::ManualReview>, WorkspaceError> {
+        Ok(self.store.manual_reviews()?)
+    }
+
+    pub fn clear_manual_review(&self, id: &JobIdentityId) -> Result<(), WorkspaceError> {
+        self.store.clear_manual_review(id.as_str())?;
+        Ok(())
+    }
+
     pub fn job(&self, id: &JobIdentityId) -> Result<Option<StoredJob>, WorkspaceError> {
         Ok(self.store.get_job(id)?)
+    }
+
+    pub fn job_description(&self, id: &JobIdentityId) -> Result<Option<String>, WorkspaceError> {
+        Ok(self.store.job_description(id)?)
+    }
+
+    pub fn save_gmail_credentials(&self, value: &[u8]) -> Result<(), WorkspaceError> {
+        Ok(self.store.save_gmail_credentials(value)?)
+    }
+
+    pub fn can_store_gmail_credentials(&self) -> bool {
+        self.store.can_store_gmail_credentials()
+    }
+
+    pub fn gmail_credentials(&self) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        Ok(self.store.gmail_credentials()?)
+    }
+
+    pub fn clear_gmail_credentials(&self) -> Result<(), WorkspaceError> {
+        Ok(self.store.clear_gmail_credentials()?)
+    }
+
+    /// Reserve one conservative Jobicy fetch per hour across application restarts.
+    pub fn reserve_jobicy_fetch(&mut self, timestamp: i64) -> Result<bool, WorkspaceError> {
+        Ok(self.store.reserve_jobicy_fetch(timestamp)?)
     }
 
     pub fn job_count(&self) -> Result<u64, WorkspaceError> {
@@ -378,6 +523,67 @@ impl Workspace {
     pub fn import_job(&mut self, job: StoredJob) -> Result<(), WorkspaceError> {
         self.store.upsert_job(&job)?;
         Ok(())
+    }
+
+    /// Add a manually described posting and its description atomically.
+    pub fn import_manual_job(
+        &mut self,
+        job: StoredJob,
+        description: Option<&str>,
+    ) -> Result<(), WorkspaceError> {
+        self.store.insert_manual_job(&job, description)?;
+        self.store.find_possible_duplicates(&job)?;
+        Ok(())
+    }
+
+    pub fn possible_duplicates(
+        &self,
+    ) -> Result<Vec<waypoint_store::duplicates::PossibleDuplicate>, WorkspaceError> {
+        Ok(self.store.possible_duplicates()?)
+    }
+
+    pub fn index_next_duplicate_job(&self, after: &str) -> Result<Option<String>, WorkspaceError> {
+        Ok(self.store.index_next_duplicate_job(after)?)
+    }
+
+    pub fn duplicate_index_pending(&self) -> Result<bool, WorkspaceError> {
+        Ok(self.store.duplicate_index_pending()?)
+    }
+
+    pub fn duplicate_neighbors(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<(Vec<StoredJob>, bool), WorkspaceError> {
+        Ok(self.store.duplicate_neighbors(id.as_str())?)
+    }
+
+    pub fn add_ai_duplicates(
+        &self,
+        first: &JobIdentityId,
+        matches: &[(String, String)],
+    ) -> Result<usize, WorkspaceError> {
+        Ok(self.store.add_ai_duplicates(first.as_str(), matches)?)
+    }
+
+    pub fn has_duplicate_hold(&self, id: &JobIdentityId) -> Result<bool, WorkspaceError> {
+        Ok(self.store.has_duplicate_hold(id.as_str())?)
+    }
+
+    pub fn pending_duplicate_pair(
+        &self,
+        a: &JobIdentityId,
+        b: &JobIdentityId,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self.store.pending_duplicate_pair(a.as_str(), b.as_str())?)
+    }
+
+    pub fn decide_duplicate(
+        &self,
+        a: &JobIdentityId,
+        b: &JobIdentityId,
+        same: bool,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self.store.decide_duplicate(a.as_str(), b.as_str(), same)?)
     }
 
     /// Drive an application-state change. Illegal transitions are refused with
@@ -562,8 +768,12 @@ impl Workspace {
         // provenance), so "same requisition, changed title/location" is
         // detected as a new observation rather than a silent no-op.
         let content = format!(
-            "{}|{}|{}|{}",
-            posting.title, posting.employer, posting.location, posting.content_hash_source
+            "{}|{}|{}|{}|{:?}",
+            posting.title,
+            posting.employer,
+            posting.location,
+            posting.content_hash_source,
+            posting.description
         );
         let hash = sha256_hex(content.as_bytes());
         let now = now_unix.to_string();
@@ -586,6 +796,9 @@ impl Workspace {
                     posted_at: posting.posted_at.clone(),
                 };
                 self.store.upsert_job(&job)?;
+                self.store
+                    .set_job_description(&id, posting.description.as_deref())?;
+                self.store.find_possible_duplicates(&job)?;
                 self.store.record_observation(
                     &id,
                     &now,
@@ -600,6 +813,10 @@ impl Workspace {
                 match dedup_decision(&existing.id, &id, existing.content_hash.as_deref(), &hash) {
                     DedupDecision::SameObservation => {
                         outcome.unchanged += 1;
+                        // Repair a missing description if a previous import
+                        // stopped after writing the job row but before its text.
+                        self.store
+                            .set_job_description(&id, posting.description.as_deref())?;
                         if let Some(url) = &existing.canonical_url {
                             if url != &posting.source_url {
                                 self.store.add_alias(&id, &posting.source_url)?;
@@ -622,6 +839,9 @@ impl Workspace {
                         merged.requisition_id = posting.requisition_id.clone();
                         merged.posted_at = posting.posted_at.clone();
                         self.store.upsert_job(&merged)?;
+                        self.store
+                            .set_job_description(&id, posting.description.as_deref())?;
+                        self.store.find_possible_duplicates(&merged)?;
                         self.store.record_observation(
                             &id,
                             &now,
@@ -665,7 +885,11 @@ impl Workspace {
                     _ => None,
                 })
                 .collect();
-            let text = format!("{} {} {}", job.title, job.employer, job.location);
+            let description = self.store.job_description(&job.id)?.unwrap_or_default();
+            let text = format!(
+                "{} {} {} {}",
+                job.title, job.employer, job.location, description
+            );
             let (score, matched_skills) = evidence_overlap(profile_skills, &text);
             let observed_at = job
                 .last_seen
@@ -708,6 +932,7 @@ fn parse_payload(source: &str, board: &str, body: &str) -> Result<Vec<RawPosting
         "greenhouse" => parse_greenhouse(board, body),
         "lever" => parse_lever(board, body),
         "ashby" => parse_ashby(board, body),
+        "jobicy" => parse_jobicy(body),
         other => return Err(format!("no adapter registered for source '{other}'")),
     };
     parsed.map_err(|e| e.to_string())

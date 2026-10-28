@@ -1,0 +1,243 @@
+//! One background form inspection; the server thread owns the resulting session.
+use crate::{doc_suggest, form_preview};
+use std::sync::{mpsc, Mutex};
+use waypoint_applications::driver::BrowserDriver;
+use waypoint_domain::{JobIdentityId, Sha256Digest};
+use waypoint_inference::OllamaInference;
+
+/// Open the listing, then at most one unambiguous same-origin application link.
+/// No field action or submit action is issued here.
+fn open_application_page(
+    driver: &mut dyn BrowserDriver,
+    url: &str,
+) -> Result<waypoint_applications::driver::LiveForm, String> {
+    let mut live = driver.open(url).map_err(|e| e.to_string())?;
+    if !live.walls.is_empty() {
+        return Ok(live);
+    }
+    let current = driver.current_url().map_err(|e| e.to_string())?;
+    let original = url::Url::parse(url).map_err(|_| "Invalid listing URL")?;
+    let reached = url::Url::parse(&current).map_err(|_| "Invalid current URL")?;
+    if original.scheme() == "https" && original.origin() != reached.origin() {
+        live.walls
+            .push("The listing redirected to another site; continue manually".into());
+        return Ok(live);
+    }
+    let links = driver.application_links().map_err(|e| e.to_string())?;
+    if let Some(destination) = crate::application_check::application_destination(&current, &links) {
+        live = driver.open(&destination).map_err(|e| e.to_string())?;
+        let final_url = driver.current_url().map_err(|e| e.to_string())?;
+        let final_url = url::Url::parse(&final_url).map_err(|_| "Invalid application URL")?;
+        if original.origin() != final_url.origin() {
+            live.walls
+                .push("The application link redirected to another site; continue manually".into());
+        }
+    } else if !links.is_empty() {
+        live.walls
+            .push("Application links are ambiguous or require manual navigation".into());
+    }
+    Ok(live)
+}
+
+pub struct Finished {
+    pub job_id: JobIdentityId,
+    pub url: String,
+    pub profile_digest: Sha256Digest,
+    pub visible: bool,
+    pub result: Result<(waypoint_browser::CdpDriver, form_preview::FormPreview), String>,
+}
+struct Task {
+    id: String,
+    receiver: mpsc::Receiver<Finished>,
+}
+static TASK: Mutex<Option<Task>> = Mutex::new(None);
+
+pub fn busy() -> bool {
+    TASK.lock().map(|task| task.is_some()).unwrap_or(true)
+}
+
+pub fn start(
+    id: String,
+    job_id: JobIdentityId,
+    url: String,
+    profile: serde_json::Value,
+    model: Option<String>,
+    visible: bool,
+) -> Result<(), String> {
+    let lease = if model.is_some() {
+        Some(doc_suggest::lease()?)
+    } else {
+        None
+    };
+    let mut task = TASK.lock().map_err(|_| "Form inspection unavailable")?;
+    if task.is_some() {
+        return Err("A form inspection is running or awaiting its result".into());
+    }
+    let (sender, receiver) = mpsc::channel();
+    *task = Some(Task { id, receiver });
+    drop(task);
+    std::thread::spawn(move || {
+        let _lease = lease;
+        let profile_digest = Sha256Digest::of(&profile.to_string());
+        let result = std::panic::catch_unwind(|| -> Result<_, String> {
+            let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible).map_err(|e| e.to_string())?;
+            let live = open_application_page(&mut driver, &url)?;
+            let preview = if let Some(model) = model {
+                let mut llm = OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
+                form_preview::suggest_for_live_form(live, &mut llm, &profile)?
+            } else {
+                let mut review = live.walls;
+                review.push("No eligible local model is available. Continue manually in the visible browser.".into());
+                form_preview::FormPreview { schema: live.schema, suggestions: vec![], manual_review: review }
+            };
+            Ok((driver, preview))
+        }).unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
+        let _ = sender.send(Finished {
+            job_id,
+            url,
+            profile_digest,
+            visible,
+            result,
+        });
+    });
+    Ok(())
+}
+
+pub fn poll(id: &str) -> Result<Option<Finished>, String> {
+    let mut tasks = TASK.lock().map_err(|_| "Form inspection unavailable")?;
+    let task = tasks
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Form inspection not found")?;
+    match task.receiver.try_recv() {
+        Ok(result) => {
+            *tasks = None;
+            Ok(Some(result))
+        }
+        Err(mpsc::TryRecvError::Empty) => Ok(None),
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *tasks = None;
+            Err("Form inspection stopped unexpectedly".into())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
+    use waypoint_applications::form_mapping::{
+        BrowserCommand, FormField, FormFieldType, FormSchema,
+    };
+
+    struct FakeDriver {
+        current: String,
+        links: Vec<String>,
+        opened: Vec<String>,
+        redirect: Option<String>,
+    }
+    impl BrowserDriver for FakeDriver {
+        fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
+            self.opened.push(url.into());
+            self.current = self.redirect.take().unwrap_or_else(|| url.into());
+            let fields = if url.ends_with("/apply") {
+                vec![FormField {
+                    selector: "#name".into(),
+                    label: "Name".into(),
+                    field_type: FormFieldType::Text,
+                    required: true,
+                    sensitive: false,
+                }]
+            } else {
+                vec![]
+            };
+            Ok(LiveForm {
+                origin: "https://jobs.example.org".into(),
+                schema: FormSchema {
+                    origin: "https://jobs.example.org".into(),
+                    fields,
+                    multi_step: false,
+                    steps: 1,
+                },
+                walls: vec![],
+            })
+        }
+        fn current_url(&mut self) -> Result<String, DriverError> {
+            Ok(self.current.clone())
+        }
+        fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+            Ok(self.links.clone())
+        }
+        fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+            panic!("inspection must not execute field actions")
+        }
+        fn commit(&mut self) -> Result<SiteAck, DriverError> {
+            panic!("inspection must not submit")
+        }
+    }
+
+    #[test]
+    fn follows_clear_application_link_and_hands_off_ambiguous_destinations() {
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec!["/role/apply".into()],
+            opened: vec![],
+            redirect: None,
+        };
+        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert_eq!(
+            driver.opened,
+            [
+                "https://jobs.example.org/role",
+                "https://jobs.example.org/role/apply"
+            ]
+        );
+        assert_eq!(form.schema.fields.len(), 1);
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec!["https://another.example/apply".into()],
+            opened: vec![],
+            redirect: None,
+        };
+        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert_eq!(driver.opened.len(), 1);
+        assert!(!form.walls.is_empty());
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec![],
+            opened: vec![],
+            redirect: Some("https://another.example/job".into()),
+        };
+        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert!(!form.walls.is_empty());
+    }
+    #[test]
+    #[ignore = "starts one headless browser against a fictional local fixture"]
+    fn background_inspection_returns_the_live_form_without_filling() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        start(
+            "inspection-fixture".into(),
+            JobIdentityId::new("fixture-job").unwrap(),
+            url,
+            serde_json::json!({}),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(busy());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if let Some(finished) = poll("inspection-fixture").unwrap() {
+                let (driver, preview) = finished.result.unwrap();
+                assert!(!preview.schema.fields.is_empty());
+                assert!(preview.suggestions.is_empty());
+                assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(!busy());
+    }
+}

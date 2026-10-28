@@ -21,6 +21,8 @@ pub struct RawPosting {
     pub location: String,
     pub remote: bool,
     pub posted_at: Option<String>,
+    /// Text supplied by the board, if the listing includes it.
+    pub description: Option<String>,
     pub content_hash_source: String, // canonical string used for hashing upstream
 }
 
@@ -55,6 +57,8 @@ struct GreenhouseJob {
     absolute_url: String,
     #[serde(default)]
     updated_at: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -74,6 +78,8 @@ struct LeverPosting {
     hosted_url: String,
     #[serde(default, rename = "createdAt")]
     created_at: Option<i64>,
+    #[serde(default, rename = "descriptionPlain")]
+    description_plain: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -100,10 +106,95 @@ struct AshbyPosting {
     employment_type_sniffed: Option<String>,
     #[serde(default = "default_false", rename = "isRemote")]
     is_remote: bool,
+    #[serde(default, rename = "descriptionPlain")]
+    description_plain: Option<String>,
 }
 
 fn default_false() -> bool {
     false
+}
+
+/// Bounded, best-effort text for matching, not a general HTML renderer.
+pub fn description_text(input: &str) -> String {
+    fn decode(s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '&' {
+                out.push(c);
+                continue;
+            }
+            let mut entity = String::new();
+            while entity.len() < 12
+                && chars
+                    .peek()
+                    .is_some_and(|ch| *ch != ';' && !ch.is_whitespace())
+            {
+                entity.push(chars.next().unwrap());
+            }
+            if chars.peek() != Some(&';') {
+                out.push('&');
+                out.push_str(&entity);
+                continue;
+            }
+            chars.next();
+            let decoded = match entity.as_str() {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" | "#39" => Some('\''),
+                "nbsp" => Some(' '),
+                _ => entity
+                    .strip_prefix("#x")
+                    .or_else(|| entity.strip_prefix("#X"))
+                    .and_then(|v| u32::from_str_radix(v, 16).ok())
+                    .or_else(|| entity.strip_prefix('#').and_then(|v| v.parse::<u32>().ok()))
+                    .and_then(char::from_u32),
+            };
+            if let Some(ch) = decoded {
+                out.push(ch);
+            } else {
+                out.push('&');
+                out.push_str(&entity);
+                out.push(';');
+            }
+        }
+        out
+    }
+    let source: String = input.chars().take(200_000).collect();
+    let decoded = decode(&decode(&source));
+    let mut result = String::new();
+    let mut chars = decoded.chars();
+    let mut hidden = false;
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            let mut tag = String::new();
+            for next in chars.by_ref() {
+                if next == '>' {
+                    break;
+                }
+                tag.push(next);
+            }
+            let tag = tag.trim().to_ascii_lowercase();
+            if tag.starts_with("script") || tag.starts_with("style") {
+                hidden = true;
+            }
+            if tag.starts_with("/script") || tag.starts_with("/style") {
+                hidden = false;
+            }
+            result.push(' ');
+        } else if !hidden {
+            result.push(ch);
+        }
+    }
+    result
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(100_000)
+        .collect()
 }
 
 /// Accept both a bare JSON array and {"<wrapper>": [...]} shapes, since live
@@ -150,6 +241,7 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
                 location: j.location.name,
                 remote: false,
                 posted_at: j.updated_at,
+                description: j.content.as_deref().map(description_text),
                 content_hash_source: format!("gh://{board}/{}", req.unwrap_or_default()),
             }
         })
@@ -173,6 +265,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
             location: j.categories.location,
             remote: j.categories.workplace_type.eq_ignore_ascii_case("remote"),
             posted_at: j.created_at.map(|ms| format!("unix:{ms}")),
+            description: j.description_plain.as_deref().map(description_text),
             content_hash_source: format!("lv://{company}/{}", j.id),
         })
         .collect())
@@ -204,9 +297,87 @@ pub fn parse_ashby(org: &str, payload: &str) -> Result<Vec<RawPosting>, Connecto
             location: j.location.clone().unwrap_or_default(),
             remote: j.is_remote,
             posted_at: j.published_at,
+            description: j.description_plain.as_deref().map(description_text),
             content_hash_source: format!("ab://{org}/{}", j.id),
         })
         .collect())
+}
+
+/// Parse Jobicy's public feed. URLs are Jobicy listings, not direct employer forms.
+pub fn parse_jobicy(payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
+    let data: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|e| ConnectorError::Parse(format!("jobicy list: {e}")))?;
+    if data.get("success").and_then(|v| v.as_bool()) != Some(true) {
+        return Err(ConnectorError::Parse(
+            "jobicy returned an unsuccessful response".into(),
+        ));
+    }
+    let jobs = data
+        .get("jobs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ConnectorError::Parse("jobicy: no job array found".into()))?;
+    let mut out = Vec::new();
+    for job in jobs {
+        let id = job
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .filter(|id| *id > 0)
+            .ok_or_else(|| ConnectorError::Parse("jobicy: invalid id".into()))?
+            .to_string();
+        let title = job
+            .get("jobTitle")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| ConnectorError::Parse("jobicy: missing title".into()))?;
+        let employer = job
+            .get("companyName")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| ConnectorError::Parse("jobicy: missing company".into()))?;
+        let url = job
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ConnectorError::Parse("jobicy: missing URL".into()))?;
+        let parsed = url::Url::parse(url)
+            .map_err(|_| ConnectorError::Parse("jobicy: invalid URL".into()))?;
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some("jobicy.com")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err(ConnectorError::Parse(
+                "jobicy: URL is not a canonical Jobicy listing".into(),
+            ));
+        }
+        let description = job
+            .get("jobDescription")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| job.get("jobExcerpt").and_then(|v| v.as_str()))
+            .map(description_text);
+        out.push(RawPosting {
+            identity: identity_key("jobicy", Some(&id), url),
+            source: "jobicy".into(),
+            source_url: url.into(),
+            requisition_id: Some(id.clone()),
+            employer_namespace: employer.into(),
+            title: title.into(),
+            employer: employer.into(),
+            location: job
+                .get("jobGeo")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .into(),
+            remote: true,
+            posted_at: job
+                .get("pubDate")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            description,
+            content_hash_source: format!("jobicy://{id}"),
+        });
+    }
+    Ok(out)
 }
 
 /// The discovery plan for a permitted source. Fetching is done by the network
@@ -227,9 +398,26 @@ pub fn discovery_plan(
         return Err(ConnectorError::NotPermitted(e.to_string()));
     }
     let url = match source {
-        "greenhouse" => format!("https://boards-api.greenhouse.io/v1/boards/{board}/jobs"),
+        "greenhouse" => {
+            format!("https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true")
+        }
         "lever" => format!("https://api.lever.co/v0/postings/{board}?mode=json"),
         "ashby" => format!("https://api.ashbyhq.com/posting-api/job-board/{board}"),
+        "jobicy" => {
+            if board.trim().chars().count() < 3
+                || board.chars().count() > 50
+                || board.chars().any(char::is_control)
+            {
+                return Err(ConnectorError::NotPermitted(
+                    "invalid Jobicy keyword".into(),
+                ));
+            }
+            let mut url = url::Url::parse("https://jobicy.com/api/jobs").expect("static URL");
+            url.query_pairs_mut()
+                .append_pair("count", "50")
+                .append_pair("tag", board.trim());
+            url.to_string()
+        }
         _ => {
             return Err(ConnectorError::NotPermitted(format!(
                 "no discovery URL template for source '{source}'"
@@ -240,6 +428,7 @@ pub fn discovery_plan(
         source: match source {
             "greenhouse" => "greenhouse",
             "lever" => "lever",
+            "jobicy" => "jobicy",
             _ => "ashby",
         },
         url,
@@ -371,6 +560,23 @@ mod tests {
     }
 
     #[test]
+    fn jobicy_feed_preserves_source_and_rejects_untrusted_urls() {
+        let payload = r#"{"success":true,"hasMore":false,"jobs":[{"id":123,"url":"https://jobicy.com/jobs/123-role","jobTitle":"Materials Engineer","companyName":"Example","jobGeo":"Europe","jobDescription":"<p>Rust &amp; materials</p>","pubDate":"2026-10-28T00:00:00Z"}]}"#;
+        let jobs = parse_jobicy(payload).unwrap();
+        assert_eq!(jobs[0].source, "jobicy");
+        assert_eq!(jobs[0].source_url, "https://jobicy.com/jobs/123-role");
+        assert_eq!(jobs[0].description.as_deref(), Some("Rust & materials"));
+        assert!(parse_jobicy(&payload.replace(
+            "https://jobicy.com/jobs/123-role",
+            "https://example.com/job"
+        ))
+        .is_err());
+        assert!(parse_jobicy(r#"{"success":false,"jobs":[]}"#).is_err());
+        let plan = discovery_plan(&registry(), "jobicy", "materials engineer").unwrap();
+        assert!(plan.url.contains("tag=materials+engineer"));
+    }
+
+    #[test]
     fn discovery_plan_respects_permission_registry() {
         let r = registry();
         let plan = discovery_plan(&r, "greenhouse", "acme").unwrap();
@@ -402,7 +608,7 @@ mod tests {
             assert!(!is_public_host_url(blocked), "should block {blocked}");
         }
         for allowed in [
-            "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+            "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
             "https://api.lever.co/v0/postings/acme",
             "https://api.ashbyhq.com/posting-api/job-board/acme",
             "http://8.8.8.8/x",

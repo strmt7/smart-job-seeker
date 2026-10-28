@@ -67,6 +67,31 @@ pub enum PacketValue {
     None,
 }
 
+/// Accept a complete Gregorian calendar date in the format used by native date inputs.
+pub fn valid_iso_date(value: &str) -> bool {
+    let b = value.as_bytes();
+    if b.len() != 10
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b.iter()
+            .enumerate()
+            .any(|(i, c)| i != 4 && i != 7 && !c.is_ascii_digit())
+    {
+        return false;
+    }
+    let year = value[0..4].parse::<u32>().unwrap_or(0);
+    let month = value[5..7].parse::<u32>().unwrap_or(0);
+    let day = value[8..10].parse::<u32>().unwrap_or(0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => 0,
+    };
+    year > 0 && day > 0 && day <= days
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProposedMapping {
     pub field_selector: String,
@@ -186,6 +211,16 @@ pub enum BrowserCommand {
     UploadFile {
         selector: String,
         file_name: String,
+    },
+    /// Select a single native option by its reviewed visible label.
+    SelectOption {
+        selector: String,
+        label: String,
+    },
+    /// Choose a reviewed option within a native fieldset radio group.
+    SelectRadio {
+        selector: String,
+        label: String,
     },
     Close,
 }

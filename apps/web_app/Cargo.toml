@@ -1,0 +1,43 @@
+[package]
+name = "waypoint_web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["sqlcipher"]
+sqlcipher = ["waypoint_workspace/sqlcipher"]
+
+[dependencies]
+getrandom = "0.3"
+base64 = "0.22"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+subtle = "2"
+zeroize = "1"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "webpki-roots", "form", "query"] }
+percent-encoding = "2"
+quick-xml = "=0.41.0"
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
+serde_json = "1"
+tempfile = "3"
+url = "2"
+waypoint_domain = { path = "../../crates/waypoint_domain" }
+waypoint_applications = { path = "../../crates/waypoint_applications" }
+waypoint_browser = { path = "../../crates/waypoint_browser" }
+waypoint_connectors = { path = "../../crates/waypoint_connectors" }
+waypoint_inference = { path = "../../crates/waypoint_inference" }
+waypoint_policy = { path = "../../crates/waypoint_policy" }
+waypoint_net = { path = "../../crates/waypoint_net" }
+waypoint_store = { path = "../../crates/waypoint_store" }
+waypoint_search = { path = "../../crates/waypoint_search" }
+waypoint_workspace = { path = "../../crates/waypoint_workspace" }
+webbrowser = "1.2"
+
+[lints]
+workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "=0.26.1", default-features = false }
+winit = { version = "=0.30.13", default-features = false }

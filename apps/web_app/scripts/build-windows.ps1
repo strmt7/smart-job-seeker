@@ -1,0 +1,43 @@
+param(
+    [string]$OpenSslRoot = $env:OPENSSL_DIR,
+    [switch]$Release
+)
+$ErrorActionPreference = 'Stop'
+if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
+if (-not $OpenSslRoot) { $OpenSslRoot = Join-Path $env:ProgramFiles 'OpenSSL-Win64' }
+$root = (Resolve-Path -LiteralPath $OpenSslRoot).Path
+$include = Join-Path $root 'include'
+if (-not (Test-Path -LiteralPath (Join-Path $include 'openssl/ssl.h'))) { throw 'OpenSSL headers were not found. Supply -OpenSslRoot with an OpenSSL developer installation.' }
+$lib = @('lib/VC/x64/MD','lib/x64','lib') | ForEach-Object { Join-Path $root $_ } | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'libcrypto.lib') } | Select-Object -First 1
+if (-not $lib) { throw 'The x64 OpenSSL import library libcrypto.lib was not found.' }
+$dlls = @(Get-ChildItem -LiteralPath (Join-Path $root 'bin') -Filter 'libcrypto*.dll' -File)
+if ($dlls.Count -ne 1) { throw 'Expected exactly one libcrypto DLL in OpenSSL bin. Choose a single compatible developer installation.' }
+$env:OPENSSL_DIR = $root
+$env:OPENSSL_INCLUDE_DIR = $include
+$env:OPENSSL_LIB_DIR = $lib
+$env:LIB = $lib + [IO.Path]::PathSeparator + $env:LIB
+$env:PATH = (Join-Path $root 'bin') + [IO.Path]::PathSeparator + $env:PATH
+if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '1' }
+$repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
+Push-Location $repo
+try {
+    $cargoArgs = @('build','-p','waypoint_web')
+    if ($Release) { $cargoArgs += '--release' }
+    & cargo @cargoArgs
+    if ($LASTEXITCODE -ne 0) { throw "Cargo build failed ($LASTEXITCODE)." }
+    $profile = if ($Release) { 'release' } else { 'debug' }
+    $destination = Join-Path $repo "target/$profile/$($dlls[0].Name)"
+    if (Test-Path -LiteralPath $destination) {
+        if ((Get-FileHash -LiteralPath $destination).Hash -ne (Get-FileHash -LiteralPath $dlls[0].FullName).Hash) { throw "A different DLL already exists at $destination; inspect it before replacing it." }
+    } else { Copy-Item -LiteralPath $dlls[0].FullName -Destination $destination }
+    $buildReceipt = @{
+        profile = $profile
+        sqlcipher = $true
+        executable_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo "target/$profile/waypoint_web.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+        openssl_dll = $dlls[0].Name
+        openssl_sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+        cargo_lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo 'Cargo.lock') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $buildReceipt | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $repo "target/$profile/waypoint-build.json")
+    Write-Host "Built target/$profile/waypoint_web.exe with SQLCipher; its OpenSSL runtime is beside it."
+} finally { Pop-Location }

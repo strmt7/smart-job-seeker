@@ -42,6 +42,20 @@ impl std::error::Error for DriverError {}
 pub trait BrowserDriver {
     /// Open the destination and describe the live form.
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError>;
+    /// Inspect the current page without navigating or resetting the form.
+    fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
+        Err(DriverError(
+            "Current-page inspection is not supported by this driver".into(),
+        ))
+    }
+    /// Return the currently loaded URL when supported by the driver.
+    fn current_url(&mut self) -> Result<String, DriverError> {
+        Err(DriverError("Current URL is unavailable".into()))
+    }
+    /// Read application-looking links without clicking them.
+    fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+        Err(DriverError("Application links are unavailable".into()))
+    }
     /// Execute exactly one typed command. No scripting surface exists.
     fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError>;
     /// The single external write. Everything before this is reversible.

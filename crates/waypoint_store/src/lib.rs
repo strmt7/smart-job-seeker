@@ -125,8 +125,53 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE packets ADD COLUMN body_sealed BLOB;
      ALTER TABLE packets ADD COLUMN doc_json_sealed BLOB;
      UPDATE meta SET value='5' WHERE key='schema_version';",
+    // v6 — applicant-provided files. Both name and content use the active
+    // sealer; an explicitly plaintext workspace stores raw bytes instead.
+    "CREATE TABLE documents(
+       id TEXT PRIMARY KEY,
+       name BLOB NOT NULL,
+       content BLOB NOT NULL,
+       sealed INTEGER NOT NULL,
+       size INTEGER NOT NULL,
+       created_at INTEGER NOT NULL
+     );
+     UPDATE meta SET value='6' WHERE key='schema_version';",
+    // v7 — applicant details and instructions, kept in one sealed record.
+    "CREATE TABLE candidate_profile(id INTEGER PRIMARY KEY CHECK(id=1), content BLOB NOT NULL, sealed INTEGER NOT NULL);
+     UPDATE meta SET value='7' WHERE key='schema_version';",
+    // v8 — per-job manual handoff. This does not change application state.
+    "CREATE TABLE manual_reviews(job_id TEXT PRIMARY KEY REFERENCES jobs(id), reason TEXT NOT NULL, updated_at INTEGER NOT NULL);
+     UPDATE meta SET value='8' WHERE key='schema_version';",
+    "CREATE TABLE job_descriptions(job_id TEXT PRIMARY KEY REFERENCES jobs(id), content TEXT);
+     UPDATE meta SET value='9' WHERE key='schema_version';",
+    // v10 — one-use authorizations for prefill, separate from submission.
+    "CREATE TABLE prefill_grants(id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), intent_id TEXT NOT NULL, payload_hash TEXT NOT NULL, profile_hash TEXT NOT NULL, schema_hash TEXT NOT NULL, destination TEXT NOT NULL, created_at INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+     UPDATE meta SET value='10' WHERE key='schema_version';",
+    // v11 — provider credentials are accepted only by an encrypted sealer.
+    "CREATE TABLE mail_credentials(provider TEXT PRIMARY KEY, sealed_content BLOB NOT NULL);
+     UPDATE meta SET value='11' WHERE key='schema_version';",
+    "CREATE INDEX jobs_employer_lookup ON jobs(lower(trim(employer)));
+     CREATE TABLE possible_duplicates(job_a TEXT NOT NULL REFERENCES jobs(id), job_b TEXT NOT NULL REFERENCES jobs(id), score INTEGER NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', preferred_job TEXT, PRIMARY KEY(job_a,job_b), CHECK(job_a < job_b));
+     CREATE INDEX possible_duplicates_b ON possible_duplicates(job_b,status);
+     CREATE TRIGGER duplicate_recheck_after_job_change AFTER UPDATE OF title,employer,location,content_hash ON jobs WHEN OLD.title IS NOT NEW.title OR OLD.employer IS NOT NEW.employer OR OLD.location IS NOT NEW.location OR OLD.content_hash IS NOT NEW.content_hash BEGIN UPDATE possible_duplicates SET status='pending', preferred_job=NULL WHERE job_a=NEW.id OR job_b=NEW.id; END;
+     UPDATE meta SET value='12' WHERE key='schema_version';",
+    "CREATE TABLE fit_assessments(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_content BLOB NOT NULL);
+     UPDATE meta SET value='13' WHERE key='schema_version';",
+    "CREATE TABLE job_employer_tokens(job_id TEXT NOT NULL REFERENCES jobs(id), token TEXT NOT NULL, PRIMARY KEY(job_id,token));
+     CREATE INDEX job_employer_token_lookup ON job_employer_tokens(token,job_id);
+     CREATE TABLE job_employer_indexed(job_id TEXT PRIMARY KEY REFERENCES jobs(id));
+     UPDATE meta SET value='14' WHERE key='schema_version';",
 ];
 
+pub mod documents;
+pub mod duplicates;
+pub mod fit_assessments;
+pub mod mail_credentials;
+pub mod prefill_grants;
+pub mod profile;
+pub mod review;
+#[cfg(feature = "sqlcipher")]
+pub mod sqlcipher;
 pub mod work;
 pub use work::{StoredClaim, StoredGrant, StoredPacket};
 
@@ -140,6 +185,27 @@ pub struct JournalRow {
 }
 
 impl Store {
+    pub fn set_job_description(
+        &self,
+        id: &JobIdentityId,
+        description: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute("INSERT INTO job_descriptions(job_id,content) VALUES(?1,?2) ON CONFLICT(job_id) DO UPDATE SET content=excluded.content", params![id.as_str(), description])?;
+        Ok(())
+    }
+
+    pub fn job_description(&self, id: &JobIdentityId) -> Result<Option<String>, StoreError> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT content FROM job_descriptions WHERE job_id=?1",
+                [id.as_str()],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
     /// Append one journal record. There is deliberately no update or delete
     /// counterpart; the database triggers reject both.
     pub fn append_journal(
@@ -321,6 +387,59 @@ impl Store {
             migrated += 1;
         }
 
+        // Read one file at a time to avoid loading an entire document library
+        // into memory during migration.
+        loop {
+            use rusqlite::OptionalExtension;
+            let row: Option<(String, Vec<u8>, Vec<u8>)> = self
+                .conn
+                .query_row(
+                    "SELECT id,name,content FROM documents WHERE sealed=0 LIMIT 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?;
+            let Some((id, name, content)) = row else {
+                break;
+            };
+            let sealer = self.sealer.as_ref().expect("checked above");
+            let sealed_name = sealer
+                .seal(&name)
+                .map_err(|e| StoreError::ToSqlConversionFailure(Box::new(e)))?;
+            let sealed_content = sealer
+                .seal(&content)
+                .map_err(|e| StoreError::ToSqlConversionFailure(Box::new(e)))?;
+            self.conn.execute(
+                "UPDATE documents SET name=?1,content=?2,sealed=1 WHERE id=?3",
+                params![sealed_name, sealed_content, id],
+            )?;
+            migrated += 1;
+        }
+
+        let profile: Option<Vec<u8>> = {
+            use rusqlite::OptionalExtension;
+            self.conn
+                .query_row(
+                    "SELECT content FROM candidate_profile WHERE id=1 AND sealed=0",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?
+        };
+        if let Some(content) = profile {
+            let sealed = self
+                .sealer
+                .as_ref()
+                .expect("checked above")
+                .seal(&content)
+                .map_err(|e| StoreError::ToSqlConversionFailure(Box::new(e)))?;
+            self.conn.execute(
+                "UPDATE candidate_profile SET content=?1,sealed=1 WHERE id=1",
+                [sealed],
+            )?;
+            migrated += 1;
+        }
+
         if migrated > 0 {
             self.conn.execute_batch("VACUUM;")?;
         }
@@ -339,7 +458,17 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
-        Ok(claims + packets > 0)
+        let documents: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM documents WHERE sealed=1", [], |r| {
+                    r.get(0)
+                })?;
+        let profile: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM candidate_profile WHERE sealed=1",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(claims + packets + documents + profile > 0)
     }
 
     /// The value actually stored for a claim's text: sealed bytes when the
@@ -416,6 +545,45 @@ impl Store {
             out.insert(table.to_string(), serde_json::Value::from(n));
         }
         Ok(serde_json::Value::Object(out).to_string())
+    }
+
+    /// Atomically reserve a Jobicy fetch, conservatively limiting requests to one per hour.
+    pub fn reserve_jobicy_fetch(&mut self, timestamp: i64) -> Result<bool, rusqlite::Error> {
+        use rusqlite::OptionalExtension;
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let last: Option<String> = tx
+            .query_row(
+                "SELECT value FROM meta WHERE key='jobicy_last_fetch_unix'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(last) = last {
+            let value = last.parse::<i64>().unwrap_or(i64::MAX);
+            if timestamp.saturating_sub(value) < 3600 {
+                return Ok(false);
+            }
+        }
+        tx.execute("INSERT INTO meta(key,value) VALUES('jobicy_last_fetch_unix',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![timestamp.to_string()])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Insert a manually entered job and its description together without replacing existing state.
+    pub fn insert_manual_job(
+        &mut self,
+        job: &StoredJob,
+        description: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        let transaction = self.conn.transaction()?;
+        transaction.execute("INSERT INTO jobs(id,title,employer,location,state,canonical_url,content_hash,first_seen,last_seen,remote,source,requisition_id,posted_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",params![job.id.as_str(),job.title,job.employer,job.location,serde_json::to_string(&job.state).unwrap(),job.canonical_url,job.content_hash,job.first_seen,job.last_seen,job.remote as i64,job.source,job.requisition_id,job.posted_at])?;
+        transaction.execute(
+            "INSERT INTO job_descriptions(job_id,content) VALUES(?1,?2)",
+            params![job.id.as_str(), description],
+        )?;
+        transaction.commit()
     }
 
     pub fn upsert_job(&mut self, job: &StoredJob) -> Result<(), rusqlite::Error> {
@@ -621,6 +789,15 @@ mod tests {
         assert!(read.remote);
         assert_eq!(read.source, "lever");
         assert_eq!(read.requisition_id.as_deref(), Some("REQ-7"));
+    }
+
+    #[test]
+    fn jobicy_fetch_reservation_limits_frequency() {
+        let mut store = Store::in_memory().unwrap();
+        assert!(store.reserve_jobicy_fetch(1000).unwrap());
+        assert!(!store.reserve_jobicy_fetch(4599).unwrap());
+        assert!(!store.reserve_jobicy_fetch(900).unwrap());
+        assert!(store.reserve_jobicy_fetch(4600).unwrap());
     }
 
     #[test]

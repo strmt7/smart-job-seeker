@@ -3,7 +3,7 @@
 
 use super::*;
 
-const GH_URL: &str = "https://boards-api.greenhouse.io/v1/boards/vercel/jobs";
+const GH_URL: &str = "https://boards-api.greenhouse.io/v1/boards/vercel/jobs?content=true";
 const LEVER_URL: &str = "https://api.lever.co/v0/postings/spotify?mode=json";
 const ASHBY_URL: &str = "https://api.ashbyhq.com/posting-api/job-board/ashby";
 
@@ -37,6 +37,38 @@ fn fetcher_all() -> StaticFetcher {
         .route(GH_URL, &greenhouse_payload("Backend Engineer"))
         .route(LEVER_URL, &lever_payload())
         .route(ASHBY_URL, &ashby_payload())
+}
+
+#[test]
+fn description_changes_update_matches_without_losing_shortlist() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let payload = |description: &str| {
+        format!(
+            r#"{{"jobs":[{{"id":401,"title":"Engineer","absolute_url":"https://boards.greenhouse.io/vercel/jobs/401","location":{{"name":"Remote"}},"content":"{description}"}}]}}"#
+        )
+    };
+    let target = [DiscoveryTarget::new("greenhouse", "vercel")];
+    let first =
+        StaticFetcher::default().route(GH_URL, &payload("&lt;p&gt;Rust development&lt;/p&gt;"));
+    assert_eq!(ws.discover(&target, &first, 100).inserted, 1);
+    let job = ws.jobs().unwrap().remove(0);
+    ws.set_state(&job.id, ApplicationState::Shortlisted)
+        .unwrap();
+    let result = ws
+        .ranked(&CampaignConstraints::default(), &["Rust".into()], 100)
+        .unwrap();
+    assert_eq!(result.strict[0].score, 1.0);
+    let second =
+        StaticFetcher::default().route(GH_URL, &payload("&lt;p&gt;Python development&lt;/p&gt;"));
+    assert_eq!(ws.discover(&target, &second, 101).updated, 1);
+    assert_eq!(
+        ws.job(&job.id).unwrap().unwrap().state,
+        ApplicationState::Shortlisted
+    );
+    let result = ws
+        .ranked(&CampaignConstraints::default(), &["Rust".into()], 101)
+        .unwrap();
+    assert_eq!(result.strict[0].score, 0.0);
 }
 
 fn targets() -> Vec<DiscoveryTarget> {
