@@ -282,6 +282,76 @@ pub fn document_visual_review(
     Ok(report)
 }
 
+/// Find a bounded set of reviews for these exact document bytes and job.
+pub fn matching_document_reviews(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    document_sha: &str,
+    context_sha: &str,
+) -> Result<Value, String> {
+    let listing = list(ws, job)?;
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let mut reviews = Vec::new();
+    let mut unreadable = 0usize;
+    let mut limited = false;
+    for item in listing["attempts"]
+        .as_array()
+        .ok_or("Invalid application record listing")?
+    {
+        if item["document_visual_review"] != true {
+            continue;
+        }
+        let Some(attempt) = item["attempt_id"]
+            .as_str()
+            .filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            unreadable += 1;
+            continue;
+        };
+        let path = root
+            .join("application-records")
+            .join(format!("{}-{attempt}", &hash.as_str()[..16]))
+            .join("document-visual-review.json");
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(m) if m.is_file() && !m.file_type().is_symlink() && m.len() <= 512 * 1024 => m,
+            _ => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        let _ = meta;
+        let parsed: Value = match fs::read(&path)
+            .ok()
+            .and_then(|v| serde_json::from_slice(&v).ok())
+        {
+            Some(v) => v,
+            None => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        if parsed["document_sha256"].as_str() != Some(document_sha) {
+            continue;
+        }
+        if reviews.len() >= 5 {
+            limited = true;
+            break;
+        }
+        match document_visual_review(ws,job,attempt) {
+            Ok(review)=>reviews.push(json!({"attempt_id":attempt,"started_at":item["started_at"],"status":review["status"],"context_current":review["context_sha256"].as_str()==Some(context_sha),"report":review["report"]})),
+            Err(_)=>unreadable+=1,
+        }
+    }
+    Ok(
+        json!({"reviews":reviews,"truncated":limited || listing["truncated"]==true,"unreadable":unreadable + listing["unreadable"].as_u64().unwrap_or(0) as usize}),
+    )
+}
+
 pub struct AttemptRecord {
     dir: PathBuf,
     sequence: u32,
@@ -536,6 +606,29 @@ impl AttemptRecord {
         }
         fs::write(self.dir.join("gmail-review.json"), bytes).map_err(|e| e.to_string())
     }
+    pub fn document_visual_evidence(
+        &mut self,
+        source_attempt: &str,
+        review: &Value,
+    ) -> Result<String, String> {
+        if source_attempt.len() != 32 || !source_attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid source review".into());
+        }
+        let bytes =
+            serde_json::to_vec_pretty(&json!({"source_attempt":source_attempt,"review":review}))
+                .map_err(|e| e.to_string())?;
+        if bytes.len() > 512 * 1024 {
+            return Err("Visual review evidence exceeds limit".into());
+        }
+        self.sequence += 1;
+        let name = format!("document-visual-{:04}.json", self.sequence);
+        let mut file = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())?;
+        file.persist_noclobber(self.dir.join(&name))
+            .map_err(|e| e.to_string())?;
+        Ok(name)
+    }
     pub fn document_visual_report(&mut self, value: &Value) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
         if bytes.len() > 512 * 1024 {
@@ -667,16 +760,49 @@ mod tests {
         let mut record = AttemptRecord::start(&ws, &id, attempt, 1).unwrap().unwrap();
         let bytes = b"%PDF-fictional";
         let material = record.material("candidate.pdf", bytes).unwrap();
-        let evidence = json!({"status":"failed","error":"fixture review incomplete","material":material,"document_sha256":waypoint_domain::sha256_hex(bytes)});
+        let evidence = json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(bytes),"context_sha256":"fictional-context","report":{"complete":true,"findings":[]}});
         record.document_visual_report(&evidence).unwrap();
         assert_eq!(
             document_visual_review(&ws, &id, attempt).unwrap()["status"],
-            "failed"
+            "complete"
         );
         assert_eq!(
             list(&ws, &id).unwrap()["attempts"][0]["document_visual_review"],
             true
         );
+        let candidates = matching_document_reviews(
+            &ws,
+            &id,
+            &waypoint_domain::sha256_hex(bytes),
+            "fictional-context",
+        )
+        .unwrap();
+        assert_eq!(candidates["reviews"][0]["context_current"], true);
+        let stale = matching_document_reviews(
+            &ws,
+            &id,
+            &waypoint_domain::sha256_hex(bytes),
+            "changed-context",
+        )
+        .unwrap();
+        assert_eq!(stale["reviews"][0]["context_current"], false);
+        assert!(matching_document_reviews(
+            &ws,
+            &id,
+            &waypoint_domain::sha256_hex(b"other"),
+            "fictional-context"
+        )
+        .unwrap()["reviews"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let mut application = AttemptRecord::start(&ws, &id, "abcdef0123456789abcdef0123456789", 2)
+            .unwrap()
+            .unwrap();
+        let saved = application
+            .document_visual_evidence(attempt, &evidence)
+            .unwrap();
+        assert!(application.dir.join(saved).exists());
         let other = JobIdentityId::new("other-job").unwrap();
         assert!(document_visual_review(&ws, &other, attempt).is_err());
         fs::write(record.dir.join("materials").join(material), b"changed").unwrap();

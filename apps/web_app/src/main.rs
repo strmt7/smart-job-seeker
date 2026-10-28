@@ -170,6 +170,15 @@ fn fit_inputs(
     Ok((facts, instructions, listing, digest))
 }
 
+fn document_visual_context(ws: &Workspace, job: &JobIdentityId) -> Result<String, String> {
+    let (facts, _, listing, _) = fit_inputs(ws, job)?;
+    Ok(format!(
+        "Posting: {}\nReviewed qualifications: {}",
+        listing.chars().take(5000).collect::<String>(),
+        facts.join(" | ").chars().take(5000).collect::<String>()
+    ))
+}
+
 fn draft_context_digest(
     ws: &Workspace,
     job_id: &JobIdentityId,
@@ -1888,7 +1897,7 @@ fn serve(
             let id = body["id"].as_str().ok_or("missing document id")?;
             let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
                 .map_err(|e| e.to_string())?;
-            let (facts, _, listing, _) = fit_inputs(ws, &job)?;
+            let context = document_visual_context(ws, &job)?;
             let name = ws
                 .documents()
                 .map_err(|e| e.to_string())?
@@ -1906,11 +1915,6 @@ fn serve(
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
-            let context = format!(
-                "Posting: {}\nReviewed qualifications: {}",
-                listing.chars().take(5000).collect::<String>(),
-                facts.join(" | ").chars().take(5000).collect::<String>()
-            );
             let task_id = random_id()?;
             document_visual::start(task_id.clone(), model, bytes, context, ws, &job, &name)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
@@ -1918,6 +1922,23 @@ fn serve(
         "/api/documents/visual-review-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", document_visual::poll(id)?);
+        }
+        "/api/documents/visual-review-candidates" => {
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let id = body["document_id"].as_str().ok_or("missing document id")?;
+            let bytes = ws
+                .document_content(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Document not found")?;
+            let context = document_visual_context(ws, &job)?;
+            let candidates = attempt_record::matching_document_reviews(
+                ws,
+                &job,
+                &waypoint_domain::sha256_hex(&bytes),
+                Sha256Digest::of(&context).as_str(),
+            )?;
+            json_reply(stream, "200 OK", candidates);
         }
         "/api/documents/visual-review-read" => {
             let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
@@ -2783,6 +2804,30 @@ fn serve(
                         .into(),
                 );
             }
+            let visual_review = match body["visual_review_attempt"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+            {
+                Some(attempt) => {
+                    if body["reviewed_visual_findings"].as_bool() != Some(true) {
+                        return Err("Review the visual findings before linking them".into());
+                    }
+                    let review =
+                        attempt_record::document_visual_review(ws, &current.job_id, attempt)?;
+                    let context = document_visual_context(ws, &current.job_id)?;
+                    if review["document_sha256"].as_str()
+                        != Some(waypoint_domain::sha256_hex(&bytes).as_str())
+                        || review["context_sha256"].as_str()
+                            != Some(Sha256Digest::of(&context).as_str())
+                        || review["status"] != "complete"
+                        || review["report"]["complete"] != true
+                    {
+                        return Err("The selected visual review does not match this PDF and current job context; review again".into());
+                    }
+                    Some((attempt, review))
+                }
+                None => None,
+            };
             if current.record.is_none() {
                 current.record = attempt_record::AttemptRecord::start(
                     ws,
@@ -2791,7 +2836,25 @@ fn serve(
                     now(),
                 )?;
             }
+            if visual_review.is_none() {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Attached document needs visual review",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+                current.preview.manual_review.push(
+                    "This attachment has no linked current visual review; inspect it manually"
+                        .into(),
+                );
+            }
             if let Some(record) = &mut current.record {
+                if let Some((attempt, review)) = &visual_review {
+                    let path = record.document_visual_evidence(attempt, review)?;
+                    record.event(json!({"type":"document_visual_review_linked","time":now(),"source_attempt":attempt,"file":path,"note":"Advisory review, not proof of correctness."}))?;
+                } else {
+                    record.status("manual_review", now())?;
+                }
                 let stored = record.material(&doc.name, &bytes)?;
                 record.event(json!({"type":"document_requested","time":now(),"selector":selector,"name":doc.name,"material":stored}))?;
             }
@@ -4017,6 +4080,14 @@ mod tests {
                 1,
             )
             .unwrap();
+            let review_attempt = "0123456789abcdef0123456789abcdef";
+            let pdf = b"%PDF-fictional resume";
+            let mut review_record =
+                attempt_record::AttemptRecord::start(&ws, &id, review_attempt, 1)
+                    .unwrap()
+                    .unwrap();
+            let material = review_record.material("fictional-cv.pdf", pdf).unwrap();
+            review_record.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":Sha256Digest::of(&document_visual_context(&ws,&id).unwrap()).as_str(),"report":{"complete":true,"findings":[]}})).unwrap();
             let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
             let form = driver.open(&url).unwrap();
             assert!(driver
@@ -4195,6 +4266,11 @@ mod tests {
             );
             drop(stream);
             let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("Review the visual findings"));
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
             let current = session.as_mut().unwrap();
             assert_eq!(
@@ -4225,10 +4301,13 @@ mod tests {
             let records = workspace_dir.path().join("application-records");
             let record = std::fs::read_dir(records)
                 .unwrap()
-                .next()
-                .unwrap()
-                .unwrap()
-                .path();
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| {
+                    std::fs::read_to_string(path.join("events.jsonl"))
+                        .is_ok_and(|events| events.contains("fields_requested"))
+                })
+                .unwrap();
             let events = std::fs::read_to_string(record.join("events.jsonl")).unwrap();
             assert!(
                 events.contains("Revised")
@@ -4236,6 +4315,15 @@ mod tests {
                     && events.contains("document_attached")
             );
             assert!(events.contains("\"segments\":2"), "{events}");
+            assert!(events.contains("document_visual_review_linked"));
+            assert!(std::fs::read_dir(&record)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("document-visual-")));
+
             assert!(
                 events.contains("fill_incomplete") && events.contains("completed_commands"),
                 "{events}"
@@ -4303,7 +4391,13 @@ mod tests {
             .iter()
             .any(|field| field == "Work authorization"));
         assert!(payload["screenshot"].as_str().unwrap().starts_with("iVBOR"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc"}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc","visual_review_attempt":"0123456789abcdef0123456789abcdef"}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/attach HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Review the visual findings"));
+        let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc","visual_review_attempt":"0123456789abcdef0123456789abcdef","reviewed_visual_findings":true}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/attach HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
