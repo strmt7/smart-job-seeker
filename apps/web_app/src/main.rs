@@ -904,10 +904,12 @@ fn serve(
             }
             None => json!({}),
         };
+        let (duplicate_total, duplicate_pending, duplicate_bounded, duplicate_missing) =
+            ws.duplicate_coverage_counts().map_err(|e| e.to_string())?;
         json_reply(
             stream,
             "200 OK",
-            json!({"jobs": jobs, "facts": facts, "documents":documents, "reviews":reviews, "duplicates":ws.possible_duplicates().map_err(|e| e.to_string())?, "duplicate_index_pending":ws.duplicate_index_pending().map_err(|e|e.to_string())?, "profile":profile, "sealing": ws.sealing_status()}),
+            json!({"jobs": jobs, "facts": facts, "documents":documents, "reviews":reviews, "duplicates":ws.possible_duplicates().map_err(|e| e.to_string())?, "duplicate_index_pending":ws.duplicate_index_pending().map_err(|e|e.to_string())?, "duplicate_coverage":{"total":duplicate_total,"pending":duplicate_pending,"bounded":duplicate_bounded,"missing_employer":duplicate_missing}, "profile":profile, "sealing": ws.sealing_status()}),
         );
         return Ok(());
     }
@@ -1943,6 +1945,15 @@ fn serve(
             ws.set_state(&id, ApplicationState::Shortlisted)
                 .map_err(|e| e.to_string())?;
             json_reply(stream, "200 OK", json!({"ok":true}));
+        }
+        "/api/duplicate-coverage" => {
+            let (total, pending, bounded, missing_employer) =
+                ws.duplicate_coverage_counts().map_err(|e| e.to_string())?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"total":total,"pending":pending,"bounded":bounded,"missing_employer":missing_employer}),
+            );
         }
         "/api/attempts/list" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)

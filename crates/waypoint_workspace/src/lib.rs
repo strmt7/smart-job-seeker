@@ -577,6 +577,10 @@ impl Workspace {
         Ok(self.store.duplicate_index_pending()?)
     }
 
+    pub fn duplicate_coverage_counts(&self) -> Result<(u64, u64, u64, u64), WorkspaceError> {
+        Ok(self.store.duplicate_coverage_counts()?)
+    }
+
     pub fn duplicate_neighbors(
         &self,
         id: &JobIdentityId,

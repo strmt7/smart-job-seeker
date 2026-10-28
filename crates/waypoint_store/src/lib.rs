@@ -192,6 +192,14 @@ const MIGRATIONS: &[&str] = &[
      CREATE TRIGGER email_reconciliation_no_update BEFORE UPDATE ON email_handoff_reconciliations BEGIN SELECT RAISE(ABORT, 'email reconciliation is append-only'); END;
      CREATE TRIGGER email_reconciliation_no_delete BEFORE DELETE ON email_handoff_reconciliations BEGIN SELECT RAISE(ABORT, 'email reconciliation is append-only'); END;
      UPDATE meta SET value='19' WHERE key='schema_version';",
+    // v20 — preserve whether bounded duplicate comparisons were complete.
+    "CREATE TABLE job_duplicate_coverage(job_id TEXT PRIMARY KEY REFERENCES jobs(id), status TEXT NOT NULL CHECK(status IN ('complete','bounded','missing_employer')), candidates INTEGER NOT NULL);
+     DELETE FROM job_employer_indexed;
+     CREATE TRIGGER duplicate_coverage_job_update AFTER UPDATE OF title,employer,location,content_hash,requisition_id ON jobs WHEN OLD.title IS NOT NEW.title OR OLD.employer IS NOT NEW.employer OR OLD.location IS NOT NEW.location OR OLD.content_hash IS NOT NEW.content_hash OR OLD.requisition_id IS NOT NEW.requisition_id BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=NEW.id; DELETE FROM job_employer_indexed WHERE job_id=NEW.id; END;
+     CREATE TRIGGER duplicate_coverage_description_insert AFTER INSERT ON job_descriptions BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=NEW.job_id; DELETE FROM job_employer_indexed WHERE job_id=NEW.job_id; END;
+     CREATE TRIGGER duplicate_coverage_description_update AFTER UPDATE ON job_descriptions WHEN OLD.content IS NOT NEW.content BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=NEW.job_id; DELETE FROM job_employer_indexed WHERE job_id=NEW.job_id; END;
+     CREATE TRIGGER duplicate_coverage_description_delete AFTER DELETE ON job_descriptions BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=OLD.job_id; DELETE FROM job_employer_indexed WHERE job_id=OLD.job_id; END;
+     UPDATE meta SET value='20' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -856,6 +864,28 @@ mod tests {
         s.upsert_job(&job("a")).unwrap();
         s.upsert_job(&job("a")).unwrap(); // update path still single row
         assert_eq!(s.job_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn duplicate_coverage_migration_reindexes_legacy_markers_without_losing_jobs() {
+        let conn = Connection::open_in_memory().unwrap();
+        for migration in &MIGRATIONS[..19] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES('legacy','Role','Example','', '\"discovered\"')", []).unwrap();
+        conn.execute(
+            "INSERT INTO job_employer_indexed(job_id) VALUES('legacy')",
+            [],
+        )
+        .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert_eq!(store.job_count().unwrap(), 1);
+        assert_eq!(store.duplicate_coverage_counts().unwrap(), (1, 1, 0, 0));
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("legacy")
+        );
+        assert_eq!(store.duplicate_coverage_counts().unwrap(), (1, 0, 0, 0));
     }
 
     #[test]

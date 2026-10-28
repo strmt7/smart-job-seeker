@@ -74,10 +74,15 @@ impl Store {
                 .cmp(&a.chars().count())
                 .then_with(|| a.cmp(b))
         });
+        let mut bounded = tokens.len() > 8;
         tokens.truncate(8);
         // Mark complete only after comparisons finish, so interrupted indexing is retried.
         self.conn.execute(
             "DELETE FROM job_employer_indexed WHERE job_id=?1",
+            [job.id.as_str()],
+        )?;
+        self.conn.execute(
+            "DELETE FROM job_duplicate_coverage WHERE job_id=?1",
             [job.id.as_str()],
         )?;
         self.conn.execute(
@@ -91,6 +96,7 @@ impl Store {
             )?;
         }
         if tokens.is_empty() {
+            self.conn.execute("INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,'missing_employer',0)", [job.id.as_str()])?;
             self.conn.execute(
                 "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
                 [job.id.as_str()],
@@ -104,19 +110,26 @@ impl Store {
         let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM job_employer_tokens t JOIN jobs j ON j.id=t.job_id WHERE t.token=?1 AND j.id<>?2 ORDER BY j.id LIMIT 200")?;
         for token in &tokens {
             let rows = stmt.query_map(params![token, job.id.as_str()], Self::row_to_job)?;
+            let mut token_count = 0usize;
             for row in rows {
+                token_count += 1;
                 let other = row?;
                 if seen.insert(other.id.as_str().to_owned()) {
                     candidates.push(other);
                 }
                 if candidates.len() >= 200 {
+                    bounded = true;
                     break;
                 }
+            }
+            if token_count >= 200 {
+                bounded = true;
             }
             if candidates.len() >= 200 {
                 break;
             }
         }
+        let candidate_count = candidates.len();
         let mut result = Vec::new();
         for other in candidates {
             if overlap(&employer_tokens, &employer_words(&other.employer)) < 65 {
@@ -166,6 +179,14 @@ impl Store {
             });
         }
         self.conn.execute(
+            "INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,?2,?3)",
+            params![
+                job.id.as_str(),
+                if bounded { "bounded" } else { "complete" },
+                candidate_count as i64
+            ],
+        )?;
+        self.conn.execute(
             "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
             [job.id.as_str()],
         )?;
@@ -186,6 +207,12 @@ impl Store {
 
     pub fn duplicate_index_pending(&self) -> rusqlite::Result<bool> {
         self.conn.query_row("SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) LIMIT 1", [], |_| Ok(())).optional().map(|v| v.is_some())
+    }
+
+    /// Counts are about bounded comparison work, not proof that every duplicate
+    /// was identified. Missing rows represent pending indexing.
+    pub fn duplicate_coverage_counts(&self) -> rusqlite::Result<(u64, u64, u64, u64)> {
+        self.conn.query_row("SELECT COUNT(*), SUM(CASE WHEN c.job_id IS NULL OR i.job_id IS NULL THEN 1 ELSE 0 END), SUM(CASE WHEN c.status='bounded' AND i.job_id IS NOT NULL THEN 1 ELSE 0 END), SUM(CASE WHEN c.status='missing_employer' AND i.job_id IS NOT NULL THEN 1 ELSE 0 END) FROM jobs j LEFT JOIN job_duplicate_coverage c ON c.job_id=j.id LEFT JOIN job_employer_indexed i ON i.job_id=j.id", [], |row| Ok((row.get(0)?, row.get::<_, Option<u64>>(1)?.unwrap_or(0), row.get::<_, Option<u64>>(2)?.unwrap_or(0), row.get::<_, Option<u64>>(3)?.unwrap_or(0))))
     }
 
     /// Gather bounded, undecided neighbors sharing employer tokens; no title threshold.
@@ -307,6 +334,38 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn reports_comparison_caps_and_missing_employers_as_incomplete() {
+        let mut store = Store::in_memory().unwrap();
+        let target = job("target", "Engineer", "Example", None);
+        store.upsert_job(&target).unwrap();
+        for index in 0..200 {
+            let candidate = job(
+                &format!("candidate-{index:03}"),
+                "Engineer",
+                "Example",
+                None,
+            );
+            store.upsert_job(&candidate).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example')",
+                    [candidate.id.as_str()],
+                )
+                .unwrap();
+        }
+        store.find_possible_duplicates(&target).unwrap();
+        let missing = job("missing", "Role", "X", None);
+        store.upsert_job(&missing).unwrap();
+        store.find_possible_duplicates(&missing).unwrap();
+        assert_eq!(store.duplicate_coverage_counts().unwrap(), (202, 200, 1, 1));
+        let mut changed = target.clone();
+        changed.title = "Changed role".into();
+        store.upsert_job(&changed).unwrap();
+        assert_eq!(store.duplicate_coverage_counts().unwrap(), (202, 201, 0, 1));
     }
 
     #[test]
