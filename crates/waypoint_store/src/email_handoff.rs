@@ -4,6 +4,74 @@ use crate::Store;
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use waypoint_domain::{ApplicationState, JobIdentityId, Sha256Digest};
 
+const MAX_RELATED_JOBS: usize = 500;
+
+// Confirmed duplicate links form a graph, not necessarily a star. Fail closed
+// if its size or an unresolved edge prevents a complete bounded check.
+fn check_related_jobs(tx: &rusqlite::Transaction<'_>, target: &str) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::from([target.to_owned()]);
+    seen.insert(target.to_owned());
+    while let Some(id) = queue.pop_front() {
+        let email_active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM email_handoffs WHERE job_id=?1 AND state IN ('reserved','accepted','uncertain'))", [&id], |row| row.get(0)).map_err(|e| e.to_string())?;
+        let browser_history: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM submission_journal WHERE application_id=?1 AND state IN ('\"submitting\"','\"uncertain\"','\"confirmed\"','\"external_attested\"','\"rejected\"','\"interview\"','\"offer\"'))", [&id], |row| row.get(0)).map_err(|e| e.to_string())?;
+        let state: String = tx
+            .query_row("SELECT state FROM jobs WHERE id=?1", [&id], |row| {
+                row.get(0)
+            })
+            .map_err(|e| e.to_string())?;
+        let state: ApplicationState =
+            serde_json::from_str(&state).map_err(|_| "Cannot verify a related job's state")?;
+        if email_active
+            || browser_history
+            || !matches!(
+                state,
+                ApplicationState::Discovered
+                    | ApplicationState::Shortlisted
+                    | ApplicationState::Prepared
+            )
+        {
+            return Err(
+                "A related job has an existing or uncertain application; review it first".into(),
+            );
+        }
+        let mut stmt = tx.prepare("SELECT job_a,job_b,status FROM possible_duplicates WHERE (job_a=?1 OR job_b=?1) AND status<>'different' LIMIT 501").map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([&id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut count = 0usize;
+        for row in rows {
+            count += 1;
+            if count > MAX_RELATED_JOBS {
+                return Err("Too many related listings to check; manual review is required".into());
+            }
+            let (a, b, status) = row.map_err(|e| e.to_string())?;
+            if status == "pending" {
+                return Err("Review possible duplicate jobs before an email handoff".into());
+            }
+            if status != "same" {
+                return Err("A duplicate decision is unknown; manual review is required".into());
+            }
+            let next = if a == id { b } else { a };
+            if seen.insert(next.clone()) {
+                if seen.len() > MAX_RELATED_JOBS {
+                    return Err(
+                        "Too many related listings to check; manual review is required".into(),
+                    );
+                }
+                queue.push_back(next);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub struct EmailHandoffReservation<'a> {
     pub id: &'a str,
     pub job_id: &'a JobIdentityId,
@@ -113,10 +181,10 @@ impl Store {
             return Err("Job is not eligible for an email handoff".into());
         }
         let held: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM possible_duplicates WHERE (job_a=?1 OR job_b=?1) AND (status='pending' OR (status='same' AND preferred_job<>?1)))", [reservation.job_id.as_str()], |row| row.get(0)).map_err(|e| e.to_string())?;
-        let related_active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM possible_duplicates p JOIN email_handoffs h ON h.job_id=CASE WHEN p.job_a=?1 THEN p.job_b ELSE p.job_a END WHERE (p.job_a=?1 OR p.job_b=?1) AND p.status='same' AND h.state IN ('reserved','accepted','uncertain'))", [reservation.job_id.as_str()], |row| row.get(0)).map_err(|e| e.to_string())?;
-        if held || related_active {
+        if held {
             return Err("Review duplicate jobs or an existing email handoff first".into());
         }
+        check_related_jobs(&tx, reservation.job_id.as_str())?;
         let consumed = tx.execute("UPDATE email_handoff_approvals SET consumed=1 WHERE id=?1 AND job_id=?2 AND message_hash=?3 AND sender_hash=?4 AND recipient_hash=?5 AND consumed=0 AND created_at<=?6 AND created_at>=?7", params![reservation.approval_id,reservation.job_id.as_str(),reservation.message_hash.as_str(),reservation.sender_hash.as_str(),reservation.recipient_hash.as_str(),reservation.created_at,reservation.created_at.saturating_sub(600)]).map_err(|e| e.to_string())?;
         if consumed != 1 {
             return Err(
@@ -318,6 +386,24 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(unspent, 0);
+            store
+                .append_journal(
+                    independent.as_str(),
+                    ApplicationState::Uncertain,
+                    "2",
+                    "fixture",
+                )
+                .unwrap();
+            let browser_blocked = EmailHandoffReservation {
+                id: "independent-attempt",
+                job_id: &independent,
+                approval_id: "independent-approval",
+                message_hash: &digest,
+                sender_hash: &digest,
+                recipient_hash: &digest,
+                created_at: 2,
+            };
+            assert!(store.reserve_email_handoff(&browser_blocked).is_err());
             assert_eq!(
                 store.email_handoffs_for_job(&job).unwrap().0[0].state,
                 "uncertain"
@@ -348,6 +434,32 @@ mod tests {
                 })
                 .unwrap();
             assert!(store.reserve_email_handoff(&related).is_err());
+            let third = JobIdentityId::new("fictional-email-job-copy-third").unwrap();
+            let mut third_job = store.get_job(&other).unwrap().unwrap();
+            third_job.id = third.clone();
+            store.upsert_job(&third_job).unwrap();
+            store.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status,preferred_job) VALUES(?1,?2,100,'fixture','same',?2)", params![other.as_str(), third.as_str()]).unwrap();
+            store
+                .approve_email_handoff(&EmailHandoffApproval {
+                    id: "third-approval",
+                    job_id: &third,
+                    message_hash: &digest,
+                    sender_hash: &digest,
+                    recipient_hash: &digest,
+                    created_at: 1,
+                    explicit_user_gesture: true,
+                })
+                .unwrap();
+            let transitive = EmailHandoffReservation {
+                id: "third-attempt",
+                job_id: &third,
+                approval_id: "third-approval",
+                message_hash: &digest,
+                sender_hash: &digest,
+                recipient_hash: &digest,
+                created_at: 3,
+            };
+            assert!(store.reserve_email_handoff(&transitive).is_err());
             assert!(store
                 .reserve_email_handoff(&reservation("two", "approval-two"))
                 .is_err());
