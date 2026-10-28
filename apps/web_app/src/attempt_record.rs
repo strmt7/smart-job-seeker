@@ -699,18 +699,17 @@ impl AttemptRecord {
         Ok(())
     }
     pub fn screenshot(&mut self, data: &str) -> Result<(), String> {
+        self.screenshot_with_name(data).map(|_| ())
+    }
+    pub fn screenshot_with_name(&mut self, data: &str) -> Result<String, String> {
         let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
         if bytes.len() > 6 * 1024 * 1024 {
             return Err("Screenshot exceeds limit".into());
         }
         self.sequence += 1;
-        fs::write(
-            self.dir
-                .join("screenshots")
-                .join(format!("{:04}.png", self.sequence)),
-            bytes,
-        )
-        .map_err(|e| e.to_string())
+        let name = format!("{:04}.png", self.sequence);
+        fs::write(self.dir.join("screenshots").join(&name), bytes).map_err(|e| e.to_string())?;
+        Ok(name)
     }
     pub fn material(&mut self, name: &str, bytes: &[u8]) -> Result<String, String> {
         let safe: String = name
@@ -789,6 +788,26 @@ mod tests {
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
 
+    #[test]
+    fn visual_capture_filename_identifies_saved_bytes_and_event() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("screenshots")).unwrap();
+        let mut record = AttemptRecord {
+            dir: dir.path().to_path_buf(),
+            sequence: 0,
+        };
+        let name = record.screenshot_with_name("aW1hZ2U=").unwrap();
+        record.event(json!({"type":"visual_capture","task_id":"test-task","screenshot":format!("screenshots/{name}")})).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("screenshots").join(&name)).unwrap(),
+            b"image"
+        );
+        let event: Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("events.jsonl")).unwrap())
+                .unwrap();
+        assert_eq!(event["task_id"], "test-task");
+        assert_eq!(event["screenshot"], format!("screenshots/{name}"));
+    }
     #[test]
     fn saved_document_review_binds_job_and_pdf_snapshot() {
         let root = tempfile::tempdir().unwrap();

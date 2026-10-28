@@ -124,8 +124,10 @@ function showFormPreview(job,result){
     if(!Number.isSafeInteger(started.segments) || started.segments<1 || started.segments>6 || started.segment!==segment || typeof started.page_signature!=='string')throw new Error('Invalid visual capture metadata');
     if(total===null){total=started.segments;signature=started.page_signature;coverage=started.coverage_complete;visualPanel.replaceChildren(element('p','The model inspects these captured page segments sequentially. Hidden content, nested scrollers and cross-origin frames may be missed. Up to 20 reviewed text answers are compared; other controls need manual inspection.','footnote'));}
     else if(started.segments!==total || started.page_signature!==signature)throw new Error('The page URL or dimensions changed between captures; inspect again');
+    if(started.record_saved===false)visualPanel.append(element('p','This visual capture could not be saved to the application record.','review-label'));
     const captured=document.createElement('img');captured.alt=`Page segment ${segment+1} sent to the local vision model`;captured.src=`data:image/png;base64,${started.screenshot}`;visualPanel.append(element('h4',`Page segment ${segment+1} of ${total}`),captured);
     let observation;do{await new Promise(resolve=>setTimeout(resolve,1500));observation=await api('/api/form/visual-review-status',{task_id:started.task_id});}while(observation.status==='running');
+    if(observation.record_saved===false)visualPanel.append(element('p','This visual result could not be saved to the application record.','review-label'));
     if(observation.status!=='complete')throw new Error(observation.error || 'Visual review failed');
     const review=observation.visual_review;if(!review || !Array.isArray(review.observations) || !Array.isArray(review.comparisons))throw new Error('Invalid visual review result');
     if(segment===0)expected=review.comparisons;

@@ -214,7 +214,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     *tasks = None;
     Ok(match result {
         Ok(observed) => json!({"status":"complete","session_id":session,"visual_review":observed}),
-        Err(error) => json!({"status":"failed","error":error}),
+        Err(error) => json!({"status":"failed","session_id":session,"error":error}),
     })
 }
 

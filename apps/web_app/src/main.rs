@@ -2559,15 +2559,20 @@ fn serve(
                 screenshot.clone(),
                 expected,
             )?;
+            let record_saved = current.record.as_mut().is_some_and(|record| {
+                record.screenshot_with_name(&screenshot).and_then(|name| {
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}")}))
+                }).is_ok()
+            });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"page_signature":signature.as_str()}),
+                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"page_signature":signature.as_str(),"record_saved":record_saved}),
             );
         }
         "/api/form/visual-review-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            let result = visual_review::poll(id)?;
+            let mut result = visual_review::poll(id)?;
             if matches!(result["status"].as_str(), Some("running" | "complete")) {
                 let current = session
                     .as_mut()
@@ -2579,6 +2584,13 @@ fn serve(
                         "The form session expired; this visual observation is no longer current",
                     )?;
                 current.created = Instant::now();
+            }
+            if matches!(result["status"].as_str(), Some("complete" | "failed")) {
+                let record_saved = session.as_mut()
+                    .filter(|s| Some(s.id.as_str()) == result["session_id"].as_str())
+                    .and_then(|s| s.record.as_mut())
+                    .is_some_and(|record| record.event(json!({"type":"visual_result","time":now(),"task_id":id,"result":result})).is_ok());
+                result["record_saved"] = json!(record_saved);
             }
             json_reply(stream, "200 OK", result);
         }
