@@ -133,9 +133,11 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
                     );
                     let record_saved = record.is_ok();
                     let record_error = record.err();
+                    let job = task.job_id.clone();
+                    let kind = task.kind.clone();
                     *tasks = None;
                     Ok(
-                        json!({"status":"complete","id":doc_id,"name":name,"record_saved":record_saved,"record_error":record_error}),
+                        json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error}),
                     )
                 }
                 Err(error) => {
@@ -392,6 +394,8 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
         assert_eq!(result["status"], "complete");
+        assert_eq!(result["job_id"], "fixture-letter");
+        assert_eq!(result["kind"], "cv");
         assert!(result["name"].as_str().unwrap().starts_with("cv-"));
         let pdf = ws
             .document_content(result["id"].as_str().unwrap())
