@@ -21,6 +21,7 @@ mod form_links;
 mod form_preview;
 mod form_task;
 mod gmail_connect;
+mod gmail_mailbox;
 mod gmail_net;
 mod gmail_oauth;
 mod gmail_password;
@@ -397,6 +398,50 @@ fn answer_inputs(
     Ok(answer_task::Inputs {
         session_id: session.id.clone(),
         selector: selector.to_owned(),
+        digest,
+        question,
+        listing,
+        facts,
+        instructions,
+    })
+}
+
+fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task::Inputs, String> {
+    let job = ws
+        .job(id)
+        .map_err(|error| error.to_string())?
+        .ok_or("Job not found")?;
+    if !matches!(
+        job.state,
+        ApplicationState::Shortlisted | ApplicationState::Prepared
+    ) {
+        return Err("Shortlist the job before drafting an email".into());
+    }
+    if ws
+        .has_duplicate_hold(id)
+        .map_err(|error| error.to_string())?
+    {
+        return Err("Review possible duplicate jobs before drafting an email".into());
+    }
+    let (facts, _, listing, _) = fit_inputs(ws, id)?;
+    if facts.is_empty() {
+        return Err("Add reviewed qualifications before drafting an email".into());
+    }
+    let profile: Value = match ws.candidate_profile().map_err(|error| error.to_string())? {
+        Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let instructions: String = profile["document_instructions"]
+        .as_str()
+        .unwrap_or("")
+        .chars()
+        .take(2000)
+        .collect();
+    let question = format!("Write a concise application email body for the role {} at {}. Use only supported candidate facts, do not invent contact information, and leave the recipient and subject to the candidate.", job.title, job.employer);
+    let digest = Sha256Digest::of(&json!({"job_id":id.as_str(),"question":question,"listing":listing,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
+    Ok(answer_task::Inputs {
+        session_id: id.as_str().to_owned(),
+        selector: "email_body".into(),
         digest,
         question,
         listing,
@@ -997,6 +1042,20 @@ fn serve(
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", gmail_password::poll(id, ws)?);
         }
+        "/api/gmail/password-cancel" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            gmail_password::cancel(id)?;
+            json_reply(stream, "200 OK", json!({"ok":true}));
+        }
+        "/api/gmail/inbox-start" => {
+            let id = random_id()?;
+            gmail_mailbox::start(id.clone(), ws)?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/gmail/inbox-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", gmail_mailbox::poll(id, ws)?);
+        }
         "/api/gmail/connect-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", gmail_connect::poll(id, ws)?);
@@ -1492,6 +1551,34 @@ fn serve(
             record.email_draft(&draft)?;
             record.event(json!({"type":"email_draft_created", "time":now(), "recipient":recipient, "subject":subject, "attachments":attachments.len(), "sent":false}))?;
             document_reply(stream, &draft);
+        }
+        "/api/email-answer/start" => {
+            let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|error| error.to_string())?;
+            let input = email_answer_inputs(ws, &id)?;
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            answer_task::start(task_id.clone(), model, input)?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/email-answer/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let mut result = answer_task::poll(id)?;
+            if result["status"] == "complete" {
+                let current = result["session_id"]
+                    .as_str()
+                    .and_then(|job| JobIdentityId::new(job).ok())
+                    .and_then(|job| email_answer_inputs(ws, &job).ok());
+                if result["selector"].as_str() != Some("email_body")
+                    || current.as_ref().map(|input| input.digest.as_str())
+                        != result["digest"].as_str()
+                {
+                    result = json!({"status":"failed","error":"The job, qualifications or instructions changed; draft the email again"});
+                }
+            }
+            json_reply(stream, "200 OK", result);
         }
         "/api/documents/convert-pdf-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
@@ -3083,6 +3170,29 @@ mod tests {
         let state = post("/api/gmail/status", "{}");
         assert_eq!(state["connected"], true);
         assert_eq!(state["sending_available"], false);
+        let inbox = post("/api/gmail/inbox-start", "{}");
+        let inbox_id = inbox["task_id"].as_str().expect("inbox task should start");
+        let deadline = Instant::now() + Duration::from_secs(55);
+        loop {
+            let status = post(
+                "/api/gmail/inbox-status",
+                &json!({"task_id":inbox_id}).to_string(),
+            );
+            match status["status"].as_str() {
+                Some("complete") => {
+                    assert!(status["messages"].as_u64().is_some());
+                    assert!(status["unseen"].as_u64().is_some());
+                    break;
+                }
+                Some("running") if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(250))
+                }
+                _ => panic!(
+                    "Gmail inbox check failed: {}",
+                    status["error"].as_str().unwrap_or("timeout")
+                ),
+            }
+        }
         assert_eq!(post("/api/gmail/disconnect", "{}")["ok"], true);
         worker.join().unwrap();
     }
@@ -3195,6 +3305,41 @@ mod tests {
         )
         .unwrap();
         assert_ne!(second, draft_context_digest(&ws, &id, "cv").unwrap());
+    }
+
+    #[test]
+    fn email_suggestion_context_tracks_reviewed_facts_and_writing_preferences() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let id = JobIdentityId::new("email-context").unwrap();
+        ws.import_manual_job(
+            waypoint_store::StoredJob {
+                id: id.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some("https://example.org/job".into()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional role"),
+        )
+        .unwrap();
+        assert!(email_answer_inputs(&ws, &id).is_err());
+        ws.add_fact("Experience with research", FactOrigin::UserAttested)
+            .unwrap();
+        let first = email_answer_inputs(&ws, &id).unwrap();
+        assert!(first.question.contains("Engineer"));
+        ws.save_candidate_profile(&json!({"document_instructions":"Concise"}).to_string())
+            .unwrap();
+        let second = email_answer_inputs(&ws, &id).unwrap();
+        assert_ne!(first.digest, second.digest);
+        assert_eq!(second.selector, "email_body");
     }
 
     #[test]

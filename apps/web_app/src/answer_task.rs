@@ -18,14 +18,21 @@ struct Task {
     selector: String,
     digest: String,
     result: Option<Result<Value, String>>,
+    completed_at: Option<std::time::Instant>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
-    if task.as_ref().is_some_and(|t| t.result.is_none()) {
-        return Err("An answer is already being drafted".into());
+    if task.as_ref().is_some_and(|t| {
+        t.completed_at
+            .is_some_and(|at| at.elapsed() > std::time::Duration::from_secs(600))
+    }) {
+        *task = None;
+    }
+    if task.is_some() {
+        return Err("An answer is running or awaiting its result".into());
     }
     *task = Some(Task {
         id: id.clone(),
@@ -33,6 +40,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
         selector: input.selector.clone(),
         digest: input.digest.clone(),
         result: None,
+        completed_at: None,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -46,6 +54,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut().filter(|t| t.id == id) {
                 task.result = Some(result);
+                task.completed_at = Some(std::time::Instant::now());
             }
         }
     });

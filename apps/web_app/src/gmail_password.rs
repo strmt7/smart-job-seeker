@@ -3,13 +3,17 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::Duration;
 use waypoint_workspace::Workspace;
 use zeroize::Zeroizing;
 
 struct Task {
     id: String,
+    cancelled: Arc<AtomicBool>,
     result: Option<Result<Zeroizing<Vec<u8>>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -113,7 +117,7 @@ fn imap_line(stream: &mut impl Read) -> Result<String, String> {
     Err("Gmail IMAP response exceeded its limit".into())
 }
 
-fn authenticate_imap(email: &str, password: &str) -> Result<(), String> {
+fn open_imap(email: &str, password: &str) -> Result<native_tls::TlsStream<TcpStream>, String> {
     let mut tls = connect("imap.gmail.com", 993)?;
     if !imap_line(&mut tls)?.starts_with("* OK") {
         return Err("Gmail IMAP did not accept the connection".into());
@@ -131,14 +135,77 @@ fn authenticate_imap(email: &str, password: &str) -> Result<(), String> {
     for _ in 0..20 {
         let line = imap_line(&mut tls)?;
         if line.starts_with("a001 OK") {
-            let _ = tls.write_all(b"a002 LOGOUT\r\n");
-            return Ok(());
+            return Ok(tls);
         }
         if line.starts_with("a001 ") {
             return Err("Gmail IMAP rejected authentication".into());
         }
     }
     Err("Gmail IMAP authentication response exceeded its limit".into())
+}
+
+fn authenticate_imap(email: &str, password: &str) -> Result<(), String> {
+    let mut tls = open_imap(email, password)?;
+    let _ = tls.write_all(b"a002 LOGOUT\r\n");
+    Ok(())
+}
+
+fn parse_inbox_status(line: &str) -> Result<(u64, u64), String> {
+    if !line.starts_with("* STATUS ") {
+        return Err("Unexpected Gmail inbox status".into());
+    }
+    let (mailbox, data) = line.split_once('(').ok_or("Invalid Gmail inbox status")?;
+    let mailbox = mailbox
+        .strip_prefix("* STATUS ")
+        .ok_or("Invalid Gmail inbox status")?
+        .trim()
+        .trim_matches('"');
+    if !mailbox.eq_ignore_ascii_case("INBOX") {
+        return Err("Gmail returned status for another mailbox".into());
+    }
+    let (data, _) = data.split_once(')').ok_or("Invalid Gmail inbox status")?;
+    let mut tokens = data.split_ascii_whitespace();
+    let mut messages = None;
+    let mut unseen = None;
+    while let Some(name) = tokens.next() {
+        let value = tokens
+            .next()
+            .and_then(|v| v.parse::<u64>().ok())
+            .ok_or("Invalid Gmail inbox status")?;
+        match name.to_ascii_uppercase().as_str() {
+            "MESSAGES" if messages.is_none() => messages = Some(value),
+            "UNSEEN" if unseen.is_none() => unseen = Some(value),
+            _ => return Err("Unexpected Gmail inbox status".into()),
+        }
+    }
+    let messages = messages.ok_or("Gmail did not report message count")?;
+    let unseen = unseen.ok_or("Gmail did not report unread count")?;
+    if unseen > messages {
+        return Err("Gmail returned inconsistent inbox counts".into());
+    }
+    Ok((messages, unseen))
+}
+
+pub fn inbox_counts(email: &str, password: &str) -> Result<(u64, u64), String> {
+    let mut tls = open_imap(email, password)?;
+    tls.write_all(b"a003 STATUS INBOX (MESSAGES UNSEEN)\r\n")
+        .map_err(|_| "Cannot request Gmail inbox status")?;
+    let mut counts = None;
+    for _ in 0..20 {
+        let line = imap_line(&mut tls)?;
+        if line.starts_with("* STATUS ") {
+            if counts.is_some() {
+                return Err("Gmail returned multiple inbox statuses".into());
+            }
+            counts = Some(parse_inbox_status(&line)?);
+        } else if line.starts_with("a003 OK") {
+            let _ = tls.write_all(b"a004 LOGOUT\r\n");
+            return counts.ok_or("Gmail did not return inbox status".into());
+        } else if line.starts_with("a003 ") {
+            return Err("Gmail rejected the inbox status request".into());
+        }
+    }
+    Err("Gmail inbox status response exceeded its limit".into())
 }
 
 pub fn start(id: String, email: String, password: String, ws: &Workspace) -> Result<(), String> {
@@ -163,8 +230,10 @@ pub fn start(id: String, email: String, password: String, ws: &Workspace) -> Res
     if task.is_some() {
         return Err("A Gmail connection is already running".into());
     }
+    let cancelled = Arc::new(AtomicBool::new(false));
     *task = Some(Task {
         id: id.clone(),
+        cancelled: cancelled.clone(),
         result: None,
     });
     drop(task);
@@ -179,10 +248,16 @@ pub fn start(id: String, email: String, password: String, ws: &Workspace) -> Res
             authenticate_smtp(&email, &password)
                 .map_err(|error| format!("SMTP check: {error}"))
                 .and_then(|_| {
+                    if cancelled.load(Ordering::SeqCst) {
+                        return Err("Gmail connection cancelled".into());
+                    }
                     authenticate_imap(&email, &password)
                         .map_err(|error| format!("IMAP check: {error}"))
                 })
                 .and_then(|_| {
+                    if cancelled.load(Ordering::SeqCst) {
+                        return Err("Gmail connection cancelled".into());
+                    }
                     serde_json::to_vec(&Credentials {
                         auth_type: "app_password",
                         email: &email,
@@ -209,18 +284,34 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
         .filter(|task| task.id == id)
         .ok_or("Gmail connection not found")?;
     match task.result.take() {
-        None => Ok(json!({"status":"running"})),
+        None => {
+            Ok(json!({"status":"running","cancel_requested":task.cancelled.load(Ordering::SeqCst)}))
+        }
         Some(Err(error)) => {
             *tasks = None;
             Ok(json!({"status":"failed","error":error}))
         }
         Some(Ok(credentials)) => {
+            if task.cancelled.load(Ordering::SeqCst) {
+                *tasks = None;
+                return Ok(json!({"status":"failed","error":"Gmail connection cancelled"}));
+            }
             *tasks = None;
             ws.save_gmail_credentials(&credentials)
                 .map_err(|_| "Cannot save Gmail credentials securely")?;
             Ok(json!({"status":"complete"}))
         }
     }
+}
+
+pub fn cancel(id: &str) -> Result<(), String> {
+    let tasks = TASK.lock().map_err(|_| "Gmail connection unavailable")?;
+    let task = tasks
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Gmail connection not found")?;
+    task.cancelled.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -235,6 +326,28 @@ mod tests {
             .unwrap()
             .starts_with("* OK"));
         assert!(imap_line(&mut &vec![b'a'; 4097][..]).is_err());
+        assert_eq!(
+            parse_inbox_status("* STATUS INBOX (MESSAGES 8 UNSEEN 2)\r\n").unwrap(),
+            (8, 2)
+        );
+        assert!(parse_inbox_status("* STATUS INBOX (MESSAGES 1 UNSEEN 2)\r\n").is_err());
+        assert!(parse_inbox_status("* STATUS INBOX (MESSAGES 1 MESSAGES 2 UNSEEN 0)\r\n").is_err());
+    }
+
+    #[test]
+    fn cancelled_completed_connection_does_not_save_credentials() {
+        let ws = Workspace::in_memory().unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        *TASK.lock().unwrap() = Some(Task {
+            id: "cancel-fixture".into(),
+            cancelled,
+            result: Some(Ok(Zeroizing::new(b"fictional".to_vec()))),
+        });
+        cancel("cancel-fixture").unwrap();
+        let result = poll("cancel-fixture", &ws).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert!(result["error"].as_str().unwrap().contains("cancelled"));
+        assert!(ws.gmail_credentials().unwrap().is_none());
     }
 
     #[cfg(windows)]
