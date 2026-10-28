@@ -467,6 +467,28 @@ fn a_required_custom_control_is_reported_alongside_native_fields() {
         );
     }
     assert!(live.walls.iter().all(|w| !w.contains("Hidden question")));
+    let editor = live
+        .schema
+        .fields
+        .iter()
+        .find(|f| f.label == "Relevant experience")
+        .expect("plain editor is a reviewable field");
+    assert_eq!(
+        editor.field_type,
+        waypoint_applications::form_mapping::FormFieldType::TextArea
+    );
+    assert!(editor.required);
+    let command = waypoint_applications::form_mapping::BrowserCommand::Fill {
+        selector: editor.selector.clone(),
+        value: waypoint_applications::form_mapping::PacketValue::Text(
+            "Fictional experience\nSecond line".into(),
+        ),
+    };
+    driver.execute(&command).unwrap();
+    driver
+        .verify_text_value(&editor.selector, "Fictional experience\nSecond line")
+        .unwrap();
+    assert!(!live.walls.iter().any(|w| w.contains("Relevant experience")));
 }
 
 #[test]

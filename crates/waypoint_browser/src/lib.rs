@@ -482,12 +482,21 @@ impl CdpDriver {
             if hidden && !matches!(tag.as_str(), "input" | "textarea" | "select") {
                 return !matches!(tag.as_str(), "script" | "style" | "noscript" | "template");
             }
+            // Only explicitly plain-text editing hosts are supported; rich editors remain manual.
+            let plain_editor = !matches!(tag.as_str(), "input" | "textarea" | "select")
+                && attrs
+                    .get("contenteditable")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only"))
+                && attrs
+                    .get("role")
+                    .is_none_or(|v| v.eq_ignore_ascii_case("textbox"));
             // Custom ARIA controls are not handled by the native-field driver.
             // Do not silently omit a required question on an otherwise readable form.
             if (attrs.contains_key("required")
                 || attrs
                     .get("aria-required")
                     .is_some_and(|value| value.eq_ignore_ascii_case("true")))
+                && !plain_editor
                 && (attrs.get("contenteditable").is_some_and(|value| {
                     matches!(
                         value.to_ascii_lowercase().as_str(),
@@ -602,7 +611,9 @@ impl CdpDriver {
             if matches!(tag.as_str(), "script" | "style" | "noscript" | "template") {
                 return false; // skip this subtree for text collection
             }
-            if matches!(tag.as_str(), "input" | "textarea" | "select") && !in_control {
+            if (matches!(tag.as_str(), "input" | "textarea" | "select") || plain_editor)
+                && !in_control
+            {
                 if node.get("nodeId").and_then(|v| v.as_u64()).is_some() {
                     let control = Control {
                         node_id: node
@@ -849,7 +860,12 @@ impl CdpDriver {
         let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
         for control in controls {
             let selector = selector_for(&control);
-            let selector = if hidden_selectors.contains(&selector) {
+            let selector = if hidden_selectors.contains(&selector)
+                || control
+                    .attrs
+                    .get("contenteditable")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only"))
+            {
                 css_paths
                     .get(&control.node_id)
                     .cloned()
@@ -1006,6 +1022,14 @@ impl CdpDriver {
                 (_, "email") => FormFieldType::Email,
                 (_, "date") => FormFieldType::Date,
                 ("textarea", _) => FormFieldType::TextArea,
+                (_, _)
+                    if control
+                        .attrs
+                        .get("contenteditable")
+                        .is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only")) =>
+                {
+                    FormFieldType::TextArea
+                }
                 _ => FormFieldType::Text,
             };
             fields.push(FormField {
@@ -1068,7 +1092,7 @@ impl CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect text field".into()))?;
-                let check = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly; }","returnByValue":true})).map_err(derr)?;
+                let check = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly || this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true'); }","returnByValue":true})).map_err(derr)?;
                 if check.get("exceptionDetails").is_some()
                     || check.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1082,6 +1106,12 @@ impl CdpDriver {
                 self.cdp
                     .call("DOM.focus", json!({ "nodeId": node }))
                     .map_err(derr)?;
+                let focus = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return document.activeElement === this; }","returnByValue":true})).map_err(derr)?;
+                if focus.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
+                    return Err(DriverError(
+                        "Text field did not receive focus; review it manually".into(),
+                    ));
+                }
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
@@ -1089,7 +1119,7 @@ impl CdpDriver {
                 self.cdp
                     .call("Input.insertText", json!({ "text": t }))
                     .map_err(derr)?;
-                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid; }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
+                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' ? this.isContentEditable && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1426,7 +1456,7 @@ impl BrowserDriver for CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' ? this.isContentEditable && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
