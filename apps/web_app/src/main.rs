@@ -607,6 +607,27 @@ fn template_suggestion_inputs(
     })
 }
 
+fn rehearse_saved_gmail(ws: &mut Workspace, body: &Value) -> Result<Value, String> {
+    let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+        .map_err(|e| e.to_string())?;
+    let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+    let approval = body["approval_id"].as_str().ok_or("missing approval")?;
+    let (review, packet) = attempt_record::load_gmail_review(ws, &id, attempt)?;
+    if application_email::connected_sender(ws)? != review.sender {
+        return Err("The connected Gmail account changed; prepare a new packet".into());
+    }
+    let rehearsal = random_id()?;
+    let timestamp = now();
+    packet.rehearse(ws, &id, approval, &rehearsal, timestamp)?;
+    let bytes = application_email::rehearse_smtp(&packet)?;
+    let recorded =
+        attempt_record::record_email_rehearsal(ws, &id, attempt, &rehearsal, timestamp, bytes)
+            .is_ok();
+    Ok(
+        json!({"simulated":true,"sent":false,"approval_consumed":false,"smtp_bytes_simulated":bytes,"record_saved":recorded}),
+    )
+}
+
 fn approve_saved_gmail(ws: &mut Workspace, body: &Value) -> Result<Value, String> {
     if body["reviewed"].as_bool() != Some(true) {
         return Err("Explicit review is required".into());
@@ -1645,6 +1666,9 @@ fn serve(
         }
         "/api/gmail/approve-application" => {
             json_reply(stream, "200 OK", approve_saved_gmail(ws, &body)?);
+        }
+        "/api/gmail/rehearse-application" => {
+            json_reply(stream, "200 OK", rehearse_saved_gmail(ws, &body)?);
         }
         "/api/email-answer/start" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
@@ -3204,10 +3228,17 @@ mod tests {
         assert!(approve_saved_gmail(&mut ws, &request).is_err());
         let fresh = attempt_record::gmail_review(&ws, &job, attempt_id).unwrap();
         let fresh_request = json!({"id":"fictional-email","attempt_id":attempt_id,"mime_sha256":fresh["mime_sha256"],"context_sha256":fresh["context_sha256"],"reviewed":true});
-        assert_eq!(
-            approve_saved_gmail(&mut ws, &fresh_request).unwrap()["sent"],
-            false
-        );
+        let approval = approve_saved_gmail(&mut ws, &fresh_request).unwrap();
+        assert_eq!(approval["sent"], false);
+        let rehearsal_request = json!({"id":"fictional-email","attempt_id":attempt_id,"approval_id":approval["approval_id"]});
+        for _ in 0..2 {
+            let rehearsal = rehearse_saved_gmail(&mut ws, &rehearsal_request).unwrap();
+            assert_eq!(rehearsal["simulated"], true);
+            assert_eq!(rehearsal["sent"], false);
+            assert_eq!(rehearsal["approval_consumed"], false);
+            assert_eq!(rehearsal["record_saved"], true);
+        }
+        assert!(ws.email_handoff_history(&job).unwrap().0.is_empty());
         attempt_record::record_email_outcome(
             &ws,
             &job,

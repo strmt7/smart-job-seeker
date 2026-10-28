@@ -196,6 +196,23 @@ impl Store {
         &mut self,
         reservation: &EmailHandoffReservation<'_>,
     ) -> Result<(), String> {
+        self.check_or_reserve_email_handoff(reservation, false)
+    }
+
+    /// Run the complete reservation transaction and roll it back. This does
+    /// not consume approval or guarantee that a later real handoff will pass.
+    pub fn rehearse_email_handoff(
+        &mut self,
+        reservation: &EmailHandoffReservation<'_>,
+    ) -> Result<(), String> {
+        self.check_or_reserve_email_handoff(reservation, true)
+    }
+
+    fn check_or_reserve_email_handoff(
+        &mut self,
+        reservation: &EmailHandoffReservation<'_>,
+        rehearsal: bool,
+    ) -> Result<(), String> {
         if [reservation.id, reservation.approval_id]
             .iter()
             .any(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
@@ -240,7 +257,11 @@ impl Store {
             params![reservation.id, reservation.created_at],
         )
         .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())
+        if rehearsal {
+            tx.rollback().map_err(|e| e.to_string())
+        } else {
+            tx.commit().map_err(|e| e.to_string())
+        }
     }
 
     /// Only record NotSent when the transport proves DATA was never handed off.

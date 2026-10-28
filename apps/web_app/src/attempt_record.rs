@@ -65,6 +65,26 @@ pub fn record_email_reconciliation(
     )
 }
 
+pub fn record_email_rehearsal(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    rehearsal: &str,
+    timestamp: i64,
+    bytes: usize,
+) -> Result<(), String> {
+    if rehearsal.len() != 32 || !rehearsal.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid rehearsal identity".into());
+    }
+    record_email_file(
+        ws,
+        job,
+        attempt,
+        &format!("email-rehearsal-{rehearsal}.json"),
+        &json!({"rehearsal_id":rehearsal,"recorded_at":timestamp,"simulated":true,"email_sent":false,"smtp_bytes_simulated":bytes,"note":"No network connection was opened; a later send must recheck all conditions."}),
+    )
+}
+
 fn record_email_file(
     ws: &Workspace,
     job: &JobIdentityId,

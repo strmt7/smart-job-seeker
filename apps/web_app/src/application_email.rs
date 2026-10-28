@@ -7,6 +7,44 @@ use waypoint_store::email_handoff::EmailHandoffOutcome;
 use waypoint_workspace::{email_handoff::ReviewedEmail, Workspace};
 use zeroize::{Zeroize, Zeroizing};
 
+/// Exercise the SMTP protocol formatter entirely in memory. This object has no
+/// socket, DNS, credentials or external transport.
+pub fn rehearse_smtp(packet: &PreparedApplicationEmail) -> Result<usize, String> {
+    struct Offline {
+        replies: std::io::Cursor<&'static [u8]>,
+        written: usize,
+    }
+    impl std::io::Read for Offline {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            std::io::Read::read(&mut self.replies, b)
+        }
+    }
+    impl std::io::Write for Offline {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.written = self
+                .written
+                .checked_add(b.len())
+                .ok_or_else(|| std::io::Error::other("rehearsal byte count overflow"))?;
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut offline = Offline {
+        replies: std::io::Cursor::new(b"250 ok\r\n250 ok\r\n354 go\r\n250 accepted\r\n"),
+        written: 0,
+    };
+    crate::smtp_handoff::handoff(
+        &mut offline,
+        &packet.sender,
+        &packet.recipient,
+        &packet.mime,
+    )
+    .map_err(|_| "The saved packet cannot be framed for SMTP")?;
+    Ok(offline.written)
+}
+
 #[derive(Deserialize)]
 pub(crate) struct Credentials {
     auth_type: String,
@@ -102,6 +140,16 @@ impl PreparedApplicationEmail {
             now,
             explicit_user_gesture,
         )
+    }
+    pub fn rehearse(
+        &self,
+        ws: &mut Workspace,
+        job: &JobIdentityId,
+        approval_id: &str,
+        rehearsal_id: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        ws.rehearse_reviewed_email(job, approval_id, rehearsal_id, &self.reviewed(), now)
     }
     fn handoff_with<F>(
         &self,

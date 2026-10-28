@@ -95,6 +95,29 @@ impl Workspace {
         })
     }
 
+    /// Check the same reservation gates without spending approval or sending.
+    pub fn rehearse_reviewed_email(
+        &mut self,
+        job: &JobIdentityId,
+        approval_id: &str,
+        rehearsal_id: &str,
+        email: &ReviewedEmail<'_>,
+        now: i64,
+    ) -> Result<(), String> {
+        let digest = digests(email)?;
+        let context = self.email_review_context(job)?;
+        self.store.rehearse_email_handoff(&EmailHandoffReservation {
+            id: rehearsal_id,
+            job_id: job,
+            approval_id,
+            message_hash: &digest.message,
+            sender_hash: &digest.sender,
+            recipient_hash: &digest.recipient,
+            context_hash: &context,
+            created_at: now,
+        })
+    }
+
     /// Persist the one observed outcome. Failure leaves the durable reservation
     /// unresolved; it must not cause the transport to be invoked again.
     pub fn finish_reviewed_email(
