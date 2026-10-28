@@ -164,10 +164,18 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE job_capture_metadata(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_metadata BLOB NOT NULL);
      CREATE TABLE job_capture_segments(job_id TEXT NOT NULL REFERENCES jobs(id), sequence INTEGER NOT NULL, sealed_png BLOB NOT NULL, PRIMARY KEY(job_id,sequence));
      UPDATE meta SET value='15' WHERE key='schema_version';",
+    // v16 — email handoff reservations and immutable outcome history.
+    "CREATE TABLE email_handoffs(id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), approval_id TEXT NOT NULL UNIQUE, message_hash TEXT NOT NULL, sender_hash TEXT NOT NULL, recipient_hash TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('reserved','accepted','uncertain','not_sent')), created_at INTEGER NOT NULL);
+     CREATE UNIQUE INDEX email_handoff_active_job ON email_handoffs(job_id) WHERE state IN ('reserved','accepted','uncertain');
+     CREATE TABLE email_handoff_events(seq INTEGER PRIMARY KEY AUTOINCREMENT, handoff_id TEXT NOT NULL REFERENCES email_handoffs(id), state TEXT NOT NULL, timestamp INTEGER NOT NULL);
+     CREATE TRIGGER email_handoff_events_no_update BEFORE UPDATE ON email_handoff_events BEGIN SELECT RAISE(ABORT, 'email handoff history is append-only'); END;
+     CREATE TRIGGER email_handoff_events_no_delete BEFORE DELETE ON email_handoff_events BEGIN SELECT RAISE(ABORT, 'email handoff history is append-only'); END;
+     UPDATE meta SET value='16' WHERE key='schema_version';",
 ];
 
 pub mod documents;
 pub mod duplicates;
+pub mod email_handoff;
 pub mod fit_assessments;
 pub mod job_capture;
 pub mod mail_credentials;
