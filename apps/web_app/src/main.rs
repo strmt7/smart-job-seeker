@@ -1232,12 +1232,8 @@ fn serve(
                 Some((job_id, result, review)) => {
                     if review {
                         let job_id = JobIdentityId::new(&job_id).map_err(|e| e.to_string())?;
-                        ws.mark_manual_review(
-                            &job_id,
-                            "Application page needs manual review",
-                            now(),
-                        )
-                        .map_err(|e| e.to_string())?;
+                        ws.mark_manual_review(&job_id, &result, now())
+                            .map_err(|e| e.to_string())?;
                     }
                     json_reply(
                         stream,

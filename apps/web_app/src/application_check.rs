@@ -76,12 +76,16 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let result = (|| -> Result<(String, bool), String> {
-            let mut browser =
-                waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
-            let mut page = browser.open(&url).map_err(|e| e.to_string())?;
+            let mut browser = waypoint_browser::CdpDriver::launch(vec![])
+                .map_err(|_| "The local browser could not start.")?;
+            let mut page = browser
+                .open(&url)
+                .map_err(|_| "The listing page could not be opened or inspected.")?;
             let mut followed = false;
             if page.walls.is_empty() {
-                let current = browser.current_url().map_err(|e| e.to_string())?;
+                let current = browser
+                    .current_url()
+                    .map_err(|_| "The listing destination could not be checked.")?;
                 let original = Url::parse(&url).map_err(|e| e.to_string())?;
                 let reached = Url::parse(&current).map_err(|e| e.to_string())?;
                 if original.origin() != reached.origin() {
@@ -91,11 +95,17 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                         true,
                     ));
                 }
-                let links = browser.application_links().map_err(|e| e.to_string())?;
+                let links = browser
+                    .application_links()
+                    .map_err(|_| "Application links could not be inspected.")?;
                 if let Some(destination) = application_destination(&current, &links) {
-                    page = browser.open(&destination).map_err(|e| e.to_string())?;
+                    page = browser
+                        .open(&destination)
+                        .map_err(|_| "The application link could not be opened or inspected.")?;
                     followed = true;
-                    let final_url = browser.current_url().map_err(|e| e.to_string())?;
+                    let final_url = browser
+                        .current_url()
+                        .map_err(|_| "The application destination could not be checked.")?;
                     let final_origin = Url::parse(&final_url).map_err(|e| e.to_string())?.origin();
                     if final_origin != original.origin() {
                         return Ok(("The application link redirected to another site; review the destination manually.".into(), true));
@@ -116,12 +126,8 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 Ok(classify_fields(page.schema.fields.len(), followed))
             }
         })();
-        let message = result.unwrap_or_else(|_| {
-            (
-                "Page could not be checked; manual review needed.".into(),
-                true,
-            )
-        });
+        let message =
+            result.unwrap_or_else(|error| (format!("{error} Manual review needed."), true));
         let _ = sender.send(message);
     });
     *task = Some(Task {
