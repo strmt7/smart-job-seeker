@@ -175,7 +175,10 @@ mod tests {
             "abc123",
         )
         .unwrap();
-        packet.approve(&mut ws, &job, "approval", 1, true).unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        packet
+            .approve(&mut ws, &job, "approval", 1, true, false)
+            .unwrap();
         let (release, wait) = mpsc::channel();
         start_with(
             &mut ws,

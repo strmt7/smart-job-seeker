@@ -137,6 +137,9 @@ pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Resul
     let mut value =
         serde_json::to_value(review).map_err(|_| "Cannot display saved Gmail review")?;
     value["context_sha256"] = json!(ws.email_review_context(job)?.as_str());
+    let (total, pending, bounded, missing_employer) =
+        ws.duplicate_coverage_counts().map_err(|e| e.to_string())?;
+    value["duplicate_coverage"] = json!({"total":total,"pending":pending,"bounded":bounded,"missing_employer":missing_employer});
     Ok(value)
 }
 

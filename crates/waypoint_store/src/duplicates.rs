@@ -214,6 +214,13 @@ impl Store {
     pub fn duplicate_coverage_counts(&self) -> rusqlite::Result<(u64, u64, u64, u64)> {
         self.conn.query_row("SELECT COUNT(*), SUM(CASE WHEN c.job_id IS NULL OR i.job_id IS NULL THEN 1 ELSE 0 END), SUM(CASE WHEN c.status='bounded' AND i.job_id IS NOT NULL THEN 1 ELSE 0 END), SUM(CASE WHEN c.status='missing_employer' AND i.job_id IS NOT NULL THEN 1 ELSE 0 END) FROM jobs j LEFT JOIN job_duplicate_coverage c ON c.job_id=j.id LEFT JOIN job_employer_indexed i ON i.job_id=j.id", [], |row| Ok((row.get(0)?, row.get::<_, Option<u64>>(1)?.unwrap_or(0), row.get::<_, Option<u64>>(2)?.unwrap_or(0), row.get::<_, Option<u64>>(3)?.unwrap_or(0))))
     }
+    pub fn duplicate_coverage_revision(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key='duplicate_coverage_revision'",
+            [],
+            |row| row.get(0),
+        )
+    }
 
     /// Gather bounded, undecided neighbors sharing employer tokens; no title threshold.
     pub fn duplicate_neighbors(&self, id: &str) -> rusqlite::Result<(Vec<StoredJob>, bool)> {

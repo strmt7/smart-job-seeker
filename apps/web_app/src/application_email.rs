@@ -132,6 +132,7 @@ impl PreparedApplicationEmail {
         approval_id: &str,
         now: i64,
         explicit_user_gesture: bool,
+        acknowledge_incomplete_coverage: bool,
     ) -> Result<(), String> {
         ws.approve_reviewed_email(
             job,
@@ -139,6 +140,7 @@ impl PreparedApplicationEmail {
             &self.reviewed(),
             now,
             explicit_user_gesture,
+            acknowledge_incomplete_coverage,
         )
     }
     pub fn rehearse(
@@ -271,7 +273,10 @@ mod tests {
             "abc123",
         )
         .unwrap();
-        packet.approve(&mut ws, &job, "approval", 1, true).unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        packet
+            .approve(&mut ws, &job, "approval", 1, true, false)
+            .unwrap();
         let mut server = Server {
             responses: std::io::Cursor::new(
                 b"250 ok\r\n250 ok\r\n354 go\r\n250 accepted\r\n".to_vec(),

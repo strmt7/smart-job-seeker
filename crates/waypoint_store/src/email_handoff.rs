@@ -6,6 +6,10 @@ use waypoint_domain::{ApplicationState, JobIdentityId, Sha256Digest};
 
 const MAX_RELATED_JOBS: usize = 500;
 
+fn coverage_flags(tx: &rusqlite::Transaction<'_>) -> Result<(bool, bool), String> {
+    tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs j LEFT JOIN job_employer_indexed i ON i.job_id=j.id LEFT JOIN job_duplicate_coverage c ON c.job_id=j.id WHERE i.job_id IS NULL OR c.job_id IS NULL), EXISTS(SELECT 1 FROM job_duplicate_coverage WHERE status IN ('bounded','missing_employer'))", [], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|e| e.to_string())
+}
+
 // Confirmed duplicate links form a graph, not necessarily a star. Fail closed
 // if its size or an unresolved edge prevents a complete bounded check.
 fn check_related_jobs(tx: &rusqlite::Transaction<'_>, target: &str) -> Result<(), String> {
@@ -92,6 +96,7 @@ pub struct EmailHandoffApproval<'a> {
     pub context_hash: &'a Sha256Digest,
     pub created_at: i64,
     pub explicit_user_gesture: bool,
+    pub acknowledge_incomplete_coverage: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,18 +181,44 @@ impl Store {
         {
             return Err("An explicit user approval is required".into());
         }
-        let job = self
-            .get_job(approval.job_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("Job not found")?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let state: Option<String> = tx
+            .query_row(
+                "SELECT state FROM jobs WHERE id=?1",
+                [approval.job_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let state: Option<ApplicationState> =
+            state.and_then(|state| serde_json::from_str(&state).ok());
         if !matches!(
-            job.state,
-            ApplicationState::Shortlisted | ApplicationState::Prepared
+            state,
+            Some(ApplicationState::Shortlisted | ApplicationState::Prepared)
         ) {
             return Err("Job is not eligible for email approval".into());
         }
-        self.conn.execute("INSERT INTO email_handoff_approvals(id,job_id,message_hash,sender_hash,recipient_hash,created_at,context_hash) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![approval.id, approval.job_id.as_str(), approval.message_hash.as_str(), approval.sender_hash.as_str(), approval.recipient_hash.as_str(), approval.created_at, approval.context_hash.as_str()]).map_err(|e| format!("Cannot save email approval: {e}"))?;
-        Ok(())
+        let (pending, incomplete) = coverage_flags(&tx)?;
+        if pending {
+            return Err("Duplicate indexing is still pending; review after it finishes".into());
+        }
+        if incomplete && !approval.acknowledge_incomplete_coverage {
+            return Err(
+                "Review and acknowledge the incomplete duplicate comparison coverage".into(),
+            );
+        }
+        let revision: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='duplicate_coverage_revision'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        tx.execute("INSERT INTO email_handoff_approvals(id,job_id,message_hash,sender_hash,recipient_hash,created_at,context_hash,coverage_revision,coverage_ack) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![approval.id, approval.job_id.as_str(), approval.message_hash.as_str(), approval.sender_hash.as_str(), approval.recipient_hash.as_str(), approval.created_at, approval.context_hash.as_str(),revision,approval.acknowledge_incomplete_coverage]).map_err(|e| format!("Cannot save email approval: {e}"))?;
+        tx.commit().map_err(|e| e.to_string())
     }
 
     /// Consume the matching one-use approval and reserve before any external
@@ -244,7 +275,11 @@ impl Store {
             return Err("Review duplicate jobs or an existing email handoff first".into());
         }
         check_related_jobs(&tx, reservation.job_id.as_str())?;
-        let consumed = tx.execute("UPDATE email_handoff_approvals SET consumed=1 WHERE id=?1 AND job_id=?2 AND message_hash=?3 AND sender_hash=?4 AND recipient_hash=?5 AND consumed=0 AND created_at<=?6 AND created_at>=?7 AND context_hash=?8", params![reservation.approval_id,reservation.job_id.as_str(),reservation.message_hash.as_str(),reservation.sender_hash.as_str(),reservation.recipient_hash.as_str(),reservation.created_at,reservation.created_at.saturating_sub(600),reservation.context_hash.as_str()]).map_err(|e| e.to_string())?;
+        let (pending, incomplete) = coverage_flags(&tx)?;
+        if pending {
+            return Err("Duplicate indexing is still pending; review after it finishes".into());
+        }
+        let consumed = tx.execute("UPDATE email_handoff_approvals SET consumed=1 WHERE id=?1 AND job_id=?2 AND message_hash=?3 AND sender_hash=?4 AND recipient_hash=?5 AND consumed=0 AND created_at<=?6 AND created_at>=?7 AND context_hash=?8 AND coverage_revision=(SELECT CAST(value AS INTEGER) FROM meta WHERE key='duplicate_coverage_revision') AND (?9=0 OR coverage_ack=1)", params![reservation.approval_id,reservation.job_id.as_str(),reservation.message_hash.as_str(),reservation.sender_hash.as_str(),reservation.recipient_hash.as_str(),reservation.created_at,reservation.created_at.saturating_sub(600),reservation.context_hash.as_str(),incomplete]).map_err(|e| e.to_string())?;
         if consumed != 1 {
             return Err(
                 "Email approval is missing, expired, spent or does not match the reviewed message"
@@ -323,6 +358,22 @@ impl Store {
 mod tests {
     use super::*;
     use crate::StoredJob;
+    fn mark_indexed(store: &Store, id: &JobIdentityId, status: &str) {
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,?2,0)",
+                params![id.as_str(), status],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
+                [id.as_str()],
+            )
+            .unwrap();
+    }
     #[test]
     fn reservation_survives_restart_and_prevents_duplicate_handoff() {
         let path = std::env::temp_dir().join(format!(
@@ -373,33 +424,53 @@ mod tests {
                 context_hash: &digest,
                 created_at: 1,
                 explicit_user_gesture: false,
+                acknowledge_incomplete_coverage: false,
             };
             assert!(store.approve_email_handoff(&approval).is_err());
             approval.explicit_user_gesture = true;
+            assert!(store.approve_email_handoff(&approval).is_err()); // Index pending.
+            mark_indexed(&store, &job, "bounded");
+            assert!(store.approve_email_handoff(&approval).is_err()); // Acknowledgement required.
+            approval.acknowledge_incomplete_coverage = true;
+            store.approve_email_handoff(&approval).unwrap();
+            store
+                .rehearse_email_handoff(&reservation("rehearsal", "approval-one"))
+                .unwrap();
+            store
+                .conn
+                .execute(
+                    "UPDATE job_duplicate_coverage SET status='complete' WHERE job_id=?1",
+                    [job.as_str()],
+                )
+                .unwrap();
+            assert!(store
+                .rehearse_email_handoff(&reservation("stale", "approval-one"))
+                .is_err());
+            approval.id = "approval-fresh";
             store.approve_email_handoff(&approval).unwrap();
             let changed = Sha256Digest::of("changed recipient");
-            let mut mismatched = reservation("one", "approval-one");
+            let mut mismatched = reservation("one", "approval-fresh");
             mismatched.recipient_hash = &changed;
             assert!(store.reserve_email_handoff(&mismatched).is_err());
-            let mut expired = reservation("one", "approval-one");
+            let mut expired = reservation("one", "approval-fresh");
             expired.created_at = 602;
             assert!(store.reserve_email_handoff(&expired).is_err());
             let unspent: i64 = store
                 .conn
                 .query_row(
-                    "SELECT consumed FROM email_handoff_approvals WHERE id='approval-one'",
+                    "SELECT consumed FROM email_handoff_approvals WHERE id='approval-fresh'",
                     [],
                     |row| row.get(0),
                 )
                 .unwrap();
             assert_eq!(unspent, 0);
             store
-                .reserve_email_handoff(&reservation("one", "approval-one"))
+                .reserve_email_handoff(&reservation("one", "approval-fresh"))
                 .unwrap();
             let spent: i64 = store
                 .conn
                 .query_row(
-                    "SELECT consumed FROM email_handoff_approvals WHERE id='approval-one'",
+                    "SELECT consumed FROM email_handoff_approvals WHERE id='approval-fresh'",
                     [],
                     |row| row.get(0),
                 )
@@ -422,6 +493,7 @@ mod tests {
             let mut independent_job = store.get_job(&job).unwrap().unwrap();
             independent_job.id = independent.clone();
             store.upsert_job(&independent_job).unwrap();
+            mark_indexed(&store, &independent, "complete");
             store
                 .approve_email_handoff(&EmailHandoffApproval {
                     id: "independent-approval",
@@ -432,6 +504,7 @@ mod tests {
                     context_hash: &digest,
                     created_at: 1,
                     explicit_user_gesture: true,
+                    acknowledge_incomplete_coverage: false,
                 })
                 .unwrap();
             let conflicting_id = EmailHandoffReservation {
@@ -481,6 +554,7 @@ mod tests {
             let mut copy = store.get_job(&job).unwrap().unwrap();
             copy.id = other.clone();
             store.upsert_job(&copy).unwrap();
+            mark_indexed(&store, &other, "complete");
             store.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status,preferred_job) VALUES(?1,?2,100,'fixture','same',?2)", params![job.as_str(), other.as_str()]).unwrap();
             let related = EmailHandoffReservation {
                 id: "related",
@@ -502,6 +576,7 @@ mod tests {
                     context_hash: &digest,
                     created_at: 1,
                     explicit_user_gesture: true,
+                    acknowledge_incomplete_coverage: false,
                 })
                 .unwrap();
             assert!(store.reserve_email_handoff(&related).is_err());
@@ -509,6 +584,7 @@ mod tests {
             let mut third_job = store.get_job(&other).unwrap().unwrap();
             third_job.id = third.clone();
             store.upsert_job(&third_job).unwrap();
+            mark_indexed(&store, &third, "complete");
             store.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status,preferred_job) VALUES(?1,?2,100,'fixture','same',?2)", params![other.as_str(), third.as_str()]).unwrap();
             store
                 .approve_email_handoff(&EmailHandoffApproval {
@@ -520,6 +596,7 @@ mod tests {
                     context_hash: &digest,
                     created_at: 1,
                     explicit_user_gesture: true,
+                    acknowledge_incomplete_coverage: false,
                 })
                 .unwrap();
             let transitive = EmailHandoffReservation {

@@ -200,6 +200,21 @@ const MIGRATIONS: &[&str] = &[
      CREATE TRIGGER duplicate_coverage_description_update AFTER UPDATE ON job_descriptions WHEN OLD.content IS NOT NEW.content BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=NEW.job_id; DELETE FROM job_employer_indexed WHERE job_id=NEW.job_id; END;
      CREATE TRIGGER duplicate_coverage_description_delete AFTER DELETE ON job_descriptions BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=OLD.job_id; DELETE FROM job_employer_indexed WHERE job_id=OLD.job_id; END;
      UPDATE meta SET value='20' WHERE key='schema_version';",
+    // v21 — bind email approval to duplicate-comparison coverage.
+    "ALTER TABLE email_handoff_approvals ADD COLUMN coverage_revision INTEGER NOT NULL DEFAULT -1;
+     ALTER TABLE email_handoff_approvals ADD COLUMN coverage_ack INTEGER NOT NULL DEFAULT 0 CHECK(coverage_ack IN (0,1));
+     INSERT INTO meta(key,value) VALUES('duplicate_coverage_revision','0');
+     CREATE TRIGGER duplicate_epoch_coverage_insert AFTER INSERT ON job_duplicate_coverage BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_coverage_update AFTER UPDATE ON job_duplicate_coverage BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_coverage_delete AFTER DELETE ON job_duplicate_coverage BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_index_insert AFTER INSERT ON job_employer_indexed BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_index_delete AFTER DELETE ON job_employer_indexed BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_pair_insert AFTER INSERT ON possible_duplicates BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_pair_update AFTER UPDATE ON possible_duplicates BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_pair_delete AFTER DELETE ON possible_duplicates BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_job_insert AFTER INSERT ON jobs BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     CREATE TRIGGER duplicate_epoch_job_delete AFTER DELETE ON jobs BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='duplicate_coverage_revision'; END;
+     UPDATE meta SET value='21' WHERE key='schema_version';",
 ];
 
 pub mod documents;

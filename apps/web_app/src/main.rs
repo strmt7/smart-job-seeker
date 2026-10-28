@@ -654,7 +654,14 @@ fn approve_saved_gmail(ws: &mut Workspace, body: &Value) -> Result<Value, String
         return Err("Review possible duplicate jobs before approving".into());
     }
     let approval = random_id()?;
-    packet.approve(ws, &id, &approval, now(), true)?;
+    packet.approve(
+        ws,
+        &id,
+        &approval,
+        now(),
+        true,
+        body["acknowledge_incomplete_duplicates"].as_bool() == Some(true),
+    )?;
     Ok(json!({"approval_id":approval,"expires_in_seconds":600,"sent":false}))
 }
 
@@ -3200,6 +3207,7 @@ mod tests {
             ws.add_document("fixture-pdf", "resume.pdf", b"%PDF-fictional", 1)
                 .unwrap();
             ws.save_gmail_credentials(&serde_json::to_vec(&json!({"auth_type":"app_password","email":"fictional@gmail.com","password":"abcdefghijklmnop"})).unwrap()).unwrap();
+            ws.index_next_duplicate_job("").unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             if let Err(error) = serve(&mut stream, &mut ws, &mut None, "test-token", port) {
                 json_reply(&mut stream, "400 Bad Request", json!({"error":error}));

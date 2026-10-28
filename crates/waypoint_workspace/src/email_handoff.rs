@@ -47,7 +47,15 @@ impl Workspace {
         let mut facts = self.facts().map_err(|e| e.to_string())?;
         facts.sort_by(|a, b| a.id.cmp(&b.id));
         let facts: Vec<_> = facts.into_iter().map(|fact| serde_json::json!({"id":fact.id,"revision":fact.profile_revision,"text":fact.text,"status":format!("{:?}",fact.status),"source":format!("{:?}",fact.source_kind),"requires_review":fact.requires_review})).collect();
-        Ok(Sha256Digest::of(&serde_json::json!({"job":job_data,"description":description,"profile":profile,"facts":facts}).to_string()))
+        let coverage = self
+            .store
+            .duplicate_coverage_counts()
+            .map_err(|e| e.to_string())?;
+        let revision = self
+            .store
+            .duplicate_coverage_revision()
+            .map_err(|e| e.to_string())?;
+        Ok(Sha256Digest::of(&serde_json::json!({"job":job_data,"description":description,"profile":profile,"facts":facts,"duplicate_coverage":coverage,"duplicate_coverage_revision":revision}).to_string()))
     }
     /// The caller must present the exact email and receive a user gesture.
     pub fn approve_reviewed_email(
@@ -57,6 +65,7 @@ impl Workspace {
         email: &ReviewedEmail<'_>,
         now: i64,
         explicit_user_gesture: bool,
+        acknowledge_incomplete_coverage: bool,
     ) -> Result<(), String> {
         let digest = digests(email)?;
         let context = self.email_review_context(job)?;
@@ -69,6 +78,7 @@ impl Workspace {
             context_hash: &context,
             created_at: now,
             explicit_user_gesture,
+            acknowledge_incomplete_coverage,
         })
     }
 
@@ -184,12 +194,13 @@ mod tests {
         ws.test_insert_job("fact-fixture", "Role", "Fixture");
         let job = JobIdentityId::new("fact-fixture").unwrap();
         ws.set_state(&job, ApplicationState::Shortlisted).unwrap();
+        ws.index_next_duplicate_job("").unwrap();
         let email = ReviewedEmail {
             sender: "sender@example.invalid",
             recipient: "recipient@example.invalid",
             mime: b"Subject: Fixture\r\n\r\nHi\r\n",
         };
-        ws.approve_reviewed_email(&job, "fact-approval", &email, 1, true)
+        ws.approve_reviewed_email(&job, "fact-approval", &email, 1, true, false)
             .unwrap();
         ws.add_fact("Fictional qualification", crate::FactOrigin::UserAttested)
             .unwrap();
@@ -210,6 +221,7 @@ mod tests {
         ws.test_insert_job("fixture", "Role", "Fixture");
         let job = JobIdentityId::new("fixture").unwrap();
         ws.set_state(&job, ApplicationState::Shortlisted).unwrap();
+        ws.index_next_duplicate_job("").unwrap();
         ws.save_candidate_profile("{\"name\":\"Initial\"}").unwrap();
         let email = ReviewedEmail {
             sender: "sender@example.invalid",
@@ -217,9 +229,9 @@ mod tests {
             mime: b"Subject: Fixture\r\n\r\nHi\r\n",
         };
         assert!(ws
-            .approve_reviewed_email(&job, "approval", &email, 1, false)
+            .approve_reviewed_email(&job, "approval", &email, 1, false, false)
             .is_err());
-        ws.approve_reviewed_email(&job, "approval", &email, 1, true)
+        ws.approve_reviewed_email(&job, "approval", &email, 1, true, false)
             .unwrap();
         ws.save_candidate_profile("{\"name\":\"Changed\"}").unwrap();
         assert!(ws
@@ -233,7 +245,7 @@ mod tests {
                 "old approval must remain invalidated"
             ))
             .is_err());
-        ws.approve_reviewed_email(&job, "fresh-approval", &email, 1, true)
+        ws.approve_reviewed_email(&job, "fresh-approval", &email, 1, true, false)
             .unwrap();
         let changed = ReviewedEmail {
             recipient: "other@example.invalid",
