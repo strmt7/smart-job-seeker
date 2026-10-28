@@ -39,6 +39,12 @@ impl std::fmt::Display for DriverError {
 
 impl std::error::Error for DriverError {}
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PageLink {
+    pub url: String,
+    pub label: String,
+}
+
 pub trait BrowserDriver {
     /// Open the destination and describe the live form.
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError>;
@@ -57,7 +63,7 @@ pub trait BrowserDriver {
         Err(DriverError("Application links are unavailable".into()))
     }
     /// Return a bounded list of page anchor destinations for explicit user review.
-    fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+    fn page_links(&mut self) -> Result<Vec<PageLink>, DriverError> {
         Err(DriverError("Page links are unavailable".into()))
     }
     /// Verify a text-like field after other form commands have run.

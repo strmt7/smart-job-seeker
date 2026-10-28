@@ -157,7 +157,9 @@ impl CdpDriver {
         Ok(application_links_from_document(&self.document()?))
     }
     /// Read bounded anchor destinations without clicking or executing script.
-    pub fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+    pub fn page_links(
+        &mut self,
+    ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
         let root = self.document()?;
         let mut links = Vec::new();
         walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
@@ -167,12 +169,38 @@ impl CdpDriver {
                     .and_then(Value::as_str)
                     .is_some_and(|tag| tag.eq_ignore_ascii_case("a"))
             {
-                if let Some(href) = attributes(node)
+                let attrs = attributes(node);
+                if let Some(href) = attrs
                     .get("href")
                     .filter(|href| !href.trim().is_empty() && href.len() <= 2048)
                 {
-                    if links.len() < 200 && !links.contains(href) {
-                        links.push(href.clone());
+                    if links.len() < 200
+                        && !links
+                            .iter()
+                            .any(|link: &waypoint_applications::driver::PageLink| link.url == *href)
+                    {
+                        let mut label = String::new();
+                        if attrs.contains_key("aria-labelledby") {
+                            label.push_str("Label unavailable");
+                        } else if let Some(aria) = attrs
+                            .get("aria-label")
+                            .filter(|value| !value.trim().is_empty())
+                        {
+                            label.push_str(aria);
+                        } else {
+                            collect_text(node, false, &mut label);
+                        }
+                        let label: String = label
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .chars()
+                            .take(200)
+                            .collect();
+                        links.push(waypoint_applications::driver::PageLink {
+                            url: href.clone(),
+                            label,
+                        });
                     }
                 }
             }
@@ -1434,7 +1462,7 @@ impl BrowserDriver for CdpDriver {
         CdpDriver::application_links(self)
     }
 
-    fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+    fn page_links(&mut self) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
         CdpDriver::page_links(self)
     }
 

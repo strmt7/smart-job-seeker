@@ -60,25 +60,40 @@ pub fn check_job_and_destination(
 }
 
 pub fn candidates(driver: &mut dyn BrowserDriver) -> Result<Vec<String>, String> {
-    filtered_candidates(driver, false)
+    Ok(filtered_candidates(driver, false)?
+        .into_iter()
+        .map(|link| link.url)
+        .collect())
 }
 
-pub fn other_candidates(driver: &mut dyn BrowserDriver) -> Result<Vec<String>, String> {
+pub fn other_candidates(
+    driver: &mut dyn BrowserDriver,
+) -> Result<Vec<waypoint_applications::driver::PageLink>, String> {
     filtered_candidates(driver, true)
 }
 
-fn filtered_candidates(driver: &mut dyn BrowserDriver, other: bool) -> Result<Vec<String>, String> {
+fn filtered_candidates(
+    driver: &mut dyn BrowserDriver,
+    other: bool,
+) -> Result<Vec<waypoint_applications::driver::PageLink>, String> {
     let current = url::Url::parse(&driver.current_url().map_err(|e| e.to_string())?)
         .map_err(|_| "Invalid current URL")?;
     let mut result = Vec::new();
     let hrefs = if other {
-        driver.page_links()
+        driver.page_links().map_err(|e| e.to_string())?
     } else {
-        driver.application_links()
-    }
-    .map_err(|e| e.to_string())?;
-    for href in hrefs.into_iter().take(200) {
-        let Ok(mut url) = current.join(&href) else {
+        driver
+            .application_links()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|url| waypoint_applications::driver::PageLink {
+                url,
+                label: String::new(),
+            })
+            .collect()
+    };
+    for link in hrefs.into_iter().take(200) {
+        let Ok(mut url) = current.join(&link.url) else {
             continue;
         };
         url.set_fragment(None);
@@ -91,8 +106,14 @@ fn filtered_candidates(driver: &mut dyn BrowserDriver, other: bool) -> Result<Ve
             continue;
         }
         let target = url.to_string();
-        if !result.contains(&target) {
-            result.push(target);
+        if !result
+            .iter()
+            .any(|link: &waypoint_applications::driver::PageLink| link.url == target)
+        {
+            result.push(waypoint_applications::driver::PageLink {
+                url: target,
+                label: link.label,
+            });
         }
         if result.len() == if other { 30 } else { 10 } {
             break;
@@ -134,10 +155,12 @@ pub fn start(
                     }
                     let found = if allow_other {
                         other_candidates(&mut session.driver)?
+                            .iter()
+                            .any(|link| link.url == target)
                     } else {
-                        candidates(&mut session.driver)?
+                        candidates(&mut session.driver)?.contains(&target)
                     };
-                    if !found.contains(&target) {
+                    if !found {
                         return Err("The selected link changed; inspect again".into());
                     }
                     let parsed = waypoint_net::parse_url(&target).map_err(|e| e.to_string())?;
@@ -242,8 +265,17 @@ mod tests {
         fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
             Ok(self.0.clone())
         }
-        fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
-            Ok(self.0.clone())
+        fn page_links(
+            &mut self,
+        ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+            Ok(self
+                .0
+                .iter()
+                .map(|url| waypoint_applications::driver::PageLink {
+                    url: url.clone(),
+                    label: "Example".into(),
+                })
+                .collect())
         }
         fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
             panic!("candidate discovery must not fill")
@@ -259,10 +291,13 @@ mod tests {
             "/submit".into(),
             "https://127.0.0.1/apply".into(),
         ]);
+        let found = other_candidates(&mut driver).unwrap();
+        assert_eq!(found.len(), 1);
         assert_eq!(
-            other_candidates(&mut driver).unwrap(),
-            ["https://jobs.example.org/unfamiliar-application"]
+            found[0].url,
+            "https://jobs.example.org/unfamiliar-application"
         );
+        assert_eq!(found[0].label, "Example");
         let mut many = Links((0..80).map(|i| format!("/page/{i}")).collect());
         assert_eq!(other_candidates(&mut many).unwrap().len(), 30);
     }
