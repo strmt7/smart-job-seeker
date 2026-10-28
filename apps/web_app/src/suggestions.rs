@@ -10,7 +10,7 @@ use waypoint_inference::Inference;
 const MAX_FIELDS: usize = 80;
 const MAX_PROFILE_VALUE: usize = 2000;
 
-/// Conservative offline fallback: only identical normalized labels and profile keys.
+/// Conservative offline fallback using exact labels or standard autocomplete hints.
 pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<ProposedMapping>, String> {
     if schema.fields.len() > MAX_FIELDS {
         return Err("Form has too many fields for one mapping request".into());
@@ -45,10 +45,38 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
                     })
             })
             .collect();
-        let [(_, value)] = keys.as_slice() else {
+        // HTML autocomplete tokens are site-provided hints, not proof. When a
+        // label directly conflicts with a hint, leave the field for review.
+        let hint = field
+            .autocomplete
+            .as_deref()
+            .and_then(|value| value.split_ascii_whitespace().last())
+            .and_then(|token| match token.to_ascii_lowercase().as_str() {
+                "given-name" => Some("first_name"),
+                "family-name" => Some("last_name"),
+                "email" => Some("email"),
+                "tel" => Some("phone"),
+                "street-address" => Some("address"),
+                "address-level2" => Some("city"),
+                "address-level1" => Some("region"),
+                "postal-code" => Some("postal_code"),
+                "country-name" => Some("country"),
+                "url" => Some("website"),
+                _ => None,
+            });
+        let key = match (keys.as_slice(), hint) {
+            ([(key, _)], Some(hint)) if key.as_str() != hint => continue,
+            ([(key, _)], _) => key.as_str(),
+            ([], Some(hint)) => hint,
+            _ => continue,
+        };
+        let Some(value) = profile
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE)
+        else {
             continue;
         };
-        let value = value.as_str().unwrap_or_default();
         let chosen = match &field.field_type {
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => {
                 value.to_owned()
@@ -120,7 +148,7 @@ pub fn suggest(
                         | FormFieldType::Radio { .. }
                 )
         })
-        .map(|field| json!({"selector":field.selector,"label":field.label,"type":field.field_type}))
+        .map(|field| json!({"selector":field.selector,"label":field.label,"type":field.field_type,"autocomplete":field.autocomplete}))
         .collect();
     if fields.is_empty() {
         return Ok(vec![]);
@@ -373,6 +401,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    autocomplete: None,
                 },
                 FormField {
                     selector: "#visa".into(),
@@ -380,6 +409,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: true,
+                    autocomplete: None,
                 },
             ],
         }
@@ -397,6 +427,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            autocomplete: None,
         });
         let matches = suggest_exact(
             &schema,
@@ -409,6 +440,22 @@ mod tests {
         assert!(suggest_exact(&schema, &json!({"first_name":"Example"}))
             .unwrap()
             .is_empty());
+        schema.fields[0].autocomplete = Some("section-person given-name".into());
+        schema.fields[1].autocomplete = Some("email".into());
+        let matches = suggest_exact(
+            &schema,
+            &json!({"first_name":"Example","email":"example@example.invalid"}),
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].field_selector, "#candidate");
+        schema.fields[0].label = "Last name".into();
+        assert!(suggest_exact(
+            &schema,
+            &json!({"first_name":"Example","last_name":"Person"})
+        )
+        .unwrap()
+        .is_empty());
     }
     #[test]
     fn maps_labels_without_sending_candidate_values_to_model() {
@@ -440,6 +487,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            autocomplete: None,
         });
         let response = json!({"mappings":[{"selector":"#country","profile_key":"country"}]});
         let mut model = FakeInference {
@@ -495,6 +543,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            autocomplete: None,
         });
         let mapping = json!({"mappings":[{"selector":"#country","profile_key":"country"}]});
         let mut model = SequenceInference(vec![
@@ -523,6 +572,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            autocomplete: None,
         });
         let mapping = json!({"mappings":[{"selector":"#location","profile_key":"country"}]});
         let mut exact = FakeInference {

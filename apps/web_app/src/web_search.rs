@@ -188,6 +188,7 @@ mod tests {
 
     #[test]
     fn local_provider_search_runs_in_background_and_returns_candidates() {
+        let _lock = crate::web_search_batch::TEST_LOCK.lock().unwrap();
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();

@@ -10,10 +10,17 @@ struct Task {
     id: String,
     job_id: String,
     kind: String,
+    digest: String,
     result: Option<Result<Vec<u8>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
-pub fn start(id: String, job_id: String, kind: String, text: String) -> Result<(), String> {
+pub fn start(
+    id: String,
+    job_id: String,
+    kind: String,
+    text: String,
+    digest: String,
+) -> Result<(), String> {
     if !matches!(kind.as_str(), "cv" | "cover_letter") {
         return Err("Unknown document type".into());
     }
@@ -27,13 +34,14 @@ pub fn start(id: String, job_id: String, kind: String, text: String) -> Result<(
         return Err("Letter contains unsupported control characters".into());
     }
     let mut task = TASK.lock().map_err(|_| "Export state unavailable")?;
-    if task.as_ref().is_some_and(|task| task.result.is_none()) {
-        return Err("A letter export is already running".into());
+    if task.is_some() {
+        return Err("An export is running or awaiting its result".into());
     }
     *task = Some(Task {
         id: id.clone(),
         job_id,
         kind,
+        digest,
         result: None,
     });
     drop(task);
@@ -69,6 +77,16 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
             Ok(json!({"status":"failed","error":error}))
         }
         Ok(pdf) => {
+            if crate::draft_context_digest(ws, &job_id, &task.kind)
+                .ok()
+                .as_deref()
+                != Some(task.digest.as_str())
+            {
+                *tasks = None;
+                return Ok(
+                    json!({"status":"failed","error":"The job, qualifications, profile or template changed during export; draft and review again"}),
+                );
+            }
             if pdf.len() > 10 * 1024 * 1024 {
                 *tasks = None;
                 return Err("Exported PDF exceeds 10 MiB".into());
@@ -144,6 +162,67 @@ fn build_docx(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn completed_export_cannot_be_replaced_before_collection() {
+        *super::TASK.lock().unwrap() = Some(super::Task {
+            id: "first".into(),
+            job_id: "fictional".into(),
+            kind: "cv".into(),
+            digest: "fixture".into(),
+            result: Some(Err("Fictional conversion error".into())),
+        });
+        let error = super::start(
+            "second".into(),
+            "fictional".into(),
+            "cv".into(),
+            "Fictional text".into(),
+            "fixture".into(),
+        )
+        .unwrap_err();
+        assert!(error.contains("awaiting its result"));
+        let ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        assert_eq!(
+            super::poll("first", &ws).unwrap()["error"],
+            "Fictional conversion error"
+        );
+        let mut ws = ws;
+        let job_id = waypoint_domain::JobIdentityId::new("fictional").unwrap();
+        ws.import_manual_job(
+            waypoint_store::StoredJob {
+                id: job_id.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: waypoint_domain::ApplicationState::Shortlisted,
+                canonical_url: Some("https://example.org/job".into()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional role"),
+        )
+        .unwrap();
+        let digest = crate::draft_context_digest(&ws, &job_id, "cv").unwrap();
+        *super::TASK.lock().unwrap() = Some(super::Task {
+            id: "stale".into(),
+            job_id: "fictional".into(),
+            kind: "cv".into(),
+            digest,
+            result: Some(Ok(b"%PDF-fictional".to_vec())),
+        });
+        ws.add_fact(
+            "New qualification",
+            waypoint_workspace::FactOrigin::UserAttested,
+        )
+        .unwrap();
+        let result = super::poll("stale", &ws).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert!(ws.documents().unwrap().is_empty());
+    }
+    #[test]
     fn document_preserves_unicode_and_xml_characters() {
         let doc = super::build_docx("Résumé & systems\nSecond paragraph").unwrap();
         let text = crate::document_extract::extract("letter.docx", &doc).unwrap();
@@ -172,7 +251,8 @@ mod tests {
             posted_at: None,
         })
         .unwrap();
-        super::start("test-task".into(),id.as_str().into(),"cv".into(),"Fictional Candidate\n\nExperience\nBuilt reliable systems and worked with colleagues to improve software.\n\nSkills\nRust and SQL".into()).unwrap();
+        let digest = crate::draft_context_digest(&ws, &id, "cv").unwrap();
+        super::start("test-task".into(),id.as_str().into(),"cv".into(),"Fictional Candidate\n\nExperience\nBuilt reliable systems and worked with colleagues to improve software.\n\nSkills\nRust and SQL".into(), digest).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
         let result = loop {
             let result = super::poll("test-task", &ws).unwrap();

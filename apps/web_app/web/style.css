@@ -9,7 +9,7 @@
 .field-selection { display: block; margin: .6rem 0; overflow-wrap: anywhere; }
 .field-selection input { width: auto; margin-right: .35rem; }
 
-.job-selection-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}.job-selection-toolbar button{padding:8px 10px;font-size:13px}.job-selection-toolbar button:not(:last-of-type){background:#eef5ff;color:#176de2}.job-selection-toolbar span{font-size:13px;color:#526583}.job-select{display:flex;align-items:center;gap:6px;min-width:0;margin:0 0 7px;font-size:12px;font-weight:400}.job-select input{width:auto;margin:0}
+.job-selection-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}.job-selection-toolbar button{padding:8px 10px;font-size:13px}.job-selection-toolbar button:not(:last-of-type){background:#eef5ff;color:#176de2}.job-selection-toolbar span{font-size:13px;color:#526583}.job-select,.job-review-select{display:flex;align-items:center;gap:6px;min-width:0;margin:0 0 7px;font-size:12px;font-weight:400}.job-select input,.job-review-select input{width:auto;margin:0}
 
 #packet textarea{display:block;width:100%;min-height:200px;resize:vertical;margin-top:10px;padding:10px;border:1px solid #ccd8e6;border-radius:5px;font:14px/1.5 Segoe UI,system-ui,sans-serif}
 
@@ -79,3 +79,5 @@ nav a.active{padding:22px 0}
 .template-edit{border-top:1px solid #dce5e3;margin:14px 0;padding-top:8px}.template-edit input,.template-edit textarea{display:block;width:100%;margin:7px 0}
 
 #pdf-preview img{display:block;width:100%;height:auto;border:1px solid #ccd8e6;margin:12px 0;background:white}.pdf-controls{display:flex;flex-wrap:wrap;gap:8px}
+
+.local-tools{margin:18px 0;padding:12px 14px;border:1px solid #dce8e5;border-radius:12px;background:#f8fbfa}.local-tools summary{cursor:pointer;font-weight:650;color:#174c4b}.local-tools[open] summary{margin-bottom:14px}#session-recovery:not(:empty),#review-queue:not(:empty){margin:14px 0;padding:16px;border:1px solid #d6e7e3;border-radius:14px;background:#fff}#session-recovery button,#review-queue button{margin:4px 8px 4px 0}#review-queue h3{margin:0 0 8px}#review-queue ol{padding-left:22px;margin:12px 0}#review-queue li{padding:4px 0;overflow-wrap:anywhere}

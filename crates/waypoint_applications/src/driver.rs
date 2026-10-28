@@ -56,6 +56,14 @@ pub trait BrowserDriver {
     fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
         Err(DriverError("Application links are unavailable".into()))
     }
+    /// Verify a text-like field after other form commands have run.
+    fn verify_text_value(&mut self, _selector: &str, _expected: &str) -> Result<(), DriverError> {
+        Err(DriverError("Post-fill verification is unavailable".into()))
+    }
+    /// Verify a supported choice without changing it.
+    fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
+        Err(DriverError("Choice verification is unavailable".into()))
+    }
     /// Execute exactly one typed command. No scripting surface exists.
     fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError>;
     /// The single external write. Everything before this is reversible.

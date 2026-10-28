@@ -21,6 +21,8 @@ enum Message {
     Done(bool),
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 pub fn busy() -> bool {
     TASK.lock().map(|t| t.is_some()).unwrap_or(true)
 }
@@ -192,7 +194,6 @@ pub fn cancel(id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
     #[test]
     fn searches_sequentially_deduplicates_and_reports_each_query() {
         let _lock = TEST_LOCK.lock().unwrap();

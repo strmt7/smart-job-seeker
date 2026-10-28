@@ -47,6 +47,7 @@ pub struct FillContext<'a> {
     pub packet_digest: &'a Sha256Digest,
     pub source_reviewed: bool,
     pub timestamp: i64,
+    pub completed: &'a mut Vec<Value>,
 }
 
 /// Apply only the exact reviewed mappings, using one prefill grant. This path
@@ -66,6 +67,7 @@ pub fn apply_reviewed_text_fields(
         packet_digest,
         source_reviewed,
         timestamp,
+        completed,
     } = context;
     if grant.operation != GrantOperation::Prefill {
         return Err("A prefill grant is required".into());
@@ -180,6 +182,53 @@ pub fn apply_reviewed_text_fields(
         driver
             .execute(&command)
             .map_err(|e| format!("Prefill stopped; review the form: {e}"))?;
+        completed.push(serde_json::json!({"selector":field.selector,"label":field.label}));
+    }
+    for mapping in &preview.suggestions {
+        let field = fresh
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == mapping.field_selector)
+            .ok_or("Unknown field")?;
+        let expected = match (&field.field_type, &mapping.value) {
+            (
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+                PacketValue::Text(value),
+            ) => Some(value),
+            (FormFieldType::Date, PacketValue::Date(value)) => Some(value),
+            _ => None,
+        };
+        if let Some(expected) = expected {
+            driver
+                .verify_text_value(&mapping.field_selector, expected)
+                .map_err(|error| format!("After filling, {} needs review: {error}", field.label))?;
+        } else {
+            let command = match (&field.field_type, &mapping.value) {
+                (FormFieldType::Select { .. }, PacketValue::Text(label)) => {
+                    Some(BrowserCommand::SelectOption {
+                        selector: mapping.field_selector.clone(),
+                        label: label.clone(),
+                    })
+                }
+                (FormFieldType::Radio { .. }, PacketValue::Text(label)) => {
+                    Some(BrowserCommand::SelectRadio {
+                        selector: mapping.field_selector.clone(),
+                        label: label.clone(),
+                    })
+                }
+                (FormFieldType::Checkbox, PacketValue::Bool(value)) => Some(BrowserCommand::Fill {
+                    selector: mapping.field_selector.clone(),
+                    value: PacketValue::Bool(*value),
+                }),
+                _ => None,
+            };
+            if let Some(command) = command {
+                driver.verify_choice(&command).map_err(|error| {
+                    format!("After filling, {} needs review: {error}", field.label)
+                })?;
+            }
+        }
     }
     Ok(preview.suggestions.len())
 }
@@ -234,7 +283,7 @@ fn build_preview(
             Ok(items) => items,
             Err(error) => {
                 manual_review.push(format!(
-                    "{error}; only exact profile-label matches are suggested"
+                    "{error}; only exact labels or standard autocomplete hints are suggested"
                 ));
                 crate::suggestions::suggest_exact(&live.schema, profile)?
             }
@@ -349,7 +398,99 @@ mod tests {
         assert!(preview
             .manual_review
             .iter()
-            .any(|reason| reason.contains("exact profile-label")));
+            .any(|reason| reason.contains("standard autocomplete")));
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and does not submit"]
+    fn offline_autocomplete_can_be_reviewed_and_filled_without_submission() {
+        use waypoint_domain::GrantId;
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-autocomplete.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        assert_eq!(
+            live.schema.fields[0].autocomplete.as_deref(),
+            Some("section-app given-name")
+        );
+        let preview = suggest_without_model(
+            live,
+            &json!({"first_name":"Example","email":"example@example.invalid"}),
+            "No model",
+        )
+        .unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        assert_eq!(preview.suggestions[0].field_selector, "#candidate");
+        assert!(driver
+            .trace
+            .iter()
+            .all(|line| !line.contains("typed") && !line.contains("submitted")));
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("autocomplete-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("autocomplete-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("autocomplete-grant").unwrap(),
+            intent_id: IntentId::new(intent.as_str()).unwrap(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        assert_eq!(
+            apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                url.as_str(),
+                &preview,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1,
+                    completed: &mut completed
+                }
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            driver
+                .read_attribute("#candidate", "data-seen")
+                .unwrap()
+                .as_deref(),
+            Some("Example")
+        );
+        assert_eq!(driver.read_attribute("#permit", "value").unwrap(), None);
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 
@@ -439,7 +580,8 @@ mod tests {
                     intent: &intent,
                     packet_digest: &packet,
                     source_reviewed: true,
-                    timestamp: 1
+                    timestamp: 1,
+                    completed: &mut Vec::new()
                 }
             )
             .unwrap(),
@@ -532,7 +674,8 @@ mod tests {
                     intent: &intent,
                     packet_digest: &packet,
                     source_reviewed: true,
-                    timestamp: 1
+                    timestamp: 1,
+                    completed: &mut Vec::new()
                 }
             )
             .unwrap(),
@@ -557,10 +700,109 @@ mod tests {
                 intent: &intent,
                 packet_digest: &packet,
                 source_reviewed: true,
-                timestamp: 2
+                timestamp: 2,
+                completed: &mut Vec::new()
             }
         )
         .is_err());
+        let partial = FormPreview {
+            schema: result.schema.clone(),
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#candidate".into(),
+                    value: PacketValue::Text("Synthetic".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#email".into(),
+                    value: PacketValue::Text("invalid-email".into()),
+                },
+            ],
+            manual_review: vec![],
+        };
+        let mut partial_grant = ApprovalGrant {
+            id: GrantId::new("partial-grant").unwrap(),
+            intent_id: IntentId::new(intent.as_str()).unwrap(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&partial.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&partial.schema.schema_hash_input()),
+            destination_origin: partial.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "partial".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        assert!(apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            &url,
+            &partial,
+            &mut partial_grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 3,
+                completed: &mut completed
+            }
+        )
+        .is_err());
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0]["selector"], "#candidate");
+        let changed = FormPreview {
+            schema: result.schema.clone(),
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#candidate".into(),
+                    value: PacketValue::Text("Synthetic".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#later-answer".into(),
+                    value: PacketValue::Text("Later".into()),
+                },
+            ],
+            manual_review: vec![],
+        };
+        let mut changed_grant = ApprovalGrant {
+            id: GrantId::new("changed-grant").unwrap(),
+            intent_id: IntentId::new(intent.as_str()).unwrap(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&changed.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&changed.schema.schema_hash_input()),
+            destination_origin: changed.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "changed".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        let error = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            &url,
+            &changed,
+            &mut changed_grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 4,
+                completed: &mut completed,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("Given name"), "{error}");
+        assert_eq!(completed.len(), 2);
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
         let ambiguous =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-ambiguous.html");

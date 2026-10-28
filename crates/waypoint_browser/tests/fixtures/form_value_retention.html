@@ -4,5 +4,11 @@
 <label for="normal">Name</label><input id="normal" value="Old">
 <label for="limited">Short answer</label><input id="limited" maxlength="4">
 <label for="cleared">Answer cleared by page</label><input id="cleared" oninput="this.value=''">
+<label for="years">Years</label><input id="years" type="number" min="1" max="5">
+<label for="code">Code</label><input id="code" pattern="[A-Z]{3}">
+<label for="agree">Available</label><input id="agree" type="checkbox">
+<label for="place">Place</label><select id="place"><option value="a">Alpha</option><option value="b">Beta</option></select>
+<fieldset><legend>Mode</legend><label for="on">On site</label><input id="on" name="mode" type="radio" checked><label for="off">Remote</label><input id="off" name="mode" type="radio"></fieldset>
+<label for="later">Later answer</label><input id="later" oninput="document.querySelector('#normal').value='';document.querySelector('#agree').checked=false;document.querySelector('#place').value='a';document.querySelector('#on').checked=true">
 <button type="submit">Submit</button>
 </form></body></html>

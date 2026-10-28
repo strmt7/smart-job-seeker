@@ -4,10 +4,15 @@ use std::sync::Mutex;
 use waypoint_inference::{Inference, OllamaInference};
 struct Task {
     id: String,
+    job_id: String,
+    kind: String,
+    digest: String,
     result: Option<Result<Value, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 pub struct Inputs {
+    pub job_id: String,
+    pub digest: String,
     pub job: Value,
     pub kind: String,
     pub facts: Vec<String>,
@@ -15,14 +20,21 @@ pub struct Inputs {
     pub template: Option<(String, Vec<u8>)>,
 }
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
-    let lease = crate::doc_suggest::lease()?;
-    {
+    let lease = {
         let mut task = TASK.lock().map_err(|_| "Draft state unavailable")?;
+        if task.is_some() {
+            return Err("A draft is running or awaiting its result".into());
+        }
+        let lease = crate::doc_suggest::lease()?;
         *task = Some(Task {
             id: id.clone(),
+            job_id: input.job_id.clone(),
+            kind: input.kind.clone(),
+            digest: input.digest.clone(),
             result: None,
         });
-    }
+        lease
+    };
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
@@ -62,8 +74,12 @@ pub fn poll(id: &str) -> Result<Value, String> {
     match task.result.take() {
         None => Ok(json!({"status":"running"})),
         Some(Ok(draft)) => {
+            let (job_id, kind, digest) =
+                (task.job_id.clone(), task.kind.clone(), task.digest.clone());
             *tasks = None;
-            Ok(json!({"status":"complete","draft":draft}))
+            Ok(
+                json!({"status":"complete","draft":draft,"job_id":job_id,"kind":kind,"digest":digest}),
+            )
         }
         Some(Err(error)) => {
             *tasks = None;

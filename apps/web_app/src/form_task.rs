@@ -184,6 +184,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    autocomplete: None,
                 }]
             } else {
                 vec![]
@@ -269,6 +270,14 @@ mod tests {
                 let (driver, preview) = finished.result.unwrap();
                 assert!(!preview.schema.fields.is_empty());
                 assert!(preview.suggestions.is_empty());
+                assert!(preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason.contains("No eligible local model")));
+                assert!(preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason.contains("Required field needs review")));
                 assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
                 break;
             }

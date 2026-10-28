@@ -117,7 +117,7 @@ impl BrowserProcess {
         if std::env::var("WAYPOINT_BROWSER_NO_SANDBOX").is_ok_and(|v| v == "1") {
             cmd.arg("--no-sandbox");
         }
-        let child = cmd
+        let mut child = cmd
             .arg("about:blank")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -128,6 +128,31 @@ impl BrowserProcess {
         let deadline = Instant::now() + timeout;
         let mut port = 0u16;
         while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let mut me = Self {
+                        child,
+                        port: 0,
+                        ws_url: String::new(),
+                        user_data_dir,
+                    };
+                    me.shutdown();
+                    return err(format!(
+                        "browser exited before its debugging endpoint was ready: {status}"
+                    ));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let mut me = Self {
+                        child,
+                        port: 0,
+                        ws_url: String::new(),
+                        user_data_dir,
+                    };
+                    me.shutdown();
+                    return err(format!("could not inspect browser startup: {error}"));
+                }
+            }
             if let Ok(text) = std::fs::read_to_string(&port_file) {
                 if let Some(first) = text.lines().next() {
                     if let Ok(p) = first.trim().parse::<u16>() {

@@ -204,6 +204,19 @@ pub fn image_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
     )
 }
 
+pub fn probe_packages() -> Result<serde_json::Value, String> {
+    let script = r#"import json, importlib.metadata, sys
+try:
+ import pypdf, pypdfium2, PIL
+ print(json.dumps({"python":sys.version.split()[0],"pypdf":importlib.metadata.version("pypdf"),"pypdfium2":importlib.metadata.version("pypdfium2"),"pillow":importlib.metadata.version("Pillow")}))
+except Exception as error:
+ print("PDF dependency check failed: " + str(error)[:400])
+ sys.exit(1)
+"#;
+    let result = run(b"probe", b"", script, None, 4096, false)?;
+    serde_json::from_slice(&result).map_err(|_| "PDF dependency check returned invalid data".into())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

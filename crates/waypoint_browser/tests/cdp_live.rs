@@ -100,6 +100,36 @@ fn text_fill_checks_that_the_site_retains_the_complete_value() {
         .unwrap();
     assert!(driver.execute(&fill("#limited", "Too long")).is_err());
     assert!(driver.execute(&fill("#cleared", "Not retained")).is_err());
+    driver.execute(&fill("#years", "3")).unwrap();
+    assert!(driver.execute(&fill("#years", "8")).is_err());
+    driver.execute(&fill("#code", "ABC")).unwrap();
+    assert!(driver.execute(&fill("#code", "123")).is_err());
+    let checkbox = BrowserCommand::Fill {
+        selector: "#agree".into(),
+        value: PacketValue::Bool(true),
+    };
+    let select = BrowserCommand::SelectOption {
+        selector: "#place".into(),
+        label: "Beta".into(),
+    };
+    let radio = BrowserCommand::SelectRadio {
+        selector: "#on".into(),
+        label: "Remote".into(),
+    };
+    for choice in [&checkbox, &select, &radio] {
+        driver.execute(choice).unwrap();
+        driver.verify_choice(choice).unwrap();
+    }
+    driver
+        .verify_text_value("#normal", "Fictional candidate")
+        .unwrap();
+    driver.execute(&fill("#later", "Changed")).unwrap();
+    assert!(driver
+        .verify_text_value("#normal", "Fictional candidate")
+        .is_err());
+    for choice in [&checkbox, &select, &radio] {
+        assert!(driver.verify_choice(choice).is_err());
+    }
     assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
 }
 

@@ -28,6 +28,8 @@ pub struct FormField {
     pub field_type: FormFieldType,
     pub required: bool,
     pub sensitive: bool, // salary/authorization/demographic/attestation
+    #[serde(default)]
+    pub autocomplete: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,8 +50,8 @@ impl FormSchema {
         ];
         for f in &self.fields {
             parts.push(format!(
-                "{}|{}|{:?}|{}|{}",
-                f.selector, f.label, f.field_type, f.required, f.sensitive
+                "{}|{}|{:?}|{}|{}|{:?}",
+                f.selector, f.label, f.field_type, f.required, f.sensitive, f.autocomplete
             ));
         }
         parts.join("\n")
@@ -239,6 +241,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    autocomplete: None,
                 },
                 FormField {
                     selector: "#salary".into(),
@@ -246,6 +249,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: true,
+                    autocomplete: None,
                 },
                 FormField {
                     selector: "#country".into(),
@@ -255,6 +259,7 @@ mod tests {
                     },
                     required: true,
                     sensitive: false,
+                    autocomplete: None,
                 },
             ],
             multi_step: false,
@@ -338,5 +343,8 @@ mod tests {
         let a = schema();
         let b = schema();
         assert_eq!(a.schema_hash_input(), b.schema_hash_input());
+        let mut changed = b;
+        changed.fields[0].autocomplete = Some("family-name".into());
+        assert_ne!(a.schema_hash_input(), changed.schema_hash_input());
     }
 }

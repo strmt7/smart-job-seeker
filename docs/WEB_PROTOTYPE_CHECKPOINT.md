@@ -199,3 +199,39 @@ The dashboard reuses the description-availability result already obtained during
 New listing captures also retain up to 32,000 bytes of normalized DOM page text from the already-open page, with captured, truncated, empty, unavailable or size-limit status. When an attempt begins, available text is copied to original-job-page/page-text.txt alongside the existing screenshots and structured data. This is not a complete HTTP/HTML archive; page text may include hidden or dynamic content and omit material in frames or after the limit. Older captures do not gain this data retroactively.
 
 Checkpoint validation (2026-10-28): the current workspace passed `cargo fmt --all -- --check`, `cargo test --workspace --offline` with the default parallel test runner, and `cargo clippy --workspace --all-targets --offline -- -D warnings`, using one build job. External-network and other ignored tests are not included in that result.
+
+Reviewed CV and cover-letter PDF exports retain completed results until collected, including when a save needs retrying. The page remembers an active export in session storage and can recover it on reload while the server remains running; a server restart loses the in-memory task. The completed export offers a local page-preview button, and the user must still review the PDF before attachment.
+
+New local CV and cover-letter drafts carry a digest of the saved job, description, qualifications, profile and selected template. The server checks that digest when collecting the draft, starting its reviewed PDF export and saving the result; changed or unavailable inputs require a new draft. This does not establish the truth of generated claims or check whether the employer has changed its live listing. The export and draft task are in-memory and do not survive a server restart.
+
+An in-progress CV or cover-letter draft is now recoverable from the current browser session after a page reload while the server remains running. Draft collection still checks its source-context digest; a changed job, profile, qualification or template is reported as stale. The task itself remains in memory and is lost on server restart.
+
+Form inspection no longer requires Ollama or a saved profile merely to start in headless mode. Without an eligible model it uses the exact-label fallback, marks unresolved requirements for review and exposes the page screenshot; challenges and complex navigation still need a visible browser or other manual handling. This change does not load a model or submit an application.
+
+The local-model status control now distinguishes a reachable runtime with no model, multiple models, incomplete reports, a model not fully reported on GPU, an over-budget model, and a ready model. It reports Ollama's values as a snapshot rather than a reservation; it does not install, load, unload or benchmark a model.
+
+After typing into supported native text, email, phone, URL, search or number inputs, the browser driver checks both exact value retention and the field's current native validity. An invalid value stops the fill and flags the session for manual review; it does not undo earlier input or guarantee that later page scripts will retain values.
+
+After a reviewed fill sequence, the browser rechecks each filled native text-like or date field for its expected value and current validity. If a later field changed an earlier one, the fill is reported as incomplete and the attempt requires manual review. This is an immediate check; checkboxes, radio buttons and selects are verified at their own action, and later asynchronous changes can still occur.
+
+The immediate post-fill recheck now also verifies reviewed native checkboxes, single-select dropdowns and radio groups without changing their values. This supplements the existing text and date check; asynchronous changes after verification remain possible and still require visual review.
+
+On interrupted reviewed form filling, the plaintext attempt event records which field commands reported success before the failure. The failing command may also have changed the page, and earlier fields can be changed by the site; these records are progress evidence, not proof of final field state.
+
+Interrupted form fills now also attempt the same bounded segmented page capture used after successful fills. Capture failures or pages exceeding the limits are recorded as incomplete; hidden content and nested scrollers may still be missed. The local browser fixture also exercises the full fill sequence where a later field clears an earlier one and confirms that it is reported for review.
+
+A fictional CV export was converted with the local LibreOffice path and rendered for visual review after adding draft-context checks. On GitHub's 91d676c browser job, two browser launches timed out and one local-fixture submission test had a CDP connection timeout; the root cause was not established. Browser startup now reports an early process exit and its status rather than waiting until the port timeout. This diagnostic change has not reproduced or fixed the hosted failure.
+
+The setup panel can run an on-demand PDF dependency check in the bounded local worker. It imports pypdf, pypdfium2 and Pillow and reports their installed versions; a successful import does not guarantee every PDF will be supported. The check uses the configured Python runtime, performs no installation or network request, and can be resumed after a page reload while the server remains running.
+
+Form schemas now retain bounded HTML autocomplete attributes and include them in their identity. The local model sees those hints, and the no-model fallback can use a small set of standard contact and address tokens alongside exact labels. Conflicting direct labels and hints, sensitive fields, unknown tokens and ambiguous select options remain for review. Hints are site-provided and do not authorize filling or prove semantic correctness.
+
+A local browser fixture now verifies that an autocomplete-derived suggestion can be reviewed and filled while a sensitive field is left untouched and no submission occurs. A changed autocomplete hint changes the form schema identity, so an existing reviewed fill cannot silently apply to the changed form.
+
+Shortlisted or prepared jobs can be selected into a guided review queue of up to 20. The user explicitly opens each next application and closes the current browser review before proceeding; the queue can be skipped or cleared. It exists only in the current page and does not fill or submit applications by itself. Existing per-job duplicate and destination checks still apply.
+
+The guided review queue now persists job IDs in the current browser session across reloads. On reload the page checks the server for an active review and offers to resume or close it before continuing. Queued inspections also require the server to confirm that no unexpired review session is active, preventing a stale page from replacing one. The queue does not survive a closed browser session and does not submit applications.
+
+The application review and recovery cards now precede the optional local-tool setup controls, which are grouped under a disclosure. Queue and recovery actions have explicit spacing and wrap on narrow screens. A local Playwright fixture exercised queue, reload, close and next-job flow at desktop and 390 px viewports; it used fictional data and no external application.
+
+Checkpoint validation (2026-10-28): workspace formatting, offline tests with the normal parallel test runner, and workspace Clippy with warnings denied passed after coordinating the single-search and batch-search fixtures. The web-app suite reported 60 passed and 28 ignored. These checks do not resolve the earlier hosted browser timeouts or hosted supply-chain failure.

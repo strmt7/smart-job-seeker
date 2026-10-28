@@ -28,6 +28,7 @@ mod manual_job;
 mod pdf_extract;
 mod pdf_job;
 mod pdf_preview_task;
+mod pdf_probe_task;
 mod pdf_setup;
 mod search_planner;
 mod storage_settings;
@@ -158,6 +159,45 @@ fn fit_inputs(
     .as_str()
     .to_owned();
     Ok((facts, instructions, listing, digest))
+}
+
+fn draft_context_digest(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+    kind: &str,
+) -> Result<String, String> {
+    let job = ws
+        .job(job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
+    let description = ws.job_description(job_id).map_err(|e| e.to_string())?;
+    let facts: Vec<Value> = ws
+        .facts()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|fact| json!({"text":fact.text,"requires_review":fact.requires_review}))
+        .collect();
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(value) => serde_json::from_str(&value).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let key = if kind == "cv" {
+        "cv_template_id"
+    } else if kind == "cover_letter" {
+        "cover_template_id"
+    } else {
+        return Err("Unknown draft type".into());
+    };
+    let template_hash = if let Some(id) = profile[key].as_str().filter(|id| !id.is_empty()) {
+        let bytes = ws
+            .document_content(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Selected template is unavailable")?;
+        Some(waypoint_domain::sha256_hex(&bytes))
+    } else {
+        None
+    };
+    Ok(Sha256Digest::of(&json!({"job":job,"description":description,"facts":facts,"profile":profile,"template_hash":template_hash,"kind":kind}).to_string()).as_str().to_owned())
 }
 
 fn read_fit(ws: &Workspace, job_id: &JobIdentityId) -> Result<Value, String> {
@@ -486,6 +526,11 @@ fn now() -> i64 {
 /// resident and within the existing 14 GiB budget. This check is a snapshot,
 /// not a reservation; Ollama can change its state after it is read.
 fn resident_model() -> Result<Option<String>, String> {
+    let status = resident_model_status()?;
+    Ok(status["model"].as_str().map(str::to_owned))
+}
+
+fn resident_model_status() -> Result<Value, String> {
     let addr = "127.0.0.1:11434"
         .parse()
         .map_err(|_| "invalid runtime address")?;
@@ -494,7 +539,37 @@ fn resident_model() -> Result<Option<String>, String> {
         return Err(format!("Ollama returned HTTP {status}"));
     }
     let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid Ollama response")?;
-    eligible_resident_model(&data)
+    model_diagnostics(&data)
+}
+
+fn model_diagnostics(data: &Value) -> Result<Value, String> {
+    let eligible = eligible_resident_model(data)?;
+    let models = data["models"]
+        .as_array()
+        .ok_or("Ollama did not report resident models")?;
+    if let Some(name) = eligible {
+        return Ok(
+            json!({"model":name,"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"]}),
+        );
+    }
+    let state = if models.is_empty() {
+        "no_model"
+    } else if models.len() > 1 {
+        "multiple_models"
+    } else {
+        let size = models[0]["size"].as_u64().unwrap_or(0);
+        let vram = models[0]["size_vram"].as_u64().unwrap_or(0);
+        if size == 0 || models[0]["name"].as_str().is_none_or(str::is_empty) {
+            "incomplete_report"
+        } else if vram > 14 * 1024 * 1024 * 1024 {
+            "over_budget"
+        } else if vram != size {
+            "not_fully_gpu"
+        } else {
+            "incomplete_report"
+        }
+    };
+    Ok(json!({"model":null,"state":state,"loaded_models":models.len()}))
 }
 
 fn eligible_resident_model(data: &Value) -> Result<Option<String>, String> {
@@ -680,13 +755,13 @@ fn serve(
         return Ok(());
     }
     if method == "GET" && path == "/api/model-status" {
-        let status = resident_model();
+        let status = resident_model_status();
         json_reply(
             stream,
             "200 OK",
             match status {
-                Ok(model) => json!({"model":model}),
-                Err(error) => json!({"model":null,"error":error}),
+                Ok(status) => status,
+                Err(error) => json!({"model":null,"state":"unreachable","error":error}),
             },
         );
         return Ok(());
@@ -1476,6 +1551,15 @@ fn serve(
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", docx_edit_task::poll(task_id, ws)?);
         }
+        "/api/pdf-probe/start" => {
+            let id = random_id()?;
+            pdf_probe_task::start(id.clone())?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/pdf-probe/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", pdf_probe_task::poll(id)?);
+        }
         "/api/pdf-setup/start" => {
             let python = body["python"]
                 .as_str()
@@ -1615,6 +1699,15 @@ fn serve(
             {
                 return Err("Wait for the current browser inspection to finish".into());
             }
+            if body["require_no_session"].as_bool() == Some(true)
+                && session
+                    .as_ref()
+                    .is_some_and(|current| current.created.elapsed() <= current.ttl)
+            {
+                return Err(
+                    "Close the active review session before opening the next queued job".into(),
+                );
+            }
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
                 .map_err(|e| e.to_string())?;
             let job = ws
@@ -1635,20 +1728,12 @@ fn serve(
                 return Err("Application URL is not a public HTTPS URL".into());
             }
             let visible = body["visible"].as_bool().unwrap_or(false);
-            let model = match resident_model() {
-                Ok(model) => model,
-                Err(_) if visible => None,
-                Err(error) => return Err(error),
-            };
-            if model.is_none() && !visible {
-                return Err("No single fully GPU-resident Ollama model is available within the 14 GiB budget; select visible browser for manual review".into());
-            }
+            let model = resident_model().ok().flatten();
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(text) => {
                     serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?
                 }
-                None if visible && model.is_none() => json!({}),
-                None => return Err("Save your personal details before inspecting a form".into()),
+                None => json!({}),
             };
             interrupt_session(ws, session, "Another application was opened")?;
             let task_id = random_id()?;
@@ -2057,6 +2142,7 @@ fn serve(
                 record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions}))?;
             }
             current.filled = true;
+            let mut completed = Vec::new();
             let result = form_preview::apply_reviewed_text_fields(
                 ws,
                 &current.job_id,
@@ -2069,16 +2155,21 @@ fn serve(
                     packet_digest: &current.profile_digest,
                     source_reviewed: true,
                     timestamp: now(),
+                    completed: &mut completed,
                 },
             );
             let filled = match result {
                 Ok(count) => count,
                 Err(error) => {
                     if let Some(record) = &mut current.record {
-                        let _ = record
-                            .event(json!({"type":"fill_incomplete","time":now(),"error":error}));
+                        let _ = record.event(json!({"type":"fill_incomplete","time":now(),"error":error,"completed_commands":completed,"note":"The failing field may have changed and earlier values may have been changed by the site; verify all fields."}));
                         if let Ok(image) = current.driver.screenshot_base64() {
                             let _ = record.screenshot(&image);
+                        }
+                        if let Err(capture_error) =
+                            attempt_record::capture_page(&mut current.driver, record, now())
+                        {
+                            let _ = record.event(json!({"type":"capture_incomplete","time":now(),"error":capture_error}));
                         }
                     }
                     ws.mark_manual_review(
@@ -2090,7 +2181,7 @@ fn serve(
                     current.created = Instant::now();
                     *session = Some(current);
                     return Err(format!(
-                        "Autofill could be incomplete; review the open browser: {error}"
+                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}", completed.len()
                     ));
                 }
             };
@@ -2313,6 +2404,21 @@ fn serve(
                 json!({"ok":true,"name":doc.name,"manual_review":current.preview.manual_review}),
             );
         }
+        "/api/form/session-status" => {
+            let current = session
+                .as_ref()
+                .filter(|current| current.created.elapsed() <= current.ttl);
+            json_reply(
+                stream,
+                "200 OK",
+                match current {
+                    Some(current) => {
+                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible})
+                    }
+                    None => json!({"active":false}),
+                },
+            );
+        }
         "/api/form/close" => {
             let requested = body["session_id"].as_str().ok_or("missing session")?;
             if session.as_ref().is_none_or(|s| s.id != requested) {
@@ -2351,12 +2457,22 @@ fn serve(
                 .as_str()
                 .ok_or("missing document text")?
                 .to_owned();
+            let digest = body["context_digest"]
+                .as_str()
+                .ok_or("Draft context is missing; draft again")?;
+            if draft_context_digest(ws, &id, kind)? != digest {
+                return Err(
+                    "The job, qualifications, profile or template changed; draft and review again"
+                        .into(),
+                );
+            }
             let task_id = random_id()?;
             letter_export::start(
                 task_id.clone(),
                 id.as_str().to_owned(),
                 kind.to_owned(),
                 text,
+                digest.to_owned(),
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
@@ -2453,10 +2569,13 @@ fn serve(
             let model =
                 resident_model()?.ok_or("No eligible already-loaded local model is available")?;
             let task_id = random_id()?;
+            let digest = draft_context_digest(ws, &id, kind)?;
             draft_task::start(
                 task_id.clone(),
                 model,
                 draft_task::Inputs {
+                    job_id: id.as_str().to_owned(),
+                    digest,
                     job: job_info,
                     kind: kind.to_owned(),
                     facts,
@@ -2468,7 +2587,19 @@ fn serve(
         }
         "/api/draft/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            json_reply(stream, "200 OK", draft_task::poll(id)?);
+            let mut result = draft_task::poll(id)?;
+            if result["status"] == "complete" {
+                let job_id =
+                    JobIdentityId::new(result["job_id"].as_str().ok_or("missing draft job")?)
+                        .map_err(|e| e.to_string())?;
+                let kind = result["kind"].as_str().ok_or("missing draft type")?;
+                if draft_context_digest(ws, &job_id, kind).ok().as_deref()
+                    != result["digest"].as_str()
+                {
+                    result = json!({"status":"failed","error":"The job, qualifications, profile or template changed while drafting; draft again"});
+                }
+            }
+            json_reply(stream, "200 OK", result);
         }
         "/api/packet/read" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
@@ -2629,6 +2760,7 @@ mod tests {
                         field_type: FormFieldType::TextArea,
                         required: true,
                         sensitive: false,
+                        autocomplete: None,
                     },
                     FormField {
                         selector: "#country".into(),
@@ -2638,6 +2770,7 @@ mod tests {
                         },
                         required: true,
                         sensitive: false,
+                        autocomplete: None,
                     },
                     FormField {
                         selector: "#visa".into(),
@@ -2645,6 +2778,7 @@ mod tests {
                         field_type: FormFieldType::Text,
                         required: false,
                         sensitive: true,
+                        autocomplete: None,
                     },
                     FormField {
                         selector: "#start".into(),
@@ -2652,6 +2786,7 @@ mod tests {
                         field_type: FormFieldType::Date,
                         required: false,
                         sensitive: false,
+                        autocomplete: None,
                     },
                 ],
             },
@@ -2772,6 +2907,26 @@ mod tests {
             assert_eq!(eligible_resident_model(&bad).unwrap(), None);
         }
         assert!(eligible_resident_model(&json!({})).is_err());
+        for (data, expected) in [
+            (json!({"models":[]}), "no_model"),
+            (json!({"models":[{},{}]}), "multiple_models"),
+            (
+                json!({"models":[{"name":"m","size":10,"size_vram":9}]}),
+                "not_fully_gpu",
+            ),
+            (
+                json!({"models":[{"name":"m","size":15_032_385_537u64,"size_vram":15_032_385_537u64}]}),
+                "over_budget",
+            ),
+            (json!({"models":[{"name":"m"}]}), "incomplete_report"),
+        ] {
+            let status = model_diagnostics(&data).unwrap();
+            assert_eq!(status["state"], expected);
+            assert!(status["model"].is_null());
+        }
+        let status = model_diagnostics(&good).unwrap();
+        assert_eq!(status["state"], "ready");
+        assert_eq!(status["reported_vram_bytes"], 1_000_000);
     }
 
     fn request(path: &str, token: &str, body: &str) -> String {
@@ -2870,6 +3025,51 @@ mod tests {
         assert!(!prepared.contains("Applied for"));
         assert!(call("/api/packet/prepare").contains("already exists"));
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn draft_context_changes_when_template_or_preferences_change() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let id = JobIdentityId::new("draft-context").unwrap();
+        ws.import_manual_job(
+            waypoint_store::StoredJob {
+                id: id.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some("https://example.org/job".into()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional role"),
+        )
+        .unwrap();
+        ws.add_document("template-a", "a.docx", b"first template", 1)
+            .unwrap();
+        ws.add_document("template-b", "b.docx", b"second template", 1)
+            .unwrap();
+        ws.save_candidate_profile(
+            &json!({"cv_template_id":"template-a", "document_instructions":"Concise"}).to_string(),
+        )
+        .unwrap();
+        let first = draft_context_digest(&ws, &id, "cv").unwrap();
+        ws.save_candidate_profile(
+            &json!({"cv_template_id":"template-b", "document_instructions":"Concise"}).to_string(),
+        )
+        .unwrap();
+        let second = draft_context_digest(&ws, &id, "cv").unwrap();
+        assert_ne!(first, second);
+        ws.save_candidate_profile(
+            &json!({"cv_template_id":"template-b", "document_instructions":"Detailed"}).to_string(),
+        )
+        .unwrap();
+        assert_ne!(second, draft_context_digest(&ws, &id, "cv").unwrap());
     }
 
     #[test]
@@ -3097,6 +3297,12 @@ mod tests {
                 record: None,
             });
             let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("Close the active review session"));
+            assert_eq!(session.as_ref().unwrap().id, "test-session");
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
             assert!(session.as_ref().unwrap().filled);
             assert_eq!(
@@ -3182,6 +3388,15 @@ mod tests {
                 b"%PDF-fictional resume"
             );
             drop(stream);
+            // Reuse the fixture session to exercise a later page fill that
+            // changes an earlier value; the production UI starts a rescan.
+            current.filled = false;
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("2 successful field commands"), "{error}");
+            assert!(error.contains("Given name"), "{error}");
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
             drop(session);
             assert!(!staged_path.exists());
             let records = workspace_dir.path().join("application-records");
@@ -3199,13 +3414,42 @@ mod tests {
             );
             assert!(events.contains("\"segments\":2"), "{events}");
             assert!(
+                events.contains("fill_incomplete") && events.contains("completed_commands"),
+                "{events}"
+            );
+            let event_values: Vec<Value> = events
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let incomplete = event_values
+                .iter()
+                .position(|event| event["type"] == "fill_incomplete")
+                .unwrap();
+            assert_eq!(
+                event_values[incomplete]["completed_commands"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            assert!(event_values
+                .iter()
+                .skip(incomplete + 1)
+                .any(|event| event["type"] == "page_capture" && event["segments"] == 2));
+            assert!(
                 std::fs::read_dir(record.join("screenshots"))
                     .unwrap()
                     .count()
-                    >= 2
+                    >= 6
             );
             assert!(std::fs::read_dir(record.join("materials")).unwrap().count() >= 1);
         });
+        let body = r#"{"id":"fixture-web","require_no_session":true}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/inspect-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Close the active review session"));
         let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#candidate","#country"],"answers":[{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"}]}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
@@ -3231,6 +3475,15 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("200 OK"), "{response}");
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#candidate"],"answers":[{"selector":"#later-answer","value":"Changed"}]}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.contains("400 Bad Request") && response.contains("Given name"),
+            "{response}"
+        );
         worker.join().unwrap();
     }
 }

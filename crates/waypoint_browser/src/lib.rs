@@ -689,6 +689,7 @@ impl CdpDriver {
                             },
                             required,
                             sensitive: sensitive || is_sensitive_label(&group_label),
+                            autocomplete: None,
                         });
                     }
                     continue;
@@ -712,6 +713,11 @@ impl CdpDriver {
                 field_type,
                 required,
                 sensitive,
+                autocomplete: control
+                    .attrs
+                    .get("autocomplete")
+                    .filter(|value| value.len() <= 128)
+                    .cloned(),
             });
         }
 
@@ -782,12 +788,13 @@ impl CdpDriver {
                 self.cdp
                     .call("Input.insertText", json!({ "text": t }))
                     .map_err(derr)?;
-                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && !this.matches(':disabled') && !this.readOnly && this.value === value; }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
+                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid; }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
                     return Err(DriverError(
-                        "Text was not retained exactly; review the field manually".into(),
+                        "Text was not retained exactly or the field is invalid; review it manually"
+                            .into(),
                     ));
                 }
                 self.trace
@@ -842,7 +849,12 @@ impl CdpDriver {
 
     /// A fixed, narrow operation for native single-select controls. It rejects
     /// ambiguous or disabled labels and dispatches the usual form events.
-    fn select_option(&mut self, selector: &str, label: &str) -> Result<(), DriverError> {
+    fn select_option(
+        &mut self,
+        selector: &str,
+        label: &str,
+        apply: bool,
+    ) -> Result<(), DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Select field not found".into()))?;
@@ -855,7 +867,7 @@ impl CdpDriver {
             .and_then(|v| v.get("objectId"))
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label) { if (this.tagName !== 'SELECT' || this.multiple || this.disabled) return false; const matches = Array.from(this.options).filter(o => o.textContent.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); return this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0]; }","arguments":[{"value":label}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this.tagName !== 'SELECT' || this.multiple || this.disabled || !this.isConnected) return false; const matches = Array.from(this.options).filter(o => o.textContent.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result
                 .get("result")
@@ -870,7 +882,12 @@ impl CdpDriver {
         Ok(())
     }
 
-    fn select_radio(&mut self, selector: &str, label: &str) -> Result<(), DriverError> {
+    fn select_radio(
+        &mut self,
+        selector: &str,
+        label: &str,
+        apply: bool,
+    ) -> Result<(), DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Radio group not found".into()))?;
@@ -882,7 +899,7 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect radio group".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label) {
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label, apply) {
           if (this.tagName !== 'INPUT' || this.type !== 'radio' || !this.name) return false;
           const selector = 'fieldset,[role="radiogroup"]';
           const group = this.closest(selector); if (!group) return false;
@@ -909,9 +926,9 @@ impl CdpDriver {
           const choices = radios.filter(r => { const text = optionLabel(r); return text !== null && norm(text) === norm(label); });
           if (choices.length !== 1) return false;
           const chosen = choices[0];
-          if (!chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
-          return chosen.isConnected && chosen.checked && !chosen.matches(':disabled');
-        }"#,"arguments":[{"value":label}],"returnByValue":true})).map_err(derr)?;
+          if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
+          return chosen.isConnected && chosen.checked && !chosen.matches(':disabled') && chosen.validity.valid;
+        }"#,"arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
@@ -1047,6 +1064,64 @@ impl BrowserDriver for CdpDriver {
         })
     }
 
+    fn verify_text_value(&mut self, selector: &str, expected: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Previously filled field is no longer present".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "A previously filled field changed or became invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_choice(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
+        match command {
+            BrowserCommand::SelectOption { selector, label } => {
+                self.select_option(selector, label, false)
+            }
+            BrowserCommand::SelectRadio { selector, label } => {
+                self.select_radio(selector, label, false)
+            }
+            BrowserCommand::Fill {
+                selector,
+                value: PacketValue::Bool(expected),
+            } => {
+                let node = self
+                    .node_id(selector)?
+                    .ok_or_else(|| DriverError("Previously filled checkbox is missing".into()))?;
+                let resolved = self
+                    .cdp
+                    .call("DOM.resolveNode", json!({"nodeId":node}))
+                    .map_err(derr)?;
+                let object = resolved
+                    .pointer("/object/objectId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| DriverError("Cannot inspect checkbox".into()))?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && this instanceof HTMLInputElement && this.type === 'checkbox' && !this.matches(':disabled') && this.checked === value && this.validity.valid; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+                if result.get("exceptionDetails").is_some()
+                    || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+                {
+                    return Err(DriverError("A checkbox changed or became invalid".into()));
+                }
+                Ok(())
+            }
+            _ => Err(DriverError("Unsupported choice verification".into())),
+        }
+    }
+
     fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
         match command {
             BrowserCommand::Navigate { url } => {
@@ -1054,8 +1129,12 @@ impl BrowserDriver for CdpDriver {
                 Ok(())
             }
             BrowserCommand::Fill { selector, value } => self.fill(selector, value),
-            BrowserCommand::SelectOption { selector, label } => self.select_option(selector, label),
-            BrowserCommand::SelectRadio { selector, label } => self.select_radio(selector, label),
+            BrowserCommand::SelectOption { selector, label } => {
+                self.select_option(selector, label, true)
+            }
+            BrowserCommand::SelectRadio { selector, label } => {
+                self.select_radio(selector, label, true)
+            }
             BrowserCommand::UploadFile {
                 selector,
                 file_name,
