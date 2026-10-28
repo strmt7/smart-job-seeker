@@ -60,15 +60,24 @@ pub fn check_job_and_destination(
 }
 
 pub fn candidates(driver: &mut dyn BrowserDriver) -> Result<Vec<String>, String> {
+    filtered_candidates(driver, false)
+}
+
+pub fn other_candidates(driver: &mut dyn BrowserDriver) -> Result<Vec<String>, String> {
+    filtered_candidates(driver, true)
+}
+
+fn filtered_candidates(driver: &mut dyn BrowserDriver, other: bool) -> Result<Vec<String>, String> {
     let current = url::Url::parse(&driver.current_url().map_err(|e| e.to_string())?)
         .map_err(|_| "Invalid current URL")?;
     let mut result = Vec::new();
-    for href in driver
-        .application_links()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .take(50)
-    {
+    let hrefs = if other {
+        driver.page_links()
+    } else {
+        driver.application_links()
+    }
+    .map_err(|e| e.to_string())?;
+    for href in hrefs.into_iter().take(200) {
         let Ok(mut url) = current.join(&href) else {
             continue;
         };
@@ -85,7 +94,7 @@ pub fn candidates(driver: &mut dyn BrowserDriver) -> Result<Vec<String>, String>
         if !result.contains(&target) {
             result.push(target);
         }
-        if result.len() == 10 {
+        if result.len() == if other { 30 } else { 10 } {
             break;
         }
     }
@@ -96,6 +105,7 @@ pub fn start(
     id: String,
     mut session: ReviewSession,
     target: Option<String>,
+    allow_other: bool,
     profile: serde_json::Value,
 ) -> Result<(), (Box<ReviewSession>, String)> {
     let mut tasks = match TASK.lock() {
@@ -122,8 +132,13 @@ pub fn start(
                     if !fresh.walls.is_empty() {
                         return Err("The current page requires manual review".into());
                     }
-                    if !candidates(&mut session.driver)?.contains(&target) {
-                        return Err("The application link changed; inspect again".into());
+                    let found = if allow_other {
+                        other_candidates(&mut session.driver)?
+                    } else {
+                        candidates(&mut session.driver)?
+                    };
+                    if !found.contains(&target) {
+                        return Err("The selected link changed; inspect again".into());
                     }
                     let parsed = waypoint_net::parse_url(&target).map_err(|e| e.to_string())?;
                     waypoint_net::resolve_public(&parsed).map_err(|e| e.to_string())?;
@@ -227,12 +242,29 @@ mod tests {
         fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
             Ok(self.0.clone())
         }
+        fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+            Ok(self.0.clone())
+        }
         fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
             panic!("candidate discovery must not fill")
         }
         fn commit(&mut self) -> Result<SiteAck, DriverError> {
             panic!("candidate discovery must not submit")
         }
+    }
+    #[test]
+    fn other_links_remain_bounded_and_exclude_final_action_routes() {
+        let mut driver = Links(vec![
+            "/unfamiliar-application".into(),
+            "/submit".into(),
+            "https://127.0.0.1/apply".into(),
+        ]);
+        assert_eq!(
+            other_candidates(&mut driver).unwrap(),
+            ["https://jobs.example.org/unfamiliar-application"]
+        );
+        let mut many = Links((0..80).map(|i| format!("/page/{i}")).collect());
+        assert_eq!(other_candidates(&mut many).unwrap().len(), 30);
     }
     #[test]
     fn cross_origin_candidates_require_a_public_permitted_non_submit_route() {

@@ -596,6 +596,8 @@ fn application_links_use_the_accessible_label_without_navigating() {
     driver
         .open(&file_url("application_accessible_links.html"))
         .expect("open fixture");
+    let page_links = driver.page_links().expect("read page links");
+    assert!(page_links.contains(&"filters.html".to_owned()));
     let links = driver.application_links().expect("read links");
     assert_eq!(
         links,

@@ -156,6 +156,30 @@ impl CdpDriver {
     pub fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
         Ok(application_links_from_document(&self.document()?))
     }
+    /// Read bounded anchor destinations without clicking or executing script.
+    pub fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+        let root = self.document()?;
+        let mut links = Vec::new();
+        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
+            if !hidden
+                && node
+                    .get("nodeName")
+                    .and_then(Value::as_str)
+                    .is_some_and(|tag| tag.eq_ignore_ascii_case("a"))
+            {
+                if let Some(href) = attributes(node)
+                    .get("href")
+                    .filter(|href| !href.trim().is_empty() && href.len() <= 2048)
+                {
+                    if links.len() < 200 && !links.contains(href) {
+                        links.push(href.clone());
+                    }
+                }
+            }
+            true
+        });
+        Ok(links)
+    }
     pub fn launch(upload_dirs: Vec<PathBuf>) -> Result<Self, DriverError> {
         Self::launch_with_mode(upload_dirs, false)
     }
@@ -1408,6 +1432,10 @@ impl BrowserDriver for CdpDriver {
 
     fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
         CdpDriver::application_links(self)
+    }
+
+    fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+        CdpDriver::page_links(self)
     }
 
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {

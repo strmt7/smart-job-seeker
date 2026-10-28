@@ -56,6 +56,10 @@ pub trait BrowserDriver {
     fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
         Err(DriverError("Application links are unavailable".into()))
     }
+    /// Return a bounded list of page anchor destinations for explicit user review.
+    fn page_links(&mut self) -> Result<Vec<String>, DriverError> {
+        Err(DriverError("Page links are unavailable".into()))
+    }
     /// Verify a text-like field after other form commands have run.
     fn verify_text_value(&mut self, _selector: &str, _expected: &str) -> Result<(), DriverError> {
         Err(DriverError("Post-fill verification is unavailable".into()))

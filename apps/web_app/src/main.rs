@@ -2309,6 +2309,11 @@ fn serve(
                     .push("Inspection screenshot is unavailable".into());
             }
             let links = form_links::candidates(&mut driver).unwrap_or_default();
+            let (other_links, other_links_available) =
+                match form_links::other_candidates(&mut driver) {
+                    Ok(links) => (links, true),
+                    Err(_) => (vec![], false),
+                };
             let mut record = match random_id()
                 .and_then(|id| attempt_record::AttemptRecord::start(ws, &job_id, &id, now()))
             {
@@ -2341,7 +2346,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"status":"complete","fields":preview.schema.fields,"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links}),
+                json!({"status":"complete","fields":preview.schema.fields,"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
             );
             *session = Some(ReviewSession {
                 id: session_id,
@@ -2382,9 +2387,13 @@ fn serve(
             };
             let task_id = random_id()?;
             let current = session.take().ok_or("Form session expired")?;
-            if let Err((current, error)) =
-                form_links::start(task_id.clone(), current, Some(target.to_owned()), profile)
-            {
+            if let Err((current, error)) = form_links::start(
+                task_id.clone(),
+                current,
+                Some(target.to_owned()),
+                body["allow_other"].as_bool() == Some(true),
+                profile,
+            ) {
                 *session = Some(*current);
                 return Err(error);
             }
@@ -2427,6 +2436,11 @@ fn serve(
                         .map_err(|e| e.to_string())?;
                     }
                     let links = form_links::candidates(&mut current.driver).unwrap_or_default();
+                    let (other_links, other_links_available) =
+                        match form_links::other_candidates(&mut current.driver) {
+                            Ok(links) => (links, true),
+                            Err(_) => (vec![], false),
+                        };
                     let screenshot = current.driver.screenshot_base64().ok();
                     if screenshot.is_none() {
                         current
@@ -2464,7 +2478,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","fields":current.preview.schema.fields,"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":current.ttl.as_secs(),"visible":current.visible,"screenshot":screenshot,"links":links}),
+                        json!({"status":"complete","fields":current.preview.schema.fields,"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":current.ttl.as_secs(),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
                     );
                     *session = Some(current);
                 }
@@ -2487,7 +2501,7 @@ fn serve(
             let task_id = random_id()?;
             let current = session.take().ok_or("Form session expired")?;
             if let Err((current, error)) =
-                form_links::start(task_id.clone(), current, None, profile)
+                form_links::start(task_id.clone(), current, None, false, profile)
             {
                 *session = Some(*current);
                 return Err(error);
