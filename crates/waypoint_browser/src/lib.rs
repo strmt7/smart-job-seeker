@@ -161,6 +161,7 @@ impl CdpDriver {
         &mut self,
     ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
         let root = self.document()?;
+        let referenced = anchor_references(&root);
         let mut links = Vec::new();
         walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
             if !hidden
@@ -179,21 +180,8 @@ impl CdpDriver {
                             .iter()
                             .any(|link: &waypoint_applications::driver::PageLink| link.url == *href)
                     {
-                        let mut label = String::new();
-                        if attrs.contains_key("aria-labelledby") {
-                            label.push_str("Label unavailable");
-                        } else if let Some(aria) = attrs
-                            .get("aria-label")
-                            .filter(|value| !value.trim().is_empty())
-                        {
-                            label.push_str(aria);
-                        } else {
-                            collect_text(node, false, &mut label);
-                        }
-                        let label: String = label
-                            .split_whitespace()
-                            .collect::<Vec<_>>()
-                            .join(" ")
+                        let label: String = anchor_label(node, &attrs, &referenced)
+                            .unwrap_or_else(|| "Label unavailable".into())
                             .chars()
                             .take(200)
                             .collect();
@@ -1692,7 +1680,7 @@ fn attributes(node: &Value) -> HashMap<String, String> {
     out
 }
 
-fn application_links_from_document(root: &Value) -> Vec<String> {
+fn anchor_references(root: &Value) -> HashMap<String, Option<String>> {
     let mut wanted = std::collections::HashSet::new();
     walk(root, false, &mut |node, _| {
         if node
@@ -1729,42 +1717,53 @@ fn application_links_from_document(root: &Value) -> Vec<String> {
         }
         true
     });
+    referenced
+}
+
+fn anchor_label(
+    node: &Value,
+    attrs: &HashMap<String, String>,
+    referenced: &HashMap<String, Option<String>>,
+) -> Option<String> {
+    let label = if let Some(ids) = attrs.get("aria-labelledby") {
+        let parts: Vec<_> = ids.split_whitespace().collect();
+        if ids.len() > 512 || parts.is_empty() || parts.len() > 16 {
+            return None;
+        }
+        parts
+            .iter()
+            .map(|id| {
+                referenced
+                    .get(*id)
+                    .and_then(Option::as_ref)
+                    .map(String::as_str)
+            })
+            .collect::<Option<Vec<_>>>()?
+            .join(" ")
+    } else if let Some(aria) = attrs
+        .get("aria-label")
+        .filter(|label| !label.trim().is_empty())
+    {
+        aria.clone()
+    } else {
+        let mut text = String::new();
+        collect_text(node, false, &mut text);
+        text
+    };
+    Some(label.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn application_links_from_document(root: &Value) -> Vec<String> {
+    let referenced = anchor_references(root);
     let mut links = Vec::new();
     walk(root, false, &mut |node, _| {
         let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
         if tag.eq_ignore_ascii_case("a") {
             let attrs = attributes(node);
-            let mut label = String::new();
-            if let Some(ids) = attrs.get("aria-labelledby") {
-                let parts: Vec<_> = ids.split_whitespace().collect();
-                if ids.len() > 512 || parts.is_empty() || parts.len() > 16 {
-                    return true;
-                }
-                let resolved: Option<Vec<_>> = parts
-                    .iter()
-                    .map(|id| referenced.get(*id).and_then(Option::as_ref))
-                    .collect();
-                let Some(resolved) = resolved else {
-                    return true;
-                };
-                label = resolved
-                    .into_iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-            } else if let Some(aria) = attrs
-                .get("aria-label")
-                .filter(|label| !label.trim().is_empty())
-            {
-                label.push_str(aria);
-            } else {
-                collect_text(node, false, &mut label);
-            }
-            let label = label
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase();
+            let Some(label) = anchor_label(node, &attrs, &referenced) else {
+                return true;
+            };
+            let label = label.to_lowercase();
             // Decorative arrows and punctuation are often part of a link's accessible name.
             // Keep the vocabulary conservative: this only proposes a destination, not a submission.
             let normalized = label.trim_matches(|c: char| !c.is_alphanumeric());

@@ -600,6 +600,15 @@ fn application_links_use_the_accessible_label_without_navigating() {
     assert!(page_links
         .iter()
         .any(|link| link.url == "filters.html" && link.label == "Apply filters"));
+    assert!(page_links
+        .iter()
+        .any(|link| link.url == "referenced.html" && link.label == "Apply now"));
+    assert!(page_links
+        .iter()
+        .any(|link| link.url == "ambiguous.html" && link.label == "Label unavailable"));
+    assert!(page_links
+        .iter()
+        .any(|link| link.url == "missing.html" && link.label == "Label unavailable"));
     let links = driver.application_links().expect("read links");
     assert_eq!(
         links,
