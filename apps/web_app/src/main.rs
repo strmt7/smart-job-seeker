@@ -2,6 +2,7 @@
 //! Local browser interface for the existing Waypoint workspace.
 mod answer_task;
 mod application_check;
+pub mod application_email;
 mod attempt_record;
 mod candidate_task;
 mod convert_task;

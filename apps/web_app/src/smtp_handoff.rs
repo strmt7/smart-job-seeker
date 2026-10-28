@@ -8,7 +8,7 @@ pub enum HandoffError {
     Uncertain,
 }
 
-fn address_valid(address: &str) -> bool {
+pub(crate) fn address_valid(address: &str) -> bool {
     let Some((local, domain)) = address.split_once('@') else {
         return false;
     };
