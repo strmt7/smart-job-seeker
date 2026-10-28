@@ -9,6 +9,83 @@ pub struct AttemptRecord {
     dir: PathBuf,
     sequence: u32,
 }
+
+/// List a bounded number of locally saved attempts without reading their materials.
+pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Attempt records require a disk-backed workspace")?
+        .join("application-records");
+    if !root.exists() {
+        return Ok(json!({"attempts":[],"truncated":false,"unreadable":0}));
+    }
+    let hash = Sha256Digest::of(id.as_str());
+    let prefix = format!("{}-", &hash.as_str()[..16]);
+    let mut attempts = Vec::new();
+    let mut unreadable = 0;
+    let mut truncated = false;
+    for (index, entry) in fs::read_dir(&root).map_err(|e| e.to_string())?.enumerate() {
+        if index >= 2000 {
+            truncated = true;
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+            continue;
+        }
+        let metadata = match entry.file_type() {
+            Ok(kind) if kind.is_dir() && !kind.is_symlink() => entry.path().join("attempt.json"),
+            _ => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        let file = match fs::metadata(&metadata) {
+            Ok(meta) if meta.is_file() && meta.len() <= 65536 => metadata,
+            _ => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        let value: Value = match fs::read(file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        {
+            Some(value) => value,
+            None => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        if value["job_id"].as_str() != Some(id.as_str()) {
+            unreadable += 1;
+            continue;
+        }
+        let (Some(attempt_id), Some(status), Some(started)) = (
+            value["attempt_id"].as_str(),
+            value["status"].as_str(),
+            value["started_at"].as_i64(),
+        ) else {
+            unreadable += 1;
+            continue;
+        };
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"]}));
+    }
+    attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
+    if attempts.len() > 50 {
+        attempts.truncate(50);
+        truncated = true;
+    }
+    Ok(json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable}))
+}
 impl AttemptRecord {
     pub fn start(
         ws: &Workspace,
@@ -313,6 +390,20 @@ mod tests {
         assert_eq!(meta["status"], "manual_review");
         assert!(meta["submitted"].is_null());
         assert_eq!(meta["submitted_by_waypoint"], false);
+        let records = list(&ws, &id).unwrap();
+        assert_eq!(records["attempts"].as_array().unwrap().len(), 1);
+        assert_eq!(records["attempts"][0]["status"], "manual_review");
+        assert_eq!(records["attempts"][0]["started_at"], 123);
+        assert_eq!(records["unreadable"], 0);
+        let other = JobIdentityId::new("other-fictional-job").unwrap();
+        assert!(list(&ws, &other).unwrap()["attempts"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        fs::write(record.dir.join("attempt.json"), b"not JSON").unwrap();
+        let invalid = list(&ws, &id).unwrap();
+        assert_eq!(invalid["unreadable"], 1);
+        assert!(invalid["attempts"].as_array().unwrap().is_empty());
         let events = fs::read_to_string(record.dir.join("events.jsonl")).unwrap();
         assert!(events.contains("Sign-in required"));
     }

@@ -181,3 +181,7 @@ After a reviewed fill, the form panel lists the labels handled by that fill and 
 Checkpoint validation (2026-10-28): `cargo fmt --all -- --check` and the offline workspace test suite passed with one build job and one test thread. The web crate reported 54 passed and 24 ignored; ignored cases were not covered by that suite. The subsequent workspace Clippy run with `-D warnings` is not yet clean: after correcting store, workspace and browser warnings it still reported 13 diagnostics in the web crate. The local changes remain uncommitted pending that cleanup.
 
 Follow-up checkpoint validation (2026-10-28): after the warning cleanup, `cargo clippy --workspace --all-targets --offline -- -D warnings` and the offline workspace test suite passed. Two additionally selected browser tests used fictional local forms and did not submit. Other ignored tests remain outside the workspace suite's coverage.
+
+Each job card can now list up to 50 matching local attempt records, including their folder locations and recorded preparation status. The scan inspects at most 2,000 directory entries and reports truncation or unreadable records. It does not establish whether the user submitted an application outside Waypoint.
+
+Hosted checkpoint CI for cb44690 failed in the Windows build job before Clippy could run: libsqlite3-sys could not find OPENSSL_DIR. The Windows build job now configures the GitHub runner's OpenSSL headers, x64 MSVC library directory and runtime path explicitly; hosted verification of this change is still pending.

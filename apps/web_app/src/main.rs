@@ -1580,6 +1580,14 @@ fn serve(
                 .map_err(|e| e.to_string())?;
             json_reply(stream, "200 OK", json!({"ok":true}));
         }
+        "/api/attempts/list" => {
+            let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            json_reply(stream, "200 OK", attempt_record::list(ws, &id)?);
+        }
         "/api/review" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
                 .map_err(|e| e.to_string())?;
