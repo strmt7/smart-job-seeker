@@ -513,6 +513,24 @@ impl AttemptRecord {
     }
 }
 
+/// Record the reviewed page and bounded evidence for off-screen content.
+pub fn capture_inspection(
+    driver: &mut waypoint_browser::CdpDriver,
+    record: &mut AttemptRecord,
+    origin: &str,
+    reasons: &[String],
+    screenshot: Option<&str>,
+    timestamp: i64,
+) -> Result<(), String> {
+    record.inspection(origin, reasons, screenshot, timestamp)?;
+    if let Err(error) = capture_page(driver, record, timestamp) {
+        let _ = record.event(json!({"type":"capture_incomplete","time":timestamp,"error":error}));
+        let _ = record.status("manual_review", timestamp);
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Save a maximum of six segments; report when a page exceeds the limit.
 pub fn capture_page(
     driver: &mut waypoint_browser::CdpDriver,
@@ -546,6 +564,64 @@ mod tests {
     use super::*;
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
+
+    #[test]
+    #[ignore = "starts one headless browser against a local fixture"]
+    fn inspection_archives_bounded_offscreen_segments() {
+        use waypoint_applications::driver::BrowserDriver;
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let id = JobIdentityId::new("inspection-fixture").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: id.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: "".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            None,
+        )
+        .unwrap();
+        let mut record = AttemptRecord::start(&ws, &id, "inspection", 1)
+            .unwrap()
+            .unwrap();
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = format!(
+            "file:///{}",
+            fixture.display().to_string().replace('\\', "/")
+        );
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(&url).unwrap();
+        let viewport = driver.screenshot_base64().unwrap();
+        capture_inspection(&mut driver, &mut record, "file://", &[], Some(&viewport), 2).unwrap();
+        let events = fs::read_to_string(record.dir.join("events.jsonl")).unwrap();
+        let entries: Vec<Value> = events
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(entries
+            .iter()
+            .any(|event| event["type"] == "page_inspected"));
+        assert!(entries.iter().any(|event| event["type"] == "page_capture"
+            && event["segments"] == 2
+            && event["full_dimensions_captured"] == true));
+        assert_eq!(
+            fs::read_dir(record.dir.join("screenshots"))
+                .unwrap()
+                .count(),
+            3
+        );
+    }
 
     #[test]
     fn attempt_archives_the_saved_listing_and_source() {

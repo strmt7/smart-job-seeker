@@ -2146,7 +2146,9 @@ fn serve(
                 }
             };
             if let Some(record) = &mut record {
-                if let Err(error) = record.inspection(
+                if let Err(error) = attempt_record::capture_inspection(
+                    &mut driver,
+                    record,
                     &preview.schema.origin,
                     &preview.manual_review,
                     screenshot.as_deref(),
@@ -2263,7 +2265,9 @@ fn serve(
                         .map_err(|e| e.to_string())?;
                     }
                     if let Some(record) = &mut current.record {
-                        if let Err(error) = record.inspection(
+                        if let Err(error) = attempt_record::capture_inspection(
+                            &mut current.driver,
+                            record,
                             &current.preview.schema.origin,
                             &current.preview.manual_review,
                             screenshot.as_deref(),
