@@ -126,6 +126,21 @@ fn analyze(
     image: &str,
     expected: &[(String, String)],
 ) -> Result<Value, String> {
+    let prompt = "Transcribe only visible form field labels and their displayed values in the image. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.";
+    let result = generate_vision(addr, model, image, prompt)?;
+    let observed = validate(&result)?;
+    Ok(compare(&observed, expected))
+}
+
+pub(crate) fn generate_vision(
+    addr: std::net::SocketAddr,
+    model: &str,
+    image: &str,
+    prompt: &str,
+) -> Result<Value, String> {
+    if image.is_empty() || image.len() > 4 * 1024 * 1024 || prompt.len() > 24_000 {
+        return Err("Vision input exceeds limits".into());
+    }
     let details = serde_json::to_vec(&json!({"model":model})).map_err(|e| e.to_string())?;
     let (status, details) =
         waypoint_inference::ollama::http_request(addr, "POST", "/api/show", Some(&details), 3000)?;
@@ -136,12 +151,9 @@ fn analyze(
             .as_array()
             .is_some_and(|items| items.iter().any(|v| v.as_str() == Some("vision")))
     {
-        return Err(
-            "The resident model did not report vision capability; inspect the screenshot manually"
-                .into(),
-        );
+        return Err("The resident model did not report vision capability; inspect manually".into());
     }
-    let body = json!({"model":model,"prompt":"Transcribe only visible form field labels and their displayed values in the image. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.","images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
+    let body = json!({"model":model,"prompt":prompt,"images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let (status, data) = waypoint_inference::ollama::http_request(
         addr,
@@ -151,22 +163,18 @@ fn analyze(
         120_000,
     )?;
     if status != 200 {
-        return Err(format!(
-            "Local vision model returned HTTP {status}; use a vision-capable resident model"
-        ));
+        return Err(format!("Local vision model returned HTTP {status}"));
     }
     let response: Value =
         serde_json::from_slice(&data).map_err(|_| "Invalid vision model response")?;
     if response["done"] != true || response["done_reason"] != "stop" {
-        return Err("Visual review did not finish; inspect the screenshot manually".into());
+        return Err("Visual review did not finish; inspect manually".into());
     }
     let text = response["response"]
         .as_str()
         .filter(|s| s.len() <= 32_000)
         .ok_or("Invalid vision output")?;
-    let observed =
-        validate(&serde_json::from_str(text).map_err(|_| "Vision output was not JSON")?)?;
-    Ok(compare(&observed, expected))
+    serde_json::from_str(text).map_err(|_| "Vision output was not JSON".into())
 }
 
 pub fn poll(id: &str) -> Result<Value, String> {

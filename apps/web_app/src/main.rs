@@ -11,6 +11,7 @@ mod discovery_task;
 mod doc_suggest;
 mod document_convert;
 mod document_extract;
+mod document_visual;
 mod docx_edit;
 mod docx_edit_task;
 mod draft_task;
@@ -1882,6 +1883,41 @@ fn serve(
         "/api/documents/preview-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", pdf_preview_task::poll(id)?);
+        }
+        "/api/documents/visual-review-start" => {
+            let id = body["id"].as_str().ok_or("missing document id")?;
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let (facts, _, listing, _) = fit_inputs(ws, &job)?;
+            let name = ws
+                .documents()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|d| d.id == id)
+                .ok_or("Document not found")?
+                .name;
+            if !name.to_ascii_lowercase().ends_with(".pdf") {
+                return Err("Convert the final document to PDF first".into());
+            }
+            let bytes = ws
+                .document_content(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Document not found")?;
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let context = format!(
+                "Posting: {}\nReviewed qualifications: {}",
+                listing.chars().take(5000).collect::<String>(),
+                facts.join(" | ").chars().take(5000).collect::<String>()
+            );
+            let task_id = random_id()?;
+            document_visual::start(task_id.clone(), model, bytes, context)?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/visual-review-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", document_visual::poll(id)?);
         }
         "/api/documents/ats-check-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
