@@ -31,6 +31,7 @@ mod gmail_oauth;
 mod gmail_password;
 mod gmail_self_test;
 mod letter_export;
+mod link_rank;
 mod manual_job;
 mod pdf_extract;
 mod pdf_job;
@@ -2363,6 +2364,40 @@ fn serve(
                 staged_files: vec![],
                 record,
             });
+        }
+        "/api/form/link-rank-start" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let recognized = form_links::candidates(&mut current.driver)?;
+            let links = form_links::other_candidates(&mut current.driver)?
+                .into_iter()
+                .filter(|link| !recognized.contains(&link.url))
+                .collect();
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            link_rank::start(task_id.clone(), current.id.clone(), model, links)?;
+            current.created = Instant::now();
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/form/link-rank-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let result = link_rank::poll(id)?;
+            if matches!(result["status"].as_str(), Some("running" | "complete")) {
+                let current = session
+                    .as_mut()
+                    .filter(|s| {
+                        Some(s.id.as_str()) == result["session_id"].as_str()
+                            && s.created.elapsed() <= s.ttl
+                    })
+                    .ok_or("The form session expired; inspect the page again")?;
+                current.created = Instant::now();
+            }
+            json_reply(stream, "200 OK", result);
         }
         "/api/form/open-link-start" => {
             if body["reviewed"].as_bool() != Some(true) {

@@ -26,6 +26,10 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// name falls back to generic JSON mode (never a silent schema mismatch).
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "application_link_ranking",
+        r#"{"type":"object","properties":{"indices":{"type":"array","items":{"type":"integer","minimum":0,"maximum":29},"maxItems":5}},"required":["indices"],"additionalProperties":false}"#,
+    ),
+    (
         "claim",
         include_str!("../../../docs/waypoint-handoff/schemas/claim.schema.json"),
     ),

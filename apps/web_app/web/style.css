@@ -105,3 +105,4 @@ aside>nav{position:sticky;top:0;z-index:2;background:#f4f6f4}
 aside>section{scroll-margin-top:76px}
 /* Keep both work areas reachable when either contains a long list. */
 @media(min-width:851px){main{height:calc(100dvh - 68px);min-height:0;overflow:hidden}.jobs,aside{overflow:auto;overscroll-behavior:contain;min-height:0;scrollbar-gutter:stable}.jobs:focus-visible,aside:focus-visible{outline:3px solid #68bfc1;outline-offset:-3px}}
+#form-preview .web-candidate .review-label{display:inline-block;margin-left:8px}
