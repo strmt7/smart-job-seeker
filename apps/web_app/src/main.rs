@@ -2900,6 +2900,18 @@ fn serve(
                 .iter()
                 .filter_map(|item| item["selector"].as_str().map(str::to_owned))
                 .collect();
+            let mut attachment_changed = false;
+            for (selector, path) in &current.attachments {
+                if current.driver.verify_local_file(selector, path).is_err() {
+                    attachment_changed = true;
+                    current.preview.manual_review.push(format!(
+                        "Attachment at {selector} could not be verified after filling; inspect it manually"
+                    ));
+                    if let Some(record) = &mut current.record {
+                        let _ = record.event(json!({"type":"attachment_verification_failed","time":now(),"selector":selector}));
+                    }
+                }
+            }
             let filled = match result {
                 Ok(count) => count,
                 Err(error) => {
@@ -2926,21 +2938,16 @@ fn serve(
                     let flag_note = review_error
                         .map(|e| format!(" The manual-review flag could not be saved: {e}."))
                         .unwrap_or_default();
+                    let attachment_note = if attachment_changed {
+                        " An attachment could not be verified; check it manually."
+                    } else {
+                        ""
+                    };
                     return Err(format!(
-                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{flag_note}", completed.len()
+                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{flag_note}", completed.len()
                     ));
                 }
             };
-            for (selector, path) in &current.attachments {
-                if current.driver.verify_local_file(selector, path).is_err() {
-                    current.preview.manual_review.push(format!(
-                        "Attachment at {selector} could not be verified after filling; inspect it manually"
-                    ));
-                    if let Some(record) = &mut current.record {
-                        let _ = record.event(json!({"type":"attachment_verification_failed","time":now(),"selector":selector}));
-                    }
-                }
-            }
             let screenshot = match current.driver.screenshot_base64() {
                 Ok(image) => image,
                 Err(error) => {
@@ -4818,9 +4825,19 @@ mod tests {
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
             assert!(error.contains("2 successful field commands"), "{error}");
             assert!(error.contains("Given name"), "{error}");
+            assert!(
+                error.contains("An attachment could not be verified"),
+                "{error}"
+            );
             assert_eq!(session.as_ref().unwrap().completed_selectors.len(), 2);
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
+            session
+                .as_mut()
+                .unwrap()
+                .driver
+                .attach_local_file("#resume", &staged_path)
+                .unwrap();
             session.as_mut().unwrap().filled = false;
             let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();

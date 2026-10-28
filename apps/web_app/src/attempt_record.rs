@@ -490,7 +490,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -515,6 +515,15 @@ impl AttemptRecord {
             .ok_or("Job not found")?;
         let description = ws.job_description(id).map_err(|e| e.to_string())?;
         let captured = ws.job_capture(id).map_err(|e| e.to_string())?;
+        let capture_source_url = captured.as_ref().and_then(|(metadata, _)| {
+            serde_json::from_slice::<Value>(metadata)
+                .ok()
+                .and_then(|capture| capture["source_url"].as_str().map(str::to_owned))
+        });
+        let capture_matches_current_url = capture_source_url
+            .as_deref()
+            .zip(job.canonical_url.as_deref())
+            .map(|(captured_url, current_url)| captured_url == current_url);
         let hash = Sha256Digest::of(id.as_str());
         let dir = root
             .join("application-records")
@@ -538,6 +547,8 @@ impl AttemptRecord {
             "description_sha256": description.as_deref().map(|text| Sha256Digest::of(text).as_str().to_owned()),
             "description": description,
             "page_capture_available": captured.is_some(),
+            "page_capture_source_url": capture_source_url,
+            "page_capture_matches_current_url": capture_matches_current_url,
             "note": "Workspace listing text as saved at the start of this attempt; it may have been extracted or pasted and is not a capture of the original page."
         });
         fs::write(
@@ -585,7 +596,7 @@ impl AttemptRecord {
                     .map_err(|e| e.to_string())?;
             }
         }
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":null,"submitted_by_waypoint":false,"note":"External submission is not monitored; this record does not prove whether an application was submitted."});
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":null,"submitted_by_waypoint":false,"page_capture_available":posting["page_capture_available"],"page_capture_source_url":posting["page_capture_source_url"],"page_capture_matches_current_url":posting["page_capture_matches_current_url"],"note":"External submission is not monitored; this record does not prove whether an application was submitted."});
         fs::write(
             dir.join("attempt.json"),
             serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?,
@@ -1043,6 +1054,11 @@ mod tests {
         #[cfg(windows)]
         {
             assert_eq!(listing["page_capture_available"], true);
+            assert_eq!(listing["page_capture_matches_current_url"], true);
+            assert_eq!(
+                listing["page_capture_source_url"],
+                "https://example.org/jobs/1"
+            );
             assert_eq!(
                 fs::read(record.dir.join("original-job-page/0001.png")).unwrap(),
                 b"\x89PNG\r\n\x1a\nfictional-data"
@@ -1088,6 +1104,11 @@ mod tests {
         assert_eq!(records["attempts"].as_array().unwrap().len(), 1);
         assert_eq!(records["attempts"][0]["status"], "manual_review");
         assert_eq!(records["attempts"][0]["started_at"], 123);
+        #[cfg(windows)]
+        assert_eq!(
+            records["attempts"][0]["page_capture_matches_current_url"],
+            true
+        );
         assert_eq!(records["unreadable"], 0);
         let other = JobIdentityId::new("other-fictional-job").unwrap();
         assert!(list(&ws, &other).unwrap()["attempts"]
@@ -1098,6 +1119,23 @@ mod tests {
         let invalid = list(&ws, &id).unwrap();
         assert_eq!(invalid["unreadable"], 1);
         assert!(invalid["attempts"].as_array().unwrap().is_empty());
+        #[cfg(windows)]
+        {
+            let mut changed = ws.job(&id).unwrap().unwrap();
+            changed.canonical_url = Some("https://example.org/jobs/updated".into());
+            ws.import_job(changed).unwrap();
+            let updated = AttemptRecord::start(&ws, &id, "attempt-updated", 124)
+                .unwrap()
+                .unwrap();
+            let updated_listing: Value =
+                serde_json::from_slice(&fs::read(updated.dir.join("original-job.json")).unwrap())
+                    .unwrap();
+            assert_eq!(updated_listing["page_capture_matches_current_url"], false);
+            assert_eq!(
+                updated_listing["page_capture_source_url"],
+                "https://example.org/jobs/1"
+            );
+        }
         let events = fs::read_to_string(record.dir.join("events.jsonl")).unwrap();
         assert!(events.contains("Sign-in required"));
     }
