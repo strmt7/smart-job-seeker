@@ -457,6 +457,16 @@ fn a_required_custom_control_is_reported_alongside_native_fields() {
         .iter()
         .any(|w| w == "a required custom control needs manual review"));
     assert!(live.walls.iter().all(|w| !w.contains("Unreliable label")));
+    for label in ["Motivation", "Availability"] {
+        assert!(
+            live.walls
+                .iter()
+                .any(|w| w.contains("required custom control") && w.contains(label)),
+            "missing {label}: {:?}",
+            live.walls
+        );
+    }
+    assert!(live.walls.iter().all(|w| !w.contains("Hidden question")));
 }
 
 #[test]

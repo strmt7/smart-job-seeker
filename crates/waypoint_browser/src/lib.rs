@@ -488,9 +488,13 @@ impl CdpDriver {
                 || attrs
                     .get("aria-required")
                     .is_some_and(|value| value.eq_ignore_ascii_case("true")))
-                && attrs
-                    .get("role")
-                    .is_some_and(|role| match role.to_ascii_lowercase().as_str() {
+                && (attrs.get("contenteditable").is_some_and(|value| {
+                    matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "" | "true" | "plaintext-only"
+                    ) && !matches!(tag.as_str(), "input" | "textarea" | "select")
+                }) || attrs.get("role").is_some_and(|role| {
+                    match role.to_ascii_lowercase().as_str() {
                         "combobox" | "listbox" => tag != "select",
                         "spinbutton" => {
                             !(tag == "input"
@@ -498,12 +502,13 @@ impl CdpDriver {
                                     .get("type")
                                     .is_some_and(|kind| kind.eq_ignore_ascii_case("number")))
                         }
-                        "slider" => true,
-                        "textbox" | "checkbox" | "radio" => {
+                        "slider" | "switch" => true,
+                        "textbox" | "searchbox" | "checkbox" | "radio" => {
                             !matches!(tag.as_str(), "input" | "textarea" | "select")
                         }
                         _ => false,
-                    })
+                    }
+                }))
             {
                 if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
                     let label = attrs
