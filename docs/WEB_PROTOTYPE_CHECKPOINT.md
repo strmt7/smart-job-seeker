@@ -292,3 +292,7 @@ Manual-review reasons for required custom controls include a bounded `aria-label
 Bounded, unambiguous `aria-labelledby` references can also identify these questions. Missing or duplicate references leave the reason generic rather than guessing a label.
 
 Pending local-model form answers can be recovered after a reload in the same browser session. The recovered answer and its sources appear separately for review; they are not inserted into a newly inspected form. The existing server-side freshness check can reject an answer when the original session, page or supporting information changed. Unsaved form edits are not recovered.
+
+Required custom widgets remain marked for manual review, but no longer prevent separately reviewed native fields on the same page from being suggested or filled. Other walls still block filling. The driver rechecks the form and its custom-widget review reasons before acting. A local Chromium fixture exercised this without submission.
+
+A user-authorized self-addressed test message was accepted by Gmail SMTP and found in the test inbox using IMAP. This used a separate local test client; in-app Gmail delivery is not yet implemented or verified.

@@ -608,7 +608,7 @@ fn check_answer_page(session: &mut ReviewSession) -> Result<(), String> {
         .driver
         .inspect_current()
         .map_err(|e| e.to_string())?;
-    if !live.walls.is_empty()
+    if !form_preview::same_reviewable_walls(&session.preview, &live.walls)
         || live.schema != session.preview.schema
         || live.origin != session.preview.schema.origin
     {
@@ -2386,7 +2386,7 @@ fn serve(
                 .driver
                 .inspect_current()
                 .map_err(|e| e.to_string())?;
-            if !live.walls.is_empty()
+            if !form_preview::same_reviewable_walls(&current.preview, &live.walls)
                 || live.schema != current.preview.schema
                 || live.origin != current.preview.schema.origin
             {

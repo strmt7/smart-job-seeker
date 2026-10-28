@@ -19,6 +19,27 @@ pub struct FormPreview {
     pub manual_review: Vec<String>,
 }
 
+// Unsupported custom questions remain review obligations; other walls block.
+fn is_custom_review(reason: &str) -> bool {
+    reason == "a required custom control needs manual review"
+        || reason.starts_with("a required custom control needs manual review: ")
+}
+
+pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
+    if fresh_walls.iter().any(|wall| !is_custom_review(wall)) {
+        return false;
+    }
+    let mut expected: Vec<_> = preview
+        .manual_review
+        .iter()
+        .filter(|reason| is_custom_review(reason))
+        .collect();
+    let mut actual: Vec<_> = fresh_walls.iter().collect();
+    expected.sort();
+    actual.sort();
+    expected == actual
+}
+
 /// Describe the commands in this fill operation, not the form's current validity.
 pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
     let selected: std::collections::HashSet<_> = preview
@@ -88,7 +109,7 @@ pub fn apply_reviewed_text_fields(
         return Err("Destination review is required".into());
     }
     let fresh = driver.inspect_current().map_err(|e| e.to_string())?;
-    if !fresh.walls.is_empty()
+    if !same_reviewable_walls(preview, &fresh.walls)
         || fresh.schema != preview.schema
         || fresh.origin != preview.schema.origin
     {
@@ -282,7 +303,8 @@ fn build_preview(
     profile: &Value,
     no_model_reason: &str,
 ) -> Result<FormPreview, String> {
-    let blocked = !live.walls.is_empty() || live.schema.fields.is_empty();
+    let blocked =
+        live.walls.iter().any(|wall| !is_custom_review(wall)) || live.schema.fields.is_empty();
     let mut manual_review = live.walls;
     if live.schema.fields.is_empty() {
         manual_review.push("No form fields were detected; navigation, login, an embedded frame, or manual review may be required".into());
@@ -439,6 +461,15 @@ mod tests {
         .unwrap();
         assert_eq!(preview.suggestions.len(), 1);
         assert_eq!(preview.suggestions[0].field_selector, "#candidate");
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Preferred location")));
+        assert!(!same_reviewable_walls(
+            &preview,
+            &["captcha present".into()]
+        ));
+        assert!(!same_reviewable_walls(&preview, &[]));
         assert!(driver
             .trace
             .iter()
