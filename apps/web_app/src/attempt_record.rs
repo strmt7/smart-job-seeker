@@ -698,6 +698,12 @@ impl AttemptRecord {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+    pub fn visual_result_path(&self, task_id: &str) -> Result<PathBuf, String> {
+        if task_id.len() != 32 || !task_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid visual task identity".into());
+        }
+        Ok(self.dir.join(format!("visual-result-{task_id}.json")))
+    }
     pub fn screenshot(&mut self, data: &str) -> Result<(), String> {
         self.screenshot_with_name(data).map(|_| ())
     }
@@ -734,6 +740,29 @@ impl AttemptRecord {
         fs::write(self.dir.join("materials").join(&filename), bytes).map_err(|e| e.to_string())?;
         Ok(filename)
     }
+}
+
+/// Save a model result independently of the review session or browser polling.
+pub fn write_visual_result(
+    path: &std::path::Path,
+    task_id: &str,
+    result: &Result<Value, String>,
+    timestamp: i64,
+) -> Result<(), String> {
+    let parent = path.parent().ok_or("Invalid visual result path")?;
+    let value = match result {
+        Ok(review) => {
+            json!({"type":"visual_result","time":timestamp,"task_id":task_id,"status":"complete","visual_review":review})
+        }
+        Err(error) => {
+            json!({"type":"visual_result","time":timestamp,"task_id":task_id,"status":"failed","error":error})
+        }
+    };
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(&mut file, &value).map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())?;
+    file.persist_noclobber(path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Record the reviewed page and bounded evidence for off-screen content.
@@ -788,6 +817,28 @@ mod tests {
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
 
+    #[test]
+    fn visual_result_can_be_saved_without_session_polling() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = AttemptRecord {
+            dir: dir.path().to_path_buf(),
+            sequence: 0,
+        };
+        let id = "0123456789abcdef0123456789abcdef";
+        let path = record.visual_result_path(id).unwrap();
+        let worker_path = path.clone();
+        std::thread::spawn(move || {
+            write_visual_result(&worker_path, id, &Ok(json!({"observations":[]})), 42).unwrap();
+        })
+        .join()
+        .unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["task_id"], id);
+        assert_eq!(saved["status"], "complete");
+        assert_eq!(saved["visual_review"]["observations"], json!([]));
+        assert!(write_visual_result(&path, id, &Err("failure".into()), 43).is_err());
+        assert!(record.visual_result_path("../escape").is_err());
+    }
     #[test]
     fn visual_capture_filename_identifies_saved_bytes_and_event() {
         let dir = tempfile::tempdir().unwrap();

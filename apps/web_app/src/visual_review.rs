@@ -7,6 +7,7 @@ struct Task {
     session: String,
     result: Option<Result<Value, String>>,
     completed: Option<std::time::Instant>,
+    record_saved: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
@@ -96,6 +97,7 @@ pub fn start(
     model: String,
     image: String,
     expected: Vec<(String, String)>,
+    result_path: Option<std::path::PathBuf>,
 ) -> Result<(), String> {
     if image.len() > 4 * 1024 * 1024 || image.is_empty() {
         return Err("Screenshot is unavailable or too large for local visual review".into());
@@ -116,6 +118,7 @@ pub fn start(
         session,
         result: None,
         completed: None,
+        record_saved: false,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -134,8 +137,12 @@ pub fn start(
             )
         })
         .unwrap_or_else(|_| Err("Visual review stopped unexpectedly".into()));
+        let record_saved = result_path.as_deref().is_some_and(|path| {
+            crate::attempt_record::write_visual_result(path, &id, &result, crate::now()).is_ok()
+        });
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut().filter(|t| t.id == id) {
+                task.record_saved = record_saved;
                 task.result = Some(result);
                 task.completed = Some(std::time::Instant::now());
             }
@@ -211,10 +218,15 @@ pub fn poll(id: &str) -> Result<Value, String> {
         return Ok(json!({"status":"running","session_id":task.session}));
     };
     let session = task.session.clone();
+    let record_saved = task.record_saved;
     *tasks = None;
     Ok(match result {
-        Ok(observed) => json!({"status":"complete","session_id":session,"visual_review":observed}),
-        Err(error) => json!({"status":"failed","session_id":session,"error":error}),
+        Ok(observed) => {
+            json!({"status":"complete","session_id":session,"visual_review":observed,"record_saved":record_saved})
+        }
+        Err(error) => {
+            json!({"status":"failed","session_id":session,"error":error,"record_saved":record_saved})
+        }
     })
 }
 
