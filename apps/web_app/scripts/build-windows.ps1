@@ -1,6 +1,8 @@
 param(
     [string]$OpenSslRoot = $env:OPENSSL_DIR,
-    [switch]$Release
+    [switch]$Release,
+    [switch]$Test,
+    [string]$TestFilter
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
@@ -21,10 +23,14 @@ if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '1' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
 Push-Location $repo
 try {
-    $cargoArgs = @('build','-p','waypoint_web')
+    if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
+    $operation = if ($Test) { 'test' } else { 'build' }
+    $cargoArgs = @($operation,'-p','waypoint_web')
     if ($Release) { $cargoArgs += '--release' }
+    if ($TestFilter) { $cargoArgs += $TestFilter }
     & cargo @cargoArgs
-    if ($LASTEXITCODE -ne 0) { throw "Cargo build failed ($LASTEXITCODE)." }
+    if ($LASTEXITCODE -ne 0) { throw "Cargo $operation failed ($LASTEXITCODE)." }
+    if ($Test) { Write-Host "Waypoint tests completed using the configured SQLCipher runtime."; return }
     $profile = if ($Release) { 'release' } else { 'debug' }
     $destination = Join-Path $repo "target/$profile/$($dlls[0].Name)"
     if (Test-Path -LiteralPath $destination) {

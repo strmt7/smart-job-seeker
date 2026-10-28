@@ -66,6 +66,10 @@ const MAX_DOCUMENT: usize = 10 * 1024 * 1024;
 const SESSION_TTL: Duration = Duration::from_secs(120);
 const VISIBLE_SESSION_TTL: Duration = Duration::from_secs(600);
 
+fn remaining_session_seconds(ttl: Duration, elapsed: Duration) -> u64 {
+    ttl.saturating_sub(elapsed).as_secs()
+}
+
 struct ReviewSession {
     id: String,
     job_id: JobIdentityId,
@@ -949,6 +953,18 @@ fn serve(
             stream,
             "200 OK",
             json!({"jobs": jobs, "facts": facts, "documents":documents, "reviews":reviews, "duplicates":ws.possible_duplicates().map_err(|e| e.to_string())?, "duplicate_index_pending":ws.duplicate_index_pending().map_err(|e|e.to_string())?, "duplicate_coverage":{"total":duplicate_total,"pending":duplicate_pending,"bounded":duplicate_bounded,"missing_employer":duplicate_missing}, "profile":profile, "sealing": ws.sealing_status()}),
+        );
+        return Ok(());
+    }
+    if method == "GET" && path == "/api/license-notices" {
+        json_reply(
+            stream,
+            "200 OK",
+            json!({
+                "sqlcipher": include_str!("../../../docs/SQLCIPHER_LICENSE.txt"),
+                "credits": include_str!("../../../docs/REJECTION_REJECTOR_LICENSE.md"),
+                "inventory": include_str!("../../../docs/dependency-license-inventory.txt")
+            }),
         );
         return Ok(());
     }
@@ -2547,7 +2563,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","fields":current.preview.schema.fields,"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":current.ttl.as_secs(),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                        json!({"status":"complete","fields":current.preview.schema.fields,"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
                     );
                     *session = Some(current);
                 }
@@ -2742,28 +2758,11 @@ fn serve(
                 return Err("Profile changed; inspect the current page again".into());
             }
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
-            let mut current = session.take().ok_or("Form session expired")?;
-            if current.created.elapsed() > current.ttl {
-                return Err("Form session expired; inspect it again".into());
-            }
-            if omitted {
-                if let Err(error) =
-                    ws.mark_manual_review(&current.job_id, "Application needs manual review", now())
-                {
-                    *session = Some(current);
-                    return Err(error.to_string());
-                }
-                current
-                    .preview
-                    .manual_review
-                    .push("Some suggested fields were left for manual review".into());
-            }
-            current.preview.suggestions = prepared.suggestions;
             let intent =
                 IntentId::new(format!("prefill-{}", current.id)).map_err(|e| e.to_string())?;
             let grant_id = GrantId::new(random_id()?).map_err(|e| e.to_string())?;
             let payload =
-                serde_json::to_string(&current.preview.suggestions).map_err(|e| e.to_string())?;
+                serde_json::to_string(&prepared.suggestions).map_err(|e| e.to_string())?;
             let mut grant = ApprovalGrant {
                 id: grant_id,
                 intent_id: IntentId::new(intent.as_str()).map_err(|e| e.to_string())?,
@@ -2778,16 +2777,54 @@ fn serve(
                 consumed: false,
                 expired: false,
             };
+            let mut current = session.take().ok_or("Form session expired")?;
+            if current.created.elapsed() > current.ttl {
+                return Err("Form session expired; inspect it again".into());
+            }
+            let original_preview = current.preview.clone();
+            if omitted {
+                if let Err(error) =
+                    ws.mark_manual_review(&current.job_id, "Application needs manual review", now())
+                {
+                    *session = Some(current);
+                    return Err(error.to_string());
+                }
+                current
+                    .preview
+                    .manual_review
+                    .push("Some suggested fields were left for manual review".into());
+            }
+            current.preview.suggestions = prepared.suggestions;
             if current.record.is_none() {
-                current.record = attempt_record::AttemptRecord::start(
-                    ws,
-                    &current.job_id,
-                    &random_id()?,
-                    now(),
-                )?;
+                match random_id().and_then(|id| {
+                    attempt_record::AttemptRecord::start(ws, &current.job_id, &id, now())
+                }) {
+                    Ok(record) => current.record = record,
+                    Err(error) => {
+                        let review_error = ws
+                            .mark_manual_review(
+                                &current.job_id,
+                                "Application record could not be created; no fields were filled",
+                                now(),
+                            )
+                            .err();
+                        current.preview = original_preview;
+                        *session = Some(current);
+                        let note = review_error
+                            .map(|e| format!(" The manual-review flag could not be saved: {e}."))
+                            .unwrap_or_default();
+                        return Err(format!("No fields were filled because the attempt record could not be created: {error}. The review session remains open.{note}"));
+                    }
+                }
             }
             if let Some(record) = &mut current.record {
-                record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions}))?;
+                if let Err(error) = record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions})) {
+                    let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written; no fields were filled", now()).err();
+                    current.preview = original_preview;
+                    *session = Some(current);
+                    let note = review_error.map(|e| format!(" The manual-review flag could not be saved: {e}.")).unwrap_or_default();
+                    return Err(format!("No fields were filled because the attempt record could not be written: {error}. The review session remains open.{note}"));
+                }
             }
             current.filled = true;
             let mut completed = Vec::new();
@@ -2824,32 +2861,40 @@ fn serve(
                             let _ = record.event(json!({"type":"capture_incomplete","time":now(),"error":capture_error}));
                         }
                     }
-                    ws.mark_manual_review(
-                        &current.job_id,
-                        "Application needs manual review",
-                        now(),
-                    )
-                    .map_err(|e| e.to_string())?;
+                    let review_error = ws
+                        .mark_manual_review(
+                            &current.job_id,
+                            "Application needs manual review",
+                            now(),
+                        )
+                        .err();
                     current.created = Instant::now();
                     *session = Some(current);
+                    let flag_note = review_error
+                        .map(|e| format!(" The manual-review flag could not be saved: {e}."))
+                        .unwrap_or_default();
                     return Err(format!(
-                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}", completed.len()
+                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{flag_note}", completed.len()
                     ));
                 }
             };
             let screenshot = match current.driver.screenshot_base64() {
                 Ok(image) => image,
                 Err(error) => {
-                    ws.mark_manual_review(
-                        &current.job_id,
-                        "Application needs manual review",
-                        now(),
-                    )
-                    .map_err(|e| e.to_string())?;
+                    let review_error = ws
+                        .mark_manual_review(
+                            &current.job_id,
+                            "Application needs manual review",
+                            now(),
+                        )
+                        .err();
                     current.created = Instant::now();
                     *session = Some(current);
+                    let flag_note = review_error
+                        .map(|e| format!(" The manual-review flag could not be saved: {e}."))
+                        .unwrap_or_default();
                     return Err(format!(
-                        "Fields were filled, but the review screenshot failed: {error}"
+                        "Fields were filled, but the review screenshot failed: {error}.{flag_note} Inspect the open browser manually."
                     ));
                 }
             };
@@ -2867,12 +2912,6 @@ fn serve(
                         .preview
                         .manual_review
                         .push("Attempt screenshot capture was incomplete".into());
-                    ws.mark_manual_review(
-                        &current.job_id,
-                        "Application needs manual review",
-                        now(),
-                    )
-                    .map_err(|e| e.to_string())?;
                 }
             }
             if let Err(error) = ws.mark_manual_review(
@@ -2898,7 +2937,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"filled":filled,"filled_fields":filled_fields,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":current.ttl.as_secs()}),
+                json!({"filled":filled,"filled_fields":filled_fields,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
             );
             *session = Some(current);
         }
@@ -3440,6 +3479,24 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn review_session_remaining_time_is_bounded_by_elapsed_time() {
+        use std::time::Duration;
+        let ttl = Duration::from_secs(120);
+        assert_eq!(
+            super::remaining_session_seconds(ttl, Duration::from_secs(35)),
+            85
+        );
+        assert_eq!(
+            super::remaining_session_seconds(ttl, Duration::from_secs(120)),
+            0
+        );
+        assert_eq!(
+            super::remaining_session_seconds(ttl, Duration::from_secs(130)),
+            0
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -3855,6 +3912,31 @@ mod tests {
         format!("{response}\nfacts={facts}")
     }
 
+    #[test]
+    fn bundled_license_notices_are_available_to_the_local_workspace() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+        });
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "GET /api/license-notices HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+        let body = response.split_once("\r\n\r\n").unwrap().1;
+        let value: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(
+            value["sqlcipher"],
+            include_str!("../../../docs/SQLCIPHER_LICENSE.txt")
+        );
+        assert_eq!(
+            value["inventory"],
+            include_str!("../../../docs/dependency-license-inventory.txt")
+        );
+    }
     #[test]
     fn mutation_requires_token_and_submit_is_unavailable() {
         let body = r#"{"text":"fixture skill"}"#;
@@ -4370,6 +4452,86 @@ mod tests {
                 .any(|mapping| mapping.field_selector == "#candidate"));
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
+            // Replace only the fixture's records directory with a file so record
+            // creation fails without changing host permissions.
+            let records = workspace_dir.path().join("application-records");
+            let records_backup = workspace_dir.path().join("fixture-records-backup");
+            std::fs::rename(&records, &records_backup).unwrap();
+            std::fs::write(&records, b"fixture blocker").unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(
+                error.contains("attempt record could not be created"),
+                "{error}"
+            );
+            assert!(ws
+                .manual_reviews()
+                .unwrap()
+                .iter()
+                .any(|review| review.reason.contains("record could not be created")));
+            let current = session.as_mut().unwrap();
+            assert!(!current.filled);
+            assert!(current
+                .preview
+                .suggestions
+                .iter()
+                .any(|mapping| mapping.field_selector == "#candidate"
+                    && mapping.value == PacketValue::Text("Synthetic".into())));
+            assert_eq!(
+                current
+                    .driver
+                    .read_attribute("#candidate", "data-seen")
+                    .unwrap(),
+                None
+            );
+            std::fs::remove_file(&records).unwrap();
+            std::fs::rename(&records_backup, &records).unwrap();
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
+            // Make the event path a directory to simulate a record-write failure
+            // inside this disposable workspace, without changing host permissions.
+            let broken_id = "fedcba9876543210fedcba9876543210";
+            let broken_record = attempt_record::AttemptRecord::start(&ws, &id, broken_id, 1)
+                .unwrap()
+                .unwrap();
+            let hash = Sha256Digest::of(id.as_str());
+            let broken_events = ws
+                .db_path
+                .as_ref()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("application-records")
+                .join(format!("{}-{broken_id}", &hash.as_str()[..16]))
+                .join("events.jsonl");
+            std::fs::create_dir(&broken_events).unwrap();
+            session.as_mut().unwrap().record = Some(broken_record);
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("No fields were filled"), "{error}");
+            assert!(ws
+                .manual_reviews()
+                .unwrap()
+                .iter()
+                .any(|review| review.reason.contains("record could not be written")));
+            let current = session.as_mut().unwrap();
+            assert!(!current.filled);
+            assert!(current
+                .preview
+                .suggestions
+                .iter()
+                .any(|mapping| mapping.field_selector == "#candidate"
+                    && mapping.value == PacketValue::Text("Synthetic".into())));
+            assert_eq!(
+                current
+                    .driver
+                    .read_attribute("#candidate", "data-seen")
+                    .unwrap(),
+                None
+            );
+            current.record = None;
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
             let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
             assert!(session.as_ref().unwrap().filled);
@@ -4568,6 +4730,22 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("invalid value"), "{response}");
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.contains("attempt record could not be created"),
+            "{response}"
+        );
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.contains("attempt record could not be written"),
+            "{response}"
+        );
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();

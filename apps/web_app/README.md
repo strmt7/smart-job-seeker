@@ -8,6 +8,8 @@ On Windows, build the prototype from the repository root with:
 
 The helper requires Rust, the MSVC build tools and a compatible x64 OpenSSL developer installation (headers, import library and runtime DLL). It checks the standard `Program Files/OpenSSL-Win64` location; pass `-OpenSslRoot` to use another installation. It builds one job at a time by default and copies the OpenSSL runtime next to `target/debug/waypoint_web.exe`. Add `-Release` for a release build. This is a build helper, not an installer or a dependency downloader.
 
+For development tests, use `./apps/web_app/scripts/build-windows.ps1 -Test`; add `-TestFilter <name>` to run one test. The helper configures the same OpenSSL environment for tests as for builds.
+
 Start the resulting executable to open the local browser workspace. The Windows default build uses SQLCipher for the workspace database with a key protected by the current Windows account's DPAPI. When an existing plaintext workspace is migrated, the original database is deliberately retained and the interface reports that it remains on disk; protect it as private data. Application-record folders remain readable as requested. The prototype does not send applications from its interface.
 
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.
