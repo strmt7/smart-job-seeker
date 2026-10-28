@@ -97,6 +97,7 @@ struct ReviewSession {
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
     attachments: Vec<(String, std::path::PathBuf)>,
+    last_visual_freshness_task: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
 }
 
@@ -2452,6 +2453,7 @@ fn serve(
                 visible,
                 staged_files: vec![],
                 attachments: vec![],
+                last_visual_freshness_task: None,
                 record,
             });
         }
@@ -2666,14 +2668,13 @@ fn serve(
             let (clip_width, y, clip_height, total, coverage_complete) =
                 visual_review::segment_geometry(width, height, segment as usize)?;
             let url = current.driver.current_url().map_err(|e| e.to_string())?;
-            let signature =
-                Sha256Digest::of(&json!({"url":url,"width":width,"height":height}).to_string());
+            let signature = visual_review::page_signature(&url, width, height);
             let screenshot = current
                 .driver
                 .screenshot_segment(clip_width, y, clip_height)
                 .map_err(|e| e.to_string())?;
             let task_id = random_id()?;
-            let expected = current
+            let mut expected: Vec<_> = current
                 .preview
                 .suggestions
                 .iter()
@@ -2689,17 +2690,13 @@ fn serve(
                         .fields
                         .iter()
                         .find(|field| field.selector == mapping.field_selector)?;
-                    match &mapping.value {
-                        waypoint_applications::form_mapping::PacketValue::Text(value)
-                            if value.len() <= 1000 =>
-                        {
-                            Some((field.label.clone(), value.clone()))
-                        }
-                        _ => None,
-                    }
+                    visual_review::expected_value(&mapping.value)
+                        .map(|value| (field.label.clone(), value))
                 })
-                .take(20)
+                .take(21)
                 .collect();
+            let comparisons_truncated = expected.len() > 20;
+            expected.truncate(20);
             let result_path = current
                 .record
                 .as_ref()
@@ -2707,6 +2704,7 @@ fn serve(
             visual_review::start(
                 task_id.clone(),
                 current.id.clone(),
+                (signature.as_str().to_owned(), segment as usize),
                 model,
                 screenshot.clone(),
                 expected,
@@ -2714,18 +2712,18 @@ fn serve(
             )?;
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
-                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
                 }).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"page_signature":signature.as_str(),"record_saved":record_saved}),
+                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"record_saved":record_saved}),
             );
         }
         "/api/form/visual-review-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            let result = visual_review::poll(id)?;
+            let mut result = visual_review::poll(id)?;
             if matches!(result["status"].as_str(), Some("running" | "complete")) {
                 let current = session
                     .as_mut()
@@ -2736,6 +2734,68 @@ fn serve(
                     .ok_or(
                         "The form session expired; this visual observation is no longer current",
                     )?;
+                if result["status"] == "complete" {
+                    let url = current.driver.current_url().map_err(|e| e.to_string())?;
+                    let (width, height) = current
+                        .driver
+                        .page_dimensions()
+                        .map_err(|e| e.to_string())?;
+                    if result["page_signature"].as_str()
+                        != Some(visual_review::page_signature(&url, width, height).as_str())
+                    {
+                        ws.mark_manual_review(&current.job_id, "Form changed during visual review", now())
+                            .map_err(|e| format!("The page changed, and its manual-review flag could not be saved: {e}"))?;
+                        return Err("The page URL or dimensions changed; this visual observation is no longer current".into());
+                    }
+                    let fresh_screenshot = result["segment"].as_u64().and_then(|segment| {
+                        let (clip_width, y, clip_height, _, _) =
+                            visual_review::segment_geometry(width, height, segment as usize)
+                                .ok()?;
+                        current
+                            .driver
+                            .screenshot_segment(clip_width, y, clip_height)
+                            .ok()
+                    });
+                    let freshness = visual_review::image_freshness(
+                        result["screenshot_hash"].as_str(),
+                        fresh_screenshot.as_deref(),
+                    );
+                    result["visual_freshness"] = json!(freshness);
+                    if freshness != "same" {
+                        let reason = if freshness == "changed" {
+                            "Form changed during visual review"
+                        } else {
+                            "Form could not be recaptured after visual review"
+                        };
+                        ws.mark_manual_review(&current.job_id, reason, now())
+                            .map_err(|e| format!("The visual check needs manual review, but its flag could not be saved: {e}"))?;
+                        if !current
+                            .preview
+                            .manual_review
+                            .iter()
+                            .any(|item| item == reason)
+                        {
+                            current.preview.manual_review.push(reason.into());
+                        }
+                    }
+                    if current.last_visual_freshness_task.as_deref() != Some(id) {
+                        let saved = current.record.as_mut().is_some_and(|record| {
+                            let captured = if freshness == "changed" {
+                                fresh_screenshot.as_deref().and_then(|image| record.screenshot_with_name(image).ok())
+                            } else { None };
+                            if freshness == "changed" && captured.is_none() { return false; }
+                            record.event(json!({"type":"visual_freshness_checked","time":now(),"task_id":id,"status":freshness,"screenshot":captured.map(|name| format!("screenshots/{name}")),"note":"Image differences can include animation; matching images do not prove correctness."})).is_ok()
+                        });
+                        if saved {
+                            current.last_visual_freshness_task = Some(id.to_owned());
+                        }
+                        result["freshness_record_saved"] = json!(saved);
+                    } else {
+                        // A later retry is a new observation; the first check was
+                        // already recorded and we do not store a duplicate capture.
+                        result["freshness_record_saved"] = json!(false);
+                    }
+                }
                 current.created = Instant::now();
             }
             json_reply(stream, "200 OK", result);
@@ -4596,6 +4656,7 @@ mod tests {
                 visible: false,
                 staged_files: vec![],
                 attachments: vec![],
+                last_visual_freshness_task: None,
                 record: None,
             });
             let (mut stream, _) = listener.accept().unwrap();
@@ -4849,6 +4910,50 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("Attachment at #resume could not be verified")));
             drop(stream);
+            let _vision_guard = visual_review::TEST_TASK_LOCK.lock().unwrap();
+            let current = session.as_mut().unwrap();
+            current
+                .driver
+                .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                    selector: "#candidate".into(),
+                    value: PacketValue::Text("Before visual capture".into()),
+                })
+                .unwrap();
+            let (width, height) = current.driver.page_dimensions().unwrap();
+            let (clip_width, y, clip_height, _, _) =
+                visual_review::segment_geometry(width, height, 0).unwrap();
+            let image = current
+                .driver
+                .screenshot_segment(clip_width, y, clip_height)
+                .unwrap();
+            let current_url = current.driver.current_url().unwrap();
+            let signature = visual_review::page_signature(&current_url, width, height);
+            visual_review::set_completed_fixture(
+                "fixture-vision",
+                &current.id,
+                signature.as_str(),
+                &image,
+            );
+            current
+                .driver
+                .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                    selector: "#candidate".into(),
+                    value: PacketValue::Text("Changed visually".into()),
+                })
+                .unwrap();
+            assert_eq!(
+                (width, height),
+                current.driver.page_dimensions().unwrap(),
+                "fixture page dimensions changed"
+            );
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
+            assert!(ws
+                .manual_review_reasons(&id)
+                .unwrap()
+                .iter()
+                .any(|reason| reason.reason == "Form changed during visual review"));
+            drop(stream);
             drop(session);
             assert!(!staged_path.exists());
             let records = workspace_dir.path().join("application-records");
@@ -4870,6 +4975,7 @@ mod tests {
             assert!(events.contains("\"segments\":2"), "{events}");
             assert!(events.contains("document_visual_review_linked"));
             assert!(events.contains("attachment_verification_failed"));
+            assert!(events.contains("visual_freshness_checked"));
             assert!(std::fs::read_dir(&record)
                 .unwrap()
                 .filter_map(Result::ok)
@@ -4991,6 +5097,15 @@ mod tests {
             response.contains("Attachment at #resume could not be verified"),
             "{response}"
         );
+        let body = r#"{"task_id":"fixture-vision"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/visual-review-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let payload: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(payload["visual_freshness"], "changed");
+        assert_eq!(payload["freshness_record_saved"], true);
         worker.join().unwrap();
     }
 }

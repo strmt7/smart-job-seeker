@@ -5,11 +5,60 @@ use std::sync::Mutex;
 struct Task {
     id: String,
     session: String,
+    page_signature: String,
+    segment: usize,
+    screenshot_hash: String,
     result: Option<Result<Value, String>>,
     completed: Option<std::time::Instant>,
     record_saved: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+#[cfg(test)]
+pub static TEST_TASK_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub fn set_completed_fixture(id: &str, session: &str, signature: &str, image: &str) {
+    *TASK.lock().unwrap() = Some(Task {
+        id: id.into(),
+        session: session.into(),
+        page_signature: signature.into(),
+        segment: 0,
+        screenshot_hash: waypoint_domain::Sha256Digest::of(image).as_str().into(),
+        result: Some(Ok(json!({"observations":[],"comparisons":[]}))),
+        completed: Some(std::time::Instant::now()),
+        record_saved: false,
+    });
+}
+
+pub fn page_signature(url: &str, width: f64, height: f64) -> waypoint_domain::Sha256Digest {
+    waypoint_domain::Sha256Digest::of(&json!({"url":url,"width":width,"height":height}).to_string())
+}
+
+pub fn image_freshness(original_hash: Option<&str>, fresh_image: Option<&str>) -> &'static str {
+    match (original_hash, fresh_image) {
+        (Some(original), Some(image))
+            if original == waypoint_domain::Sha256Digest::of(image).as_str() =>
+        {
+            "same"
+        }
+        (Some(_), Some(_)) => "changed",
+        _ => "unavailable",
+    }
+}
+
+/// Values used for advisory screenshot comparison, not proof of a valid fill.
+pub fn expected_value(value: &waypoint_applications::form_mapping::PacketValue) -> Option<String> {
+    use waypoint_applications::form_mapping::PacketValue;
+    let text = match value {
+        PacketValue::Text(value) | PacketValue::Date(value) => value.clone(),
+        PacketValue::Bool(value) => if *value { "checked" } else { "unchecked" }.into(),
+        PacketValue::TextList(values) if values.len() <= 100 => values.join(", "),
+        _ => return None,
+    };
+    (text.len() <= 1000).then_some(text)
+}
 
 fn validate(output: &Value) -> Result<Value, String> {
     let observations = output
@@ -94,6 +143,7 @@ pub fn segment_geometry(
 pub fn start(
     id: String,
     session: String,
+    capture: (String, usize),
     model: String,
     image: String,
     expected: Vec<(String, String)>,
@@ -116,6 +166,11 @@ pub fn start(
     *task = Some(Task {
         id: id.clone(),
         session,
+        page_signature: capture.0,
+        segment: capture.1,
+        screenshot_hash: waypoint_domain::Sha256Digest::of(&image)
+            .as_str()
+            .to_owned(),
         result: None,
         completed: None,
         record_saved: false,
@@ -157,7 +212,7 @@ fn analyze(
     image: &str,
     expected: &[(String, String)],
 ) -> Result<Value, String> {
-    let prompt = "Transcribe only visible form field labels and their displayed values in the image. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.";
+    let prompt = "Transcribe only visible form field labels and their displayed values in the image. For a visible checkbox use checked or unchecked; for a multi-select list the visible selected labels separated by comma and space. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.";
     let result = generate_vision(addr, model, image, prompt)?;
     let observed = validate(&result)?;
     Ok(compare(&observed, expected))
@@ -210,29 +265,109 @@ pub(crate) fn generate_vision(
 
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Visual review unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Visual review not found")?;
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        let completed = COMPLETED.lock().map_err(|_| "Visual review unavailable")?;
+        return completed
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| "Visual review not found".into());
+    };
     let Some(result) = task.result.take() else {
         return Ok(json!({"status":"running","session_id":task.session}));
     };
     let session = task.session.clone();
+    let page_signature = task.page_signature.clone();
+    let segment = task.segment;
+    let screenshot_hash = task.screenshot_hash.clone();
     let record_saved = task.record_saved;
-    *tasks = None;
-    Ok(match result {
+    let output = match result {
         Ok(observed) => {
-            json!({"status":"complete","session_id":session,"visual_review":observed,"record_saved":record_saved})
+            json!({"status":"complete","session_id":session,"page_signature":page_signature,"segment":segment,"screenshot_hash":screenshot_hash,"visual_review":observed,"record_saved":record_saved})
         }
         Err(error) => {
             json!({"status":"failed","session_id":session,"error":error,"record_saved":record_saved})
         }
-    })
+    };
+    *COMPLETED.lock().map_err(|_| "Visual review unavailable")? = Some((id.into(), output.clone()));
+    *tasks = None;
+    Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_freshness_reports_changes_and_missing_capture() {
+        let digest = waypoint_domain::Sha256Digest::of("fictional-image");
+        assert_eq!(
+            image_freshness(Some(digest.as_str()), Some("fictional-image")),
+            "same"
+        );
+        assert_eq!(
+            image_freshness(Some(digest.as_str()), Some("changed-image")),
+            "changed"
+        );
+        assert_eq!(image_freshness(Some(digest.as_str()), None), "unavailable");
+        assert_eq!(
+            image_freshness(None, Some("fictional-image")),
+            "unavailable"
+        );
+    }
+    #[test]
+    fn visual_result_can_be_retried_after_a_lost_response() {
+        let _guard = TEST_TASK_LOCK.lock().unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-review".into(),
+            session: "fixture-session".into(),
+            page_signature: "fixture-page".into(),
+            segment: 0,
+            screenshot_hash: "fixture-hash".into(),
+            result: Some(Ok(json!({"observations":[],"comparisons":[]}))),
+            completed: Some(std::time::Instant::now()),
+            record_saved: true,
+        });
+        let first = poll("fixture-review").unwrap();
+        assert_eq!(first, poll("fixture-review").unwrap());
+        assert!(poll("different-review").is_err());
+    }
+    #[test]
+    fn visual_expected_values_include_dates_and_choices() {
+        use waypoint_applications::form_mapping::PacketValue;
+        assert_eq!(
+            expected_value(&PacketValue::Bool(true)).as_deref(),
+            Some("checked")
+        );
+        assert_eq!(
+            expected_value(&PacketValue::Bool(false)).as_deref(),
+            Some("unchecked")
+        );
+        assert_eq!(
+            expected_value(&PacketValue::Date("2026-11-01".into())).as_deref(),
+            Some("2026-11-01")
+        );
+        assert_eq!(
+            expected_value(&PacketValue::TextList(vec!["Rust".into(), "Python".into()])).as_deref(),
+            Some("Rust, Python")
+        );
+        assert!(expected_value(&PacketValue::Text("x".repeat(1001))).is_none());
+        assert!(expected_value(&PacketValue::FileRef {
+            name: "cv.pdf".into()
+        })
+        .is_none());
+    }
+    #[test]
+    fn page_signature_changes_with_url_or_dimensions() {
+        let original = page_signature("https://example.org/a", 800.0, 1000.0);
+        assert_ne!(
+            original,
+            page_signature("https://example.org/b", 800.0, 1000.0)
+        );
+        assert_ne!(
+            original,
+            page_signature("https://example.org/a", 800.0, 1200.0)
+        );
+    }
     #[test]
     fn segments_cover_bounded_pages_and_report_limits() {
         assert_eq!(
@@ -282,7 +417,7 @@ mod tests {
                 let body: Value = serde_json::from_slice(&body).unwrap();
                 let response = if step == 0 { json!({"capabilities":["vision"]}) } else {
                     assert_eq!(body["images"][0], "fictional-image");
-                    json!({"done":true,"done_reason":"stop","response":json!({"observations":[{"label":"Name","visible_value":"Example"}]}).to_string()})
+                    json!({"done":true,"done_reason":"stop","response":json!({"observations":[{"label":"Name","visible_value":"Example"},{"label":"Travel","visible_value":"checked"},{"label":"Skills","visible_value":"Rust, Python"}]}).to_string()})
                 }.to_string();
                 write!(
                     stream,
@@ -297,10 +432,16 @@ mod tests {
             addr,
             "fictional-model",
             "fictional-image",
-            &[("Name".into(), "Example".into())],
+            &[
+                ("Name".into(), "Example".into()),
+                ("Travel".into(), "checked".into()),
+                ("Skills".into(), "Rust, Python".into()),
+            ],
         )
         .unwrap();
         assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
+        assert_eq!(result["comparisons"][1]["status"], "matches_transcription");
+        assert_eq!(result["comparisons"][2]["status"], "matches_transcription");
         server.join().unwrap();
     }
     #[test]
