@@ -8,7 +8,22 @@ if ($InstallDirectory -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') {
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 if (Test-Path -LiteralPath $InstallDirectory) { throw 'The installation directory already exists. Choose a new directory; existing files will not be overwritten.' }
 $source = Join-Path $PSScriptRoot 'app'
-if (-not (Test-Path -LiteralPath (Join-Path $source 'waypoint_web.exe'))) { throw 'Package is missing the application executable.' }
+$manifestPath = Join-Path $source 'package-manifest.json'
+if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Package manifest is missing. Extract the complete package and try again.' }
+try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { throw 'Package manifest is invalid. Extract the complete package and try again.' }
+if ($manifest.openssl_dll -notmatch '^libcrypto[A-Za-z0-9_.-]*\.dll$' -or
+    $manifest.openssl_sha256 -notmatch '^[a-fA-F0-9]{64}$' -or
+    $manifest.executable_sha256 -notmatch '^[a-fA-F0-9]{64}$') {
+    throw 'Package manifest does not contain valid runtime information.'
+}
+foreach ($entry in @(
+    @{ Name = 'waypoint_web.exe'; Hash = $manifest.executable_sha256 },
+    @{ Name = $manifest.openssl_dll; Hash = $manifest.openssl_sha256 }
+)) {
+    $file = Join-Path $source $entry.Name
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Package is missing $($entry.Name). Extract the complete package and try again." }
+    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Hash) { throw "Package file $($entry.Name) does not match its manifest. Extract the complete package and try again." }
+}
 $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Waypoint.lnk'
 if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcut)) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null

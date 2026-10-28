@@ -62,6 +62,11 @@ def main():
         root = candidates[0].parent
         package = tomllib.loads(candidates[0].read_text(encoding='utf-8')).get('package',{})
         files = {f.resolve() for f in root.iterdir() if f.is_file() and f.name.lower().startswith(('license','licence','copying','notice'))}
+        # The published crate omits its license file. This is the upstream
+        # LICENSE blob ca4e06058707e187b049ee4da06ed553b1854243 at the crate's
+        # .cargo_vcs_info.json revision 14011d08c42a7cd368698fe28f77eb4cd0b65bf0.
+        if (name, version) == ('mutants', '0.0.4') and not files:
+            files.add((REPO / 'docs/MUTANTS_LICENSE.txt').resolve())
         if package.get('license-file'):
             license_file = (root / package['license-file']).resolve()
             if not license_file.is_relative_to(root.resolve()) or not license_file.is_file(): raise ValueError(f'Invalid license file for {name} {version}')
