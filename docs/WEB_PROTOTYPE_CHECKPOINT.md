@@ -269,3 +269,7 @@ The browser process is now owned immediately after launch, so startup errors aft
 Page-node and text traversal use an explicit depth-first work stack, reducing call-stack pressure on deeply nested pages. This does not remove the browser protocol's message-size limit or cap the browser process itself.
 
 Unparseable or excessively nested browser responses now produce an explicit inspection error instead of being ignored until another response or timeout. The parser's nesting limit still applies.
+
+Controls carrying the HTML hidden attribute or inside an element with that attribute are excluded from form inspection, and selectors avoid matching them when they duplicate an active field. CSS-hidden controls are not yet detected.
+
+A fictional two-section browser fixture checks that inspecting again after the section changes detects and fills the newly visible field. Navigation between steps in the product remains manual; the fixture's local button is not an employer application.

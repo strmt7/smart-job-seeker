@@ -591,6 +591,80 @@ fn generated_ids_and_quoted_names_are_fillable() {
 }
 
 #[test]
+#[ignore = "launches a real browser with a local fixture"]
+fn hidden_duplicate_does_not_hide_the_active_form_field() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_hidden_duplicate.html"))
+        .expect("open fixture");
+    assert!(live.walls.is_empty(), "{:?}", live.walls);
+    assert_eq!(live.schema.fields.len(), 1);
+    let field = &live.schema.fields[0];
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: field.selector.clone(),
+            value: PacketValue::Text("Example".into()),
+        })
+        .expect("fill active field");
+    assert_eq!(
+        driver
+            .read_attribute(&field.selector, "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("Example")
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser and changes sections without submitting"]
+fn reinspection_tracks_a_revealed_form_section() {
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    let first = driver
+        .open(&file_url("form_hidden_steps.html"))
+        .expect("open fixture");
+    assert!(first.walls.is_empty(), "{:?}", first.walls);
+    assert_eq!(first.schema.fields.len(), 1);
+    assert_eq!(first.schema.fields[0].label, "First answer");
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: first.schema.fields[0].selector.clone(),
+            value: PacketValue::Text("First".into()),
+        })
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#next".into(),
+        })
+        .unwrap();
+    let second = driver.inspect_current().expect("inspect revealed section");
+    assert!(second.walls.is_empty(), "{:?}", second.walls);
+    assert_eq!(second.schema.fields.len(), 1);
+    assert_eq!(second.schema.fields[0].label, "Second answer");
+    assert_ne!(first.schema, second.schema);
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: second.schema.fields[0].selector.clone(),
+            value: PacketValue::Text("Second".into()),
+        })
+        .unwrap();
+    assert_eq!(
+        driver
+            .read_attribute(&second.schema.fields[0].selector, "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("Second")
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_changed_page_voids_the_approval_against_a_real_site() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");

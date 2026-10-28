@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Hidden duplicate fixture</title></head>
+<body><form>
+  <input id="inactive" name="first_name" hidden required>
+  <section hidden><label>Old name<input id="ancestor-hidden" name="first_name" required></label><div role="combobox" aria-required="true"></div></section>
+  <label>First name<input name="first_name" required oninput="this.setAttribute('data-seen',this.value)"></label>
+  <button type="submit">Submit</button>
+</form></body></html>

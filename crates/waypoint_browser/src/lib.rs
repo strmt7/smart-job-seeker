@@ -347,13 +347,14 @@ impl CdpDriver {
     ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
         let root = self.document()?;
         let mut controls = vec![];
+        let mut hidden_selectors = std::collections::HashSet::new();
         let mut labels: HashMap<String, String> = HashMap::new();
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
         let mut text = String::new();
         let mut possible_next_step = false;
-        walk(&root, false, &mut |node, in_control| {
+        walk_with_visibility(&root, false, false, &mut |node, in_control, hidden| {
             let tag = node
                 .get("nodeName")
                 .and_then(|v| v.as_str())
@@ -368,7 +369,7 @@ impl CdpDriver {
                         matches!(kind.to_ascii_lowercase().as_str(), "button" | "submit")
                     })))
                 && !attrs.contains_key("disabled")
-                && !attrs.contains_key("hidden")
+                && !hidden
             {
                 let mut caption = String::new();
                 collect_text(node, false, &mut caption);
@@ -401,6 +402,9 @@ impl CdpDriver {
                         wall_flags.push("captcha present".into());
                     }
                 }
+            }
+            if hidden && !matches!(tag.as_str(), "input" | "textarea" | "select") {
+                return !matches!(tag.as_str(), "script" | "style" | "noscript" | "template");
             }
             // Custom ARIA controls are not handled by the native-field driver.
             // Do not silently omit a required question on an otherwise readable form.
@@ -506,7 +510,7 @@ impl CdpDriver {
             }
             if matches!(tag.as_str(), "input" | "textarea" | "select") && !in_control {
                 if node.get("nodeId").and_then(|v| v.as_u64()).is_some() {
-                    controls.push(Control {
+                    let control = Control {
                         node_id: node
                             .get("nodeId")
                             .and_then(Value::as_u64)
@@ -514,7 +518,27 @@ impl CdpDriver {
                         tag: tag.clone(),
                         attrs: attrs.clone(),
                         options: options_of(node),
-                    });
+                    };
+                    if hidden {
+                        hidden_selectors.insert(selector_for(&control));
+                        hidden_selectors.insert(control.tag.clone());
+                        if let Some(name) = attrs.get("name").filter(|name| !name.is_empty()) {
+                            hidden_selectors.insert(format!(
+                                "{}[name=\"{}\"]",
+                                control.tag,
+                                css_string(name)
+                            ));
+                        }
+                        if let Some(kind) = attrs.get("type") {
+                            hidden_selectors.insert(format!(
+                                "{}[type=\"{}\"]",
+                                control.tag,
+                                css_string(kind)
+                            ));
+                        }
+                    } else {
+                        controls.push(control);
+                    }
                 }
                 // Continue walking: a control may contain option children.
                 return true;
@@ -586,6 +610,12 @@ impl CdpDriver {
 
         let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
         for control in controls {
+            let selector = selector_for(&control);
+            let selector = if hidden_selectors.contains(&selector) {
+                format!("{selector}:not([hidden]):not([hidden] *)")
+            } else {
+                selector
+            };
             let input_type = control
                 .attrs
                 .get("type")
@@ -707,7 +737,7 @@ impl CdpDriver {
                         let index = fields.len();
                         radio_groups.insert(key, index);
                         fields.push(FormField {
-                            selector: selector_for(&control),
+                            selector: selector.clone(),
                             label: group_label.clone(),
                             field_type: FormFieldType::Radio {
                                 options: vec![label],
@@ -738,7 +768,7 @@ impl CdpDriver {
                 _ => FormFieldType::Text,
             };
             fields.push(FormField {
-                selector: selector_for(&control),
+                selector,
                 label,
                 field_type,
                 required,
@@ -1539,6 +1569,37 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
                 .any(|kind| tag.eq_ignore_ascii_case(kind));
         if let Some(children) = current.get("children").and_then(Value::as_array) {
             pending.extend(children.iter().rev().map(|child| (child, child_in_control)));
+        }
+    }
+}
+
+fn walk_with_visibility<F: FnMut(&Value, bool, bool) -> bool>(
+    node: &Value,
+    in_control: bool,
+    hidden: bool,
+    cb: &mut F,
+) {
+    let mut pending = vec![(node, in_control, hidden)];
+    while let Some((current, inside_control, parent_hidden)) = pending.pop() {
+        let hidden = parent_hidden || attributes(current).contains_key("hidden");
+        if !cb(current, inside_control, hidden) {
+            continue;
+        }
+        let tag = current
+            .get("nodeName")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let child_in_control = inside_control
+            || ["input", "textarea", "select"]
+                .iter()
+                .any(|kind| tag.eq_ignore_ascii_case(kind));
+        if let Some(children) = current.get("children").and_then(Value::as_array) {
+            pending.extend(
+                children
+                    .iter()
+                    .rev()
+                    .map(|child| (child, child_in_control, hidden)),
+            );
         }
     }
 }

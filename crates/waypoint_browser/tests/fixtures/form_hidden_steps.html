@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local multi-step fixture</title></head>
+<body><form>
+  <section id="first"><label>First answer<input name="answer" oninput="this.setAttribute('data-seen',this.value)"></label>
+    <button id="next" type="button" onclick="document.getElementById('first').hidden=true;document.getElementById('second').hidden=false">Next</button>
+  </section>
+  <section id="second" hidden><label>Second answer<input name="answer" oninput="this.setAttribute('data-seen',this.value)"></label>
+    <button type="submit">Submit</button>
+  </section>
+</form></body></html>
