@@ -148,3 +148,6 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 .review-reason-manager{margin:8px 0 12px;font-size:13px}.review-reason-manager summary{cursor:pointer;color:#176a70;font-weight:600}.review-reason-list{margin-top:8px;max-width:720px}.review-reason-row{display:flex;justify-content:space-between;align-items:start;gap:12px;padding:8px 0;border-top:1px solid #e8eeee}.review-reason-row span{overflow-wrap:anywhere;white-space:pre-wrap}.review-reason-row button{flex-shrink:0;padding:6px 10px;font-size:12px}
 
 .manual-job-grid .manual-clear{background:#f8faf9;border:1px solid #d7e1e1;color:#173944}
+
+#auto-fit-status:not(:empty){margin:12px 28px 6px;color:#526b78;font-size:13px;line-height:1.4}
+#auto-fit-retry{margin:0 28px 12px}

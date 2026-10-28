@@ -144,6 +144,7 @@ const PROFILE_FIELDS: &[&str] = &[
     "cv_template_id",
     "cover_template_id",
     "document_instructions",
+    "auto_assess_ai",
 ];
 
 fn fit_inputs(
@@ -1463,11 +1464,14 @@ fn serve(
                 let (_, _, _, digest) = fit_inputs(ws, &job_id)?;
                 if result["input_digest"].as_str() != Some(digest.as_str()) {
                     result = json!({"status":"failed","error":"Job or candidate inputs changed during assessment; assess again"});
-                } else {
-                    result["saved"] = json!(ws
-                        .save_fit_assessment(&job_id, result.to_string().as_bytes())
-                        .is_ok());
+                } else if result["saved"].is_null() {
+                    ws.save_fit_assessment(&job_id, result.to_string().as_bytes())
+                        .map_err(|e| format!("Could not save assessment; retry after resolving the workspace error: {e}"))?;
+                    result["saved"] = json!(true);
                 }
+            }
+            if result["status"] != "running" {
+                fit_task::complete(id, result.clone())?;
             }
             json_reply(stream, "200 OK", result);
         }
@@ -1475,6 +1479,14 @@ fn serve(
             let job_id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
                 .map_err(|e| e.to_string())?;
             json_reply(stream, "200 OK", read_fit(ws, &job_id)?);
+        }
+        "/api/fit/discard" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            fit_task::discard(id)?;
+            json_reply(stream, "200 OK", json!({"discarded":true}));
+        }
+        "/api/fit/pending" => {
+            json_reply(stream, "200 OK", fit_task::pending()?);
         }
         "/api/fit/batch" => {
             let ids = body["ids"]
@@ -1609,6 +1621,9 @@ fn serve(
                         return Err(format!("{key} must refer to a saved PDF or DOCX"));
                     }
                 }
+            }
+            if !["", "on", "off"].contains(&profile["auto_assess_ai"].as_str().unwrap_or("")) {
+                return Err("Invalid automatic assessment setting".into());
             }
             ws.save_candidate_profile(&Value::Object(profile).to_string())
                 .map_err(|e| e.to_string())?;

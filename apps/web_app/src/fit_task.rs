@@ -11,6 +11,17 @@ struct Task {
     model: String,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+pub fn pending() -> Result<Value, String> {
+    let tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    Ok(match tasks.as_ref() {
+        Some(task) => {
+            json!({"active":true,"task_id":task.id,"job_id":task.job_id,"finished":task.result.is_some()})
+        }
+        None => json!({"active":false}),
+    })
+}
 
 pub fn start(
     id: String,
@@ -53,23 +64,63 @@ pub fn start(
 
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|task| task.id == id)
-        .ok_or("Assessment not found")?;
-    let Some(result) = task.result.take() else {
+    let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Assessment unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| "Assessment not found".into());
+    };
+    let Some(result) = task.result.as_ref() else {
         return Ok(json!({"status":"running"}));
     };
     let job_id = task.job_id.clone();
     let input_digest = task.input_digest.clone();
     let model = task.model.clone();
-    *tasks = None;
     Ok(match result {
         Ok(assessment) => {
             json!({"status":"complete","assessment":assessment,"job_id":job_id,"input_digest":input_digest,"model":model})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
+}
+
+/// Retain the last result after it has been checked and persisted by the API.
+pub fn complete(id: &str, result: Value) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    let mut completed = COMPLETED.lock().map_err(|_| "Assessment unavailable")?;
+    if tasks
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.result.is_some())
+    {
+        *completed = Some((id.to_owned(), result));
+        *tasks = None;
+        Ok(())
+    } else if completed.as_ref().is_some_and(|(task_id, _)| task_id == id) {
+        Ok(())
+    } else {
+        Err("Assessment not found".into())
+    }
+}
+
+/// Discard a finished result without stopping an active model operation.
+pub fn discard(id: &str) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    if let Some(task) = tasks.as_ref().filter(|task| task.id == id) {
+        if task.result.is_none() {
+            return Err("Assessment is still running; wait until it finishes".into());
+        }
+        *tasks = None;
+        return Ok(());
+    }
+    let mut completed = COMPLETED.lock().map_err(|_| "Assessment unavailable")?;
+    if completed.as_ref().is_some_and(|(task_id, _)| task_id == id) {
+        *completed = None;
+        return Ok(());
+    }
+    Err("Assessment not found".into())
 }
 
 fn assess(
@@ -126,8 +177,115 @@ fn validate(value: Value, facts: &[String], listing: &str) -> Result<Value, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn api_keeps_assessment_after_save_failure() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/unsaved","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let id = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (_, _, _, digest) = crate::fit_inputs(&ws, &id).unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-unsaved".into(),
+            result: Some(Ok(json!({"score":60}))),
+            job_id: id.as_str().into(),
+            input_digest: digest,
+            model: "fixture".into(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = json!({"task_id":"fixture-unsaved"}).to_string();
+        write!(client, "POST /api/fit/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let error =
+            crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap_err();
+        assert!(error.contains("Could not save assessment"));
+        let retained = poll("fixture-unsaved").unwrap();
+        assert_eq!(retained["assessment"]["score"], 60);
+        discard("fixture-unsaved").unwrap();
+        assert!(poll("fixture-unsaved").is_err());
+    }
+
+    #[test]
+    fn discard_does_not_interrupt_a_running_assessment() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-running".into(),
+            result: None,
+            job_id: "job".into(),
+            input_digest: "digest".into(),
+            model: "fixture".into(),
+        });
+        assert!(discard("fixture-running")
+            .unwrap_err()
+            .contains("still running"));
+        assert_eq!(pending().unwrap()["job_id"], "job");
+        assert_eq!(pending().unwrap()["finished"], false);
+        assert_eq!(poll("fixture-running").unwrap()["status"], "running");
+        *TASK.lock().unwrap() = None;
+    }
+
+    #[cfg(all(windows, feature = "sqlcipher"))]
+    #[test]
+    fn api_retries_saved_assessment_and_rejects_changed_inputs() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(test_root).unwrap();
+        let mut ws = waypoint_workspace::Workspace::open_encrypted(dir.path()).unwrap();
+        let added = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/role","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let id = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (_, _, _, digest) = crate::fit_inputs(&ws, &id).unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-api".into(),
+            result: Some(Ok(
+                json!({"score":70,"summary":"Fixture","evidence":[],"concerns":[]}),
+            )),
+            job_id: id.as_str().into(),
+            input_digest: digest,
+            model: "fixture-model".into(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let request = |ws: &mut waypoint_workspace::Workspace| {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"task_id":"fixture-api"}).to_string();
+            write!(client, "POST /api/fit/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let first = request(&mut ws);
+        assert_eq!(first["saved"], true);
+        let saved = ws.fit_assessment(&id).unwrap().unwrap();
+        assert_eq!(request(&mut ws), first);
+        assert_eq!(ws.fit_assessment(&id).unwrap().unwrap(), saved);
+        ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
+            .unwrap();
+        assert_eq!(request(&mut ws)["status"], "failed");
+        assert_eq!(crate::read_fit(&ws, &id).unwrap()["status"], "stale");
+    }
+
     #[test]
     fn completed_assessment_is_not_replaced_before_collection() {
+        let _guard = TEST_LOCK.lock().unwrap();
         *TASK.lock().unwrap() = Some(Task {
             id: "first".into(),
             result: Some(Ok(json!({"score": 70}))),
@@ -147,6 +305,12 @@ mod tests {
         assert!(result.unwrap_err().contains("awaiting its result"));
         let first = poll("first").unwrap();
         assert_eq!(first["assessment"]["score"], 70);
+        assert_eq!(poll("first").unwrap(), first);
+        let mut saved = first;
+        saved["saved"] = json!(true);
+        complete("first", saved.clone()).unwrap();
+        assert_eq!(poll("first").unwrap(), saved);
+        complete("first", saved).unwrap();
     }
     #[test]
     fn rejects_invented_excerpt_and_unknown_qualification() {
