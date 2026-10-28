@@ -1,17 +1,19 @@
 # smart-job-seeker (Waypoint)
 
-An enterprise-grade, fully free and open-source **job-seeker platform for Windows written in Rust** — native desktop UI, local-first data, local AI reasoning, and an application engine designed around correctness under failure rather than feature-count marketing.
+Waypoint is a Windows-first, local job-search and application-assistance prototype written in Rust. Its current interface is a local web page; it uses local tools, including Ollama for optional model-assisted features. The prototype is under active development and is not yet a complete enterprise product.
 
-**Status: research-complete, core built through gate G6.** See `IMPLEMENTATION_STATUS.md` and `KNOWN_LIMITATIONS.md` for exactly what is verified versus pending. No hiring-uplift, superiority or "undetectable AI" claims are made.
+**Current status:** See [the web prototype checkpoint](docs/WEB_PROTOTYPE_CHECKPOINT.md) for the latest verified capabilities and limitations. Earlier gate documents describe historical work and do not establish current end-to-end readiness. No hiring-uplift, superiority or "undetectable AI" claims are made.
 
 ## Quick start
 
-Requires: Rust stable (MSVC toolchain). No Node.js, Python, WSL or Docker anywhere in the end-user stack.
+On Windows, build the local web prototype from the repository root:
 
+```powershell
+./apps/web_app/scripts/build-windows.ps1
+./target/debug/waypoint_web.exe
 ```
-cargo test                 # 110 tests
-cargo run -p windows_app   # native eframe/egui shell
-```
+
+The build helper requires Rust, MSVC build tools and an x64 OpenSSL developer installation. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. The current prototype does not submit applications or send email from its interface. It can prepare drafts and assist with reviewed form filling; real third-party forms vary and may need manual review.
 
 ## Workspace layout
 
@@ -28,7 +30,8 @@ cargo run -p windows_app   # native eframe/egui shell
 | `crates/waypoint_applications` | Preflight, one-use grants, durable journal, receipt qualification, uncertain-state recovery, typed form mapping, manual fallback |
 | `crates/waypoint_lifecycle` | Consent-scoped inbox, timeline reconciliation, calendar checks, CRM, interview practice, offers, analytics, review sharing |
 | `crates/waypoint_desktop` | Native eframe/egui shell: virtualized lists, coverage and model-qualification screens |
-| `apps/windows_app` | Windows entrypoint |
+| `apps/web_app` | Local web interface and Windows tray entrypoint |
+| `apps/windows_app` | Earlier native desktop entrypoint |
 
 ## Product principles (enforced in code, not prose)
 
@@ -39,10 +42,10 @@ cargo run -p windows_app   # native eframe/egui shell
 5. **Honest coverage.** The app reports which sources it searched, which failed, and what is stale — with denominators.
 6. **Local and private.** Local model + local store by default; telemetry does not exist; queries carrying candidate PII are refused at the policy layer.
 
-## Quality gates recorded on real hardware
+## Historical quality gates recorded on real hardware
 
 - qwen3.5:9b on AMD RX 9070 XT (16 GB): 13.23 GiB VRAM, zero CPU offload, ~77 tok/s, structured output + reasoning pass — `docs/g1/QUALIFICATION.md`.
-- 110 tests green, 0 clippy warnings, `cargo audit`: 0 vulnerabilities, `cargo deny`: licenses/bans/sources clean — `docs/g6/RELEASE_READINESS.md`, SBOM at `docs/g6/sbom.json` (750 components).
+- Historical test, audit and dependency results are recorded in `docs/g6/RELEASE_READINESS.md` and its SBOM. These records do not prove the current checkout passes those checks.
 
 ## Documentation
 
