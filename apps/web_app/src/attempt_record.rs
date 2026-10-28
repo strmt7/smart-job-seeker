@@ -21,6 +21,8 @@ pub struct GmailReview {
 pub struct GmailReviewAttachment {
     pub name: String,
     pub stored_name: String,
+    #[serde(default)]
+    pub visual_review_file: Option<String>,
 }
 
 /// Copy a recorded outcome to the human-readable attempt folder. The database
@@ -135,7 +137,62 @@ fn record_email_file(
 pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {
     let (review, _) = load_gmail_review(ws, job, attempt)?;
     let mut value =
-        serde_json::to_value(review).map_err(|_| "Cannot display saved Gmail review")?;
+        serde_json::to_value(&review).map_err(|_| "Cannot display saved Gmail review")?;
+    let visual_context = crate::document_visual_context(ws, job)?;
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let job_hash = Sha256Digest::of(job.as_str());
+    let dir = root
+        .join("application-records")
+        .join(format!("{}-{attempt}", &job_hash.as_str()[..16]));
+    for (index, attachment) in review.attachments.iter().enumerate() {
+        let mut status = "not_linked";
+        let mut findings = Value::Null;
+        if let Some(filename) = attachment.visual_review_file.as_deref() {
+            status = "invalid";
+            let path = std::path::Path::new(filename);
+            if path.components().count() == 1
+                && matches!(
+                    path.components().next(),
+                    Some(std::path::Component::Normal(_))
+                )
+            {
+                let file = dir.join(path);
+                if fs::symlink_metadata(&file).is_ok_and(|m| {
+                    m.is_file() && !m.file_type().is_symlink() && m.len() <= 512 * 1024
+                }) {
+                    if let Some(saved) = fs::read(&file)
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                    {
+                        let visual = &saved["review"];
+                        let material = dir.join("materials").join(&attachment.stored_name);
+                        if let Ok(bytes) = fs::read(material) {
+                            if visual["document_sha256"].as_str()
+                                == Some(waypoint_domain::sha256_hex(&bytes).as_str())
+                                && visual["status"] == "complete"
+                                && visual["report"]["complete"] == true
+                            {
+                                status = if visual["context_sha256"].as_str()
+                                    == Some(Sha256Digest::of(&visual_context).as_str())
+                                {
+                                    "current"
+                                } else {
+                                    "stale"
+                                };
+                                findings = visual["report"]["findings"].clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        value["attachments"][index]["visual_review_status"] = json!(status);
+        value["attachments"][index]["visual_review_findings"] = findings;
+    }
     value["context_sha256"] = json!(ws.email_review_context(job)?.as_str());
     let (total, pending, bounded, missing_employer) =
         ws.duplicate_coverage_counts().map_err(|e| e.to_string())?;

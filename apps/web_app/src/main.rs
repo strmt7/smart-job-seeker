@@ -179,6 +179,24 @@ fn document_visual_context(ws: &Workspace, job: &JobIdentityId) -> Result<String
     ))
 }
 
+fn verified_visual_review(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    bytes: &[u8],
+) -> Result<Value, String> {
+    let review = attempt_record::document_visual_review(ws, job, attempt)?;
+    let context = document_visual_context(ws, job)?;
+    if review["document_sha256"].as_str() != Some(waypoint_domain::sha256_hex(bytes).as_str())
+        || review["context_sha256"].as_str() != Some(Sha256Digest::of(&context).as_str())
+        || review["status"] != "complete"
+        || review["report"]["complete"] != true
+    {
+        return Err("The selected visual review does not match this PDF and current job context; review again".into());
+    }
+    Ok(review)
+}
+
 fn draft_context_digest(
     ws: &Workspace,
     job_id: &JobIdentityId,
@@ -1622,6 +1640,35 @@ fn serve(
                     .ok_or("document not found")?;
                 attachments.push((doc_id.to_owned(), doc.name.clone(), bytes));
             }
+            let visual_inputs = match body.get("visual_reviews") {
+                None | Some(Value::Null) => &[][..],
+                Some(Value::Array(items)) if items.len() <= 5 => items.as_slice(),
+                _ => return Err("Invalid visual review selections".into()),
+            };
+            let mut linked = std::collections::HashMap::new();
+            for item in visual_inputs {
+                let doc_id = item["document_id"]
+                    .as_str()
+                    .ok_or("Missing reviewed document")?;
+                let attempt = item["attempt_id"].as_str().ok_or("Missing visual review")?;
+                if item["reviewed"].as_bool() != Some(true) {
+                    return Err("Review visual findings before linking them".into());
+                }
+                let (_, _, bytes) = attachments
+                    .iter()
+                    .find(|(id, _, _)| id == doc_id)
+                    .ok_or("Visual review refers to an unselected attachment")?;
+                if linked.contains_key(doc_id) {
+                    return Err("Duplicate visual review selection".into());
+                }
+                linked.insert(
+                    doc_id.to_owned(),
+                    (
+                        attempt.to_owned(),
+                        verified_visual_review(ws, &id, attempt, bytes)?,
+                    ),
+                );
+            }
             let recipient = body["recipient"].as_str().ok_or("missing recipient")?;
             let subject = body["subject"].as_str().ok_or("missing subject")?;
             let text = body["message"].as_str().ok_or("missing message")?;
@@ -1652,12 +1699,28 @@ fn serve(
             let mut record = attempt_record::AttemptRecord::start(ws, &id, &attempt_id, now())?
                 .ok_or("Email draft requires a disk-backed workspace")?;
             let mut saved_materials = Vec::new();
-            for (_, name, bytes) in &attachments {
+            let mut missing_visual = false;
+            for (doc_id, name, bytes) in &attachments {
+                let visual_review_file = if let Some((attempt, review)) = linked.get(doc_id) {
+                    let file = record.document_visual_evidence(attempt, review)?;
+                    record.event(json!({"type":"document_visual_review_linked","time":now(),"source_attempt":attempt,"file":file,"document":name,"note":"Advisory review, not proof of correctness."}))?;
+                    Some(file)
+                } else {
+                    missing_visual = true;
+                    None
+                };
                 let stored_name = record.material(name, bytes)?;
                 saved_materials.push(attempt_record::GmailReviewAttachment {
                     name: name.clone(),
                     stored_name,
+                    visual_review_file,
                 });
+            }
+            if missing_visual {
+                record.status("manual_review", now())?;
+                ws.mark_manual_review(&id, "Email attachment needs visual review", now())
+                    .map_err(|e| e.to_string())?;
+                record.event(json!({"type":"document_visual_review_missing","time":now(),"note":"At least one email attachment has no linked visual review."}))?;
             }
             record.email_draft(&draft)?;
             if let Some(sender) = gmail_sender.as_ref() {
@@ -2812,18 +2875,7 @@ fn serve(
                     if body["reviewed_visual_findings"].as_bool() != Some(true) {
                         return Err("Review the visual findings before linking them".into());
                     }
-                    let review =
-                        attempt_record::document_visual_review(ws, &current.job_id, attempt)?;
-                    let context = document_visual_context(ws, &current.job_id)?;
-                    if review["document_sha256"].as_str()
-                        != Some(waypoint_domain::sha256_hex(&bytes).as_str())
-                        || review["context_sha256"].as_str()
-                            != Some(Sha256Digest::of(&context).as_str())
-                        || review["status"] != "complete"
-                        || review["report"]["complete"] != true
-                    {
-                        return Err("The selected visual review does not match this PDF and current job context; review again".into());
-                    }
+                    let review = verified_visual_review(ws, &current.job_id, attempt, &bytes)?;
                     Some((attempt, review))
                 }
                 None => None,
@@ -3430,7 +3482,7 @@ mod tests {
             let mut ws = Workspace::open(&root).unwrap();
             let id = JobIdentityId::new("fictional-email").unwrap();
             ws.import_job(waypoint_store::StoredJob {
-                id,
+                id: id.clone(),
                 title: "Role".into(),
                 employer: "Fixture".into(),
                 location: "".into(),
@@ -3449,12 +3501,31 @@ mod tests {
                 .unwrap();
             ws.save_gmail_credentials(&serde_json::to_vec(&json!({"auth_type":"app_password","email":"fictional@gmail.com","password":"abcdefghijklmnop"})).unwrap()).unwrap();
             ws.index_next_duplicate_job("").unwrap();
+            let review_id = "0123456789abcdef0123456789abcdef";
+            let mut review = attempt_record::AttemptRecord::start(&ws, &id, review_id, 1)
+                .unwrap()
+                .unwrap();
+            let material = review.material("resume.pdf", b"%PDF-fictional").unwrap();
+            review.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(b"%PDF-fictional"),"context_sha256":Sha256Digest::of(&document_visual_context(&ws,&id).unwrap()).as_str(),"report":{"complete":true,"findings":[]}})).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap_err();
+            assert!(error.contains("Review visual findings"));
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
             let (mut stream, _) = listener.accept().unwrap();
             if let Err(error) = serve(&mut stream, &mut ws, &mut None, "test-token", port) {
                 json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             }
         });
-        let body = json!({"id":"fictional-email","recipient":"hiring@example.invalid","subject":"Role","message":"Hello","documents":["fixture-pdf"]}).to_string();
+        let mut request = json!({"id":"fictional-email","recipient":"hiring@example.invalid","subject":"Role","message":"Hello","documents":["fixture-pdf"],"visual_reviews":[{"document_id":"fixture-pdf","attempt_id":"0123456789abcdef0123456789abcdef","reviewed":false}]});
+        let body = request.to_string();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream,"POST /api/gmail/prepare-application HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let mut rejected = String::new();
+        stream.read_to_string(&mut rejected).unwrap();
+        assert!(rejected.contains("Review visual findings"));
+        request["visual_reviews"][0]["reviewed"] = json!(true);
+        let body = request.to_string();
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream,"POST /api/gmail/prepare-application HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
         let mut response = Vec::new();
@@ -3470,22 +3541,24 @@ mod tests {
         let records = directory.path().join("application-records");
         let attempt = std::fs::read_dir(records)
             .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.join("email-draft.eml").exists())
+            .unwrap();
         assert_eq!(
             std::fs::read(attempt.join("email-draft.eml")).unwrap(),
             mime
         );
         assert_eq!(
-            std::fs::read(attempt.join("materials").join("0001-resume.pdf")).unwrap(),
+            std::fs::read(attempt.join("materials").join("0002-resume.pdf")).unwrap(),
             b"%PDF-fictional"
         );
         assert!(attempt.join("original-job.json").exists());
         let events = std::fs::read_to_string(attempt.join("events.jsonl")).unwrap();
         assert!(events.contains(&waypoint_domain::sha256_hex(mime)));
         assert!(events.contains("\"sent\":false"));
+        assert!(events.contains("document_visual_review_linked"));
+        assert!(attempt.join("document-visual-0001.json").exists());
         let meta: Value =
             serde_json::from_slice(&std::fs::read(attempt.join("attempt.json")).unwrap()).unwrap();
         let attempt_id = meta["attempt_id"].as_str().unwrap();
@@ -3494,13 +3567,17 @@ mod tests {
         let review = attempt_record::gmail_review(&ws, &job, attempt_id).unwrap();
         assert_eq!(review["message"], "Hello");
         assert_eq!(review["attachments"][0]["name"], "resume.pdf");
+        assert_eq!(review["attachments"][0]["visual_review_status"], "current");
         let request = json!({"id":"fictional-email","attempt_id":attempt_id,"mime_sha256":review["mime_sha256"],"context_sha256":review["context_sha256"],"reviewed":true});
         let mut without_gesture = request.clone();
         without_gesture["reviewed"] = json!(false);
         assert!(approve_saved_gmail(&mut ws, &without_gesture).is_err());
         ws.save_candidate_profile("{\"city\":\"Changed\"}").unwrap();
         assert!(approve_saved_gmail(&mut ws, &request).is_err());
+        ws.add_fact("Fictional new qualification", FactOrigin::UserAttested)
+            .unwrap();
         let fresh = attempt_record::gmail_review(&ws, &job, attempt_id).unwrap();
+        assert_eq!(fresh["attachments"][0]["visual_review_status"], "stale");
         let fresh_request = json!({"id":"fictional-email","attempt_id":attempt_id,"mime_sha256":fresh["mime_sha256"],"context_sha256":fresh["context_sha256"],"reviewed":true});
         let approval = approve_saved_gmail(&mut ws, &fresh_request).unwrap();
         assert_eq!(approval["sent"], false);
@@ -3555,7 +3632,7 @@ mod tests {
         )
         .is_err());
         std::fs::write(
-            attempt.join("materials").join("0001-resume.pdf"),
+            attempt.join("materials").join("0002-resume.pdf"),
             b"%PDF-changed",
         )
         .unwrap();
