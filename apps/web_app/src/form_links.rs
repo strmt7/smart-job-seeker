@@ -8,9 +8,18 @@ use waypoint_policy::Operation;
 
 struct Task {
     id: String,
-    rx: mpsc::Receiver<Result<ReviewSession, String>>,
+    job_id: waypoint_domain::JobIdentityId,
+    rx: mpsc::Receiver<Result<ReviewSession, NavigationFailure>>,
+    failure: Option<NavigationFailure>,
+}
+#[derive(Clone)]
+pub struct NavigationFailure {
+    pub job_id: waypoint_domain::JobIdentityId,
+    pub reason: String,
+    pub review_saved: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED_FAILURE: Mutex<Option<(String, NavigationFailure)>> = Mutex::new(None);
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
@@ -149,7 +158,13 @@ pub fn start(
         ));
     }
     let (tx, rx) = mpsc::channel();
-    *tasks = Some(Task { id, rx });
+    let job_id = session.job_id.clone();
+    *tasks = Some(Task {
+        id,
+        job_id,
+        rx,
+        failure: None,
+    });
     drop(tasks);
     std::thread::spawn(move || {
         let navigation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
@@ -226,37 +241,84 @@ pub fn start(
                 manual_review: vec![error],
             },
         };
-        let result = crate::random_id().map(|new_id| {
-            session.id = new_id;
-            session.profile_digest = Sha256Digest::of(&profile.to_string());
-            session.preview = preview;
-            session.filled = false;
-            session.completed_selectors.clear();
-            session.created = std::time::Instant::now();
-            session
-        });
+        let result = crate::random_id()
+            .map_err(|reason| NavigationFailure {
+                job_id: session.job_id.clone(),
+                reason,
+                review_saved: false,
+            })
+            .map(|new_id| {
+                session.id = new_id;
+                session.profile_digest = Sha256Digest::of(&profile.to_string());
+                session.preview = preview;
+                session.filled = false;
+                session.completed_selectors.clear();
+                session.created = std::time::Instant::now();
+                session
+            });
         let _ = tx.send(result);
     });
     Ok(())
 }
 
-pub fn poll(id: &str) -> Result<Option<Result<ReviewSession, String>>, String> {
+pub fn poll(id: &str) -> Result<Option<Result<ReviewSession, NavigationFailure>>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Navigation unavailable")?;
-    let task = tasks
-        .as_ref()
-        .filter(|task| task.id == id)
-        .ok_or("Navigation task not found")?;
+    let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
+        let completed = COMPLETED_FAILURE
+            .lock()
+            .map_err(|_| "Navigation unavailable")?;
+        return completed
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, failure)| Some(Err(failure.clone())))
+            .ok_or_else(|| "Navigation task not found".into());
+    };
+    if let Some(failure) = &task.failure {
+        return Ok(Some(Err(failure.clone())));
+    }
     match task.rx.try_recv() {
-        Ok(result) => {
+        Ok(Ok(result)) => {
             *tasks = None;
-            Ok(Some(result))
+            Ok(Some(Ok(result)))
+        }
+        Ok(Err(failure)) => {
+            task.failure = Some(failure.clone());
+            Ok(Some(Err(failure)))
         }
         Err(mpsc::TryRecvError::Empty) => Ok(None),
         Err(mpsc::TryRecvError::Disconnected) => {
-            *tasks = None;
-            Err("Navigation stopped unexpectedly".into())
+            let failure = NavigationFailure {
+                job_id: task.job_id.clone(),
+                reason: "Navigation stopped unexpectedly".into(),
+                review_saved: false,
+            };
+            task.failure = Some(failure.clone());
+            Ok(Some(Err(failure)))
         }
     }
+}
+
+/// Release a failed task only after its manual-review flag has been saved.
+pub fn acknowledge_failure(id: &str) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Navigation unavailable")?;
+    let mut completed = COMPLETED_FAILURE
+        .lock()
+        .map_err(|_| "Navigation unavailable")?;
+    let Some(task) = tasks.as_ref().filter(|task| task.id == id) else {
+        return if completed.as_ref().is_some_and(|(task_id, _)| task_id == id) {
+            Ok(())
+        } else {
+            Err("Navigation task not found".into())
+        };
+    };
+    let mut failure = task
+        .failure
+        .clone()
+        .ok_or("Navigation failure is not ready")?;
+    failure.review_saved = true;
+    *completed = Some((id.to_owned(), failure));
+    *tasks = None;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -264,6 +326,75 @@ mod tests {
     use super::*;
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
+
+    #[test]
+    fn disconnected_navigation_retains_the_job_for_review() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(
+            &mut ws,
+            &serde_json::json!({
+                "url":"https://example.org/job", "title":"Engineer", "employer":"Fixture"
+            }),
+            1,
+        )
+        .unwrap();
+        let job_id = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (sender, rx) = mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-navigation".into(),
+            job_id: job_id.clone(),
+            rx,
+            failure: None,
+        });
+        let first = poll("fictional-navigation")
+            .unwrap()
+            .unwrap()
+            .err()
+            .unwrap();
+        let retry = poll("fictional-navigation")
+            .unwrap()
+            .unwrap()
+            .err()
+            .unwrap();
+        assert_eq!(first.job_id, retry.job_id);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = serde_json::json!({"task_id":"fictional-navigation"}).to_string();
+        write!(client, "POST /api/form/open-link-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["error"], "Navigation stopped unexpectedly");
+        let reviews = ws.manual_reviews().unwrap();
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].job_id, job_id.as_str());
+        assert!(reviews[0].reason.contains("navigation stopped"));
+        let revision = ws.manual_review_reasons(&job_id).unwrap()[0].revision;
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/form/open-link-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let repeated: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result, repeated);
+        assert_eq!(
+            ws.manual_review_reasons(&job_id).unwrap()[0].revision,
+            revision
+        );
+        assert!(!busy());
+    }
 
     struct Links(Vec<String>);
     impl BrowserDriver for Links {

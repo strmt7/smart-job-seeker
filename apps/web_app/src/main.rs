@@ -1969,11 +1969,12 @@ fn serve(
             json_reply(stream, "200 OK", pdf_probe_task::poll(id)?);
         }
         "/api/pdf-setup/start" => {
-            let python = body["python"]
-                .as_str()
-                .ok_or("Choose a Python executable")?;
+            let python = pdf_setup::select_python(
+                body["python"].as_str().unwrap_or(""),
+                pdf_extract::python_path,
+            )?;
             let id = random_id()?;
-            pdf_setup::start(id.clone(), std::path::PathBuf::from(python))?;
+            pdf_setup::start(id.clone(), python)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/pdf-setup/status" => {
@@ -2544,7 +2545,22 @@ fn serve(
             match form_links::poll(id)? {
                 None => json_reply(stream, "200 OK", json!({"status":"running"})),
                 Some(Err(error)) => {
-                    json_reply(stream, "200 OK", json!({"status":"failed","error":error}))
+                    if !error.review_saved {
+                        ws.mark_manual_review(
+                            &error.job_id,
+                            "Application navigation stopped; review the application manually",
+                            now(),
+                        )
+                        .map_err(|e| {
+                            format!("Navigation failed and its review flag could not be saved: {e}")
+                        })?;
+                    }
+                    form_links::acknowledge_failure(id)?;
+                    json_reply(
+                        stream,
+                        "200 OK",
+                        json!({"status":"failed","error":error.reason}),
+                    )
                 }
                 Some(Ok(mut current)) => {
                     let job = ws.job(&current.job_id).map_err(|e| e.to_string())?;
@@ -2745,7 +2761,13 @@ fn serve(
                     {
                         ws.mark_manual_review(&current.job_id, "Form changed during visual review", now())
                             .map_err(|e| format!("The page changed, and its manual-review flag could not be saved: {e}"))?;
-                        return Err("The page URL or dimensions changed; this visual observation is no longer current".into());
+                        let saved = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"visual_page_changed","time":now(),"task_id":id,"note":"The page URL or dimensions changed after the reviewed capture; inspect the live page."})).is_ok());
+                        let record_note = if saved {
+                            ""
+                        } else {
+                            " The stale-review event could not be saved to the application record."
+                        };
+                        return Err(format!("The page URL or dimensions changed; this visual observation is no longer current.{record_note}"));
                     }
                     let fresh_screenshot = result["segment"].as_u64().and_then(|segment| {
                         let (clip_width, y, clip_height, _, _) =
@@ -4954,6 +4976,17 @@ mod tests {
                 .iter()
                 .any(|reason| reason.reason == "Form changed during visual review"));
             drop(stream);
+            visual_review::set_completed_fixture(
+                "fixture-vision-stale",
+                "test-session",
+                "fictional-old-signature",
+                &image,
+            );
+            let (mut stream, _) = listener.accept().unwrap();
+            let stale = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(stale.contains("no longer current"));
+            json_reply(&mut stream, "400 Bad Request", json!({"error":stale}));
+            drop(stream);
             drop(session);
             assert!(!staged_path.exists());
             let records = workspace_dir.path().join("application-records");
@@ -4976,6 +5009,7 @@ mod tests {
             assert!(events.contains("document_visual_review_linked"));
             assert!(events.contains("attachment_verification_failed"));
             assert!(events.contains("visual_freshness_checked"));
+            assert!(events.contains("visual_page_changed"));
             assert!(std::fs::read_dir(&record)
                 .unwrap()
                 .filter_map(Result::ok)
@@ -5106,6 +5140,12 @@ mod tests {
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(payload["visual_freshness"], "changed");
         assert_eq!(payload["freshness_record_saved"], true);
+        let body = r#"{"task_id":"fixture-vision-stale"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/visual-review-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("no longer current"), "{response}");
         worker.join().unwrap();
     }
 }

@@ -17,6 +17,20 @@ struct Task {
     outcome: Option<Result<String, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// Retain the latest completed result so a lost HTTP response can be retried.
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+pub fn select_python(
+    configured: &str,
+    discover: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        discover().ok_or_else(|| "No local Python was found. Install a compatible Python or choose its executable for PDF setup.".into())
+    } else {
+        Ok(PathBuf::from(configured))
+    }
+}
 
 pub fn managed_python(control: &Path) -> Option<PathBuf> {
     let id = std::fs::read_to_string(control.join("pdf-runtime.json")).ok()?;
@@ -175,27 +189,61 @@ pub fn start(id: String, python: PathBuf) -> Result<(), String> {
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "PDF setup unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("PDF setup not found")?;
-    match task.outcome.take() {
-        None => Ok(json!({"status":"running"})),
-        Some(Ok(path)) => {
-            *tasks = None;
-            Ok(json!({"status":"complete","path":path}))
-        }
-        Some(Err(error)) => {
-            *tasks = None;
-            Ok(json!({"status":"failed","error":error}))
-        }
-    }
+    let mut completed = COMPLETED.lock().map_err(|_| "PDF setup unavailable")?;
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        return completed
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| "PDF setup not found".into());
+    };
+    let Some(outcome) = task.outcome.take() else {
+        return Ok(json!({"status":"running"}));
+    };
+    let result = match outcome {
+        Ok(path) => json!({"status":"complete","path":path}),
+        Err(error) => json!({"status":"failed","error":error}),
+    };
+    *completed = Some((id.to_owned(), result.clone()));
+    *tasks = None;
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Stdio;
+
+    #[test]
+    fn selects_discovered_python_only_when_no_path_was_given() {
+        let discovered = PathBuf::from("discovered/python.exe");
+        assert_eq!(
+            select_python("  ", || Some(discovered.clone())).unwrap(),
+            discovered
+        );
+        assert_eq!(
+            select_python(" chosen/python.exe ", || panic!(
+                "explicit path should not trigger discovery"
+            ))
+            .unwrap(),
+            PathBuf::from("chosen/python.exe")
+        );
+        assert!(select_python("", || None)
+            .unwrap_err()
+            .contains("No local Python"));
+    }
+
+    #[test]
+    fn completed_setup_status_can_be_retried() {
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture".into(),
+            outcome: Some(Err("fixture failure".into())),
+        });
+        let first = poll("fixture").unwrap();
+        assert_eq!(first["status"], "failed");
+        assert_eq!(poll("fixture").unwrap(), first);
+        assert!(poll("other").is_err());
+    }
 
     #[test]
     #[ignore = "downloads pinned PDF packages into a temporary isolated environment"]

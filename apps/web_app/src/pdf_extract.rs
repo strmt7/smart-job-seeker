@@ -7,6 +7,18 @@ use std::{
 };
 use std::{path::PathBuf, process::Command};
 
+fn is_store_alias_directory(path: &std::path::Path, local_app_data: &std::path::Path) -> bool {
+    let normalize = |value: &std::path::Path| {
+        value
+            .to_string_lossy()
+            .trim_end_matches(['/', '\\'])
+            .replace('/', "\\")
+    };
+    normalize(path).eq_ignore_ascii_case(&normalize(
+        &local_app_data.join("Microsoft").join("WindowsApps"),
+    ))
+}
+
 pub fn python_path() -> Option<PathBuf> {
     let mut paths = Vec::new();
     if let Some(p) = std::env::var_os("WAYPOINT_PDF_PYTHON") {
@@ -24,10 +36,32 @@ pub fn python_path() -> Option<PathBuf> {
     }
     if let Some(env) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&env) {
+            if std::env::var_os("LOCALAPPDATA")
+                .is_some_and(|base| is_store_alias_directory(&dir, std::path::Path::new(&base)))
+            {
+                continue;
+            }
             paths.push(dir.join("python.exe"));
         }
     }
     paths.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    #[test]
+    fn excludes_the_store_alias_directory_from_automatic_path_discovery() {
+        let base = std::path::Path::new("C:/Users/fixture/AppData/Local");
+        assert!(is_store_alias_directory(
+            &base.join("Microsoft/WindowsApps"),
+            base
+        ));
+        assert!(!is_store_alias_directory(
+            &base.join("Programs/Python/Python312"),
+            base
+        ));
+    }
 }
 
 static PDF_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

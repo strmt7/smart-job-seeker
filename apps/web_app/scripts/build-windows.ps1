@@ -6,7 +6,24 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
-if (-not $OpenSslRoot) { $OpenSslRoot = Join-Path $env:ProgramFiles 'OpenSSL-Win64' }
+if (-not $OpenSslRoot) {
+    # The official Windows runner and common developer installers use different
+    # directories. Only select a complete x64 development installation.
+    $candidates = @('OpenSSL-Win64', 'OpenSSL') | ForEach-Object { Join-Path $env:ProgramFiles $_ }
+    $OpenSslRoot = $candidates | Where-Object {
+        $candidate = $_
+        (Test-Path -LiteralPath (Join-Path $candidate 'include/openssl/ssl.h') -PathType Leaf) -and
+        (@('lib/VC/x64/MD', 'lib/x64', 'lib') | Where-Object {
+            Test-Path -LiteralPath (Join-Path (Join-Path $candidate $_) 'libcrypto.lib') -PathType Leaf
+        }).Count -gt 0 -and
+        (Test-Path -LiteralPath (Join-Path $candidate 'bin') -PathType Container) -and
+        @(Get-ChildItem -LiteralPath (Join-Path $candidate 'bin') -Filter 'libcrypto*.dll' -File).Count -eq 1
+    } | Select-Object -First 1
+    if (-not $OpenSslRoot) {
+        throw 'No complete x64 OpenSSL development installation was found in the standard locations. Automatic provisioning is not yet available; set OPENSSL_DIR or pass -OpenSslRoot.'
+    }
+}
+if (-not (Test-Path -LiteralPath $OpenSslRoot -PathType Container)) { throw "OpenSSL directory does not exist: $OpenSslRoot" }
 $root = (Resolve-Path -LiteralPath $OpenSslRoot).Path
 $include = Join-Path $root 'include'
 if (-not (Test-Path -LiteralPath (Join-Path $include 'openssl/ssl.h'))) { throw 'OpenSSL headers were not found. Supply -OpenSslRoot with an OpenSSL developer installation.' }

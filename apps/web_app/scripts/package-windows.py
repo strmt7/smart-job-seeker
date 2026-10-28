@@ -8,17 +8,92 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
+import urllib.request
 import zipfile
 
 REPO = Path(__file__).resolve().parents[3]
 TARGET = 'x86_64-pc-windows-msvc'
+PYTHON_URL = 'https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg'
+PYTHON_SHA256 = '0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8'
+PDF_WHEELS = (
+    ('pypdf-6.10.0-py3-none-any.whl', 'https://files.pythonhosted.org/packages/55/f2/7ebe366f633f30a6ad105f650f44f24f98cb1335c4157d21ae47138b3482/pypdf-6.10.0-py3-none-any.whl', '90005e959e1596c6e6c84c8b0ad383285b3e17011751cedd17f2ce8fcdfc86de'),
+    ('pypdfium2-5.14.0-py3-none-win_amd64.whl', 'https://files.pythonhosted.org/packages/00/dc/ca7874924c9cfd701ad53f89529968523790e70473e0b71e834668316148/pypdfium2-5.14.0-py3-none-win_amd64.whl', '149fd5c6397b8df8bf7911a93506eff0be874f877afe7ac936cf5d37d21a6a06'),
+    ('pillow-12.3.0-cp312-cp312-win_amd64.whl', 'https://files.pythonhosted.org/packages/45/89/da2f7971a317f83d807fdd4065c0af40208e59e692cc43d315a71a0e96d1/pillow-12.3.0-cp312-cp312-win_amd64.whl', 'a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09'),
+)
+
+def add_pdf_wheels(archive, wheel_dir=None):
+    for name, url, expected_hash in PDF_WHEELS:
+        with tempfile.TemporaryFile() as temporary:
+            source = open(Path(wheel_dir) / name, 'rb') if wheel_dir else urllib.request.urlopen(url, timeout=60)
+            sha = hashlib.sha256()
+            size = 0
+            with source:
+                while chunk := source.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 50 * 1024 * 1024:
+                        raise ValueError(f'{name} exceeds the size limit')
+                    sha.update(chunk)
+                    temporary.write(chunk)
+            if sha.hexdigest() != expected_hash:
+                raise ValueError(f'{name} does not match the pinned SHA-256')
+            temporary.seek(0)
+            with zipfile.ZipFile(temporary) as wheel:
+                members = [entry for entry in wheel.infolist() if not entry.is_dir()]
+                if sum(entry.file_size for entry in members) > 150 * 1024 * 1024:
+                    raise ValueError(f'{name} contents exceed the size limit')
+                for entry in members:
+                    relative = entry.filename
+                    if '\\' in relative or any(part in ('', '.', '..') for part in relative.split('/')) or '.data/' in relative:
+                        raise ValueError(f'Unexpected wheel path in {name}')
+                    dest_name = 'app/dependencies/python/Lib/site-packages/' + relative
+                    if dest_name in archive.NameToInfo:
+                        raise ValueError(f'Duplicate bundled Python file: {relative}')
+                    with wheel.open(entry) as src, archive.open(dest_name, 'w') as dest:
+                        shutil.copyfileobj(src, dest, length=1024 * 1024)
+
+def add_python_runtime(archive, package_path=None):
+    # Stream a pinned, official x64 distribution into the package; do not
+    # extract it into or modify the developer's Python installation.
+    with tempfile.TemporaryFile() as temporary:
+        if package_path:
+            source = open(package_path, 'rb')
+        else:
+            source = urllib.request.urlopen(PYTHON_URL, timeout=60)
+        sha = hashlib.sha256()
+        size = 0
+        with source:
+            while chunk := source.read(1024 * 1024):
+                size += len(chunk)
+                if size > 50 * 1024 * 1024:
+                    raise ValueError('Python runtime package exceeds the size limit')
+                sha.update(chunk)
+                temporary.write(chunk)
+        if sha.hexdigest() != PYTHON_SHA256:
+            raise ValueError('Python runtime package does not match the pinned SHA-256')
+        temporary.seek(0)
+        with zipfile.ZipFile(temporary) as source_zip:
+            members = [entry for entry in source_zip.infolist() if entry.filename.startswith('tools/') and not entry.is_dir()]
+            if sum(entry.file_size for entry in members) > 150 * 1024 * 1024:
+                raise ValueError('Python runtime contents exceed the size limit')
+            names = {entry.filename for entry in members}
+            if not {'tools/python.exe', 'tools/LICENSE.txt', 'tools/Lib/ensurepip/__init__.py'}.issubset(names):
+                raise ValueError('Python runtime package is incomplete')
+            for entry in members:
+                relative = entry.filename.removeprefix('tools/')
+                if '\\' in relative or any(part in ('', '.', '..') for part in relative.split('/')):
+                    raise ValueError('Unexpected Python runtime package path')
+                with source_zip.open(entry) as src, archive.open('app/dependencies/python/' + relative, 'w') as dest:
+                    shutil.copyfileobj(src, dest, length=1024 * 1024)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, help='New ZIP path inside this repository')
     parser.add_argument('--release', action='store_true')
-    parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR') or str(Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'OpenSSL-Win64'))
+    parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
+    parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
+    parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
     output = Path(args.output).resolve()
     if not output.is_relative_to(REPO) or output.suffix.lower() != '.zip' or output.exists():
@@ -39,12 +114,14 @@ def main():
         or receipt.get('openssl_sha256') != digest(dlls[0])
         or receipt.get('cargo_lock_sha256') != digest(REPO / 'Cargo.lock')):
         raise ValueError('Build receipt does not match the executable, runtime or Cargo.lock; rebuild first')
-    source_dll = Path(args.openssl_root) / 'bin' / dlls[0].name
-    if not source_dll.is_file() or digest(source_dll) != digest(dlls[0]):
+    program_files = Path(os.environ.get('ProgramFiles', 'C:/Program Files'))
+    roots = [Path(args.openssl_root)] if args.openssl_root else [program_files / 'OpenSSL-Win64', program_files / 'OpenSSL']
+    matching = [root for root in roots if (root / 'bin' / dlls[0].name).is_file()
+                and digest(root / 'bin' / dlls[0].name) == digest(dlls[0])
+                and (root / 'license.txt').is_file()]
+    if not matching:
         raise ValueError('OpenSSL runtime does not match the specified license source')
-    openssl_license = Path(args.openssl_root) / 'license.txt'
-    if not openssl_license.is_file():
-        raise ValueError('OpenSSL license.txt is missing from the specified installation')
+    openssl_license = matching[0] / 'license.txt'
     tree = subprocess.check_output(['cargo','tree','-p','waypoint_web','-e','normal','--target',TARGET,'--offline','--prefix','none','--format','{p}'],cwd=REPO,text=True,encoding='utf-8')
     registry = Path(os.environ.get('CARGO_HOME') or (Path(os.environ['USERPROFILE']) / '.cargo')) / 'registry' / 'src'
     packages = {}
@@ -77,11 +154,21 @@ def main():
     # Exclusive creation avoids replacing an existing artifact; remove a partial ZIP on failure.
     created = False
     try:
-        raw = output.open('xb')
+        raw = output.open('x+b')
         created = True
         with raw, zipfile.ZipFile(raw,'w',zipfile.ZIP_DEFLATED,strict_timestamps=False) as archive:
             def add(path, dest): archive.write(path, dest)
             add(exe,'app/waypoint_web.exe');add(dlls[0],f'app/{dlls[0].name}')
+            add_python_runtime(archive, args.python_package)
+            add_pdf_wheels(archive, args.wheel_dir)
+            runtime_hashes = {}
+            for info in archive.infolist():
+                if info.filename.startswith('app/dependencies/python/'):
+                    digest_runtime = hashlib.sha256()
+                    with archive.open(info) as runtime_file:
+                        while chunk := runtime_file.read(1024 * 1024):
+                            digest_runtime.update(chunk)
+                    runtime_hashes[info.filename.removeprefix('app/')] = digest_runtime.hexdigest()
             add(REPO/'apps/web_app/scripts/install-package.ps1','install.ps1')
             add(REPO/'apps/web_app/README.md','app/README.md')
             add(REPO/'docs/WEB_PROTOTYPE_CHECKPOINT.md','app/docs/WEB_PROTOTYPE_CHECKPOINT.md')
@@ -94,8 +181,8 @@ def main():
                 for index,path in enumerate(files): add(path,f'app/licenses/crates/{name}-{version}/{index}-{path.name}')
                 inventory.append({'name':name,'version':version,'license':license_expr,'files':len(files)})
             archive.writestr('app/licenses/dependencies.json',json.dumps(inventory,indent=2))
-            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
-            archive.writestr('INSTALL.txt','Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Microsoft Visual C++ runtime, a Chromium browser, Ollama, and optional document tools may need separate installation. See app/README.md.\n')
+            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'python_files':runtime_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
+            archive.writestr('INSTALL.txt','Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. Microsoft Visual C++ runtime, a Chromium browser, Ollama, and document conversion tools may need separate installation. See app/README.md.\n')
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise

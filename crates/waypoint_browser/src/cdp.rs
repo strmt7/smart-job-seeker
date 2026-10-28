@@ -40,6 +40,28 @@ fn err<T>(m: impl Into<String>) -> Result<T, CdpError> {
     Err(CdpError(m.into()))
 }
 
+fn candidate_binaries(
+    explicit: Option<PathBuf>,
+    root: Option<&Path>,
+    discovered: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = explicit {
+        candidates.push(path);
+    }
+    if let Some(root) = root {
+        candidates.push(root.join("dependencies/chromium/chrome.exe"));
+    }
+    candidates.extend(discovered);
+    let mut found = Vec::new();
+    for path in candidates {
+        if path.is_file() && !found.contains(&path) {
+            found.push(path);
+        }
+    }
+    found
+}
+
 /// A browser process owned by us, with a private profile.
 pub struct BrowserProcess {
     child: Child,
@@ -52,24 +74,31 @@ impl BrowserProcess {
     /// Candidate executables, most-preferred first. Only paths that exist are
     /// returned, so a missing browser is reported rather than guessed at.
     pub fn discover_binaries() -> Vec<PathBuf> {
-        let mut out = vec![];
-        let mut push = |p: String| {
-            let path = PathBuf::from(p);
-            if path.is_file() {
-                out.push(path);
-            }
-        };
+        let mut discovered = vec![];
+        let mut push = |path: PathBuf| discovered.push(path);
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            push(format!("{local}\\Microsoft\\Edge\\Application\\msedge.exe"));
-            push(format!("{local}\\Google\\Chrome\\Application\\chrome.exe"));
+            push(PathBuf::from(format!(
+                "{local}\\Microsoft\\Edge\\Application\\msedge.exe"
+            )));
+            push(PathBuf::from(format!(
+                "{local}\\Google\\Chrome\\Application\\chrome.exe"
+            )));
         }
         if let Ok(pf) = std::env::var("PROGRAMFILES") {
-            push(format!("{pf}\\Google\\Chrome\\Application\\chrome.exe"));
-            push(format!("{pf}\\Microsoft\\Edge\\Application\\msedge.exe"));
+            push(PathBuf::from(format!(
+                "{pf}\\Google\\Chrome\\Application\\chrome.exe"
+            )));
+            push(PathBuf::from(format!(
+                "{pf}\\Microsoft\\Edge\\Application\\msedge.exe"
+            )));
         }
         if let Ok(pf86) = std::env::var("PROGRAMFILES(X86)") {
-            push(format!("{pf86}\\Microsoft\\Edge\\Application\\msedge.exe"));
-            push(format!("{pf86}\\Google\\Chrome\\Application\\chrome.exe"));
+            push(PathBuf::from(format!(
+                "{pf86}\\Microsoft\\Edge\\Application\\msedge.exe"
+            )));
+            push(PathBuf::from(format!(
+                "{pf86}\\Google\\Chrome\\Application\\chrome.exe"
+            )));
         }
         for p in [
             "/usr/bin/chromium",
@@ -77,9 +106,21 @@ impl BrowserProcess {
             "/usr/bin/google-chrome",
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         ] {
-            push(p.to_string());
+            push(PathBuf::from(p));
         }
-        out
+        if let Some(path) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path) {
+                for name in ["chrome.exe", "msedge.exe", "chromium.exe"] {
+                    push(dir.join(name));
+                }
+            }
+        }
+        let executable = std::env::current_exe().ok();
+        candidate_binaries(
+            std::env::var_os("WAYPOINT_BROWSER").map(PathBuf::from),
+            executable.as_deref().and_then(Path::parent),
+            discovered,
+        )
     }
 
     /// Launch with a throwaway profile and wait until it is actually talking.
@@ -89,9 +130,39 @@ impl BrowserProcess {
 
     pub fn launch_with_mode(timeout: Duration, visible: bool) -> Result<Self, CdpError> {
         let binaries = Self::discover_binaries();
-        let Some(exe) = binaries.first() else {
+        Self::launch_candidates(&binaries, timeout, visible)
+    }
+
+    fn launch_candidates(
+        binaries: &[PathBuf],
+        timeout: Duration,
+        visible: bool,
+    ) -> Result<Self, CdpError> {
+        if binaries.is_empty() {
             return err("no Chromium-family browser found (Edge/Chrome/Chromium)");
-        };
+        }
+        let deadline = Instant::now() + timeout;
+        let mut last_error = None;
+        let candidates = &binaries[..binaries.len().min(5)];
+        for (index, exe) in candidates.iter().enumerate() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let budget = if index + 1 == candidates.len() {
+                remaining
+            } else {
+                (remaining / 2).min(Duration::from_secs(5))
+            };
+            match Self::launch_one(exe, budget, visible) {
+                Ok(browser) => return Ok(browser),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| CdpError("browser startup timed out".into())))
+    }
+
+    fn launch_one(exe: &Path, timeout: Duration, visible: bool) -> Result<Self, CdpError> {
         // Unique per launch: pid alone is not enough (two launches in one
         // process, or a recycled pid, would collide).
         let nonce = std::time::SystemTime::now()
@@ -173,12 +244,17 @@ impl BrowserProcess {
         // Ask the browser itself for the WebSocket endpoint.
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         let version = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return err("browser debugging endpoint not ready before the startup deadline");
+            }
+            let request_timeout_ms = remaining.as_millis().clamp(1, 2_000) as u64;
             match waypoint_net::request_loopback(
                 addr,
                 "GET",
                 "/json/version",
                 None,
-                2_000,
+                request_timeout_ms,
                 64 * 1024,
             ) {
                 Ok(resp) if resp.status == 200 => break resp,
@@ -398,6 +474,53 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "starts a locally installed browser with a temporary profile"]
+    fn falls_back_after_invalid_browser_executable() {
+        let actual = BrowserProcess::discover_binaries()
+            .into_iter()
+            .next()
+            .expect("a local browser is required");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!("waypoint-invalid-browser-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let invalid = root.join("invalid.exe");
+        std::fs::write(&invalid, b"not an executable").unwrap();
+        let browser =
+            BrowserProcess::launch_candidates(&[invalid, actual], Duration::from_secs(20), false)
+                .unwrap();
+        assert_ne!(browser.port, 0);
+        drop(browser);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovery_prefers_explicit_then_bundled_and_skips_missing_duplicates() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!(
+                "waypoint-browser-discovery-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        let bundled = root.join("dependencies/chromium/chrome.exe");
+        let explicit = root.join("custom.exe");
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"fixture").unwrap();
+        std::fs::write(&explicit, b"fixture").unwrap();
+        let found = candidate_binaries(
+            Some(explicit.clone()),
+            Some(&root),
+            vec![bundled.clone(), root.join("missing.exe")],
+        );
+        assert_eq!(found, vec![explicit, bundled]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn event_buffer_is_bounded_and_retains_a_load_signal() {

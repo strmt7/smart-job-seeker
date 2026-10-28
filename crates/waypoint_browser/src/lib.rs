@@ -41,6 +41,26 @@ fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
 }
 
+/// This is only a hint to request manual navigation, never authorization to click.
+fn possible_next_label(label: &str) -> bool {
+    let normalized = label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    ["next", "continue", "weiter", "suivant", "siguiente"]
+        .iter()
+        .any(|prefix| {
+            normalized.strip_prefix(prefix).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_whitespace() || matches!(ch, ':' | '→' | '»' | '>'))
+            })
+        })
+}
+
 pub struct CdpDriver {
     browser: BrowserProcess,
     cdp: Cdp,
@@ -546,10 +566,7 @@ impl CdpDriver {
                     } else {
                         possible_next_step = true;
                     }
-                } else if matches!(
-                    caption.as_str(),
-                    "next" | "next step" | "continue" | "weiter" | "suivant" | "siguiente"
-                ) {
+                } else if possible_next_label(&caption) {
                     if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
                         next_nodes.push(id);
                     } else {
@@ -782,15 +799,12 @@ impl CdpDriver {
             };
             match parts {
                 Some(parts)
-                    if matches!(
-                        parts
+                    if possible_next_label(
+                        &parts
                             .iter()
                             .map(|part| part.as_str())
                             .collect::<Vec<_>>()
-                            .join(" ")
-                            .to_lowercase()
-                            .as_str(),
-                        "next" | "next step" | "continue" | "weiter" | "suivant" | "siguiente"
+                            .join(" "),
                     ) =>
                 {
                     next_nodes.push(node)
