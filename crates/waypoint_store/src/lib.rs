@@ -171,6 +171,9 @@ const MIGRATIONS: &[&str] = &[
      CREATE TRIGGER email_handoff_events_no_update BEFORE UPDATE ON email_handoff_events BEGIN SELECT RAISE(ABORT, 'email handoff history is append-only'); END;
      CREATE TRIGGER email_handoff_events_no_delete BEFORE DELETE ON email_handoff_events BEGIN SELECT RAISE(ABORT, 'email handoff history is append-only'); END;
      UPDATE meta SET value='16' WHERE key='schema_version';",
+    // v17 — separate one-use, hash-bound approval for an email handoff.
+    "CREATE TABLE email_handoff_approvals(id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), message_hash TEXT NOT NULL, sender_hash TEXT NOT NULL, recipient_hash TEXT NOT NULL, created_at INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)));
+     UPDATE meta SET value='17' WHERE key='schema_version';",
 ];
 
 pub mod documents;
