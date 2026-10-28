@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 use tungstenite::{Message, WebSocket};
 
 pub type Ws = WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
+const MAX_PROTOCOL_MESSAGE: usize = 16 * 1024 * 1024;
+const MAX_EVENT_BYTES: usize = 64 * 1024;
+const MAX_EVENTS: usize = 64;
 
 #[derive(Debug)]
 pub struct CdpError(pub String);
@@ -117,39 +120,38 @@ impl BrowserProcess {
         if std::env::var("WAYPOINT_BROWSER_NO_SANDBOX").is_ok_and(|v| v == "1") {
             cmd.arg("--no-sandbox");
         }
-        let mut child = cmd
+        let child = match cmd
             .arg("about:blank")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| CdpError(format!("spawn {}: {e}", exe.display())))?;
+        {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&user_data_dir);
+                return err(format!("spawn {}: {error}", exe.display()));
+            }
+        };
+        // Own the child immediately, so every later error path runs Drop.
+        let mut browser = Self {
+            child,
+            port: 0,
+            ws_url: String::new(),
+            user_data_dir,
+        };
 
-        let port_file = user_data_dir.join("DevToolsActivePort");
+        let port_file = browser.user_data_dir.join("DevToolsActivePort");
         let deadline = Instant::now() + timeout;
         let mut port = 0u16;
         while Instant::now() < deadline {
-            match child.try_wait() {
+            match browser.child.try_wait() {
                 Ok(Some(status)) => {
-                    let mut me = Self {
-                        child,
-                        port: 0,
-                        ws_url: String::new(),
-                        user_data_dir,
-                    };
-                    me.shutdown();
                     return err(format!(
                         "browser exited before its debugging endpoint was ready: {status}"
                     ));
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    let mut me = Self {
-                        child,
-                        port: 0,
-                        ws_url: String::new(),
-                        user_data_dir,
-                    };
-                    me.shutdown();
                     return err(format!("could not inspect browser startup: {error}"));
                 }
             }
@@ -164,15 +166,9 @@ impl BrowserProcess {
             std::thread::sleep(Duration::from_millis(50));
         }
         if port == 0 {
-            let mut me = Self {
-                child,
-                port: 0,
-                ws_url: String::new(),
-                user_data_dir,
-            };
-            me.shutdown();
             return err("browser did not report a debugging port in time");
         }
+        browser.port = port;
 
         // Ask the browser itself for the WebSocket endpoint.
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -188,13 +184,6 @@ impl BrowserProcess {
                 Ok(resp) if resp.status == 200 => break resp,
                 other => {
                     if Instant::now() >= deadline {
-                        let mut me = Self {
-                            child,
-                            port,
-                            ws_url: String::new(),
-                            user_data_dir,
-                        };
-                        me.shutdown();
                         return err(format!(
                             "browser debugging endpoint not ready: {:?}",
                             other.map(|r| r.status).map_err(|e| e.to_string())
@@ -206,23 +195,22 @@ impl BrowserProcess {
         };
         let parsed: Value = serde_json::from_slice(&version.body)
             .map_err(|e| CdpError(format!("/json/version: {e}")))?;
-        let ws_url = parsed
+        browser.ws_url = parsed
             .get("webSocketDebuggerUrl")
             .and_then(|v| v.as_str())
             .ok_or_else(|| CdpError("no webSocketDebuggerUrl reported".into()))?
             .to_string();
 
-        Ok(Self {
-            child,
-            port,
-            ws_url,
-            user_data_dir,
-        })
+        Ok(browser)
     }
 
     pub fn connect(&self) -> Result<Ws, CdpError> {
-        let (ws, _resp) = tungstenite::connect(self.ws_url.as_str())
+        let (mut ws, _resp) = tungstenite::connect(self.ws_url.as_str())
             .map_err(|e| CdpError(format!("websocket connect: {e}")))?;
+        ws.set_config(|config| {
+            config.max_message_size = Some(MAX_PROTOCOL_MESSAGE);
+            config.max_frame_size = Some(MAX_PROTOCOL_MESSAGE);
+        });
         // Bound every read so a wedged browser cannot hang the app forever.
         if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = ws.get_ref() {
             let _ = tcp.set_read_timeout(Some(Duration::from_secs(20)));
@@ -253,6 +241,30 @@ pub struct Cdp {
     /// driver legitimately needs them (e.g. `Page.loadEventFired`).
     pub events: Vec<(String, Value)>,
     pub timeout: Duration,
+}
+
+fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize) {
+    if raw_len > MAX_EVENT_BYTES {
+        return;
+    }
+    let Some(name) = value
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if name == "Page.loadEventFired" {
+        events.retain(|(event, _)| event != "Page.loadEventFired");
+    }
+    if events.len() >= MAX_EVENTS {
+        let oldest_non_load = events
+            .iter()
+            .position(|(event, _)| event != "Page.loadEventFired")
+            .unwrap_or(0);
+        events.remove(oldest_non_load);
+    }
+    events.push((name, value));
 }
 
 impl Cdp {
@@ -316,6 +328,11 @@ impl Cdp {
             if Instant::now() >= deadline {
                 return err(format!("{method}: timed out waiting for a reply"));
             }
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = self.ws.get_ref() {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                tcp.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))
+                    .map_err(|e| CdpError(format!("{method}: cannot set read timeout: {e}")))?;
+            }
             let raw = match self.ws.read() {
                 Ok(Message::Text(t)) => t.as_str().to_string(),
                 Ok(Message::Binary(b)) => String::from_utf8_lossy(&b).into_owned(),
@@ -323,19 +340,18 @@ impl Cdp {
                 Ok(_) => continue,
                 Err(e) => return err(format!("{method}: read: {e}")),
             };
-            let value: Value = match serde_json::from_str(&raw) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
+            let value: Value = serde_json::from_str(&raw).map_err(|error| {
+                CdpError(format!(
+                    "{method}: invalid or too deeply nested browser response: {error}"
+                ))
+            })?;
             if value.get("id").and_then(|v| v.as_u64()) == Some(id) {
                 if let Some(e) = value.get("error") {
                     return err(format!("{method}: protocol error {e}"));
                 }
                 return Ok(value.get("result").cloned().unwrap_or(Value::Null));
             }
-            if let Some(event) = value.get("method").and_then(|v| v.as_str()) {
-                self.events.push((event.to_string(), value));
-            }
+            retain_event(&mut self.events, value, raw.len());
         }
     }
 
@@ -351,16 +367,12 @@ impl Cdp {
             match self.ws.read() {
                 Ok(Message::Text(t)) => {
                     if let Ok(value) = serde_json::from_str::<Value>(t.as_str()) {
-                        if let Some(event) = value.get("method").and_then(|v| v.as_str()) {
-                            self.events.push((event.to_string(), value));
-                        }
+                        retain_event(&mut self.events, value, t.len());
                     }
                 }
                 Ok(Message::Binary(b)) => {
                     if let Ok(value) = serde_json::from_str::<Value>(&String::from_utf8_lossy(&b)) {
-                        if let Some(event) = value.get("method").and_then(|v| v.as_str()) {
-                            self.events.push((event.to_string(), value));
-                        }
+                        retain_event(&mut self.events, value, b.len());
                     }
                 }
                 Ok(_) => {}
@@ -381,4 +393,103 @@ impl Cdp {
 /// Windows-safe temporary directory helper used by tests and the driver.
 pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
     std::fs::create_dir_all(path).map_err(|e| CdpError(format!("{}: {e}", path.display())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_buffer_is_bounded_and_retains_a_load_signal() {
+        let mut events = Vec::new();
+        retain_event(&mut events, json!({"method":"Page.loadEventFired"}), 100);
+        for index in 0..(MAX_EVENTS * 3) {
+            retain_event(
+                &mut events,
+                json!({"method":"Runtime.event","index":index}),
+                100,
+            );
+        }
+        assert_eq!(events.len(), MAX_EVENTS);
+        assert!(events.iter().any(|(name, _)| name == "Page.loadEventFired"));
+        assert_eq!(
+            events.last().unwrap().1["index"],
+            (MAX_EVENTS * 3 - 1) as u64
+        );
+        retain_event(
+            &mut events,
+            json!({"method":"oversized"}),
+            MAX_EVENT_BYTES + 1,
+        );
+        assert_eq!(events.len(), MAX_EVENTS);
+        assert!(!events.iter().any(|(name, _)| name == "oversized"));
+    }
+
+    #[test]
+    fn command_timeout_is_not_inherited_from_short_event_poll() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let request = socket.read().unwrap().into_text().unwrap();
+            let request: Value = serde_json::from_str(&request).unwrap();
+            std::thread::sleep(Duration::from_millis(250));
+            socket
+                .send(Message::Text(
+                    json!({"id":request["id"],"result":{"ok":true}})
+                        .to_string()
+                        .into(),
+                ))
+                .unwrap();
+        });
+        let (socket, _) = tungstenite::connect(format!("ws://{addr}")).unwrap();
+        let mut cdp = Cdp {
+            ws: socket,
+            next_id: 0,
+            session: String::new(),
+            events: vec![],
+            timeout: Duration::from_secs(2),
+        };
+        cdp.pump(Duration::from_millis(40));
+        let response = cdp
+            .call_browser("Test.delayed", json!({}))
+            .expect("the command gets its own timeout");
+        assert_eq!(response["ok"], true);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn unparseable_response_is_reported_without_waiting_for_another_reply() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let request: Value =
+                serde_json::from_str(&socket.read().unwrap().into_text().unwrap()).unwrap();
+            let nested = format!("{}0{}", "[".repeat(140), "]".repeat(140));
+            socket
+                .send(Message::Text(
+                    format!("{{\"id\":{},\"result\":{nested}}}", request["id"]).into(),
+                ))
+                .unwrap();
+        });
+        let (socket, _) = tungstenite::connect(format!("ws://{addr}")).unwrap();
+        let mut cdp = Cdp {
+            ws: socket,
+            next_id: 0,
+            session: String::new(),
+            events: vec![],
+            timeout: Duration::from_secs(2),
+        };
+        let error = cdp.call_browser("Test.deep", json!({})).unwrap_err();
+        assert!(
+            error
+                .0
+                .contains("invalid or too deeply nested browser response"),
+            "{error}"
+        );
+        worker.join().unwrap();
+    }
 }

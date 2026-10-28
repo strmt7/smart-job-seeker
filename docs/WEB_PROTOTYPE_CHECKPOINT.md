@@ -259,3 +259,13 @@ For long multi-select lists, the review panel renders at most 40 choices at a ti
 Application-link inspection resolves bounded accessible label references and uses a nonempty accessible label in preference to visible text, rather than concatenating them. Missing or ambiguous references are not guessed. The destination still requires user review before navigation; the fixture only reads local links.
 
 Form selectors now quote generated IDs and escape attribute values when needed, so punctuation, leading digits, and quotes do not make otherwise supported fields inaccessible. A local browser fixture filled two such fields without submission.
+
+Browser protocol messages are limited to 16 MiB, and the retained event buffer is limited to 64 events of at most 64 KiB each. Older non-load events and oversized events are discarded. An oversized protocol response fails inspection and may require manual review. These limits do not cap the browser process or the operating system's total memory use.
+
+Each browser protocol command now sets its own remaining read deadline, rather than inheriting a short timeout used to poll page events. A loopback fixture exercised a response arriving after that short poll interval.
+
+The browser process is now owned immediately after launch, so startup errors after spawning trigger the normal process and temporary-profile cleanup path. A failed process spawn also removes the newly created profile directory.
+
+Page-node and text traversal use an explicit depth-first work stack, reducing call-stack pressure on deeply nested pages. This does not remove the browser protocol's message-size limit or cap the browser process itself.
+
+Unparseable or excessively nested browser responses now produce an explicit inspection error instead of being ignored until another response or timeout. The parser's nesting limit still applies.

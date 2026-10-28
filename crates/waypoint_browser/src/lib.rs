@@ -1110,6 +1110,7 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
+        self.cdp.take_events();
         self.cdp
             .call("Page.navigate", json!({ "url": url }))
             .map_err(derr)?;
@@ -1499,39 +1500,45 @@ fn css_string(value: &str) -> String {
 }
 
 fn collect_text(node: &Value, skip: bool, out: &mut String) {
-    let tag = node
-        .get("nodeName")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let skip_here = skip || matches!(tag.as_str(), "script" | "style" | "noscript" | "template");
-    if !skip_here && tag == "#text" {
-        if let Some(value) = node.get("nodeValue").and_then(|v| v.as_str()) {
-            out.push_str(value);
-            out.push(' ');
-        }
+    if skip {
+        return;
     }
-    if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
-        for child in children {
-            collect_text(child, skip_here, out);
+    walk(node, false, &mut |current, _| {
+        let tag = current
+            .get("nodeName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(tag.as_str(), "script" | "style" | "noscript" | "template") {
+            return false;
         }
-    }
+        if tag == "#text" {
+            if let Some(value) = current.get("nodeValue").and_then(Value::as_str) {
+                out.push_str(value);
+                out.push(' ');
+            }
+        }
+        true
+    });
 }
 
 /// Depth-first walk; the callback returns false to skip a subtree.
 fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut F) {
-    let proceed = cb(node, in_control);
-    let tag = node
-        .get("nodeName")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let child_in_control = in_control || matches!(tag.as_str(), "input" | "textarea" | "select");
-    if proceed {
-        if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
-            for child in children {
-                walk(child, child_in_control, cb);
-            }
+    let mut pending = vec![(node, in_control)];
+    while let Some((current, inside_control)) = pending.pop() {
+        if !cb(current, inside_control) {
+            continue;
+        }
+        let tag = current
+            .get("nodeName")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let child_in_control = inside_control
+            || ["input", "textarea", "select"]
+                .iter()
+                .any(|kind| tag.eq_ignore_ascii_case(kind));
+        if let Some(children) = current.get("children").and_then(Value::as_array) {
+            pending.extend(children.iter().rev().map(|child| (child, child_in_control)));
         }
     }
 }
@@ -1543,5 +1550,35 @@ fn origin_of(url: &str) -> String {
             format!("{scheme}://{host}")
         }
         None => url.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod traversal_tests {
+    use super::*;
+
+    #[test]
+    fn deeply_nested_nodes_keep_order_and_skip_non_content() {
+        let mut nested = json!({"nodeName":"#text", "nodeValue":"deep"});
+        for _ in 0..512 {
+            nested = json!({"nodeName":"DIV", "children":[nested]});
+        }
+        let root = json!({"nodeName":"BODY", "children":[
+            {"nodeName":"#text", "nodeValue":"first"},
+            {"nodeName":"SCRIPT", "children":[{"nodeName":"#text", "nodeValue":"ignored"}]},
+            nested,
+            {"nodeName":"SELECT", "children":[{"nodeName":"OPTION", "children":[{"nodeName":"#text", "nodeValue":"choice"}]}]}
+        ]});
+        let mut text = String::new();
+        collect_text(&root, false, &mut text);
+        assert_eq!(text, "first deep choice ");
+        let mut control_text = false;
+        walk(&root, false, &mut |node, inside| {
+            if node.get("nodeValue").and_then(Value::as_str) == Some("choice") {
+                control_text = inside;
+            }
+            true
+        });
+        assert!(control_text);
     }
 }

@@ -55,6 +55,25 @@ fn flags_a_possible_next_step_without_clicking_it() {
     assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
 }
 
+#[test]
+#[ignore = "launches one local browser and immediately exercises startup timeout cleanup"]
+fn timed_out_browser_start_cleans_its_private_profile() {
+    let temp = std::env::temp_dir();
+    let prefix = format!("waypoint-profile-{}-", std::process::id());
+    let profiles = || -> std::collections::HashSet<_> {
+        std::fs::read_dir(&temp)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .map(|entry| entry.path())
+            .collect()
+    };
+    let before = profiles();
+    let result = waypoint_browser::cdp::BrowserProcess::launch(std::time::Duration::ZERO);
+    assert!(result.is_err(), "zero startup time must fail");
+    assert_eq!(profiles(), before, "failed startup must remove its profile");
+}
+
 fn job(id: &str, title: &str, employer: &str, url: &str) -> StoredJob {
     StoredJob {
         id: JobIdentityId::new(id).unwrap(),
