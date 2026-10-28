@@ -1928,9 +1928,44 @@ fn serve(
                 .ok_or("Job not found")?;
             let mut listing = attempt_record::list(ws, &id)?;
             let (handoffs, truncated) = ws.email_handoff_history(&id)?;
-            listing["email_handoffs"] = json!(handoffs.into_iter().map(|item| json!({"attempt_id":item.id,"state":item.state,"created_at":item.created_at})).collect::<Vec<_>>());
+            listing["email_handoffs"] = json!(handoffs.into_iter().map(|item| json!({"attempt_id":item.id,"state":item.state,"reconciliation":item.reconciliation,"created_at":item.created_at})).collect::<Vec<_>>());
             listing["email_handoffs_truncated"] = json!(truncated);
             json_reply(stream, "200 OK", listing);
+        }
+        "/api/gmail/reconcile-handoff" => {
+            if body["reviewed"].as_bool() != Some(true) {
+                return Err("Confirm that you checked the mailbox first".into());
+            }
+            if email_worker::busy() {
+                return Err(
+                    "Wait for the active email worker and collect its result before reconciling"
+                        .into(),
+                );
+            }
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing handoff id")?;
+            let (decision, label) = match body["decision"].as_str() {
+                Some("sent") => (
+                    waypoint_store::email_handoff::EmailReconciliation::UserReportsSent,
+                    "user_reports_sent",
+                ),
+                Some("not_sent") => (
+                    waypoint_store::email_handoff::EmailReconciliation::UserReportsNotSent,
+                    "user_reports_not_sent",
+                ),
+                _ => return Err("Choose whether you found evidence of sending".into()),
+            };
+            let timestamp = now();
+            ws.reconcile_email_handoff(&job, attempt, decision, timestamp, true)?;
+            let record_saved =
+                attempt_record::record_email_reconciliation(ws, &job, attempt, label, timestamp)
+                    .is_ok();
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"ok":true,"record_saved":record_saved,"email_sent_by_action":false}),
+            );
         }
         "/api/review" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
@@ -3191,6 +3226,27 @@ mod tests {
             attempt_id,
             waypoint_store::email_handoff::EmailHandoffOutcome::Accepted,
             3
+        )
+        .is_err());
+        attempt_record::record_email_reconciliation(
+            &ws,
+            &job,
+            attempt_id,
+            "user_reports_not_sent",
+            4,
+        )
+        .unwrap();
+        let reconciliation: Value = serde_json::from_slice(
+            &std::fs::read(attempt.join("email-reconciliation.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reconciliation["decision"], "user_reports_not_sent");
+        assert!(attempt_record::record_email_reconciliation(
+            &ws,
+            &job,
+            attempt_id,
+            "user_reports_sent",
+            5
         )
         .is_err());
         std::fs::write(

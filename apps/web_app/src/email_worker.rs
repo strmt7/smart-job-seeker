@@ -13,6 +13,11 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
+/// Reconciliation must wait for any live or uncollected worker result.
+pub fn busy() -> bool {
+    TASK.lock().map(|task| task.is_some()).unwrap_or(true)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum WorkerStatus {
     Running,
@@ -171,6 +176,7 @@ mod tests {
             },
         )
         .unwrap();
+        assert!(busy());
         assert_eq!(
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "reserved"
@@ -199,6 +205,7 @@ mod tests {
             "accepted"
         );
         assert!(poll(&mut ws, attempt).is_err());
+        assert!(!busy());
         let folder = std::fs::read_dir(directory.path().join("application-records"))
             .unwrap()
             .next()

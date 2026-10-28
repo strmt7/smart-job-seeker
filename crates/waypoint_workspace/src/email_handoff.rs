@@ -136,6 +136,18 @@ impl Workspace {
             .email_handoffs_for_job(job)
             .map_err(|e| e.to_string())
     }
+
+    pub fn reconcile_email_handoff(
+        &mut self,
+        job: &JobIdentityId,
+        id: &str,
+        decision: waypoint_store::email_handoff::EmailReconciliation,
+        now: i64,
+        explicit_user_gesture: bool,
+    ) -> Result<(), String> {
+        self.store
+            .reconcile_email_handoff(job, id, decision, now, explicit_user_gesture)
+    }
 }
 
 #[cfg(test)]

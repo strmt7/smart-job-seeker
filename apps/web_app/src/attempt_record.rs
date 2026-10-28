@@ -32,6 +32,46 @@ pub fn record_email_outcome(
     outcome: waypoint_store::email_handoff::EmailHandoffOutcome,
     timestamp: i64,
 ) -> Result<(), String> {
+    let state = match outcome {
+        waypoint_store::email_handoff::EmailHandoffOutcome::Accepted => "accepted",
+        waypoint_store::email_handoff::EmailHandoffOutcome::Uncertain => "uncertain",
+        waypoint_store::email_handoff::EmailHandoffOutcome::NotSent => "not_sent",
+    };
+    record_email_file(
+        ws,
+        job,
+        attempt,
+        "email-handoff.json",
+        &json!({"handoff_id":attempt,"state":state,"recorded_at":timestamp,"note":"SMTP acceptance does not prove inbox delivery. Check the mailbox before any retry."}),
+    )
+}
+
+pub fn record_email_reconciliation(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    decision: &str,
+    timestamp: i64,
+) -> Result<(), String> {
+    if !matches!(decision, "user_reports_sent" | "user_reports_not_sent") {
+        return Err("Invalid reconciliation".into());
+    }
+    record_email_file(
+        ws,
+        job,
+        attempt,
+        "email-reconciliation.json",
+        &json!({"handoff_id":attempt,"decision":decision,"recorded_at":timestamp,"note":"This is the user's report, not independently verified delivery evidence."}),
+    )
+}
+
+fn record_email_file(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    filename: &str,
+    value: &Value,
+) -> Result<(), String> {
     if attempt.len() != 32 || !attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid application record".into());
     }
@@ -61,17 +101,12 @@ pub fn record_email_outcome(
     {
         return Err("Application record does not match the handoff".into());
     }
-    let state = match outcome {
-        waypoint_store::email_handoff::EmailHandoffOutcome::Accepted => "accepted",
-        waypoint_store::email_handoff::EmailHandoffOutcome::Uncertain => "uncertain",
-        waypoint_store::email_handoff::EmailHandoffOutcome::NotSent => "not_sent",
-    };
     let mut file =
-        tempfile::NamedTempFile::new_in(&dir).map_err(|_| "Cannot write email outcome")?;
-    serde_json::to_writer_pretty(&mut file, &json!({"handoff_id":attempt,"state":state,"recorded_at":timestamp,"note":"SMTP acceptance does not prove inbox delivery. Check the mailbox before any retry."})).map_err(|_| "Cannot write email outcome")?;
-    file.flush().map_err(|_| "Cannot write email outcome")?;
-    file.persist_noclobber(dir.join("email-handoff.json"))
-        .map_err(|_| "Cannot save email outcome")?;
+        tempfile::NamedTempFile::new_in(&dir).map_err(|_| "Cannot write email record")?;
+    serde_json::to_writer_pretty(&mut file, value).map_err(|_| "Cannot write email record")?;
+    file.flush().map_err(|_| "Cannot write email record")?;
+    file.persist_noclobber(dir.join(filename))
+        .map_err(|_| "Cannot save email record")?;
     Ok(())
 }
 

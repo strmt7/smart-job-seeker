@@ -101,6 +101,12 @@ pub enum EmailHandoffOutcome {
     NotSent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmailReconciliation {
+    UserReportsSent,
+    UserReportsNotSent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmailHandoffRecord {
     pub id: String,
@@ -109,6 +115,7 @@ pub struct EmailHandoffRecord {
     pub sender_hash: String,
     pub recipient_hash: String,
     pub state: String,
+    pub reconciliation: Option<String>,
     pub created_at: i64,
 }
 impl EmailHandoffOutcome {
@@ -122,6 +129,39 @@ impl EmailHandoffOutcome {
 }
 
 impl Store {
+    /// Record a user's mailbox check; this is a user report, not independent
+    /// delivery evidence. No action here sends or retries a message.
+    pub fn reconcile_email_handoff(
+        &mut self,
+        job: &JobIdentityId,
+        id: &str,
+        decision: EmailReconciliation,
+        timestamp: i64,
+        explicit_user_gesture: bool,
+    ) -> Result<(), String> {
+        if !explicit_user_gesture || timestamp <= 0 {
+            return Err("An explicit user reconciliation is required".into());
+        }
+        let (state, label) = match decision {
+            EmailReconciliation::UserReportsSent => ("accepted", "user_reports_sent"),
+            EmailReconciliation::UserReportsNotSent => ("not_sent", "user_reports_not_sent"),
+        };
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let changed = tx.execute("UPDATE email_handoffs SET state=?1 WHERE id=?2 AND job_id=?3 AND state IN ('reserved','uncertain')", params![state,id,job.as_str()]).map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err("Email handoff is not awaiting reconciliation".into());
+        }
+        tx.execute("INSERT INTO email_handoff_reconciliations(handoff_id,decision,timestamp) VALUES(?1,?2,?3)", params![id,label,timestamp]).map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO email_handoff_events(handoff_id,state,timestamp) VALUES(?1,?2,?3)",
+            params![id, label, timestamp],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    }
     /// Persist an approval after the application has presented the exact
     /// message and destination to the user. Never call from a model decision.
     pub fn approve_email_handoff(
@@ -238,7 +278,7 @@ impl Store {
         &self,
         job_id: &JobIdentityId,
     ) -> rusqlite::Result<(Vec<EmailHandoffRecord>, bool)> {
-        let mut stmt = self.conn.prepare("SELECT id,approval_id,message_hash,sender_hash,recipient_hash,state,created_at FROM email_handoffs WHERE job_id=?1 ORDER BY created_at DESC,id DESC LIMIT 101")?;
+        let mut stmt = self.conn.prepare("SELECT h.id,h.approval_id,h.message_hash,h.sender_hash,h.recipient_hash,h.state,h.created_at,r.decision FROM email_handoffs h LEFT JOIN email_handoff_reconciliations r ON r.handoff_id=h.id WHERE h.job_id=?1 ORDER BY h.created_at DESC,h.id DESC LIMIT 101")?;
         let rows = stmt.query_map([job_id.as_str()], |row| {
             Ok(EmailHandoffRecord {
                 id: row.get(0)?,
@@ -248,6 +288,7 @@ impl Store {
                 recipient_hash: row.get(4)?,
                 state: row.get(5)?,
                 created_at: row.get(6)?,
+                reconciliation: row.get(7)?,
             })
         })?;
         let mut records: Vec<_> = rows.collect::<rusqlite::Result<_>>()?;
@@ -480,6 +521,46 @@ mod tests {
             assert!(store
                 .conn
                 .execute("DELETE FROM email_handoff_events", [])
+                .is_err());
+            assert!(store
+                .reconcile_email_handoff(
+                    &job,
+                    "one",
+                    EmailReconciliation::UserReportsNotSent,
+                    4,
+                    false
+                )
+                .is_err());
+            assert!(store
+                .reconcile_email_handoff(
+                    &other,
+                    "one",
+                    EmailReconciliation::UserReportsNotSent,
+                    4,
+                    true
+                )
+                .is_err());
+            store
+                .reconcile_email_handoff(
+                    &job,
+                    "one",
+                    EmailReconciliation::UserReportsNotSent,
+                    4,
+                    true,
+                )
+                .unwrap();
+            let history = store.email_handoffs_for_job(&job).unwrap().0;
+            assert_eq!(history[0].state, "not_sent");
+            assert_eq!(
+                history[0].reconciliation.as_deref(),
+                Some("user_reports_not_sent")
+            );
+            assert!(store
+                .reconcile_email_handoff(&job, "one", EmailReconciliation::UserReportsSent, 5, true)
+                .is_err());
+            assert!(store
+                .conn
+                .execute("DELETE FROM email_handoff_reconciliations", [])
                 .is_err());
         }
         std::fs::remove_file(path).unwrap();

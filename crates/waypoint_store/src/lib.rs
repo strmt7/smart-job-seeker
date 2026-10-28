@@ -187,6 +187,11 @@ const MIGRATIONS: &[&str] = &[
      CREATE TRIGGER email_approval_description_update AFTER UPDATE ON job_descriptions BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE job_id=NEW.job_id AND consumed=0; END;
      CREATE TRIGGER email_approval_description_delete AFTER DELETE ON job_descriptions BEGIN UPDATE email_handoff_approvals SET consumed=1 WHERE job_id=OLD.job_id AND consumed=0; END;
      UPDATE meta SET value='18' WHERE key='schema_version';",
+    // v19 — explicit user reconciliation of ambiguous email handoffs.
+    "CREATE TABLE email_handoff_reconciliations(handoff_id TEXT PRIMARY KEY REFERENCES email_handoffs(id), decision TEXT NOT NULL CHECK(decision IN ('user_reports_sent','user_reports_not_sent')), timestamp INTEGER NOT NULL);
+     CREATE TRIGGER email_reconciliation_no_update BEFORE UPDATE ON email_handoff_reconciliations BEGIN SELECT RAISE(ABORT, 'email reconciliation is append-only'); END;
+     CREATE TRIGGER email_reconciliation_no_delete BEFORE DELETE ON email_handoff_reconciliations BEGIN SELECT RAISE(ABORT, 'email reconciliation is append-only'); END;
+     UPDATE meta SET value='19' WHERE key='schema_version';",
 ];
 
 pub mod documents;
