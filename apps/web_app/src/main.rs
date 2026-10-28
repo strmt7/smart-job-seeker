@@ -2044,12 +2044,14 @@ fn serve(
                 .document_content(id)
                 .map_err(|e| e.to_string())?
                 .ok_or("Document not found")?;
+            let facts = fit_inputs(ws, &job)?.0;
             let task_id = random_id()?;
             ats_check::start(
                 task_id.clone(),
                 info.name,
                 bytes,
                 format!("{}\n{}", job_data.title, description),
+                facts,
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }

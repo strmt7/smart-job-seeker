@@ -80,7 +80,7 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     Ok(notes)
 }
 
-fn report(name: &str, bytes: &[u8], listing: &str) -> Result<Value, String> {
+fn report(name: &str, bytes: &[u8], listing: &str, facts: &[String]) -> Result<Value, String> {
     let text = crate::document_extract::extract(name, bytes)?;
     let structure = structure_notes(name, bytes)?;
     let resume_words: HashSet<_> = words(&text).into_iter().collect();
@@ -148,7 +148,14 @@ fn report(name: &str, bytes: &[u8], listing: &str) -> Result<Value, String> {
     let mut terms: Vec<_> = counts.into_iter().collect();
     terms.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let truncated = terms.len() > 30;
-    let terms: Vec<_> = terms.into_iter().take(30).map(|(term,count)| json!({"present":resume_words.contains(&term),"term":term,"posting_occurrences":count})).collect();
+    let fact_words: Vec<_> = facts
+        .iter()
+        .map(|fact| words(fact).into_iter().collect::<HashSet<_>>())
+        .collect();
+    let terms: Vec<_> = terms.into_iter().take(30).map(|(term,count)| {
+        let sources: Vec<_> = facts.iter().zip(&fact_words).filter(|(_,words)| words.contains(&term)).take(3).map(|(fact,_)|fact).collect();
+        json!({"present":resume_words.contains(&term),"term":term,"posting_occurrences":count,"matching_qualifications":sources})
+    }).collect();
     let lines: Vec<_> = text
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -159,7 +166,13 @@ fn report(name: &str, bytes: &[u8], listing: &str) -> Result<Value, String> {
         json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching; not a real ATS result. Inspect the extracted reading order, layout, headers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
     )
 }
-pub fn start(id: String, name: String, bytes: Vec<u8>, listing: String) -> Result<(), String> {
+pub fn start(
+    id: String,
+    name: String,
+    bytes: Vec<u8>,
+    listing: String,
+    facts: Vec<String>,
+) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "CV check unavailable")?;
     if task.as_ref().is_some_and(|t| t.result.is_none()) {
         return Err("A CV check is already running".into());
@@ -170,7 +183,7 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, listing: String) -> Resul
     });
     drop(task);
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| report(&name, &bytes, &listing))
+        let result = std::panic::catch_unwind(|| report(&name, &bytes, &listing, &facts))
             .unwrap_or_else(|_| Err("CV check stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut().filter(|t| t.id == id) {
@@ -203,7 +216,13 @@ mod tests {
     fn checks_extractable_pdf_against_posting() {
         let path = std::env::var("WAYPOINT_PDF_FIXTURE").unwrap();
         let bytes = std::fs::read(path).unwrap();
-        let result = report("fictional.pdf", &bytes, "Synthetic experience and Rust").unwrap();
+        let result = report(
+            "fictional.pdf",
+            &bytes,
+            "Synthetic experience and Rust",
+            &[],
+        )
+        .unwrap();
         assert!(result["reading_order_preview"]
             .to_string()
             .contains("Fictional Candidate"));
@@ -223,7 +242,7 @@ mod tests {
         zip.start_file("word/header1.xml", options).unwrap();
         zip.write_all(b"<header/>").unwrap();
         let bytes = zip.finish().unwrap().into_inner();
-        let result = report("fixture.docx", &bytes, "Rust role").unwrap();
+        let result = report("fixture.docx", &bytes, "Rust role", &[]).unwrap();
         let notes = result["structure_notes"].to_string();
         assert!(notes.contains("table") && notes.contains("text box") && notes.contains("header"));
         assert!(result["reading_order_preview"]
@@ -236,6 +255,7 @@ mod tests {
             "cv.txt",
             b"Fictional Candidate\nRust engineer\nResearch",
             "Rust engineer required; Python and Python",
+            &["Used Python for research".into()],
         )
         .unwrap();
         let terms = result["terms"].as_array().unwrap();
@@ -246,6 +266,13 @@ mod tests {
             .iter()
             .any(|v| v["term"] == "python" && v["present"] == false));
         assert!(result["reading_order_preview"].as_array().unwrap().len() >= 2);
-        assert!(report("cv.txt", b"", "A role").is_err());
+        assert!(
+            terms.iter().find(|v| v["term"] == "python").unwrap()["matching_qualifications"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|fact| fact == "Used Python for research")
+        );
+        assert!(report("cv.txt", b"", "A role", &[]).is_err());
     }
 }
