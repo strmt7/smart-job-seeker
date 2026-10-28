@@ -19,6 +19,25 @@ impl Drop for Credentials {
     }
 }
 
+/// Return the connected app-password sender without exposing the credential.
+pub fn connected_sender(ws: &Workspace) -> Result<String, String> {
+    let bytes = Zeroizing::new(
+        ws.gmail_credentials()
+            .map_err(|_| "Cannot read Gmail credentials")?
+            .ok_or("Connect Gmail first")?,
+    );
+    let credentials: Credentials = serde_json::from_slice(&bytes)
+        .map_err(|_| "Gmail package preparation currently requires an app-password connection")?;
+    if credentials.auth_type != "app_password"
+        || !crate::smtp_handoff::address_valid(&credentials.email)
+    {
+        return Err(
+            "Gmail package preparation currently requires an app-password connection".into(),
+        );
+    }
+    Ok(credentials.email.clone())
+}
+
 pub struct PreparedApplicationEmail {
     sender: String,
     recipient: String,

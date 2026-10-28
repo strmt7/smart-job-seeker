@@ -1502,7 +1502,7 @@ fn serve(
                 .ok_or("document not found")?;
             document_reply(stream, &bytes);
         }
-        "/api/email-draft" => {
+        "/api/email-draft" | "/api/gmail/prepare-application" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
                 .map_err(|e| e.to_string())?;
             if ws.has_duplicate_hold(&id).map_err(|e| e.to_string())? {
@@ -1557,14 +1557,32 @@ fn serve(
                 .map(|(_, name, bytes)| (name.clone(), bytes.clone()))
                 .collect();
             let attempt_id = random_id()?;
-            let draft = email_draft::build(recipient, subject, text, &pairs, &attempt_id)?;
+            let gmail_sender = if path == "/api/gmail/prepare-application" {
+                Some(application_email::connected_sender(ws)?)
+            } else {
+                None
+            };
+            let draft = if let Some(sender) = gmail_sender.as_deref() {
+                application_email::PreparedApplicationEmail::prepare(
+                    sender,
+                    recipient,
+                    subject,
+                    text,
+                    &pairs,
+                    &attempt_id,
+                )?
+                .mime()
+                .to_vec()
+            } else {
+                email_draft::build(recipient, subject, text, &pairs, &attempt_id)?
+            };
             let mut record = attempt_record::AttemptRecord::start(ws, &id, &attempt_id, now())?
                 .ok_or("Email draft requires a disk-backed workspace")?;
             for (_, name, bytes) in &attachments {
                 record.material(name, bytes)?;
             }
             record.email_draft(&draft)?;
-            record.event(json!({"type":"email_draft_created", "time":now(), "recipient":recipient, "subject":subject, "attachments":attachments.len(), "sent":false}))?;
+            record.event(json!({"type":"email_draft_created", "time":now(), "sender":gmail_sender, "recipient":recipient, "subject":subject, "attachments":attachments.len(), "mime_sha256":waypoint_domain::sha256_hex(&draft), "sent":false}))?;
             document_reply(stream, &draft);
         }
         "/api/email-answer/start" => {
@@ -3002,6 +3020,74 @@ mod tests {
         ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
             .unwrap();
         assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn gmail_packet_api_saves_exact_unsent_message_and_materials() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::open(&root).unwrap();
+            let id = JobIdentityId::new("fictional-email").unwrap();
+            ws.import_job(waypoint_store::StoredJob {
+                id,
+                title: "Role".into(),
+                employer: "Fixture".into(),
+                location: "".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            })
+            .unwrap();
+            ws.add_document("fixture-pdf", "resume.pdf", b"%PDF-fictional", 1)
+                .unwrap();
+            ws.save_gmail_credentials(&serde_json::to_vec(&json!({"auth_type":"app_password","email":"fictional@gmail.com","password":"abcdefghijklmnop"})).unwrap()).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            if let Err(error) = serve(&mut stream, &mut ws, &mut None, "test-token", port) {
+                json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            }
+        });
+        let body = json!({"id":"fictional-email","recipient":"hiring@example.invalid","subject":"Role","message":"Hello","documents":["fixture-pdf"]}).to_string();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream,"POST /api/gmail/prepare-application HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        worker.join().unwrap();
+        let split = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        let mime = &response[split + 4..];
+        assert!(mime.starts_with(b"From: fictional@gmail.com\r\n"));
+        let records = directory.path().join("application-records");
+        let attempt = std::fs::read_dir(records)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            std::fs::read(attempt.join("email-draft.eml")).unwrap(),
+            mime
+        );
+        assert_eq!(
+            std::fs::read(attempt.join("materials").join("0001-resume.pdf")).unwrap(),
+            b"%PDF-fictional"
+        );
+        assert!(attempt.join("original-job.json").exists());
+        let events = std::fs::read_to_string(attempt.join("events.jsonl")).unwrap();
+        assert!(events.contains(&waypoint_domain::sha256_hex(mime)));
+        assert!(events.contains("\"sent\":false"));
     }
 
     #[test]
