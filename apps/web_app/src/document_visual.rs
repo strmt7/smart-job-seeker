@@ -5,6 +5,8 @@ struct Task {
     id: String,
     outcome: Option<Result<Value, String>>,
     pages_processed: usize,
+    completed: Option<std::time::Instant>,
+    record_saved: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 const PAGE_LIMIT: usize = 30;
@@ -60,20 +62,47 @@ where
         json!({"pages":total,"pages_inspected":findings.len(),"complete":findings.len()==total,"findings":findings,"document_sha256":waypoint_domain::sha256_hex(bytes)}),
     )
 }
-pub fn start(id: String, model: String, bytes: Vec<u8>, context: String) -> Result<(), String> {
+pub fn start(
+    id: String,
+    model: String,
+    bytes: Vec<u8>,
+    context: String,
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    name: &str,
+) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK
         .lock()
         .map_err(|_| "Document visual review unavailable")?;
-    if task.as_ref().is_some_and(|t| t.outcome.is_none()) {
-        return Err("A document visual review is already running".into());
+    if task.as_ref().is_some_and(|t| {
+        t.completed
+            .is_some_and(|time| time.elapsed() > std::time::Duration::from_secs(600))
+    }) {
+        *task = None;
     }
+    if task.is_some() {
+        return Err("A document visual review is running or awaiting its result".into());
+    }
+    let mut record = crate::attempt_record::AttemptRecord::start(ws, job, &id, crate::now())?
+        .ok_or("Visual review requires a disk-backed workspace")?;
+    record.status("manual_review", crate::now())?;
+    let material = record.material(name, &bytes)?;
+    let document_sha = waypoint_domain::sha256_hex(&bytes);
+    let context_sha = waypoint_domain::Sha256Digest::of(&context)
+        .as_str()
+        .to_owned();
+    record.event(json!({"type":"document_visual_started","time":crate::now(),"material":material,"document_sha256":document_sha,"context_sha256":context_sha,"model":model,"note":"Visual review is advisory and does not submit an application."}))?;
     *task = Some(Task {
         id: id.clone(),
         outcome: None,
         pages_processed: 0,
+        completed: None,
+        record_saved: false,
     });
     drop(task);
+    let name_for_record = name.to_owned();
+    let model_for_record = model.clone();
     std::thread::spawn(move || {
         let _lease = lease;
         let outcome=std::panic::catch_unwind(|| {
@@ -87,9 +116,21 @@ pub fn start(id: String, model: String, bytes: Vec<u8>, context: String) -> Resu
                 Ok(value)
             })
         }).unwrap_or_else(|_|Err("Document visual review stopped unexpectedly".into()));
+        let evidence = match &outcome {
+            Ok(report) => {
+                json!({"status":"complete","recorded_at":crate::now(),"material":material,"document_name":name_for_record,"document_sha256":document_sha,"context_sha256":context_sha,"model":model_for_record,"report":report,"note":"Advisory model output; not a submission or proof of correctness."})
+            }
+            Err(error) => {
+                json!({"status":"failed","recorded_at":crate::now(),"material":material,"document_name":name_for_record,"document_sha256":document_sha,"context_sha256":context_sha,"model":model_for_record,"error":error,"note":"Visual review is incomplete; manual review is required."})
+            }
+        };
+        let record_saved = record.document_visual_report(&evidence).is_ok();
+        let _ = record.event(json!({"type":"document_visual_finished","time":crate::now(),"report_saved":record_saved,"status":evidence["status"]}));
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut().filter(|t| t.id == id) {
                 task.outcome = Some(outcome);
+                task.record_saved = record_saved;
+                task.completed = Some(std::time::Instant::now());
             }
         }
     });
@@ -106,10 +147,15 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let Some(outcome) = task.outcome.take() else {
         return Ok(json!({"status":"running","pages_processed":task.pages_processed}));
     };
+    let record_saved = task.record_saved;
     *tasks = None;
     Ok(match outcome {
-        Ok(report) => json!({"status":"complete","report":report}),
-        Err(error) => json!({"status":"failed","error":error}),
+        Ok(report) => {
+            json!({"status":"complete","report":report,"record_saved":record_saved,"attempt_id":id})
+        }
+        Err(error) => {
+            json!({"status":"failed","error":error,"record_saved":record_saved,"attempt_id":id})
+        }
     })
 }
 #[cfg(test)]

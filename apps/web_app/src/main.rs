@@ -1912,12 +1912,22 @@ fn serve(
                 facts.join(" | ").chars().take(5000).collect::<String>()
             );
             let task_id = random_id()?;
-            document_visual::start(task_id.clone(), model, bytes, context)?;
+            document_visual::start(task_id.clone(), model, bytes, context, ws, &job, &name)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/documents/visual-review-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", document_visual::poll(id)?);
+        }
+        "/api/documents/visual-review-read" => {
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::document_visual_review(ws, &job, attempt)?,
+            );
         }
         "/api/documents/ats-check-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;

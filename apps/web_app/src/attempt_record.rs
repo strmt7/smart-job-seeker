@@ -220,6 +220,68 @@ pub fn load_gmail_review(
     Ok((review, packet))
 }
 
+/// Read a saved visual review only after verifying its job and PDF snapshot.
+pub fn document_visual_review(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+) -> Result<Value, String> {
+    if attempt.len() != 32 || !attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid application record".into());
+    }
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let dir = root
+        .join("application-records")
+        .join(format!("{}-{attempt}", &hash.as_str()[..16]));
+    let meta = fs::symlink_metadata(&dir).map_err(|_| "Application record not found")?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err("Invalid application record".into());
+    }
+    let read = |path: &std::path::Path, limit: u64| -> Result<Vec<u8>, String> {
+        let meta = fs::symlink_metadata(path).map_err(|_| "Saved review file unavailable")?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > limit {
+            return Err("Invalid saved review file".into());
+        }
+        fs::read(path).map_err(|_| "Cannot read saved review file".into())
+    };
+    let info: Value = serde_json::from_slice(&read(&dir.join("attempt.json"), 65536)?)
+        .map_err(|_| "Invalid attempt metadata")?;
+    if info["job_id"].as_str() != Some(job.as_str()) || info["attempt_id"].as_str() != Some(attempt)
+    {
+        return Err("Saved review does not match the job".into());
+    }
+    let report: Value =
+        serde_json::from_slice(&read(&dir.join("document-visual-review.json"), 512 * 1024)?)
+            .map_err(|_| "Invalid visual review")?;
+    let name = report["material"]
+        .as_str()
+        .ok_or("Visual review has no PDF snapshot")?;
+    let path = std::path::Path::new(name);
+    if path.components().count() != 1
+        || !matches!(
+            path.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Err("Invalid visual review material".into());
+    }
+    let materials = dir.join("materials");
+    let metadata = fs::symlink_metadata(&materials).map_err(|_| "Review materials unavailable")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Invalid review materials folder".into());
+    }
+    let pdf = read(&materials.join(path), 10 * 1024 * 1024)?;
+    if report["document_sha256"].as_str() != Some(waypoint_domain::sha256_hex(&pdf).as_str()) {
+        return Err("Saved PDF snapshot changed; this report cannot be verified".into());
+    }
+    Ok(report)
+}
+
 pub struct AttemptRecord {
     dir: PathBuf,
     sequence: u32,
@@ -301,7 +363,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json")}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -474,6 +536,18 @@ impl AttemptRecord {
         }
         fs::write(self.dir.join("gmail-review.json"), bytes).map_err(|e| e.to_string())
     }
+    pub fn document_visual_report(&mut self, value: &Value) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+        if bytes.len() > 512 * 1024 {
+            return Err("Document review report exceeds limit".into());
+        }
+        let mut file = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())?;
+        file.persist_noclobber(self.dir.join("document-visual-review.json"))
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
     pub fn screenshot(&mut self, data: &str) -> Result<(), String> {
         let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
         if bytes.len() > 6 * 1024 * 1024 {
@@ -564,6 +638,52 @@ mod tests {
     use super::*;
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
+
+    #[test]
+    fn saved_document_review_binds_job_and_pdf_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let id = JobIdentityId::new("fictional-document-review").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: id.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: "".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional job"),
+        )
+        .unwrap();
+        let attempt = "0123456789abcdef0123456789abcdef";
+        let mut record = AttemptRecord::start(&ws, &id, attempt, 1).unwrap().unwrap();
+        let bytes = b"%PDF-fictional";
+        let material = record.material("candidate.pdf", bytes).unwrap();
+        let evidence = json!({"status":"failed","error":"fixture review incomplete","material":material,"document_sha256":waypoint_domain::sha256_hex(bytes)});
+        record.document_visual_report(&evidence).unwrap();
+        assert_eq!(
+            document_visual_review(&ws, &id, attempt).unwrap()["status"],
+            "failed"
+        );
+        assert_eq!(
+            list(&ws, &id).unwrap()["attempts"][0]["document_visual_review"],
+            true
+        );
+        let other = JobIdentityId::new("other-job").unwrap();
+        assert!(document_visual_review(&ws, &other, attempt).is_err());
+        fs::write(record.dir.join("materials").join(material), b"changed").unwrap();
+        assert!(document_visual_review(&ws, &id, attempt)
+            .unwrap_err()
+            .contains("changed"));
+    }
 
     #[test]
     #[ignore = "starts one headless browser against a local fixture"]
