@@ -151,10 +151,12 @@ fn fit_inputs(
     ws: &Workspace,
     job_id: &JobIdentityId,
 ) -> Result<(Vec<String>, String, String, String), String> {
-    let job = ws
-        .job(job_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("Job not found")?;
+    let (facts, instructions) = fit_candidate_context(ws)?;
+    let (listing, digest) = fit_listing_digest(ws, job_id, &facts, &instructions)?;
+    Ok((facts, instructions, listing, digest))
+}
+
+fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String> {
     let facts: Vec<String> = ws
         .facts()
         .map_err(|e| e.to_string())?
@@ -173,6 +175,19 @@ fn fit_inputs(
         .chars()
         .take(2000)
         .collect();
+    Ok((facts, instructions))
+}
+
+fn fit_listing_digest(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+    facts: &[String],
+    instructions: &str,
+) -> Result<(String, String), String> {
+    let job = ws
+        .job(job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
     let description = ws
         .job_description(job_id)
         .map_err(|e| e.to_string())?
@@ -189,7 +204,7 @@ fn fit_inputs(
     )
     .as_str()
     .to_owned();
-    Ok((facts, instructions, listing, digest))
+    Ok((listing, digest))
 }
 
 fn document_visual_context(ws: &Workspace, job: &JobIdentityId) -> Result<String, String> {
@@ -259,11 +274,23 @@ fn draft_context_digest(
 }
 
 fn read_fit(ws: &Workspace, job_id: &JobIdentityId) -> Result<Value, String> {
+    read_fit_with_context(ws, job_id, &mut None)
+}
+
+fn read_fit_with_context(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+    context: &mut Option<(Vec<String>, String)>,
+) -> Result<Value, String> {
     match ws.fit_assessment(job_id).map_err(|e| e.to_string())? {
         Some(data) => {
             let value: Value =
                 serde_json::from_slice(&data).map_err(|_| "Stored assessment is invalid")?;
-            let (_, _, _, digest) = fit_inputs(ws, job_id)?;
+            if context.is_none() {
+                *context = Some(fit_candidate_context(ws)?);
+            }
+            let (facts, instructions) = context.as_ref().ok_or("Candidate context unavailable")?;
+            let (_, digest) = fit_listing_digest(ws, job_id, facts, instructions)?;
             if value["input_digest"].as_str() == Some(digest.as_str()) {
                 Ok(
                     json!({"status":"current","assessment":value["assessment"],"model":value["model"]}),
@@ -1494,10 +1521,11 @@ fn serve(
                 .filter(|ids| ids.len() <= 20)
                 .ok_or("Supply at most 20 job IDs")?;
             let mut results = Vec::with_capacity(ids.len());
+            let mut context = None;
             for id in ids {
                 let id = JobIdentityId::new(id.as_str().ok_or("Invalid job ID")?)
                     .map_err(|e| e.to_string())?;
-                let item = match read_fit(ws, &id) {
+                let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
                         json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"]})
                     }
@@ -3913,6 +3941,47 @@ mod tests {
         ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
             .unwrap();
         assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn batch_fit_context_preserves_per_job_results_and_freshness() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let mut ids = Vec::new();
+        for (title, url) in [
+            ("Engineer", "https://example.org/one"),
+            ("Analyst", "https://example.org/two"),
+        ] {
+            let added = manual_job::add(&mut ws, &json!({"url":url,"title":title,"employer":"Fixture","description":"Fictional role"}), 1).unwrap();
+            let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let (_, _, _, digest) = fit_inputs(&ws, &id).unwrap();
+            ws.save_fit_assessment(
+                &id,
+                json!({"input_digest":digest,"assessment":{"score":73},"model":"fixture"})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            ids.push(id);
+        }
+        let mut context = None;
+        for id in &ids {
+            assert_eq!(
+                read_fit_with_context(&ws, id, &mut context).unwrap(),
+                read_fit(&ws, id).unwrap()
+            );
+        }
+        ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
+            .unwrap();
+        let mut next_request_context = None;
+        for id in &ids {
+            assert_eq!(
+                read_fit_with_context(&ws, id, &mut next_request_context).unwrap()["status"],
+                "stale"
+            );
+        }
     }
 
     #[cfg(windows)]

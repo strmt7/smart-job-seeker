@@ -151,3 +151,4 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 
 #auto-fit-status:not(:empty){margin:12px 28px 6px;color:#526b78;font-size:13px;line-height:1.4}
 #auto-fit-retry{margin:0 28px 12px}
+#job-pagination:not([hidden]){display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 28px 24px;font-size:12px;color:#526b78}

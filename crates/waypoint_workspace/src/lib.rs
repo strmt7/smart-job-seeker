@@ -932,47 +932,48 @@ impl Workspace {
         now_unix: i64,
     ) -> Result<RankedResults, WorkspaceError> {
         let mut results = RankedResults::default();
-        for job in self.store.all_jobs()? {
-            let outcomes = check_constraints(
-                constraints,
-                &[],  // adapters do not claim languages the payload never states
-                None, // nor salaries it never states
-                None, // nor sponsorship promises
-                job.remote,
-                &job.location,
-            );
-            let reasons: Vec<String> = outcomes
-                .iter()
-                .filter_map(|(name, o)| match o {
-                    ConstraintOutcome::Fail(m) => Some(format!("{name}: {m}")),
-                    _ => None,
-                })
-                .collect();
-            let description = self.store.job_description(&job.id)?.unwrap_or_default();
-            let text = format!(
-                "{} {} {} {}",
-                job.title, job.employer, job.location, description
-            );
-            let (score, matched_skills) = evidence_overlap(profile_skills, &text);
-            let observed_at = job
-                .last_seen
-                .as_deref()
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(0);
-            let fresh = freshness(observed_at, now_unix, STALE_AFTER_SECONDS);
-            let ranked = RankedJob {
-                job: job.clone(),
-                description_available: !description.trim().is_empty(),
-                score,
-                matched_skills,
-                freshness: fresh,
-            };
-            if reasons.is_empty() {
-                results.strict.push(ranked);
-            } else {
-                results.excluded.push(ExcludedJob { job, reasons });
-            }
-        }
+        self.store
+            .visit_jobs_with_descriptions(|job, description| {
+                let outcomes = check_constraints(
+                    constraints,
+                    &[],  // adapters do not claim languages the payload never states
+                    None, // nor salaries it never states
+                    None, // nor sponsorship promises
+                    job.remote,
+                    &job.location,
+                );
+                let reasons: Vec<String> = outcomes
+                    .iter()
+                    .filter_map(|(name, o)| match o {
+                        ConstraintOutcome::Fail(m) => Some(format!("{name}: {m}")),
+                        _ => None,
+                    })
+                    .collect();
+                let description = description.unwrap_or_default();
+                let text = format!(
+                    "{} {} {} {}",
+                    job.title, job.employer, job.location, description
+                );
+                let (score, matched_skills) = evidence_overlap(profile_skills, &text);
+                let observed_at = job
+                    .last_seen
+                    .as_deref()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0);
+                let fresh = freshness(observed_at, now_unix, STALE_AFTER_SECONDS);
+                let ranked = RankedJob {
+                    job: job.clone(),
+                    description_available: !description.trim().is_empty(),
+                    score,
+                    matched_skills,
+                    freshness: fresh,
+                };
+                if reasons.is_empty() {
+                    results.strict.push(ranked);
+                } else {
+                    results.excluded.push(ExcludedJob { job, reasons });
+                }
+            })?;
         results.strict.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)

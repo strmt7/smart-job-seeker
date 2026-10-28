@@ -742,6 +742,25 @@ impl Store {
         rows.collect()
     }
 
+    /// Visit jobs and their optional descriptions in the same order as all_jobs.
+    /// Rows are processed one at a time so descriptions are not accumulated in memory.
+    pub fn visit_jobs_with_descriptions(
+        &self,
+        mut visit: impl FnMut(StoredJob, Option<String>),
+    ) -> Result<(), rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,
+                    j.remote,j.source,j.requisition_id,j.posted_at,d.content
+             FROM jobs j LEFT JOIN job_descriptions d ON d.job_id=j.id
+             ORDER BY COALESCE(j.last_seen,'') DESC, j.id ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            visit(Self::row_to_job(row)?, row.get(13)?);
+        }
+        Ok(())
+    }
+
     /// Match the first job in the same order as `all_jobs`, without loading it all.
     pub fn job_id_by_canonical_url(&self, url: &str) -> Result<Option<String>, rusqlite::Error> {
         self.conn.query_row(
@@ -874,6 +893,37 @@ mod tests {
             requisition_id: Some(id.to_string()),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn streamed_job_descriptions_match_individual_lookups_and_order() {
+        let mut store = Store::in_memory().unwrap();
+        let mut first = job("first");
+        first.last_seen = Some("2".into());
+        let mut second = job("second");
+        second.last_seen = Some("1".into());
+        let third = job("third");
+        for job in [&first, &second, &third] {
+            store.upsert_job(job).unwrap();
+        }
+        store
+            .set_job_description(&first.id, Some("Python research"))
+            .unwrap();
+        store.set_job_description(&second.id, None).unwrap();
+        let expected: Vec<_> = store
+            .all_jobs()
+            .unwrap()
+            .into_iter()
+            .map(|job| {
+                let description = store.job_description(&job.id).unwrap();
+                (job, description)
+            })
+            .collect();
+        let mut actual = Vec::new();
+        store
+            .visit_jobs_with_descriptions(|job, description| actual.push((job, description)))
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
