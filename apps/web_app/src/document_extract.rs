@@ -1,4 +1,4 @@
-//! Local bounded extraction for UTF-8 and DOCX body text.
+//! Local bounded extraction for UTF-8 and DOCX body, header, and footer text.
 use quick_xml::{events::Event, Reader};
 use std::io::{Cursor, Read};
 
@@ -30,36 +30,89 @@ pub fn extract(name: &str, bytes: &[u8]) -> Result<String, String> {
     Ok(text.to_owned())
 }
 
-fn extract_docx(bytes: &[u8]) -> Result<String, String> {
-    let mut archive =
-        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
-    let matches = (0..archive.len())
-        .filter(|&i| {
-            archive
-                .by_index_raw(i)
-                .ok()
-                .is_some_and(|f| f.name() == "word/document.xml")
-        })
-        .count();
-    if matches != 1 {
-        return Err("DOCX must contain exactly one document body".into());
+pub(crate) fn docx_text_parts(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index_raw(index)
+            .map_err(|_| "Invalid DOCX entry")?;
+        let name = file.name();
+        let auxiliary = ["word/header", "word/footer"].iter().any(|prefix| {
+            name.strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix(".xml"))
+                .is_some_and(|number| {
+                    !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())
+                })
+        });
+        if name == "word/document.xml" || auxiliary {
+            if !seen.insert(name.to_owned()) {
+                return Err("Duplicate DOCX text part".into());
+            }
+            names.push(name.to_owned());
+            if names.len() > 32 {
+                return Err("DOCX has too many text parts".into());
+            }
+        }
     }
+    if !seen.contains("word/document.xml") {
+        return Err("DOCX body missing".into());
+    }
+    names.sort_by_key(|name| {
+        if name.starts_with("word/header") {
+            (0, name.clone())
+        } else if name == "word/document.xml" {
+            (1, name.clone())
+        } else {
+            (2, name.clone())
+        }
+    });
+    Ok(names)
+}
+
+pub(crate) fn read_docx_text_part(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+    total: &mut u64,
+) -> Result<Vec<u8>, String> {
     let mut file = archive
-        .by_name("word/document.xml")
-        .map_err(|_| "DOCX body missing")?;
-    if file.size() > MAX_XML {
-        return Err("DOCX document body exceeds 4 MiB".into());
+        .by_name(name)
+        .map_err(|_| "DOCX text part missing")?;
+    if file.size() > MAX_XML || total.saturating_add(file.size()) > 8 * 1024 * 1024 {
+        return Err("DOCX text parts exceed size limits".into());
     }
     let mut xml = Vec::new();
     file.by_ref()
         .take(MAX_XML + 1)
         .read_to_end(&mut xml)
-        .map_err(|_| "Could not read DOCX body")?;
-    if xml.len() as u64 > MAX_XML {
-        return Err("DOCX document body exceeds 4 MiB".into());
+        .map_err(|_| "Could not read DOCX text part")?;
+    if xml.len() as u64 > MAX_XML || total.saturating_add(xml.len() as u64) > 8 * 1024 * 1024 {
+        return Err("DOCX text parts exceed size limits".into());
     }
-    let mut reader = Reader::from_reader(xml.as_slice());
+    *total += xml.len() as u64;
+    Ok(xml)
+}
+
+fn extract_docx(bytes: &[u8]) -> Result<String, String> {
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
+    let names = docx_text_parts(&mut archive)?;
     let mut output = String::new();
+    let mut total = 0;
+    for name in names {
+        let xml = read_docx_text_part(&mut archive, &name, &mut total)?;
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        extract_docx_xml(&xml, &mut output)?;
+    }
+    Ok(output)
+}
+
+fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
+    let mut reader = Reader::from_reader(xml);
     let mut in_text = false;
     loop {
         match reader.read_event().map_err(|_| "Malformed DOCX XML")? {
@@ -93,7 +146,7 @@ fn extract_docx(bytes: &[u8]) -> Result<String, String> {
             return Err("Extracted text exceeds 200 KB".into());
         }
     }
-    Ok(output)
+    Ok(())
 }
 
 #[cfg(test)]

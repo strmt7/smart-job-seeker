@@ -1,7 +1,7 @@
-//! Apply one exact, reviewed text replacement within a DOCX paragraph.
+//! Apply one exact, reviewed text replacement within a DOCX body, header or footer paragraph.
 //! Text spanning Word runs is supported; the replacement uses the first run's style.
 use quick_xml::{events::Event, Reader};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 
 struct Node {
     start: usize,
@@ -97,52 +97,33 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
     }
     let mut archive =
         zip::ZipArchive::new(Cursor::new(docx)).map_err(|_| "Invalid DOCX archive")?;
-    let matching = (0..archive.len())
-        .filter(|&i| {
-            archive
-                .by_index_raw(i)
-                .ok()
-                .is_some_and(|f| f.name() == "word/document.xml")
-        })
-        .count();
-    if matching != 1 {
-        return Err("DOCX must contain exactly one document body".into());
-    }
-    let xml = {
-        let mut file = archive
-            .by_name("word/document.xml")
-            .map_err(|_| "DOCX body missing")?;
-        if file.size() > 4 * 1024 * 1024 {
-            return Err("DOCX body exceeds 4 MiB".into());
-        }
-        let mut xml = Vec::new();
-        file.by_ref()
-            .take(4 * 1024 * 1024 + 1)
-            .read_to_end(&mut xml)
-            .map_err(|_| "Cannot read DOCX body")?;
-        if xml.len() > 4 * 1024 * 1024 {
-            return Err("DOCX body exceeds 4 MiB".into());
-        }
-        xml
-    };
-    let blocks = parse_blocks(&xml)?;
+    let parts = crate::document_extract::docx_text_parts(&mut archive)?;
+    let mut total = 0;
     let mut found = None;
-    for (block_index, block) in blocks.iter().enumerate() {
-        let text: String = block.iter().map(|n| n.text.as_str()).collect();
-        let mut cursor = 0;
-        while cursor < text.len() {
-            let Some(relative) = text[cursor..].find(before) else {
-                break;
-            };
-            let at = cursor + relative;
-            if found.is_some() {
-                return Err("Original text appears more than once; select a unique passage".into());
+    for name in parts {
+        let xml = crate::document_extract::read_docx_text_part(&mut archive, &name, &mut total)?;
+        let blocks = parse_blocks(&xml)?;
+        for (block_index, block) in blocks.iter().enumerate() {
+            let text: String = block.iter().map(|node| node.text.as_str()).collect();
+            let mut cursor = 0;
+            while cursor < text.len() {
+                let Some(relative) = text[cursor..].find(before) else {
+                    break;
+                };
+                let at = cursor + relative;
+                if found.is_some() {
+                    return Err(
+                        "Original text appears more than once; select a unique passage".into(),
+                    );
+                }
+                found = Some((name.clone(), xml.clone(), block_index, at));
+                cursor = at + text[at..].chars().next().unwrap().len_utf8();
             }
-            found = Some((block_index, at));
-            cursor = at + text[at..].chars().next().unwrap().len_utf8();
         }
     }
-    let (block_index, start) = found.ok_or("Original text was not found within one paragraph")?;
+    let (part_name, xml, block_index, start) =
+        found.ok_or("Original text was not found within one paragraph")?;
+    let blocks = parse_blocks(&xml)?;
     let end = start + before.len();
     let mut patches: Vec<(usize, usize, Vec<u8>)> = Vec::new();
     let mut position = 0;
@@ -198,11 +179,11 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
         let file = archive
             .by_index_raw(index)
             .map_err(|_| "Invalid DOCX entry")?;
-        if file.name() == "word/document.xml" {
+        if file.name() == part_name {
             drop(file);
             writer
                 .start_file(
-                    "word/document.xml",
+                    &part_name,
                     zip::write::SimpleFileOptions::default()
                         .compression_method(zip::CompressionMethod::Deflated),
                 )
@@ -229,6 +210,7 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     #[test]
     fn replacement_preserves_unedited_parts_and_handles_split_runs() {
         let xml = r#"<w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Research </w:t></w:r><w:r><w:t>engineer &amp; scientist</w:t></w:r></w:p></w:body></w:document>"#;
@@ -260,6 +242,42 @@ mod tests {
     }
 
     #[test]
+    fn edits_header_or_footer_and_rejects_cross_part_ambiguity() {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, text) in [
+            ("word/document.xml", "Body sentence"),
+            ("word/header1.xml", "Header name"),
+            ("word/footer1.xml", "Footer contact"),
+        ] {
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            write!(writer, "<w:p><w:r><w:t>{text}</w:t></w:r></w:p>").unwrap();
+        }
+        let doc = writer.finish().unwrap().into_inner();
+        let extracted = crate::document_extract::extract("sample.docx", &doc).unwrap();
+        assert_eq!(extracted, "Header name\nBody sentence\nFooter contact");
+        let edited = replace(&doc, "Header name", "New header").unwrap();
+        let edited = replace(&edited, "Footer contact", "New contact").unwrap();
+        assert_eq!(
+            crate::document_extract::extract("sample.docx", &edited).unwrap(),
+            "New header\nBody sentence\nNew contact"
+        );
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in ["word/document.xml", "word/header1.xml"] {
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer
+                .write_all(b"<w:p><w:r><w:t>shared phrase</w:t></w:r></w:p>")
+                .unwrap();
+        }
+        let ambiguous = writer.finish().unwrap().into_inner();
+        assert!(replace(&ambiguous, "shared phrase", "replacement")
+            .unwrap_err()
+            .contains("more than once"));
+    }
+    #[test]
     fn ambiguous_or_cross_paragraph_matches_are_rejected() {
         let xml = r#"<w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:t>Repeated</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:body></w:document>"#;
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -275,6 +293,27 @@ mod tests {
         assert!(replace(&doc, "RepeatedRepeated", "Changed").is_err());
     }
 
+    #[test]
+    #[ignore = "converts a fictional DOCX header and footer with local LibreOffice"]
+    fn edited_header_and_footer_convert_to_pdf() {
+        let source = std::env::var("WAYPOINT_HEADER_FIXTURE").expect("fixture path");
+        let output = std::env::var("WAYPOINT_HEADER_PDF").expect("new PDF output path");
+        let original = std::fs::read(source).unwrap();
+        let edited = replace(&original, "Synthetic Header Name", "Fictional Header Name").unwrap();
+        let edited = replace(
+            &edited,
+            "Synthetic Footer Contact",
+            "Fictional Footer Contact",
+        )
+        .unwrap();
+        let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)
+            .unwrap();
+        file.write_all(&pdf).unwrap();
+    }
     #[test]
     #[ignore = "converts a fictional DOCX with local LibreOffice"]
     fn edited_fictional_template_converts_to_pdf() {
