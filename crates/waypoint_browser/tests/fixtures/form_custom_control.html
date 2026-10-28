@@ -5,6 +5,10 @@
   <form>
     <label for="name">Name</label><input id="name" name="name" required>
     <div role="combobox" aria-label="Preferred location" aria-required="true" tabindex="0"></div>
+    <span id="workplace-label">Preferred workplace</span>
+    <div role="combobox" aria-labelledby="workplace-label" aria-required="true" tabindex="0"></div>
+    <span id="duplicate-label">Unreliable label one</span><span id="duplicate-label">Unreliable label two</span>
+    <div role="combobox" aria-labelledby="duplicate-label" aria-required="true" tabindex="0"></div>
     <button type="submit">Submit</button>
   </form>
 </body>

@@ -510,7 +510,8 @@ impl CdpDriver {
                         .get("aria-label")
                         .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
                         .filter(|value| !value.is_empty() && value.len() <= 160);
-                    custom_nodes.push((id, label));
+                    let references = attrs.get("aria-labelledby").cloned();
+                    custom_nodes.push((id, label, references));
                 } else {
                     wall_flags.push("a required custom control needs manual review".into());
                 }
@@ -628,7 +629,7 @@ impl CdpDriver {
         // Accessible names may be provided by nodes elsewhere in the page.
         // Resolve only bounded, unambiguous references; unresolved names need
         // review rather than silently dropping a possible navigation control.
-        if next_references.len() > 160 {
+        if next_references.len().saturating_add(custom_nodes.len()) > 160 {
             return Err(DriverError(
                 "Form has too many controls for one inspection; manual review is needed".into(),
             ));
@@ -638,6 +639,13 @@ impl CdpDriver {
         for (_, ids) in &next_references {
             for id in ids.split_whitespace().take(16) {
                 wanted_next.insert(id.to_owned());
+            }
+        }
+        for (_, _, references) in &custom_nodes {
+            if let Some(ids) = references.as_ref().filter(|ids| ids.len() <= 512) {
+                for id in ids.split_whitespace().take(16) {
+                    wanted_next.insert(id.to_owned());
+                }
             }
         }
         walk(&root, false, &mut |node, _| {
@@ -729,11 +737,32 @@ impl CdpDriver {
                     add_hidden_selectors(&mut hidden_selectors, &control);
                 }
             }
-            for (node, label) in custom_nodes {
+            for (node, label, references) in custom_nodes {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
                 if self.control_visibility_and_path(node)?.0 {
+                    let label = if let Some(ids) = references {
+                        let parts: Vec<_> = ids.split_whitespace().collect();
+                        if ids.len() <= 512 && !parts.is_empty() && parts.len() <= 16 {
+                            parts
+                                .iter()
+                                .map(|id| next_labels.get(*id).and_then(Option::as_ref))
+                                .collect::<Option<Vec<_>>>()
+                                .map(|parts| {
+                                    parts
+                                        .into_iter()
+                                        .map(String::as_str)
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .filter(|value| !value.is_empty() && value.len() <= 160)
+                        } else {
+                            None
+                        }
+                    } else {
+                        label
+                    };
                     wall_flags.push(match label {
                         Some(label) => {
                             format!("a required custom control needs manual review: {label}")

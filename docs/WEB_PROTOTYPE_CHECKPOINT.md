@@ -289,3 +289,4 @@ A fictional two-section browser fixture checks that inspecting again after the s
 The multi-step review heuristic also recognizes visible custom controls with `role=button` and bounded, unambiguous `aria-labelledby` names. Unresolved referenced names are flagged for manual review. A local Chromium fixture verified detection without clicking or submitting; this still cannot identify every next-step control and does not advance the application.
 
 Manual-review reasons for required custom controls include a bounded `aria-label` when provided, helping locate the question in the browser. Controls without such a label remain generic; detection does not fill custom widgets.
+Bounded, unambiguous `aria-labelledby` references can also identify these questions. Missing or duplicate references leave the reason generic rather than guessing a label.

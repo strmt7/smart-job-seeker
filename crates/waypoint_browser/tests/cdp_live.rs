@@ -448,6 +448,15 @@ fn a_required_custom_control_is_reported_alongside_native_fields() {
         "the unsupported required question must be reported: {:?}",
         live.walls
     );
+    assert!(live
+        .walls
+        .iter()
+        .any(|w| w.contains("required custom control") && w.contains("Preferred workplace")));
+    assert!(live
+        .walls
+        .iter()
+        .any(|w| w == "a required custom control needs manual review"));
+    assert!(live.walls.iter().all(|w| !w.contains("Unreliable label")));
 }
 
 #[test]
