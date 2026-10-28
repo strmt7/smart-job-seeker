@@ -8,6 +8,7 @@ struct Task {
     id: String,
     job_id: String,
     receiver: mpsc::Receiver<(String, bool)>,
+    result: Option<(String, bool)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
@@ -19,10 +20,14 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
         return None;
     }
     let mut candidates = Vec::new();
+    let mut rejected = false;
     for href in links {
         let candidate = match base.join(href) {
             Ok(value) => value,
-            Err(_) => continue,
+            Err(_) => {
+                rejected = true;
+                continue;
+            }
         };
         if candidate.scheme() != "https"
             || candidate.origin() != base.origin()
@@ -36,13 +41,14 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
                 .iter()
                 .any(|term| candidate.path().to_ascii_lowercase().contains(term))
         {
+            rejected = true;
             continue;
         }
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
         }
     }
-    if candidates.len() == 1 && links.len() == 1 {
+    if candidates.len() == 1 && !rejected {
         Some(candidates.remove(0).to_string())
     } else {
         None
@@ -134,6 +140,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
         id,
         job_id,
         receiver,
+        result: None,
     });
     Ok(())
 }
@@ -141,26 +148,64 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
 pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
     let current = task
+        .as_mut()
+        .filter(|task| task.id == id)
+        .ok_or("Application check not found")?;
+    if current.result.is_none() {
+        current.result = match current.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some((
+                "Application check stopped unexpectedly; manual review needed.".into(),
+                true,
+            )),
+        };
+    }
+    Ok(current
+        .result
+        .as_ref()
+        .map(|(result, review)| (current.job_id.clone(), result.clone(), *review)))
+}
+
+/// Release a completed result only after its review entry has been saved.
+pub fn acknowledge(id: &str) -> Result<(), String> {
+    let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
+    let current = task
         .as_ref()
         .filter(|task| task.id == id)
         .ok_or("Application check not found")?;
-    match current.receiver.try_recv() {
-        Ok((result, review)) => {
-            let job_id = current.job_id.clone();
-            *task = None;
-            Ok(Some((job_id, result, review)))
-        }
-        Err(mpsc::TryRecvError::Empty) => Ok(None),
-        Err(mpsc::TryRecvError::Disconnected) => {
-            *task = None;
-            Err("Application check stopped unexpectedly".into())
-        }
+    if current.result.is_none() {
+        return Err("Application check is still running".into());
     }
+    *task = None;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{application_destination, classify_fields};
+    use super::{acknowledge, application_destination, classify_fields, poll, Task, TASK};
+    #[test]
+    fn interrupted_check_returns_a_reviewable_result() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-interrupted-check".into(),
+            job_id: "fictional-job".into(),
+            receiver,
+            result: None,
+        });
+        let (job, result, review) = poll("fictional-interrupted-check").unwrap().unwrap();
+        assert_eq!(job, "fictional-job");
+        assert!(review);
+        assert!(result.contains("stopped unexpectedly"));
+        assert_eq!(
+            poll("fictional-interrupted-check").unwrap().unwrap(),
+            (job, result, review)
+        );
+        assert!(acknowledge("wrong-task").is_err());
+        acknowledge("fictional-interrupted-check").unwrap();
+        assert!(TASK.lock().unwrap().is_none());
+    }
     #[test]
     fn detected_fields_do_not_confirm_an_application_page() {
         for followed in [false, true] {
@@ -190,7 +235,24 @@ mod tests {
                 "{href}"
             );
         }
+        assert_eq!(
+            application_destination(
+                base,
+                &[
+                    "/role/apply".into(),
+                    "https://jobs.example.org/role/apply".into()
+                ]
+            )
+            .as_deref(),
+            Some("https://jobs.example.org/role/apply")
+        );
         assert!(application_destination(base, &["/apply".into(), "/apply/other".into()]).is_none());
+        assert!(application_destination(
+            base,
+            &["/apply".into(), "https://other.example.org/apply".into()]
+        )
+        .is_none());
+        assert!(application_destination(base, &["/apply".into(), "/submit".into()]).is_none());
     }
 
     #[test]

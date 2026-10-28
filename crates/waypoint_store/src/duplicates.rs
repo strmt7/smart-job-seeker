@@ -51,6 +51,19 @@ fn employer_words(s: &str) -> BTreeSet<String> {
                 "corp",
                 "corporation",
                 "company",
+                "plc",
+                "ag",
+                "bv",
+                "nv",
+                "sa",
+                "sas",
+                "sarl",
+                "srl",
+                "spa",
+                "pty",
+                "oy",
+                "ab",
+                "kg",
             ]
             .contains(&w.as_str())
         })
@@ -422,6 +435,20 @@ mod tests {
             store.find_possible_duplicates(item).unwrap();
         }
         assert_eq!(store.possible_duplicates().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn international_legal_suffixes_do_not_hide_a_possible_duplicate() {
+        let mut store = Store::in_memory().unwrap();
+        let first = job("a", "Senior Software Engineer", "Example BV", None);
+        let second = job("b", "Sr Software Developer", "Example PLC", None);
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        assert_eq!(store.possible_duplicates().unwrap().len(), 1);
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
     }
 
     #[test]

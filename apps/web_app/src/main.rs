@@ -1265,6 +1265,7 @@ fn serve(
                         ws.mark_manual_review(&job_id, &result, now())
                             .map_err(|e| e.to_string())?;
                     }
+                    application_check::acknowledge(id)?;
                     json_reply(
                         stream,
                         "200 OK",

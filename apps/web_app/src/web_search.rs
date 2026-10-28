@@ -67,6 +67,13 @@ pub(crate) fn fetch(url: &Url) -> Result<String, String> {
 }
 
 pub(crate) fn parse(payload: &str) -> Result<Value, String> {
+    parse_excluding(payload, &std::collections::HashSet::new())
+}
+
+pub(crate) fn parse_excluding(
+    payload: &str,
+    excluded: &std::collections::HashSet<String>,
+) -> Result<Value, String> {
     let data: Value =
         serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
     let results = data
@@ -75,7 +82,10 @@ pub(crate) fn parse(payload: &str) -> Result<Value, String> {
         .ok_or("Provider returned no results array")?;
     let mut links = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut examined = 0;
+    let mut previously_seen = 0;
     for item in results.iter().take(100) {
+        examined += 1;
         let Some(raw) = item.get("url").and_then(Value::as_str) else {
             continue;
         };
@@ -87,7 +97,6 @@ pub(crate) fn parse(payload: &str) -> Result<Value, String> {
             || !url.username().is_empty()
             || url.password().is_some()
             || !waypoint_connectors::is_public_host_url(url.as_str())
-            || !seen.insert(url.to_string())
         {
             continue;
         }
@@ -103,6 +112,13 @@ pub(crate) fn parse(payload: &str) -> Result<Value, String> {
             .filter(|c| !c.is_control())
             .take(200)
             .collect();
+        if title.trim().is_empty() || !seen.insert(url.to_string()) {
+            continue;
+        }
+        if excluded.contains(url.as_str()) {
+            previously_seen += 1;
+            continue;
+        }
         let snippet: String = item
             .get("content")
             .and_then(Value::as_str)
@@ -111,7 +127,34 @@ pub(crate) fn parse(payload: &str) -> Result<Value, String> {
             .filter(|c| !c.is_control() || *c == '\n')
             .take(1000)
             .collect();
-        links.push(json!({"url":url.as_str(),"title":title,"snippet":snippet}));
+        let mut engines = Vec::new();
+        if let Some(values) = item.get("engines").and_then(Value::as_array) {
+            for value in values.iter().take(8).filter_map(Value::as_str) {
+                let cleaned: String = value.chars().filter(|c| !c.is_control()).take(80).collect();
+                let cleaned = cleaned.trim().to_owned();
+                if !cleaned.is_empty() && !engines.contains(&cleaned) {
+                    engines.push(cleaned);
+                }
+            }
+        }
+        if engines.is_empty() {
+            if let Some(value) = item.get("engine").and_then(Value::as_str) {
+                let cleaned: String = value.chars().filter(|c| !c.is_control()).take(80).collect();
+                let cleaned = cleaned.trim();
+                if !cleaned.is_empty() {
+                    engines.push(cleaned.to_owned());
+                }
+            }
+        }
+        let published_date: String = item
+            .get("publishedDate")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(80)
+            .collect();
+        links.push(json!({"url":url.as_str(),"title":title,"snippet":snippet,"engines":engines,"published_date":published_date.trim()}));
         if links.len() == 30 {
             break;
         }
@@ -122,7 +165,7 @@ pub(crate) fn parse(payload: &str) -> Result<Value, String> {
         .map(|v| v.len())
         .unwrap_or(0);
     Ok(
-        json!({"results":links,"results_examined":results.len().min(100),"unresponsive_engines":unavailable,"limited":results.len()>30}),
+        json!({"results":links,"results_examined":examined,"unresponsive_engines":unavailable,"limited":examined < results.len(),"previously_seen":previously_seen}),
     )
 }
 
@@ -184,6 +227,65 @@ mod tests {
         assert!(request_url("https://user:secret@example.org/", "engineer").is_err());
         let data=parse(&json!({"results":[{"title":"Role","url":"https://example.org/job","content":"Fictional"},{"title":"private","url":"https://127.0.0.1/job"},{"title":"duplicate","url":"https://example.org/job"}]}).to_string()).unwrap();
         assert_eq!(data["results"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn provider_metadata_is_optional_bounded_and_cleaned() {
+        let data = parse(&json!({"results":[
+            {"title":"Role", "url":"https://example.org/one", "engines":["search\nengine", "search\nengine", 4], "publishedDate":"2026-10-28\n"},
+            {"title":"Other", "url":"https://example.org/two", "engine":"fallback", "publishedDate":null},
+            {"title":"Plain", "url":"https://example.org/three"}
+        ]}).to_string()).unwrap();
+        assert_eq!(data["results"][0]["engines"], json!(["searchengine"]));
+        assert_eq!(data["results"][0]["published_date"], "2026-10-28");
+        assert_eq!(data["results"][1]["engines"], json!(["fallback"]));
+        assert_eq!(data["results"][2]["engines"], json!([]));
+        assert_eq!(data["results"][2]["published_date"], "");
+        let engines: Vec<String> = (0..10).map(|i| format!("{i}{}", "x".repeat(100))).collect();
+        let long = parse(&json!({"results":[{"title":"Role", "url":"https://example.org/long", "engines":engines, "publishedDate":"x".repeat(100)}]}).to_string()).unwrap();
+        let engines = long["results"][0]["engines"].as_array().unwrap();
+        assert_eq!(engines.len(), 8);
+        assert_eq!(engines[0].as_str().unwrap().chars().count(), 80);
+        assert_eq!(
+            long["results"][0]["published_date"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            80
+        );
+    }
+
+    #[test]
+    fn result_limits_and_duplicate_validation_reflect_actual_work() {
+        let duplicate = parse(
+            &json!({"results":[
+                {"title":"\u{0001}", "url":"https://example.org/job"},
+                {"title":"Fictional role", "url":"https://example.org/job"}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(duplicate["results"][0]["title"], "Fictional role");
+        assert_eq!(duplicate["results_examined"], 2);
+        assert_eq!(duplicate["limited"], false);
+
+        let valid: Vec<Value> = (0..100)
+            .map(|i| json!({"title":"Role","url":format!("https://example.org/{i}")}))
+            .collect();
+        let limited = parse(&json!({"results":valid}).to_string()).unwrap();
+        assert_eq!(limited["results"].as_array().unwrap().len(), 30);
+        assert_eq!(limited["results_examined"], 30);
+        assert_eq!(limited["limited"], true);
+
+        let invalid = vec![json!({"title":"No URL"}); 35];
+        let complete = parse(&json!({"results":invalid}).to_string()).unwrap();
+        assert_eq!(complete["results_examined"], 35);
+        assert_eq!(complete["limited"], false);
+        let invalid = vec![json!({"title":"No URL"}); 120];
+        let bounded = parse(&json!({"results":invalid}).to_string()).unwrap();
+        assert_eq!(bounded["results_examined"], 100);
+        assert_eq!(bounded["limited"], true);
     }
 
     #[test]

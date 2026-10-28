@@ -55,13 +55,11 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
     let employer = input(body, "employer", 200, true)?;
     let location = input(body, "location", 200, false)?;
     let description = input(body, "description", 30000, false)?;
-    if let Some(existing) = ws
-        .jobs()
+    if let Some(id) = ws
+        .job_id_by_canonical_url(&url)
         .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|job| job.canonical_url.as_deref() == Some(url.as_str()))
     {
-        return Ok(json!({"id":existing.id.as_str(),"existing":true}));
+        return Ok(json!({"id":id,"existing":true}));
     }
     if let Some(id) = ws.resolve_alias(&url).map_err(|e| e.to_string())? {
         return Ok(json!({"id":id,"existing":true}));

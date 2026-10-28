@@ -253,6 +253,10 @@ const MIGRATIONS: &[&str] = &[
            VALUES(NEW.job_id,NEW.reason,NEW.updated_at,(SELECT CAST(value AS INTEGER) FROM meta WHERE key='manual_review_revision'))
            ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at,revision=excluded.revision; END;
      UPDATE meta SET value='23' WHERE key='schema_version';",
+    // v24 — index URL lookups and rebuild employer tokens with updated normalization.
+    "CREATE INDEX jobs_canonical_url_lookup ON jobs(canonical_url, COALESCE(last_seen,'') DESC, id ASC);
+     DELETE FROM job_employer_indexed;
+     UPDATE meta SET value='24' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -738,6 +742,15 @@ impl Store {
         rows.collect()
     }
 
+    /// Match the first job in the same order as `all_jobs`, without loading it all.
+    pub fn job_id_by_canonical_url(&self, url: &str) -> Result<Option<String>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT id FROM jobs WHERE canonical_url = ?1 ORDER BY COALESCE(last_seen,'') DESC, id ASC LIMIT 1",
+            params![url],
+            |row| row.get(0),
+        ).optional()
+    }
+
     fn row_to_job(r: &rusqlite::Row<'_>) -> Result<StoredJob, rusqlite::Error> {
         let state_json: String = r.get(4)?;
         let state = serde_json::from_str(&state_json).unwrap_or(ApplicationState::Prepared);
@@ -861,6 +874,52 @@ mod tests {
             requisition_id: Some(id.to_string()),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn canonical_url_lookup_migrates_and_preserves_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        for migration in &MIGRATIONS[..23] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES('legacy','Role','Example BV','','\"discovered\"')", []).unwrap();
+        conn.execute(
+            "INSERT INTO job_employer_indexed(job_id) VALUES('legacy')",
+            [],
+        )
+        .unwrap();
+        let mut store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        let mut older = job("older");
+        older.canonical_url = Some("https://example.com/job".into());
+        older.last_seen = Some("1".into());
+        let mut newer = job("newer");
+        newer.canonical_url = older.canonical_url.clone();
+        newer.last_seen = Some("2".into());
+        store.upsert_job(&older).unwrap();
+        store.upsert_job(&newer).unwrap();
+        assert_eq!(
+            store
+                .job_id_by_canonical_url("https://example.com/job")
+                .unwrap()
+                .as_deref(),
+            Some("newer")
+        );
+        assert_eq!(
+            store
+                .job_id_by_canonical_url("https://example.com/other")
+                .unwrap(),
+            None
+        );
+        let plan: String = store.conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT id FROM jobs WHERE canonical_url = ?1 ORDER BY COALESCE(last_seen,'') DESC, id ASC LIMIT 1",
+            params!["https://example.com/job"], |row| row.get(3),
+        ).unwrap();
+        assert!(plan.contains("jobs_canonical_url_lookup"), "{plan}");
     }
 
     #[test]

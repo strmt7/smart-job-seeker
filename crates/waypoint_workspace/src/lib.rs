@@ -394,6 +394,10 @@ impl Workspace {
         Ok(self.store.all_jobs()?)
     }
 
+    pub fn job_id_by_canonical_url(&self, url: &str) -> Result<Option<String>, WorkspaceError> {
+        Ok(self.store.job_id_by_canonical_url(url)?)
+    }
+
     /// Store an applicant-supplied document using the workspace sealer.
     pub fn add_document(
         &self,

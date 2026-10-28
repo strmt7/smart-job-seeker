@@ -100,7 +100,8 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
                 break;
             }
             let result = std::panic::catch_unwind(|| {
-                crate::web_search::fetch(&url).and_then(|body| crate::web_search::parse(&body))
+                crate::web_search::fetch(&url)
+                    .and_then(|body| crate::web_search::parse_excluding(&body, &seen))
             })
             .unwrap_or_else(|_| Err("Search stopped unexpectedly".into()))
             .map(|mut data| {
@@ -114,7 +115,11 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
                                 limit_reached = true;
                                 return false;
                             }
-                            seen.insert(url.to_owned())
+                            let inserted = seen.insert(url.to_owned());
+                            if seen.len() >= 600 {
+                                limit_reached = true;
+                            }
+                            inserted
                         })
                     });
                 }
@@ -206,11 +211,13 @@ mod tests {
                 let len = stream.read(&mut request).unwrap();
                 let request = std::str::from_utf8(&request[..len]).unwrap();
                 assert!(request.contains(if n == 0 { "first" } else { "second" }));
-                let body = if n == 0 {
-                    r#"{"results":[{"title":"One","url":"https://example.org/a"}]}"#
-                } else {
-                    r#"{"results":[{"title":"One","url":"https://example.org/a"},{"title":"Two","url":"https://example.org/b"}]}"#
-                };
+                let mut results: Vec<Value> = (0..30)
+                    .map(|i| json!({"title":"Repeated", "url":format!("https://example.org/{i}")}))
+                    .collect();
+                if n == 1 {
+                    results.push(json!({"title":"New result", "url":"https://example.org/new"}));
+                }
+                let body = json!({"results":results}).to_string();
                 write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -242,9 +249,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 1);
+        assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 30);
         assert_eq!(batches[1]["data"]["results"].as_array().unwrap().len(), 1);
-        assert_eq!(batches[1]["data"]["results"][0]["title"], "Two");
+        assert_eq!(batches[1]["data"]["results"][0]["title"], "New result");
+        assert_eq!(batches[1]["data"]["previously_seen"], 30);
+        assert_eq!(batches[1]["data"]["results_examined"], 31);
         provider.join().unwrap();
     }
 
