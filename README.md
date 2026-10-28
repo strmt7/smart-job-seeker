@@ -13,7 +13,7 @@ On Windows, build the local web prototype from the repository root:
 ./target/debug/waypoint_web.exe
 ```
 
-The build helper requires Rust, MSVC build tools and an x64 OpenSSL developer installation. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. The current prototype does not submit applications or send email from its interface. It can prepare drafts and assist with reviewed form filling; real third-party forms vary and may need manual review.
+The build helper requires Rust, MSVC build tools and an x64 OpenSSL developer installation. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. The current prototype does not submit applications or send application email. It can prepare drafts, send an explicit fixed Gmail self-test, and assist with reviewed form filling; real third-party forms vary and may need manual review.
 
 ## Workspace layout
 

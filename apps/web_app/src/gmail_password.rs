@@ -39,7 +39,7 @@ pub fn busy() -> bool {
         .unwrap_or(true)
 }
 
-fn reply(stream: &mut impl Read, expected: u16) -> Result<(), String> {
+pub(crate) fn reply(stream: &mut impl Read, expected: u16) -> Result<(), String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(12);
     for _ in 0..30 {
         let mut line = Vec::new();
@@ -99,7 +99,10 @@ fn connect(host: &str, port: u16) -> Result<native_tls::TlsStream<TcpStream>, St
         .map_err(|_| "Gmail TLS connection failed".into())
 }
 
-fn authenticate_smtp(email: &str, password: &str) -> Result<(), String> {
+pub(crate) fn open_smtp(
+    email: &str,
+    password: &str,
+) -> Result<native_tls::TlsStream<TcpStream>, String> {
     let mut tls = connect("smtp.gmail.com", 465)?;
     reply(&mut tls, 220)?;
     tls.write_all(b"EHLO localhost\r\n")
@@ -111,11 +114,16 @@ fn authenticate_smtp(email: &str, password: &str) -> Result<(), String> {
     tls.write_all(command.as_bytes())
         .map_err(|_| "Cannot authenticate with Gmail")?;
     reply(&mut tls, 235)?;
+    Ok(tls)
+}
+
+fn authenticate_smtp(email: &str, password: &str) -> Result<(), String> {
+    let mut tls = open_smtp(email, password)?;
     let _ = tls.write_all(b"QUIT\r\n");
     Ok(())
 }
 
-fn imap_line(stream: &mut impl Read) -> Result<String, String> {
+pub(crate) fn imap_line(stream: &mut impl Read) -> Result<String, String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(12);
     let mut line = Vec::new();
     for _ in 0..4096 {
@@ -134,7 +142,10 @@ fn imap_line(stream: &mut impl Read) -> Result<String, String> {
     Err("Gmail IMAP response exceeded its limit".into())
 }
 
-fn open_imap(email: &str, password: &str) -> Result<native_tls::TlsStream<TcpStream>, String> {
+pub(crate) fn open_imap(
+    email: &str,
+    password: &str,
+) -> Result<native_tls::TlsStream<TcpStream>, String> {
     let mut tls = connect("imap.gmail.com", 993)?;
     if !imap_line(&mut tls)?.starts_with("* OK") {
         return Err("Gmail IMAP did not accept the connection".into());

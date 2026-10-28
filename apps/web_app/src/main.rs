@@ -25,6 +25,7 @@ mod gmail_mailbox;
 mod gmail_net;
 mod gmail_oauth;
 mod gmail_password;
+mod gmail_self_test;
 mod letter_export;
 mod manual_job;
 mod pdf_extract;
@@ -1055,6 +1056,18 @@ fn serve(
         "/api/gmail/inbox-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", gmail_mailbox::poll(id, ws)?);
+        }
+        "/api/gmail/self-test-start" => {
+            if body["reviewed"].as_bool() != Some(true) {
+                return Err("Explicit confirmation is required to send a test email".into());
+            }
+            let id = random_id()?;
+            gmail_self_test::start(id.clone(), ws)?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/gmail/self-test-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", gmail_self_test::poll(id)?);
         }
         "/api/gmail/connect-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
