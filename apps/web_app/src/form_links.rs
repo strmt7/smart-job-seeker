@@ -182,6 +182,7 @@ pub fn start(
             session.profile_digest = Sha256Digest::of(&profile.to_string());
             session.preview = preview;
             session.filled = false;
+            session.completed_selectors.clear();
             session.created = std::time::Instant::now();
             session
         });

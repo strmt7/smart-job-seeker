@@ -75,6 +75,7 @@ struct ReviewSession {
     created: Instant,
     ttl: Duration,
     filled: bool,
+    completed_selectors: Vec<String>,
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
     record: Option<attempt_record::AttemptRecord>,
@@ -2356,6 +2357,7 @@ fn serve(
                 created: Instant::now(),
                 ttl,
                 filled: false,
+                completed_selectors: vec![],
                 visible,
                 staged_files: vec![],
                 record,
@@ -2505,16 +2507,33 @@ fn serve(
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
+            let segment = body["segment"].as_u64().unwrap_or(0);
+            if segment > 5 {
+                return Err("Visual segment is outside the capture limit".into());
+            }
+            let (width, height) = current
+                .driver
+                .page_dimensions()
+                .map_err(|e| e.to_string())?;
+            let (clip_width, y, clip_height, total, coverage_complete) =
+                visual_review::segment_geometry(width, height, segment as usize)?;
+            let url = current.driver.current_url().map_err(|e| e.to_string())?;
+            let signature =
+                Sha256Digest::of(&json!({"url":url,"width":width,"height":height}).to_string());
             let screenshot = current
                 .driver
-                .screenshot_base64()
+                .screenshot_segment(clip_width, y, clip_height)
                 .map_err(|e| e.to_string())?;
             let task_id = random_id()?;
             let expected = current
                 .preview
                 .suggestions
                 .iter()
-                .filter(|_| current.filled)
+                .filter(|mapping| {
+                    current
+                        .completed_selectors
+                        .contains(&mapping.field_selector)
+                })
                 .filter_map(|mapping| {
                     let field = current
                         .preview
@@ -2543,21 +2562,23 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":task_id,"screenshot":screenshot}),
+                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"page_signature":signature.as_str()}),
             );
         }
         "/api/form/visual-review-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             let result = visual_review::poll(id)?;
-            if result["status"] == "complete"
-                && !session.as_ref().is_some_and(|s| {
-                    Some(s.id.as_str()) == result["session_id"].as_str()
-                        && s.created.elapsed() <= s.ttl
-                })
-            {
-                return Err(
-                    "The form session expired; this visual observation is no longer current".into(),
-                );
+            if matches!(result["status"].as_str(), Some("running" | "complete")) {
+                let current = session
+                    .as_mut()
+                    .filter(|s| {
+                        Some(s.id.as_str()) == result["session_id"].as_str()
+                            && s.created.elapsed() <= s.ttl
+                    })
+                    .ok_or(
+                        "The form session expired; this visual observation is no longer current",
+                    )?;
+                current.created = Instant::now();
             }
             json_reply(stream, "200 OK", result);
         }
@@ -2696,6 +2717,10 @@ fn serve(
                     completed: &mut completed,
                 },
             );
+            current.completed_selectors = completed
+                .iter()
+                .filter_map(|item| item["selector"].as_str().map(str::to_owned))
+                .collect();
             let filled = match result {
                 Ok(count) => count,
                 Err(error) => {
@@ -4222,6 +4247,7 @@ mod tests {
                 created: Instant::now(),
                 ttl: SESSION_TTL,
                 filled: false,
+                completed_selectors: vec![],
                 visible: false,
                 staged_files: vec![],
                 record: None,
@@ -4373,6 +4399,7 @@ mod tests {
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
             assert!(error.contains("2 successful field commands"), "{error}");
             assert!(error.contains("Given name"), "{error}");
+            assert_eq!(session.as_ref().unwrap().completed_selectors.len(), 2);
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
             drop(session);

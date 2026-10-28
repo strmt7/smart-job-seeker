@@ -1,4 +1,4 @@
-//! Bounded, local-only advisory transcription of a single form screenshot.
+//! Bounded, local-only advisory transcription of one form-page segment.
 use serde_json::{json, Value};
 use std::sync::Mutex;
 
@@ -64,6 +64,30 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
         })
         .collect();
     json!({"observations":items,"comparisons":comparisons})
+}
+
+/// Derive one bounded clip without scrolling or clicking. Larger pages are explicitly incomplete.
+pub fn segment_geometry(
+    width: f64,
+    height: f64,
+    index: usize,
+) -> Result<(f64, f64, f64, usize, bool), String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("Invalid page dimensions".into());
+    }
+    let capped_height = height.min(12000.0);
+    let total = (capped_height / 2000.0).ceil() as usize;
+    if index >= total {
+        return Err("Visual segment is outside the page".into());
+    }
+    let y = (index as f64) * 2000.0;
+    Ok((
+        width.min(2048.0),
+        y,
+        (capped_height - y).min(2000.0),
+        total,
+        width <= 2048.0 && height <= 12000.0,
+    ))
 }
 
 pub fn start(
@@ -184,7 +208,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
         .filter(|t| t.id == id)
         .ok_or("Visual review not found")?;
     let Some(result) = task.result.take() else {
-        return Ok(json!({"status":"running"}));
+        return Ok(json!({"status":"running","session_id":task.session}));
     };
     let session = task.session.clone();
     *tasks = None;
@@ -197,6 +221,23 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn segments_cover_bounded_pages_and_report_limits() {
+        assert_eq!(
+            segment_geometry(1200.0, 2600.0, 0).unwrap(),
+            (1200.0, 0.0, 2000.0, 2, true)
+        );
+        assert_eq!(
+            segment_geometry(1200.0, 2600.0, 1).unwrap(),
+            (1200.0, 2000.0, 600.0, 2, true)
+        );
+        assert!(segment_geometry(1200.0, 2600.0, 2).is_err());
+        assert_eq!(
+            segment_geometry(3000.0, 15000.0, 5).unwrap(),
+            (2048.0, 10000.0, 2000.0, 6, false)
+        );
+        assert!(segment_geometry(f64::NAN, 1.0, 0).is_err());
+    }
     #[test]
     fn sends_image_to_a_local_vision_fixture_and_compares_observations() {
         use std::io::{BufRead, BufReader, Read, Write};
