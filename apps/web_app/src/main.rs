@@ -34,6 +34,7 @@ mod pdf_preview_task;
 mod pdf_probe_task;
 mod pdf_setup;
 mod search_planner;
+mod smtp_handoff;
 mod storage_settings;
 mod suggestions;
 mod template_suggest;

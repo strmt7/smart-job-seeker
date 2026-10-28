@@ -39,27 +39,20 @@ fn transmit(stream: &mut (impl Read + Write), address: &str, id: &str) -> Result
     if !valid_address(address) || !id.bytes().all(|b| b.is_ascii_hexdigit()) || id.is_empty() {
         return Err("Cannot use these credentials for the test message".into());
     }
-    for command in [
-        format!("MAIL FROM:<{address}>\r\n"),
-        format!("RCPT TO:<{address}>\r\n"),
-    ] {
-        stream
-            .write_all(command.as_bytes())
-            .map_err(|_| "Gmail test message was not handed off")?;
-        crate::gmail_password::reply(stream, 250)
-            .map_err(|_| "Gmail rejected the test message before handoff")?;
-    }
-    stream
-        .write_all(b"DATA\r\n")
-        .map_err(|_| "Gmail test message was not handed off")?;
-    crate::gmail_password::reply(stream, 354)
-        .map_err(|_| "Gmail rejected the test message before handoff")?;
-    let message = format!("From: {address}\r\nTo: {address}\r\nSubject: Waypoint connectivity test\r\nMessage-ID: <waypoint-test-{id}@localhost>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a self-addressed Waypoint connectivity test. It is not a job application.\r\n.\r\n");
-    stream
-        .write_all(message.as_bytes())
-        .map_err(|_| "Delivery is uncertain; check the mailbox before trying again")?;
-    crate::gmail_password::reply(stream, 250)
-        .map_err(|_| "Delivery is uncertain; check the mailbox before trying again")?;
+    let message = format!("From: {address}\r\nTo: {address}\r\nSubject: Waypoint connectivity test\r\nMessage-ID: <waypoint-test-{id}@localhost>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a self-addressed Waypoint connectivity test. It is not a job application.\r\n");
+    crate::smtp_handoff::handoff(stream, address, address, message.as_bytes()).map_err(
+        |error| match error {
+            crate::smtp_handoff::HandoffError::InvalidMessage => {
+                "Cannot prepare the Gmail test message"
+            }
+            crate::smtp_handoff::HandoffError::BeforeData => {
+                "Gmail rejected or could not receive the test message before handoff"
+            }
+            crate::smtp_handoff::HandoffError::Uncertain => {
+                "Delivery is uncertain; check the mailbox before trying again"
+            }
+        },
+    )?;
     let _ = stream.write_all(b"QUIT\r\n");
     Ok(())
 }
