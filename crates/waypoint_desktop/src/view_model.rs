@@ -242,6 +242,7 @@ mod tests {
         let results = RankedResults {
             strict: vec![RankedJob {
                 job: job("Rust Engineer", "ashby"),
+                description_available: true,
                 score: 0.5,
                 matched_skills: vec!["Rust".into()],
                 freshness: waypoint_search::Freshness::Fresh { age_seconds: 5 },

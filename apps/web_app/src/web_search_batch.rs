@@ -192,8 +192,10 @@ pub fn cancel(id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
     #[test]
     fn searches_sequentially_deduplicates_and_reports_each_query() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let provider = std::thread::spawn(move || {
@@ -247,6 +249,7 @@ mod tests {
 
     #[test]
     fn searches_requested_pages_and_deduplicates_between_them() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let provider = std::thread::spawn(move || {

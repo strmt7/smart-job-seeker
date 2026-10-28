@@ -64,10 +64,12 @@ pub fn start(
     model: Option<String>,
     visible: bool,
 ) -> Result<(), String> {
-    let lease = if model.is_some() {
-        Some(doc_suggest::lease()?)
-    } else {
-        None
+    let (model, lease, no_model_reason) = match model {
+        Some(model) => match doc_suggest::lease() {
+            Ok(lease) => (Some(model), Some(lease), String::new()),
+            Err(error) => (None, None, error),
+        },
+        None => (None, None, "No eligible local model is loaded".into()),
     };
     let mut task = TASK.lock().map_err(|_| "Form inspection unavailable")?;
     if task.is_some() {
@@ -80,18 +82,19 @@ pub fn start(
         let _lease = lease;
         let profile_digest = Sha256Digest::of(&profile.to_string());
         let result = std::panic::catch_unwind(|| -> Result<_, String> {
-            let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible).map_err(|e| e.to_string())?;
+            let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
+                .map_err(|e| e.to_string())?;
             let live = open_application_page(&mut driver, &url)?;
             let preview = if let Some(model) = model {
-                let mut llm = OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
+                let mut llm = OllamaInference::new("http://127.0.0.1:11434", model)
+                    .map_err(|e| e.to_string())?;
                 form_preview::suggest_for_live_form(live, &mut llm, &profile)?
             } else {
-                let mut review = live.walls;
-                review.push("No eligible local model is available. Continue manually in the visible browser.".into());
-                form_preview::FormPreview { schema: live.schema, suggestions: vec![], manual_review: review }
+                form_preview::suggest_without_model(live, &profile, &no_model_reason)?
             };
             Ok((driver, preview))
-        }).unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
+        })
+        .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
         let _ = sender.send(Finished {
             job_id,
             url,
@@ -129,6 +132,40 @@ mod tests {
     use waypoint_applications::form_mapping::{
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
+
+    #[test]
+    #[ignore = "starts a local browser while holding the model lease"]
+    fn busy_model_does_not_block_form_inspection() {
+        let _lease = crate::doc_suggest::lease().unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        start(
+            "busy-fixture".into(),
+            JobIdentityId::new("fixture-job").unwrap(),
+            url,
+            serde_json::json!({"country":"Germany"}),
+            Some("fictional-model".into()),
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some(done) = poll("busy-fixture").unwrap() {
+                let (_, preview) = done.result.unwrap();
+                assert!(preview
+                    .suggestions
+                    .iter()
+                    .any(|item| item.field_selector == "#country"));
+                assert!(preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason.contains("already running")));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
 
     struct FakeDriver {
         current: String,

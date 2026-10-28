@@ -141,6 +141,16 @@ impl AttemptRecord {
             fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
             fs::write(source_dir.join("capture.json"), &metadata).map_err(|e| e.to_string())?;
             if let Ok(capture) = serde_json::from_slice::<Value>(&metadata) {
+                if matches!(
+                    capture["page_text_status"].as_str(),
+                    Some("captured" | "truncated")
+                ) {
+                    let text = capture["page_text"]
+                        .as_str()
+                        .filter(|text| text.len() <= 32_000)
+                        .ok_or("Invalid captured page text")?;
+                    fs::write(source_dir.join("page-text.txt"), text).map_err(|e| e.to_string())?;
+                }
                 if capture["structured_source_status"] == "captured" {
                     let scripts = capture["structured_source_scripts"]
                         .as_array()
@@ -333,7 +343,7 @@ mod tests {
         #[cfg(windows)]
         {
             let png = b"\x89PNG\r\n\x1a\nfictional-data".to_vec();
-            let metadata=json!({"source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
+            let metadata=json!({"source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
             assert!(ws
                 .save_job_capture(&id, metadata.as_bytes(), std::slice::from_ref(&png))
                 .unwrap());
@@ -358,6 +368,10 @@ mod tests {
                 b"\x89PNG\r\n\x1a\nfictional-data"
             );
             assert!(record.dir.join("original-job-page/capture.json").exists());
+            assert_eq!(
+                fs::read_to_string(record.dir.join("original-job-page/page-text.txt")).unwrap(),
+                "Fictional original page text"
+            );
             assert_eq!(
                 fs::read_to_string(
                     record

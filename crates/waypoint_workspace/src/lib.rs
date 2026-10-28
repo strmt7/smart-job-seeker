@@ -170,6 +170,7 @@ pub struct RankedResults {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RankedJob {
     pub job: StoredJob,
+    pub description_available: bool,
     /// Fraction of the candidate's skills evidenced in the posting text.
     pub score: f32,
     pub matched_skills: Vec<String>,
@@ -925,6 +926,7 @@ impl Workspace {
             let fresh = freshness(observed_at, now_unix, STALE_AFTER_SECONDS);
             let ranked = RankedJob {
                 job: job.clone(),
+                description_available: !description.trim().is_empty(),
                 score,
                 matched_skills,
                 freshness: fresh,

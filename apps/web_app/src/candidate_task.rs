@@ -223,6 +223,25 @@ fn capture_listing(
         metadata["structured_source_status"] = json!("captured");
         metadata["structured_source_scripts"] = json!(scripts);
     }
+    match browser.page_text_bounded(32_000) {
+        Ok((text, truncated)) if !text.is_empty() => {
+            metadata["page_text_status"] = json!(if truncated { "truncated" } else { "captured" });
+            metadata["page_text"] = json!(text);
+            if serde_json::to_vec(&metadata)
+                .ok()
+                .is_none_or(|value| value.len() > 512 * 1024)
+            {
+                metadata.as_object_mut().unwrap().remove("page_text");
+                metadata["page_text_status"] = json!("omitted_size_limit");
+            }
+        }
+        Ok(_) => metadata["page_text_status"] = json!("empty"),
+        Err(error) => {
+            metadata["page_text_status"] = json!("unavailable");
+            metadata["page_text_error"] =
+                json!(error.to_string().chars().take(500).collect::<String>());
+        }
+    }
     ListingCapture { metadata, segments }
 }
 
@@ -311,6 +330,8 @@ mod tests {
         assert_eq!(capture.metadata["source_url"], url);
         assert_eq!(capture.metadata["structured_source_status"], "captured");
         assert_eq!(capture.metadata["structured_source_scripts"][0], scripts[0]);
+        assert_eq!(capture.metadata["page_text_status"], "captured");
+        assert!(!capture.metadata["page_text"].as_str().unwrap().is_empty());
         assert_eq!(
             capture.metadata["segments"].as_u64(),
             Some(capture.segments.len() as u64)

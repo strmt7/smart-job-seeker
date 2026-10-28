@@ -200,6 +200,23 @@ pub fn suggest_for_live_form(
     inference: &mut dyn Inference,
     profile: &Value,
 ) -> Result<FormPreview, String> {
+    build_preview(live, Some(inference), profile, "")
+}
+
+pub fn suggest_without_model(
+    live: waypoint_applications::driver::LiveForm,
+    profile: &Value,
+    reason: &str,
+) -> Result<FormPreview, String> {
+    build_preview(live, None, profile, reason)
+}
+
+fn build_preview(
+    live: waypoint_applications::driver::LiveForm,
+    inference: Option<&mut dyn Inference>,
+    profile: &Value,
+    no_model_reason: &str,
+) -> Result<FormPreview, String> {
     let blocked = !live.walls.is_empty() || live.schema.fields.is_empty();
     let mut manual_review = live.walls;
     if live.schema.fields.is_empty() {
@@ -209,11 +226,17 @@ pub fn suggest_for_live_form(
         manual_review.push("A possible next-step control was found. Navigate and inspect the next page manually; the total number of steps is unknown".into());
     }
     let suggestions = if !blocked {
-        match crate::suggestions::suggest(inference, &live.schema, profile) {
+        let mapped = match inference {
+            Some(inference) => crate::suggestions::suggest(inference, &live.schema, profile),
+            None => Err(no_model_reason.to_owned()),
+        };
+        match mapped {
             Ok(items) => items,
             Err(error) => {
-                manual_review.push(format!("Could not map form: {error}"));
-                vec![]
+                manual_review.push(format!(
+                    "{error}; only exact profile-label matches are suggested"
+                ));
+                crate::suggestions::suggest_exact(&live.schema, profile)?
             }
         }
     } else {
@@ -299,6 +322,35 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("captcha")));
         assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn offline_form_preview_suggests_exact_matches_and_flags_other_required_fields() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(
+            live,
+            &json!({"country":"Germany", "first_name":"Example"}),
+            "No eligible local model is loaded",
+        )
+        .unwrap();
+        assert!(preview
+            .suggestions
+            .iter()
+            .any(|item| item.field_selector == "#country"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Given name")));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("exact profile-label")));
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 
     #[test]

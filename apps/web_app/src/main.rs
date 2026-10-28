@@ -643,11 +643,18 @@ fn serve(
     }
     if method == "GET" && path == "/api/state" {
         let facts = ws.facts().map_err(|e| e.to_string())?;
-        let skills: Vec<String> = facts.iter().map(|f| f.text.clone()).collect();
+        let skills: Vec<String> = facts
+            .iter()
+            .filter(|fact| !fact.requires_review && !fact.text.trim().is_empty())
+            .map(|fact| fact.text.clone())
+            .collect();
         let ranked = ws
             .ranked(&CampaignConstraints::default(), &skills, now())
             .map_err(|e| e.to_string())?;
-        let jobs: Vec<Value> = ranked.strict.iter().map(|row| json!({"job": row.job, "score": if skills.is_empty() {None} else {Some(row.score)}, "matched": row.matched_skills})).collect();
+        let jobs: Vec<Value> = ranked.strict.iter().map(|row| {
+            let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
+            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis})
+        }).collect();
         let facts: Vec<Value> = facts
             .iter()
             .map(|f| json!({"id":f.id,"text":f.text,"requires_review":f.requires_review}))
@@ -2862,6 +2869,73 @@ mod tests {
         assert!(prepared.contains("Position: Engineer at Fixture."));
         assert!(!prepared.contains("Applied for"));
         assert!(call("/api/packet/prepare").contains("already exists"));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn state_does_not_score_jobs_without_reviewed_facts_or_a_description() {
+        use waypoint_store::StoredJob;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            for (id, description) in [
+                ("with-description", Some("Python research")),
+                ("no-description", None),
+            ] {
+                ws.import_manual_job(
+                    StoredJob {
+                        id: JobIdentityId::new(id).unwrap(),
+                        title: "Engineer".into(),
+                        employer: "Example".into(),
+                        location: "Remote".into(),
+                        state: ApplicationState::Discovered,
+                        canonical_url: Some(format!("https://example.org/{id}")),
+                        content_hash: None,
+                        first_seen: None,
+                        last_seen: None,
+                        remote: true,
+                        source: "user_supplied_url".into(),
+                        requisition_id: None,
+                        posted_at: None,
+                    },
+                    description,
+                )
+                .unwrap();
+            }
+            for index in 0..2 {
+                if index == 1 {
+                    ws.add_fact("Python", waypoint_workspace::FactOrigin::UserAttested)
+                        .unwrap();
+                }
+                let (mut stream, _) = listener.accept().unwrap();
+                serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+            }
+        });
+        let request = || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let first = request();
+        assert!(first["jobs"].as_array().unwrap().iter().all(
+            |row| row["score"].is_null() && row["match_basis"] == "no_reviewed_qualifications"
+        ));
+        let second = request();
+        let rows = second["jobs"].as_array().unwrap();
+        let described = rows
+            .iter()
+            .find(|row| row["job"]["id"] == "with-description")
+            .unwrap();
+        let missing = rows
+            .iter()
+            .find(|row| row["job"]["id"] == "no-description")
+            .unwrap();
+        assert_eq!(described["score"], 1.0);
+        assert_eq!(missing["match_basis"], "no_description");
+        assert!(missing["score"].is_null());
         worker.join().unwrap();
     }
 

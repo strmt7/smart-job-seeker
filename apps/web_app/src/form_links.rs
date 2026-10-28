@@ -146,18 +146,20 @@ pub fn start(
                 };
                 let model = crate::resident_model().ok().flatten();
                 if let Some(model) = model {
-                    let _lease = crate::doc_suggest::lease()?;
-                    let mut llm = OllamaInference::new("http://127.0.0.1:11434", model)
-                        .map_err(|e| e.to_string())?;
-                    form_preview::suggest_for_live_form(live, &mut llm, &profile)
+                    match crate::doc_suggest::lease() {
+                        Ok(_lease) => {
+                            let mut llm = OllamaInference::new("http://127.0.0.1:11434", model)
+                                .map_err(|e| e.to_string())?;
+                            form_preview::suggest_for_live_form(live, &mut llm, &profile)
+                        }
+                        Err(error) => form_preview::suggest_without_model(live, &profile, &error),
+                    }
                 } else {
-                    let mut review = live.walls;
-                    review.push("No eligible local model is loaded; continue manually".into());
-                    Ok(form_preview::FormPreview {
-                        schema: live.schema,
-                        suggestions: vec![],
-                        manual_review: review,
-                    })
+                    form_preview::suggest_without_model(
+                        live,
+                        &profile,
+                        "No eligible local model is loaded",
+                    )
                 }
             },
         ))

@@ -24,16 +24,20 @@ pub fn lease() -> Result<ModelLease, String> {
     Ok(ModelLease)
 }
 pub fn start(id: String, model: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
-    let guard = lease()?;
-    {
+    let guard = {
         let mut task = TASK
             .lock()
             .map_err(|_| "Document review state unavailable")?;
+        if task.is_some() {
+            return Err("A document review is running or awaiting its result".into());
+        }
+        let guard = lease()?;
         *task = Some(Task {
             id: id.clone(),
             outcome: None,
         });
-    }
+        guard
+    };
     std::thread::spawn(move || {
         let _guard = guard;
         let result = std::panic::catch_unwind(|| {
@@ -112,6 +116,25 @@ mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     struct Fake(Value);
+    #[test]
+    fn completed_document_review_is_available_until_collected() {
+        *TASK.lock().unwrap() = Some(Task {
+            id: "first".into(),
+            outcome: Some(Ok((vec!["Fictional qualification".into()], false))),
+        });
+        let error = start(
+            "second".into(),
+            "local".into(),
+            "document.txt".into(),
+            vec![],
+        )
+        .unwrap_err();
+        assert!(error.contains("awaiting its result"));
+        assert_eq!(
+            poll("first").unwrap()["excerpts"][0],
+            "Fictional qualification"
+        );
+    }
     impl Inference for Fake {
         fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
             unreachable!()

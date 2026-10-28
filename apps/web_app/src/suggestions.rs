@@ -10,6 +10,70 @@ use waypoint_inference::Inference;
 const MAX_FIELDS: usize = 80;
 const MAX_PROFILE_VALUE: usize = 2000;
 
+/// Conservative offline fallback: only identical normalized labels and profile keys.
+pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<ProposedMapping>, String> {
+    if schema.fields.len() > MAX_FIELDS {
+        return Err("Form has too many fields for one mapping request".into());
+    }
+    let profile = profile.as_object().ok_or("Profile must be an object")?;
+    let normalize = |text: &str| {
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let mut result = Vec::new();
+    for field in &schema.fields {
+        if field.sensitive {
+            continue;
+        }
+        let keys: Vec<_> = profile
+            .iter()
+            .filter(|(key, value)| {
+                super::PROFILE_FIELDS.contains(&key.as_str())
+                    && !matches!(
+                        key.as_str(),
+                        "instructions"
+                            | "work_authorization"
+                            | "document_instructions"
+                            | "cv_template_id"
+                            | "cover_template_id"
+                    )
+                    && normalize(key) == normalize(&field.label)
+                    && value.as_str().is_some_and(|text| {
+                        !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE
+                    })
+            })
+            .collect();
+        let [(_, value)] = keys.as_slice() else {
+            continue;
+        };
+        let value = value.as_str().unwrap_or_default();
+        let chosen = match &field.field_type {
+            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => {
+                value.to_owned()
+            }
+            FormFieldType::Select { options } | FormFieldType::Radio { options } => {
+                let matches: Vec<_> = options
+                    .iter()
+                    .filter(|option| option.trim().eq_ignore_ascii_case(value.trim()))
+                    .collect();
+                if let [only] = matches.as_slice() {
+                    (*only).clone()
+                } else {
+                    continue;
+                }
+            }
+            _ => continue,
+        };
+        result.push(ProposedMapping {
+            field_selector: field.selector.clone(),
+            value: PacketValue::Text(chosen),
+        });
+    }
+    Ok(result)
+}
+
 /// Send labels and available profile keys to a local inference provider. The
 /// first request contains no candidate values and chooses only key-to-field
 /// associations. Non-exact choices may then send the relevant value and
@@ -319,6 +383,32 @@ mod tests {
                 },
             ],
         }
+    }
+    #[test]
+    fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
+        let mut schema = form();
+        schema.fields[0].label = "First name".into();
+        schema.fields[1].label = "Work authorization".into();
+        schema.fields.push(FormField {
+            selector: "#country".into(),
+            label: "Country".into(),
+            field_type: FormFieldType::Select {
+                options: vec!["Germany".into(), "germany".into()],
+            },
+            required: true,
+            sensitive: false,
+        });
+        let matches = suggest_exact(
+            &schema,
+            &json!({"first_name":"Example", "work_authorization":"yes", "country":"Germany"}),
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].field_selector, "#candidate");
+        schema.fields[0].label = "Your given name".into();
+        assert!(suggest_exact(&schema, &json!({"first_name":"Example"}))
+            .unwrap()
+            .is_empty());
     }
     #[test]
     fn maps_labels_without_sending_candidate_values_to_model() {

@@ -21,11 +21,11 @@ pub fn start(
     instructions: String,
     listing: String,
 ) -> Result<(), String> {
-    let lease = crate::doc_suggest::lease()?;
     let mut task = TASK.lock().map_err(|_| "Assessment unavailable")?;
-    if task.as_ref().is_some_and(|task| task.result.is_none()) {
-        return Err("An assessment is already running".into());
+    if task.is_some() {
+        return Err("An assessment is running or awaiting its result".into());
     }
+    let lease = crate::doc_suggest::lease()?;
     *task = Some(Task {
         id: id.clone(),
         result: None,
@@ -126,6 +126,28 @@ fn validate(value: Value, facts: &[String], listing: &str) -> Result<Value, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completed_assessment_is_not_replaced_before_collection() {
+        *TASK.lock().unwrap() = Some(Task {
+            id: "first".into(),
+            result: Some(Ok(json!({"score": 70}))),
+            job_id: "job".into(),
+            input_digest: "digest".into(),
+            model: "local".into(),
+        });
+        let result = start(
+            "second".into(),
+            "local".into(),
+            "job".into(),
+            "digest".into(),
+            vec![],
+            String::new(),
+            String::new(),
+        );
+        assert!(result.unwrap_err().contains("awaiting its result"));
+        let first = poll("first").unwrap();
+        assert_eq!(first["assessment"]["score"], 70);
+    }
     #[test]
     fn rejects_invented_excerpt_and_unknown_qualification() {
         let facts = vec!["Research with Python".to_owned()];

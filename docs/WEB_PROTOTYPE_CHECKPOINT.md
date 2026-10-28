@@ -185,3 +185,17 @@ Follow-up checkpoint validation (2026-10-28): after the warning cleanup, `cargo 
 Each job card can now list up to 50 matching local attempt records, including their folder locations and recorded preparation status. The scan inspects at most 2,000 directory entries and reports truncation or unreadable records. It does not establish whether the user submitted an application outside Waypoint.
 
 Hosted checkpoint CI for cb44690 failed in the Windows build job before Clippy could run: libsqlite3-sys could not find OPENSSL_DIR. The Windows build job now configures the GitHub runner's OpenSSL headers, x64 MSVC library directory and runtime path explicitly; hosted verification of this change is still pending.
+
+When no eligible local model is loaded or model mapping fails, form inspection can suggest normalized exact matches between field labels and saved profile keys. Choice values must match one unique page option. Sensitive fields, ambiguous options and non-exact labels remain for review; no form is filled without a separate user action.
+
+If a local model task is already using the exclusive inference lease, initial form inspection and navigation rescans continue with exact-label suggestions and explain that the model is busy. This does not run another inference request or automatically fill the form.
+
+Document qualification review now retains a completed in-process result until collected. The web page remembers an active review in session storage and can recover its excerpts after reload while the server remains running. A server restart still loses the in-memory task; no qualifications are saved until the user selects and adds them.
+
+The job-card percentage is labeled as literal text overlap and excludes qualifications awaiting review. It is unavailable when there are no reviewed qualifications or the listing description is missing; the local AI assessment remains separate. Hosted CI for b08db5a showed a race between two tests sharing the single batch-search task; those tests now coordinate while leaving the production concurrency limit intact. The web-app suite passed with default parallel test execution after the change. The hosted supply-chain job also failed; it was not investigated in this development pass.
+
+The dashboard reuses the description-availability result already obtained during ranking, avoiding a second description lookup per displayed job. This reduces duplicate database work but is not a measured performance benchmark.
+
+New listing captures also retain up to 32,000 bytes of normalized DOM page text from the already-open page, with captured, truncated, empty, unavailable or size-limit status. When an attempt begins, available text is copied to original-job-page/page-text.txt alongside the existing screenshots and structured data. This is not a complete HTTP/HTML archive; page text may include hidden or dynamic content and omit material in frames or after the limit. Older captures do not gain this data retroactively.
+
+Checkpoint validation (2026-10-28): the current workspace passed `cargo fmt --all -- --check`, `cargo test --workspace --offline` with the default parallel test runner, and `cargo clippy --workspace --all-targets --offline -- -D warnings`, using one build job. External-network and other ignored tests are not included in that result.
