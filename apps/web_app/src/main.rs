@@ -3,6 +3,7 @@
 mod answer_task;
 mod application_check;
 pub mod application_email;
+mod ats_check;
 mod attempt_record;
 mod candidate_task;
 mod convert_task;
@@ -1881,6 +1882,50 @@ fn serve(
         "/api/documents/preview-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", pdf_preview_task::poll(id)?);
+        }
+        "/api/documents/ats-check-start" => {
+            let id = body["id"].as_str().ok_or("missing document id")?;
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let job_data = ws
+                .job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let description = ws
+                .job_description(&job)
+                .map_err(|e| e.to_string())?
+                .filter(|s| !s.trim().is_empty())
+                .ok_or("This job has no saved description to compare")?;
+            if description.len() > 200_000 {
+                return Err("Job description exceeds the CV check limit".into());
+            }
+            let info = ws
+                .documents()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|doc| doc.id == id)
+                .ok_or("Document not found")?;
+            if !info.name.to_ascii_lowercase().ends_with(".pdf")
+                && !info.name.to_ascii_lowercase().ends_with(".docx")
+            {
+                return Err("Choose a PDF or DOCX CV".into());
+            }
+            let bytes = ws
+                .document_content(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Document not found")?;
+            let task_id = random_id()?;
+            ats_check::start(
+                task_id.clone(),
+                info.name,
+                bytes,
+                format!("{}\n{}", job_data.title, description),
+            )?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/ats-check-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", ats_check::poll(id)?);
         }
         "/api/documents/extract-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
