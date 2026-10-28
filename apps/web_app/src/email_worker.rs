@@ -123,6 +123,20 @@ pub fn poll(ws: &mut Workspace, id: &str) -> Result<WorkerStatus, String> {
     })
 }
 
+/// Collect a completed worker independently of an open browser page. This
+/// writes only the result; it never starts or retries a transport.
+pub fn collect_finished(ws: &mut Workspace) -> Result<Option<WorkerStatus>, String> {
+    let id = TASK
+        .lock()
+        .map_err(|_| "Email worker unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone());
+    match id {
+        Some(id) => poll(ws, &id).map(Some),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,25 +195,28 @@ mod tests {
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "reserved"
         );
-        assert_eq!(poll(&mut ws, attempt).unwrap(), WorkerStatus::Running);
+        assert_eq!(
+            collect_finished(&mut ws).unwrap(),
+            Some(WorkerStatus::Running)
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_worker = stop.clone();
+        let server = std::thread::spawn(move || {
+            crate::serve_loop(ws, listener, "fixture-token".into(), port, stop_worker)
+        });
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            match poll(&mut ws, attempt).unwrap() {
-                WorkerStatus::Finished {
-                    outcome,
-                    record_saved,
-                } => {
-                    assert_eq!(outcome, EmailHandoffOutcome::Accepted);
-                    assert_eq!(record_saved, Some(true));
-                    break;
-                }
-                WorkerStatus::Running if std::time::Instant::now() < deadline => {
-                    std::thread::yield_now()
-                }
-                _ => panic!("fixture worker timed out"),
-            }
+        while busy() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        let collected = !busy();
+        stop.store(true, std::sync::atomic::Ordering::Release);
+        server.join().unwrap();
+        assert!(collected, "server did not collect the worker outcome");
+        let mut ws = Workspace::open(directory.path()).unwrap();
         assert_eq!(
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "accepted"

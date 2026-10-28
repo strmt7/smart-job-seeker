@@ -2953,7 +2953,21 @@ fn serve_loop(
     let mut session: Option<ReviewSession> = None;
     let mut duplicate_cursor = String::new();
     let mut next_duplicate_index = Instant::now();
+    let mut next_email_collect = Instant::now();
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
+        if Instant::now() >= next_email_collect {
+            match email_worker::collect_finished(&mut ws) {
+                Ok(Some(email_worker::WorkerStatus::Finished {
+                    record_saved: Some(false),
+                    ..
+                })) => eprintln!(
+                    "Email outcome was saved in the database but not in its attempt folder"
+                ),
+                Ok(_) => {}
+                Err(error) => eprintln!("Email outcome could not be recorded: {error}"),
+            }
+            next_email_collect = Instant::now() + Duration::from_secs(1);
+        }
         if session
             .as_ref()
             .is_some_and(|s| s.created.elapsed() > s.ttl)

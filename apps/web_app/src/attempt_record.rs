@@ -293,7 +293,12 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
             fs::symlink_metadata(entry.path().join("gmail-review.json")).is_ok_and(|meta| {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             });
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"gmail_review":gmail_review}));
+        let has_record = |name| {
+            fs::symlink_metadata(entry.path().join(name)).is_ok_and(|meta| {
+                meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
+            })
+        };
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json")}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
