@@ -16,6 +16,7 @@ mod draft_task;
 mod duplicate_compare;
 mod duplicate_search;
 mod email_draft;
+pub mod email_worker;
 mod extract_task;
 mod fit_task;
 mod form_links;

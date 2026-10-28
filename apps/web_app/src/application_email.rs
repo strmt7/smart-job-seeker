@@ -8,7 +8,7 @@ use waypoint_workspace::{email_handoff::ReviewedEmail, Workspace};
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Deserialize)]
-struct Credentials {
+pub(crate) struct Credentials {
     auth_type: String,
     email: String,
     password: String,
@@ -76,7 +76,7 @@ impl PreparedApplicationEmail {
             mime,
         })
     }
-    fn reviewed(&self) -> ReviewedEmail<'_> {
+    pub(crate) fn reviewed(&self) -> ReviewedEmail<'_> {
         ReviewedEmail {
             sender: &self.sender,
             recipient: &self.recipient,
@@ -134,6 +134,13 @@ impl PreparedApplicationEmail {
         handoff_id: &str,
         now: i64,
     ) -> Result<EmailHandoffOutcome, String> {
+        let credentials = self.connected_credentials(ws)?;
+        self.handoff_with(ws, job, approval_id, handoff_id, now, |email| {
+            Self::transmit(email, &credentials)
+        })
+    }
+
+    pub(crate) fn connected_credentials(&self, ws: &Workspace) -> Result<Credentials, String> {
         let bytes = Zeroizing::new(
             ws.gmail_credentials()
                 .map_err(|_| "Cannot read Gmail credentials")?
@@ -144,23 +151,23 @@ impl PreparedApplicationEmail {
         if credentials.auth_type != "app_password" || credentials.email != self.sender {
             return Err("Connected Gmail account does not match the reviewed sender".into());
         }
-        self.handoff_with(ws, job, approval_id, handoff_id, now, |email| {
-            let Ok(mut stream) =
-                crate::gmail_password::open_smtp(&credentials.email, &credentials.password)
-            else {
-                return EmailHandoffOutcome::NotSent;
-            };
-            match crate::smtp_handoff::handoff(
-                &mut stream,
-                email.sender,
-                email.recipient,
-                email.mime,
-            ) {
-                Ok(()) => EmailHandoffOutcome::Accepted,
-                Err(crate::smtp_handoff::HandoffError::Uncertain) => EmailHandoffOutcome::Uncertain,
-                Err(_) => EmailHandoffOutcome::NotSent,
-            }
-        })
+        Ok(credentials)
+    }
+
+    pub(crate) fn transmit(
+        email: &ReviewedEmail<'_>,
+        credentials: &Credentials,
+    ) -> EmailHandoffOutcome {
+        let Ok(mut stream) =
+            crate::gmail_password::open_smtp(&credentials.email, &credentials.password)
+        else {
+            return EmailHandoffOutcome::NotSent;
+        };
+        match crate::smtp_handoff::handoff(&mut stream, email.sender, email.recipient, email.mime) {
+            Ok(()) => EmailHandoffOutcome::Accepted,
+            Err(crate::smtp_handoff::HandoffError::Uncertain) => EmailHandoffOutcome::Uncertain,
+            Err(_) => EmailHandoffOutcome::NotSent,
+        }
     }
 }
 

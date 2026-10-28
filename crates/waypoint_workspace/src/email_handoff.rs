@@ -72,9 +72,43 @@ impl Workspace {
         })
     }
 
-    /// Reserve and spend the exact approval before invoking the supplied
-    /// transport once. The caller must run this blocking work on a bounded
-    /// worker, preserve an application record, and never auto-retry.
+    /// Persist and spend approval before starting a transport worker.
+    pub fn reserve_reviewed_email(
+        &mut self,
+        job: &JobIdentityId,
+        approval_id: &str,
+        handoff_id: &str,
+        email: &ReviewedEmail<'_>,
+        now: i64,
+    ) -> Result<(), String> {
+        let digest = digests(email)?;
+        let context = self.email_review_context(job)?;
+        self.store.reserve_email_handoff(&EmailHandoffReservation {
+            id: handoff_id,
+            job_id: job,
+            approval_id,
+            message_hash: &digest.message,
+            sender_hash: &digest.sender,
+            recipient_hash: &digest.recipient,
+            context_hash: &context,
+            created_at: now,
+        })
+    }
+
+    /// Persist the one observed outcome. Failure leaves the durable reservation
+    /// unresolved; it must not cause the transport to be invoked again.
+    pub fn finish_reviewed_email(
+        &mut self,
+        handoff_id: &str,
+        outcome: EmailHandoffOutcome,
+    ) -> Result<(), String> {
+        let finished = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .ok().and_then(|duration| i64::try_from(duration.as_secs()).ok())
+            .ok_or("Cannot timestamp email handoff; treat delivery as uncertain and do not retry automatically")?;
+        self.store.finish_email_handoff(handoff_id, outcome, finished).map_err(|_| "Email handoff outcome could not be recorded; treat delivery as uncertain and do not retry automatically".to_owned())
+    }
+
+    /// Synchronous coordinator for local fixtures and bounded worker callers.
     pub fn handoff_reviewed_email<F>(
         &mut self,
         job: &JobIdentityId,
@@ -87,24 +121,10 @@ impl Workspace {
     where
         F: FnOnce(&ReviewedEmail<'_>) -> EmailHandoffOutcome,
     {
-        let digest = digests(email)?;
-        let context = self.email_review_context(job)?;
-        self.store.reserve_email_handoff(&EmailHandoffReservation {
-            id: handoff_id,
-            job_id: job,
-            approval_id,
-            message_hash: &digest.message,
-            sender_hash: &digest.sender,
-            recipient_hash: &digest.recipient,
-            context_hash: &context,
-            created_at: now,
-        })?;
+        self.reserve_reviewed_email(job, approval_id, handoff_id, email, now)?;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| transport(email)))
             .unwrap_or(EmailHandoffOutcome::Uncertain);
-        let finished = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .ok().and_then(|duration| i64::try_from(duration.as_secs()).ok())
-            .ok_or("Cannot timestamp email handoff; treat delivery as uncertain and do not retry automatically")?;
-        self.store.finish_email_handoff(handoff_id, outcome, finished).map_err(|_| "Email handoff outcome could not be recorded; treat delivery as uncertain and do not retry automatically".to_owned())?;
+        self.finish_reviewed_email(handoff_id, outcome)?;
         Ok(outcome)
     }
 
