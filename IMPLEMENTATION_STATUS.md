@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Numeric quote context — 2026-10-29
+
+- Preference comparison now also checks a bounded same-line context around a uniquely occurring citation when the citation contains a complete numeric bound. This catches a model citing only the upper or lower endpoint of a crossing interval; the outcome is unknown and requires review. The fallback does not inspect repeated citations, split-line ranges or citations without a whole bound, and the existing limits on number formats and semantic interpretation remain. Unrelated nearby numeric text may also require review. Saved assessments from the preceding scoring version become stale.
+- Twelve focused fit tests passed with five live-model tests ignored, including fictional endpoint-only citations, repeated quotes, split lines, Unicode boundaries and the model-response integration. Web Clippy and formatting passed with one Cargo build job. No live model, real listing, browser session, peak-resource measurement or application submission was exercised for this change.
+
 ## Grouped numeric interval review — 2026-10-29
 
 - The conservative preference check now recognizes comma- and dot-separated three-digit groups as candidate integers and downgrades both supported and contradicted model judgments when a cited interval straddles the preference's number. It does not resolve locale, units, decimal values, mixed separators or unrelated numbers; it only flags a potential ambiguity for manual review. Existing assessments become stale.

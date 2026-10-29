@@ -376,13 +376,13 @@ fn compare_preferences(
         let numerical_review = matches!(status, "supported" | "contradicted")
             && quote
                 .as_str()
-                .is_some_and(|text| interval_straddles_number(preference, text));
+                .is_some_and(|text| interval_requires_review(preference, text, listing_excerpt));
         updates.push((
             id - 1,
             if numerical_review { "unknown" } else { status }.to_owned(),
             if numerical_review { Value::Null } else { quote.clone() },
             if numerical_review {
-                "The cited numeric interval crosses the preference's stated number; check the bounds and units manually.".to_owned()
+                "A numeric interval in or near the cited text crosses the preference's stated number; check the bounds and units manually.".to_owned()
             } else {
                 explanation.to_owned()
             },
@@ -408,6 +408,10 @@ fn compare_preferences(
 /// Comma/dot three-digit groups are candidates for manual review, not a
 /// locale or currency interpretation. Other ambiguous formats are ignored.
 fn interval_straddles_number(preference: &str, quote: &str) -> bool {
+    crossing_bounds(preference, quote).is_some()
+}
+
+fn crossing_bounds(preference: &str, quote: &str) -> Option<[(usize, usize); 2]> {
     fn integers(text: &str) -> Vec<(usize, usize, u64)> {
         let bytes = text.as_bytes();
         let mut result = Vec::new();
@@ -460,11 +464,45 @@ fn interval_straddles_number(preference: &str, quote: &str) -> bool {
     let target = integers(preference);
     let bounds = integers(quote);
     if target.len() != 1 || bounds.len() != 2 {
-        return false;
+        return None;
     }
     let between = quote[bounds[0].1..bounds[1].0].to_ascii_lowercase();
     let is_range = between.contains('-') || between.contains('–') || between.contains(" to ");
-    is_range && bounds[0].2 < target[0].2 && target[0].2 <= bounds[1].2
+    (is_range && bounds[0].2 < target[0].2 && target[0].2 <= bounds[1].2)
+        .then_some([(bounds[0].0, bounds[0].1), (bounds[1].0, bounds[1].1)])
+}
+
+/// The model may cite only one bound. Inspect a uniquely located quote's
+/// bounded, same-line context, but only when the quote contains a whole bound.
+fn interval_requires_review(preference: &str, quote: &str, listing: &str) -> bool {
+    if interval_straddles_number(preference, quote) {
+        return true;
+    }
+    if quote.len() > 200 {
+        return false;
+    }
+    let mut matches = listing.match_indices(quote);
+    let Some((position, _)) = matches.next() else {
+        return false;
+    };
+    if matches.next().is_some() {
+        return false;
+    }
+    let end = position + quote.len();
+    let left = listing.ceil_char_boundary(position.saturating_sub(200));
+    let right = listing.floor_char_boundary(end.saturating_add(200).min(listing.len()));
+    let start = listing[left..position]
+        .rfind('\n')
+        .map_or(left, |offset| left + offset + 1);
+    let finish = listing[end..right]
+        .find('\n')
+        .map_or(right, |offset| end + offset);
+    let context = &listing[start..finish];
+    crossing_bounds(preference, context).is_some_and(|bounds| {
+        bounds
+            .iter()
+            .any(|&(from, to)| quote.contains(&context[from..to]))
+    })
 }
 
 fn validate(
@@ -1255,6 +1293,20 @@ mod tests {
         let fallback = validate(original.clone(), &[], preference, listing).unwrap();
         let result = compare_preferences(
             &mut Fixture(
+                json!({"items":[{"id":1,"status":"supported","quote":"EUR 80,000","explanation":"The maximum meets the minimum"}]}),
+            ),
+            original,
+            fallback,
+            &[],
+            preference,
+            listing,
+        );
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+
+        let original = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let fallback = validate(original.clone(), &[], preference, listing).unwrap();
+        let result = compare_preferences(
+            &mut Fixture(
                 json!({"items":[{"id":1,"status":"contradicted","quote":listing,"explanation":"The range can fall below the minimum"}]}),
             ),
             original,
@@ -1305,6 +1357,29 @@ mod tests {
             "at least 80",
             "80 positions in 2026"
         ));
+    }
+
+    #[test]
+    fn numeric_interval_context_requires_unique_quote_and_a_whole_bound() {
+        let preference = "Minimum EUR 80,000 per year";
+        let listing = "Salary: EUR 60,000 to EUR 80,000 gross per year.";
+        assert!(interval_requires_review(preference, "EUR 80,000", listing));
+        assert!(interval_requires_review(preference, "60,000", listing));
+        assert!(!interval_requires_review(
+            preference,
+            "gross per year",
+            listing
+        ));
+        assert!(!interval_requires_review(preference, "80", listing));
+        let repeated = "Salary: EUR 60,000 to EUR 80,000. Bonus limit EUR 80,000.";
+        assert!(!interval_requires_review(preference, "80,000", repeated));
+        assert!(!interval_requires_review(
+            preference,
+            "80,000",
+            "EUR 60,000\nto EUR 80,000"
+        ));
+        let long = format!("{}\n{listing}\n{}", "é".repeat(150), "é".repeat(150));
+        assert!(interval_requires_review(preference, "EUR 80,000", &long));
     }
 
     #[test]
