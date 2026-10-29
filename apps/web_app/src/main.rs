@@ -451,6 +451,7 @@ fn reviewed_form_answers(
             .find(|f| f.selector == selector)
             .ok_or("Unknown answer field")?;
         if field.sensitive
+            || preview.model_review_selectors.contains(selector)
             || !seen.insert(selector)
             || preview
                 .suggestions
@@ -574,6 +575,7 @@ fn answer_inputs(
         .find(|f| f.selector == selector)
         .ok_or("Field is no longer available")?;
     if field.sensitive
+        || session.preview.model_review_selectors.contains(selector)
         || !matches!(
             field.field_type,
             FormFieldType::Text | FormFieldType::TextArea
@@ -2808,7 +2810,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"status":"complete","fields":preview.schema.fields,"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                json!({"status":"complete","fields":preview.fields_for_review(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
             );
             *session = Some(ReviewSession {
                 id: session_id,
@@ -3026,7 +3028,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","fields":current.preview.schema.fields,"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                        json!({"status":"complete","fields":current.preview.fields_for_review(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
                     );
                     *session = Some(current);
                 }
@@ -3568,6 +3570,7 @@ fn serve(
                 .find(|field| field.selector == selector)
                 .ok_or("Unknown file field")?;
             if field.sensitive
+                || current.preview.model_review_selectors.contains(selector)
                 || !matches!(
                     field.field_type,
                     waypoint_applications::form_mapping::FormFieldType::File
@@ -4392,6 +4395,7 @@ mod tests {
     fn reviewed_answers_require_known_non_sensitive_fields_and_unique_options() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
         let preview = form_preview::FormPreview {
+            model_review_selectors: Default::default(),
             schema: FormSchema {
                 origin: "https://example.org".into(),
                 multi_step: false,
@@ -4447,6 +4451,17 @@ mod tests {
             manual_review: vec![],
         };
         assert_eq!(reviewed_form_answers(&json!([{"selector":"#question","value":"Research interests"},{"selector":"#country","value":"Germany"}]), &preview).unwrap().len(), 2);
+        let mut model_flagged = preview.clone();
+        model_flagged
+            .model_review_selectors
+            .insert("#question".into());
+        assert!(!model_flagged.schema.fields[0].sensitive);
+        assert!(model_flagged.fields_for_review()[0].sensitive);
+        assert!(reviewed_form_answers(
+            &json!([{"selector":"#question","value":"Research interests"}]),
+            &model_flagged
+        )
+        .is_err());
         assert!(
             reviewed_form_answers(&json!([{"selector":"#visa","value":"Yes"}]), &preview).is_err()
         );
@@ -4501,6 +4516,7 @@ mod tests {
             })
             .collect();
         let preview = form_preview::FormPreview {
+            model_review_selectors: Default::default(),
             schema: FormSchema {
                 origin: "https://example.org".into(),
                 fields,
@@ -5494,6 +5510,7 @@ mod tests {
                 })
                 .unwrap();
             let preview = form_preview::FormPreview {
+                model_review_selectors: Default::default(),
                 schema: form.schema,
                 suggestions: vec![
                     ProposedMapping {

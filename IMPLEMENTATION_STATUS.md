@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Model-assisted form review flags — 2026-10-29
+
+- The local mapping model can identify additional fields for manual handling, including wording not covered by the fixed sensitivity markers. Valid flagged selectors suppress both model mappings and exact-autocomplete fallback. The review session presents these fields as sensitive and refuses them in generated answers, reviewed prefill and file attachment paths; the underlying browser schema remains unchanged for freshness checks and approval hashes. A missing or invalid model review list produces a warning, and recognized flags from a partially invalid bounded list are retained.
+- With resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), a fictional Portuguese work-eligibility label not recognized by the fixed list was flagged even though its autocomplete hint misleadingly requested email; a separate email field remained mapped. A local-browser test verified a model-flagged field is rejected before a simulated prefill grant is consumed. The model can still miss sensitive wording or flag ordinary fields, and when its review list is unavailable the warning does not convert all fields to sensitive. This is not a guarantee of safety on other pages or languages.
+- The full web suite passed 179 tests with 55 ignored before the final added regression fixture; the added form-preview and reviewed-answer tests passed separately. The local-browser grant test and local-model Portuguese test passed separately, as did the prior multilingual-browser and production-mapping model fixtures. Web Clippy passed with one Cargo job. No real employer page or submission was exercised; peak resources were not measured.
+
 ## Fictional multi-step review — 2026-10-29
 
 - Headless form review now explains how to reopen the application in a visible browser when a possible next-step control is detected. Navigation still requires the user's action; the app does not automatically click a next button as a result of this change.

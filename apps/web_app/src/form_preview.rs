@@ -17,6 +17,23 @@ pub struct FormPreview {
     pub schema: FormSchema,
     pub suggestions: Vec<ProposedMapping>,
     pub manual_review: Vec<String>,
+    pub model_review_selectors: std::collections::HashSet<String>,
+}
+
+impl FormPreview {
+    /// Preserve the original schema for change detection and approval hashes;
+    /// only the UI copy carries conservative model review flags.
+    pub fn fields_for_review(&self) -> Vec<waypoint_applications::form_mapping::FormField> {
+        self.schema
+            .fields
+            .iter()
+            .cloned()
+            .map(|mut field| {
+                field.sensitive |= self.model_review_selectors.contains(&field.selector);
+                field
+            })
+            .collect()
+    }
 }
 
 // Unsupported custom questions remain review obligations; other walls block.
@@ -166,7 +183,7 @@ pub fn apply_reviewed_text_fields(
             }
             _ => false,
         };
-        if field.sensitive || !valid {
+        if field.sensitive || preview.model_review_selectors.contains(&field.selector) || !valid {
             return Err("Field requires manual handling".into());
         }
     }
@@ -327,15 +344,17 @@ fn build_preview(
     if live.schema.multi_step {
         manual_review.push("A possible next-step control was found. Navigate and inspect the next page manually; the total number of steps is unknown".into());
     }
+    let mut model_review_selectors = std::collections::HashSet::new();
     let suggestions = if !blocked {
         let mapped = match inference {
             Some(inference) => {
-                crate::suggestions::suggest_with_diagnostics(inference, &live.schema, profile)
+                crate::suggestions::suggest_with_review(inference, &live.schema, profile)
             }
             None => Err(no_model_reason.to_owned()),
         };
         match mapped {
-            Ok((items, warnings)) => {
+            Ok((items, warnings, model_review)) => {
+                model_review_selectors = model_review;
                 manual_review.extend(warnings);
                 items
             }
@@ -361,6 +380,7 @@ fn build_preview(
         schema: live.schema,
         suggestions,
         manual_review,
+        model_review_selectors,
     };
     refresh_required_review(&mut preview);
     Ok(preview)
@@ -805,6 +825,7 @@ mod tests {
         })
         .collect();
         let mut preview = FormPreview {
+            model_review_selectors: Default::default(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
                 fields,
@@ -910,7 +931,7 @@ mod tests {
                 _: u32,
             ) -> Result<(Value, UsageReport), InferenceError> {
                 Ok((
-                    json!({"mappings":[{"selector":"#first","profile_key":"last_name"}]}),
+                    json!({"mappings":[{"selector":"#first","profile_key":"last_name"}],"manual_review":[]}),
                     UsageReport {
                         prompt_tokens: 0,
                         completion_tokens: 0,
@@ -957,6 +978,63 @@ mod tests {
         });
         refresh_required_review(&mut preview);
         assert!(preview.manual_review.is_empty());
+    }
+
+    #[test]
+    fn model_review_flag_is_preserved_without_mutating_browser_schema() {
+        struct ReviewModel;
+        impl Inference for ReviewModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    json!({"mappings":[],"manual_review":["#question"]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let schema = FormSchema {
+            origin: "https://example.test".into(),
+            fields: vec![waypoint_applications::form_mapping::FormField {
+                selector: "#question".into(),
+                label: "Tem autorização legal para trabalhar neste país?".into(),
+                field_type: FormFieldType::Text,
+                required: true,
+                sensitive: false,
+                autocomplete: Some("email".into()),
+            }],
+            multi_step: false,
+            steps: 1,
+        };
+        let live = LiveForm {
+            origin: schema.origin.clone(),
+            schema: schema.clone(),
+            walls: vec![],
+        };
+        let preview = suggest_for_live_form(
+            live,
+            &mut ReviewModel,
+            &json!({"email":"avery@example.invalid"}),
+        )
+        .unwrap();
+        assert_eq!(preview.schema, schema);
+        assert!(preview.suggestions.is_empty());
+        assert!(preview.model_review_selectors.contains("#question"));
+        assert!(preview.fields_for_review()[0].sensitive);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|warning| warning.contains("Model flagged a field")));
     }
     #[test]
     fn wall_stops_before_suggestions() {
@@ -1152,7 +1230,7 @@ mod tests {
                 _: u32,
             ) -> Result<(Value, UsageReport), InferenceError> {
                 Ok((
-                    json!({"mappings":[{"selector":"#de","profile_key":"country"}]}),
+                    json!({"mappings":[{"selector":"#de","profile_key":"country"}],"manual_review":[]}),
                     UsageReport {
                         prompt_tokens: 0,
                         completion_tokens: 0,
@@ -1210,6 +1288,27 @@ mod tests {
             consumed: false,
             expired: false,
         };
+        let mut model_flagged = preview.clone();
+        model_flagged
+            .model_review_selectors
+            .insert(preview.suggestions[0].field_selector.clone());
+        assert!(apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            &url,
+            &model_flagged,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut Vec::new()
+            }
+        )
+        .is_err());
+        assert!(!grant.consumed);
         assert_eq!(
             apply_reviewed_text_fields(
                 &mut ws,
@@ -1348,6 +1447,7 @@ mod tests {
         )
         .is_err());
         let partial = FormPreview {
+            model_review_selectors: Default::default(),
             schema: result.schema.clone(),
             suggestions: vec![
                 ProposedMapping {
@@ -1397,6 +1497,7 @@ mod tests {
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0]["selector"], "#candidate");
         let changed = FormPreview {
+            model_review_selectors: Default::default(),
             schema: result.schema.clone(),
             suggestions: vec![
                 ProposedMapping {

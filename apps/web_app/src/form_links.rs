@@ -264,6 +264,7 @@ pub fn start(
         let preview = match navigation {
             Ok(preview) => preview,
             Err(error) => form_preview::FormPreview {
+                model_review_selectors: Default::default(),
                 schema: waypoint_applications::form_mapping::FormSchema {
                     origin: String::new(),
                     fields: vec![],
