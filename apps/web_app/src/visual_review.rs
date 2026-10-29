@@ -7,6 +7,7 @@ struct Task {
     session: String,
     page_signature: String,
     segment: usize,
+    half: Option<usize>,
     screenshot_hash: String,
     result: Option<Result<Value, String>>,
     completed: Option<std::time::Instant>,
@@ -25,6 +26,7 @@ pub fn set_completed_fixture(id: &str, session: &str, signature: &str, image: &s
         session: session.into(),
         page_signature: signature.into(),
         segment: 0,
+        half: None,
         screenshot_hash: waypoint_domain::Sha256Digest::of(image).as_str().into(),
         result: Some(Ok(json!({"observations":[],"comparisons":[]}))),
         completed: Some(std::time::Instant::now()),
@@ -163,10 +165,26 @@ pub fn segment_geometry(
     ))
 }
 
+/// A dense segment can be rechecked in two bounded, non-overlapping halves.
+pub fn segment_half_geometry(
+    width: f64,
+    height: f64,
+    index: usize,
+    half: Option<usize>,
+) -> Result<(f64, f64, f64, usize, bool), String> {
+    let (width, y, height, total, complete) = segment_geometry(width, height, index)?;
+    match half {
+        None => Ok((width, y, height, total, complete)),
+        Some(0) => Ok((width, y, height / 2.0, total, complete)),
+        Some(1) => Ok((width, y + height / 2.0, height / 2.0, total, complete)),
+        _ => Err("Invalid visual segment subdivision".into()),
+    }
+}
+
 pub fn start(
     id: String,
     session: String,
-    capture: (String, usize),
+    capture: (String, usize, Option<usize>),
     model: String,
     image: String,
     expected: Vec<(String, String)>,
@@ -191,6 +209,7 @@ pub fn start(
         session,
         page_signature: capture.0,
         segment: capture.1,
+        half: capture.2,
         screenshot_hash: waypoint_domain::Sha256Digest::of(&image)
             .as_str()
             .to_owned(),
@@ -302,11 +321,12 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let session = task.session.clone();
     let page_signature = task.page_signature.clone();
     let segment = task.segment;
+    let half = task.half;
     let screenshot_hash = task.screenshot_hash.clone();
     let record_saved = task.record_saved;
     let output = match result {
         Ok(observed) => {
-            json!({"status":"complete","session_id":session,"page_signature":page_signature,"segment":segment,"screenshot_hash":screenshot_hash,"visual_review":observed,"record_saved":record_saved})
+            json!({"status":"complete","session_id":session,"page_signature":page_signature,"segment":segment,"half":half,"screenshot_hash":screenshot_hash,"visual_review":observed,"record_saved":record_saved})
         }
         Err(error) => {
             json!({"status":"failed","session_id":session,"error":error,"record_saved":record_saved})
@@ -345,6 +365,7 @@ mod tests {
             session: "fixture-session".into(),
             page_signature: "fixture-page".into(),
             segment: 0,
+            half: None,
             screenshot_hash: "fixture-hash".into(),
             result: Some(Ok(json!({"observations":[],"comparisons":[]}))),
             completed: Some(std::time::Instant::now()),
@@ -425,6 +446,18 @@ mod tests {
             (2048.0, 10000.0, 2000.0, 6, false)
         );
         assert!(segment_geometry(f64::NAN, 1.0, 0).is_err());
+    }
+    #[test]
+    fn dense_segment_halves_cover_the_original_without_overlap() {
+        assert_eq!(
+            segment_half_geometry(1200.0, 2600.0, 1, Some(0)).unwrap(),
+            (1200.0, 2000.0, 300.0, 2, true)
+        );
+        assert_eq!(
+            segment_half_geometry(1200.0, 2600.0, 1, Some(1)).unwrap(),
+            (1200.0, 2300.0, 300.0, 2, true)
+        );
+        assert!(segment_half_geometry(1200.0, 2600.0, 1, Some(2)).is_err());
     }
     #[test]
     fn sends_image_to_a_local_vision_fixture_and_compares_observations() {

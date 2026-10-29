@@ -224,23 +224,24 @@ function showFormPreview(job,result){setWorkspaceView('applications');
   if(fillInProgress || visualButton.disabled)return;
   visualButton.disabled=true;if(fillButton)fillButton.disabled=true;visualPanel.replaceChildren(element('p','Inspecting bounded page segments with the local vision model…'));
   try{
-   let total=null,signature=null,coverage=true,allFresh=true,expected=[];const observations=[];
-   for(let segment=0;total===null || segment<total;segment++){
-    const started=await api('/api/form/visual-review-start',{session_id:result.session_id,segment});
-    sessionStorage.setItem('waypoint-form-vision',JSON.stringify({task:started.task_id,session:result.session_id,segment,comparisons_truncated:started.comparisons_truncated===true}));
-    if(!Number.isSafeInteger(started.segments) || started.segments<1 || started.segments>6 || started.segment!==segment || typeof started.page_signature!=='string')throw new Error('Invalid visual capture metadata');
-    if(total===null){total=started.segments;signature=started.page_signature;coverage=started.coverage_complete;visualPanel.replaceChildren(element('p',`The model inspects these captured page segments sequentially. Hidden content, nested scrollers and cross-origin frames may be missed. Up to 200 supported filled fields are compared; inspect all fields manually.${started.comparisons_truncated?' More than 200 supported fields were filled, so some are not included in the comparison.':''}`,'footnote'));}
+   let total=null,signature=null,coverage=true,allFresh=true,expected=[];const observations=[],queue=[{segment:0,half:null}];
+   for(let cursor=0;cursor<queue.length;cursor++){
+    const {segment,half}=queue[cursor];
+    const started=await api('/api/form/visual-review-start',{session_id:result.session_id,segment,half});
+    sessionStorage.setItem('waypoint-form-vision',JSON.stringify({task:started.task_id,session:result.session_id,segment,half,comparisons_truncated:started.comparisons_truncated===true}));
+    if(!Number.isSafeInteger(started.segments) || started.segments<1 || started.segments>6 || started.segment!==segment || started.half!==half || typeof started.page_signature!=='string')throw new Error('Invalid visual capture metadata');
+    if(total===null){total=started.segments;signature=started.page_signature;coverage=started.coverage_complete;for(let next=1;next<total;next++)queue.push({segment:next,half:null});visualPanel.replaceChildren(element('p',`The model inspects these captured page segments sequentially. Hidden content, nested scrollers and cross-origin frames may be missed. Up to 200 supported filled fields are compared; inspect all fields manually.${started.comparisons_truncated?' More than 200 supported fields were filled, so some are not included in the comparison.':''}`,'footnote'));}
     else if(started.segments!==total || started.page_signature!==signature)throw new Error('The page URL or dimensions changed between captures; inspect again');
     if(started.record_saved===false)visualPanel.append(element('p','This visual capture could not be saved to the application record.','review-label'));
-    const captured=document.createElement('img');captured.alt=`Page segment ${segment+1} sent to the local vision model`;captured.src=`data:image/png;base64,${started.screenshot}`;visualPanel.append(element('h4',`Page segment ${segment+1} of ${total}`),captured);
+    const captured=document.createElement('img');captured.alt=`Page segment ${segment+1}${half===null?'':`, half ${half+1}`} sent to the local vision model`;captured.src=`data:image/png;base64,${started.screenshot}`;visualPanel.append(element('h4',`Page segment ${segment+1} of ${total}${half===null?'':`, half ${half+1}`}`),captured);
     let observation;do{await new Promise(resolve=>setTimeout(resolve,1500));if(!visualPanel.isConnected)return;observation=await api('/api/form/visual-review-status',{task_id:started.task_id});}while(observation.status==='running');
     sessionStorage.removeItem('waypoint-form-vision');
     if(observation.record_saved===false)visualPanel.append(element('p','This visual result could not be saved to the application record.','review-label'));
     if(observation.status!=='complete')throw new Error(observation.error || 'Visual review failed');
     if(observation.visual_freshness!=='same')allFresh=false;if(observation.freshness_record_saved===false)visualPanel.append(element('p','This fresh-capture check was not saved to the application record.','review-label'));if(['changed','unavailable'].includes(observation.visual_freshness))await refresh().catch(()=>{});if(observation.visual_freshness==='changed')visualPanel.append(element('p','This page segment changed after the captured image. Inspect the live form and review again; animations can also cause this warning.','review-label'));else if(observation.visual_freshness==='unavailable')visualPanel.append(element('p','A fresh page capture was unavailable. Inspect the live form manually.','review-label'));
     const review=observation.visual_review;if(!review || !Array.isArray(review.observations) || !Array.isArray(review.comparisons))throw new Error('Invalid visual review result');
-    if(review.observation_limit_reached===true){visualPanel.append(element('p','This segment reached the 20-observation limit; additional fields may have been missed. Inspect the live page manually.','review-label'));await refresh().catch(()=>{});}
-    if(segment===0)expected=review.comparisons;
+    if(segment===0 && half===null)expected=review.comparisons;
+    if(review.observation_limit_reached===true){visualPanel.append(element('p',half===null?'This segment reached the observation limit; inspecting its two halves. Fields at the split may be missed, so inspect the live page manually.':'This half reached the observation limit; additional fields may have been missed. Inspect the live page manually.','review-label'));await refresh().catch(()=>{});if(half===null){queue.push({segment,half:0},{segment,half:1});continue;}}
     observations.push(...review.observations);
     if(!review.observations.length)visualPanel.append(element('p','No fields transcribed from this segment.','review-label'));
     for(const item of review.observations)visualPanel.append(element('p',`${item.label}: ${item.visible_value}`));

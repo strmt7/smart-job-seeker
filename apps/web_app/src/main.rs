@@ -2953,12 +2953,19 @@ fn serve(
             if segment > 5 {
                 return Err("Visual segment is outside the capture limit".into());
             }
+            let half = match body.get("half") {
+                None | Some(Value::Null) => None,
+                Some(Value::Number(value)) if value.as_u64().is_some_and(|n| n <= 1) => {
+                    Some(value.as_u64().unwrap() as usize)
+                }
+                _ => return Err("Invalid visual segment subdivision".into()),
+            };
             let (width, height) = current
                 .driver
                 .page_dimensions()
                 .map_err(|e| e.to_string())?;
             let (clip_width, y, clip_height, total, coverage_complete) =
-                visual_review::segment_geometry(width, height, segment as usize)?;
+                visual_review::segment_half_geometry(width, height, segment as usize, half)?;
             let url = current.driver.current_url().map_err(|e| e.to_string())?;
             let signature = visual_review::page_signature(&url, width, height);
             let screenshot = current
@@ -2994,7 +3001,7 @@ fn serve(
             visual_review::start(
                 task_id.clone(),
                 current.id.clone(),
-                (signature.as_str().to_owned(), segment as usize),
+                (signature.as_str().to_owned(), segment as usize, half),
                 model,
                 screenshot.clone(),
                 expected,
@@ -3002,13 +3009,13 @@ fn serve(
             )?;
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
-                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"half":half,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
                 }).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"record_saved":record_saved}),
+                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"half":half,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"record_saved":record_saved}),
             );
         }
         "/api/form/visual-review-status" => {
@@ -3058,8 +3065,15 @@ fn serve(
                     }
                     let fresh_screenshot = result["segment"].as_u64().and_then(|segment| {
                         let (clip_width, y, clip_height, _, _) =
-                            visual_review::segment_geometry(width, height, segment as usize)
-                                .ok()?;
+                            visual_review::segment_half_geometry(
+                                width,
+                                height,
+                                segment as usize,
+                                result["half"]
+                                    .as_u64()
+                                    .and_then(|h| usize::try_from(h).ok()),
+                            )
+                            .ok()?;
                         current
                             .driver
                             .screenshot_segment(clip_width, y, clip_height)

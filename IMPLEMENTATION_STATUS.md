@@ -107,6 +107,11 @@
 - When a segment returns the maximum 20 model observations, the application is marked for manual review and the normal and recovered review flows warn that additional fields may have been missed. The saved visual result includes the limit indicator. Fewer observations also do not prove completeness.
 - With one build job and one test thread, ten visual-review tests passed (one unrelated PDF test ignored), web-app Clippy passed, and the visual comparison UI check passed. No live model, real employer site or resource peaks were measured. No application was sent.
 
+## Adaptive dense-segment review — 2026-10-29
+
+- A visual segment reaching the 20-observation limit is rechecked sequentially in two non-overlapping halves; at most 18 captures are attempted for six segments. The job remains flagged for manual review because fields crossing the split or otherwise hidden can be missed. Saved captures identify their half and freshness recaptures use the same geometry.
+- With one build job and one test thread, eleven visual-review tests passed (one unrelated PDF test ignored), web-app Clippy passed, and visual comparison and adaptive-retry UI fixture checks passed. A live model, employer site, full application startup and resource peaks were not measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

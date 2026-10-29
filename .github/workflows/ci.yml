@@ -22,6 +22,7 @@ jobs:
           node --check apps/web_app/web/app.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/visual-review-ui.test.js
+          node apps/web_app/tests/visual-dense-retry-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/search-coverage-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
