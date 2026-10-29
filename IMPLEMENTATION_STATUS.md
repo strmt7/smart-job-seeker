@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Explicit conflicts in additional fit evidence — 2026-10-29
+
+- The additional search for initially unknown requirements can now propose an explicit contradiction as well as support; the separate qualification comparison must agree before the judgment contributes to the score. In this recovery path, a contradiction is considered only when the cited fact has an English negation marker. This is a conservative lexical prerequisite, not proof of a relevant conflict; other languages or implicit conflicts may remain unknown. It does not govern the first-pass rubric.
+- The resident qwen3.5:9b model produced 87% on all three repeated runs of one fictional assessment. The recovery pass proposed an unrelated fact for SQL on each run, and the qualification comparison downgraded it. In a separate fictional near-miss test, both model passes incorrectly treated one year of SQL as proving insufficient total experience. After the guard, that item remained unknown, six years of Python supported the five-year requirement, and an explicit statement of never holding a nursing licence was marked contradicted. The result was 50%, range 33–67%. These cases do not establish general model accuracy or repeatability; negation can refer to unrelated context and model agreement can still be wrong.
+- The previous Python-evidence live case also passed after the change. The web suite passed (192 passed, 63 ignored), as did web Clippy and formatting. Live tests used one already GPU-resident local model after a free-memory preflight; peak resources were not measured. No application was sent.
+
 ## Additional evidence for unknown requirements — 2026-10-29
 
 - Fit assessment now asks the local model to revisit up to six initially unknown listing criteria against the selected candidate facts. Candidate facts must be referenced by valid index and then pass the existing separate qualification comparison before they affect the score. Responses with missing, duplicate, or invalid IDs or fact indices, model failures, and payloads over 6,000 bytes leave the original unknowns in place. The UI reports selection and proposal counts; the changed input digest marks older assessments stale.
