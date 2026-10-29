@@ -187,9 +187,51 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
         }
     }
     let location = bounded(&extracted.join("; "), 200);
+    let salary = job
+        .get("baseSalary")
+        .filter(|value| !value.is_null())
+        .and_then(|value| {
+            let encoded = serde_json::to_string(value).ok()?;
+            (encoded.len() <= 4096).then_some(value.clone())
+        });
     Ok(Some(
-        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"requisition_id":requisition_id,"extraction":"structured"}),
+        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"requisition_id":requisition_id,"extraction":"structured","salary_evidence":salary}),
     ))
+}
+
+/// Read employer-provided structured salary evidence from a retained capture.
+/// This is source data only; it does not establish gross/net basis or suitability.
+pub fn captured_salary_evidence(metadata: &[u8]) -> Result<Option<Value>, String> {
+    let capture: Value =
+        serde_json::from_slice(metadata).map_err(|_| "Saved listing metadata is invalid")?;
+    if capture["structured_source_status"].as_str() != Some("captured") {
+        return Ok(None);
+    }
+    let scripts = capture["structured_source_scripts"]
+        .as_array()
+        .ok_or("Saved structured source is invalid")?;
+    if scripts.len() > 8 {
+        return Err("Saved structured source exceeds the limit".into());
+    }
+    let mut values = Vec::with_capacity(scripts.len());
+    let mut total = 0usize;
+    for script in scripts {
+        let value = script
+            .as_str()
+            .ok_or("Saved structured source is invalid")?;
+        total = total.saturating_add(value.len());
+        if total > 256 * 1024 {
+            return Err("Saved structured source exceeds the limit".into());
+        }
+        values.push(value.to_owned());
+    }
+    let url = capture["source_url"].as_str().unwrap_or("");
+    Ok(parse(&values, url)?.and_then(|posting| {
+        posting
+            .get("salary_evidence")
+            .filter(|value| !value.is_null())
+            .cloned()
+    }))
 }
 
 /// Only exact excerpts are accepted. Exact text is evidence, not proof that
@@ -543,6 +585,24 @@ mod tests {
         assert!(parse(&["{}".into()], "https://example.org/job")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn salary_evidence_comes_only_from_one_bounded_captured_listing() {
+        let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"maxValue":80000,"unitText":"YEAR"}}}).to_string();
+        let metadata = json!({"source_url":"https://example.test/job","structured_source_status":"captured","structured_source_scripts":[posting]}).to_string();
+        let salary = captured_salary_evidence(metadata.as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(salary["currency"], "EUR");
+        assert_eq!(salary["value"]["minValue"], 60000);
+        assert!(
+            captured_salary_evidence(br#"{"structured_source_status":"unavailable"}"#)
+                .unwrap()
+                .is_none()
+        );
+        let ambiguous = json!({"structured_source_status":"captured","structured_source_scripts":[posting, posting]}).to_string();
+        assert!(captured_salary_evidence(ambiguous.as_bytes()).is_err());
     }
 
     #[test]

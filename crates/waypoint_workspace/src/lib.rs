@@ -544,6 +544,13 @@ impl Workspace {
         Ok(self.store.job_capture(id.as_str())?)
     }
 
+    pub fn job_capture_metadata(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        Ok(self.store.job_capture_metadata(id.as_str())?)
+    }
+
     pub fn save_gmail_credentials(&self, value: &[u8]) -> Result<(), WorkspaceError> {
         Ok(self.store.save_gmail_credentials(value)?)
     }

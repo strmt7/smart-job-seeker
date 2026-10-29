@@ -129,7 +129,12 @@ pub const CONFIRMATION_SCAN_LIMIT: usize = 40_000;
 /// identical to the original for every input (Unicode-aware lowercasing can
 /// change byte lengths and would mis-slice).
 pub fn extract_application_ref(text: &str) -> Option<String> {
-    let text = &text[..text.len().min(CONFIRMATION_SCAN_LIMIT)];
+    let mut end = text.len().min(CONFIRMATION_SCAN_LIMIT);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let truncated = end < text.len();
+    let text = &text[..end];
     const KEYS: &[&str] = &[
         "application id",
         "application reference",
@@ -163,7 +168,7 @@ pub fn extract_application_ref(text: &str) -> Option<String> {
         let mut from = 0usize;
         while let Some(pos) = lowered[from..].find(key) {
             let start = from + pos + key.len();
-            if let Some(found) = identifier_in(&text[start..], STOPWORDS) {
+            if let Some(found) = identifier_in(&text[start..], STOPWORDS, truncated) {
                 return Some(found);
             }
             from = start;
@@ -178,8 +183,12 @@ pub fn extract_application_ref(text: &str) -> Option<String> {
 /// The first token in `tail` that could plausibly be an identifier: at least
 /// three characters, containing a digit (which is what makes it a reference
 /// rather than a word), and not a connector word.
-fn identifier_in(tail: &str, stopwords: &[&str]) -> Option<String> {
+fn identifier_in(tail: &str, stopwords: &[&str], truncated: bool) -> Option<String> {
     for token in tail.split_whitespace().take(4) {
+        // A token reaching the scan boundary may be only part of an ID.
+        if truncated && token.as_bytes().as_ptr_range().end == tail.as_bytes().as_ptr_range().end {
+            continue;
+        }
         let cleaned: String = token
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
@@ -276,5 +285,26 @@ mod tests {
         // Key present but no identifier: still not a confirmation.
         assert_eq!(extract_application_ref("Application ID: "), None);
         assert_eq!(extract_application_ref("Application id: —"), None);
+    }
+
+    #[test]
+    fn confirmation_limit_does_not_split_utf8_or_accept_partial_identifiers() {
+        let multibyte = format!(
+            "{}éApplication ID: ABC123",
+            "x".repeat(CONFIRMATION_SCAN_LIMIT - 1)
+        );
+        assert_eq!(extract_application_ref(&multibyte), None);
+        let truncated_id = "Application ID: ABC123";
+        let partial = format!(
+            "{}{truncated_id}EXTRA",
+            " ".repeat(CONFIRMATION_SCAN_LIMIT - truncated_id.len())
+        );
+        assert_eq!(extract_application_ref(&partial), None);
+        let complete_id = "Application ID: ABC123 ";
+        let complete = format!(
+            "{}{complete_id}more",
+            " ".repeat(CONFIRMATION_SCAN_LIMIT - complete_id.len())
+        );
+        assert_eq!(extract_application_ref(&complete), Some("ABC123".into()));
     }
 }

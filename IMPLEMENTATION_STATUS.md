@@ -1,5 +1,15 @@
 # Implementation checkpoint
 
+## Confirmation scan boundary checkpoint — 2026-10-29
+
+- The bounded application-reference scan now stops at a UTF-8 boundary and refuses an identifier token cut by the scan limit. This prevents a panic and avoids accepting a partial reference as a confirmation; it does not send an application.
+- Five focused driver tests and `cargo clippy -p waypoint_applications --all-targets -- -D warnings` passed with one build job. The web-app suite subsequently passed 144 tests with 37 ignored, and web-app Clippy passed. No live employer response was tested; peak resource use was not measured.
+
+## Listing metadata access checkpoint — 2026-10-29
+
+- Existing listing-capture metadata can be read without loading or decrypting screenshot segments; repeated listing inspection uses this path. Structured source remains in the existing encrypted capture when capture succeeds. Job details can request bounded `baseSalary` evidence from one saved structured posting and display its stated fields and capture date for manual review. This is evidence from the original capture, not a salary comparison; filter wiring, employer-salary normalization and fresh-host testing remain incomplete.
+- The DPAPI capture test passed, including metadata access when a fictional screenshot segment is corrupted. The web listing-inspection suite passed 8 tests with 3 local-browser tests ignored, including captured salary and ambiguous-posting cases. A local HTTP handler test passed with a fictional encrypted capture and checked returned salary evidence and timestamp. The real display function was exercised in a synthetic headless Edge page with a mocked response at 1200 and 375 pixels; it showed the evidence, date and verification caveat without horizontal overflow or console errors. This was not a running-app end-to-end test. One Cargo build job was used; peak resource use was not measured.
+
 ## Salary comparability checkpoint — 2026-10-29
 
 - Salary thresholds now carry optional currency, gross/net basis, period and compensation category. If these are absent or disagree with a stated job amount, the comparison is explicitly unknown; a lower bound below the threshold no longer acts as an upper bound. Invalid inverted ranges are also unknown. Older settings without the new optional fields remain readable.

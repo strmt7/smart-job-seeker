@@ -1473,6 +1473,30 @@ fn serve(
                 json!({"task_id":candidate_task::pending()?}),
             );
         }
+        "/api/listing-salary-evidence" => {
+            let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            if ws.job(&id).map_err(|e| e.to_string())?.is_none() {
+                return Err("Job not found".into());
+            }
+            let metadata = ws.job_capture_metadata(&id).map_err(|e| e.to_string())?;
+            let (salary, captured_at) = if let Some(metadata) = metadata {
+                let salary = candidate_task::captured_salary_evidence(&metadata)?;
+                let capture: Value = serde_json::from_slice(&metadata)
+                    .map_err(|_| "Saved listing metadata is invalid")?;
+                let captured_at = capture["captured_at"]
+                    .as_i64()
+                    .filter(|time| *time > 0 && *time <= 253_402_300_799);
+                (salary, captured_at)
+            } else {
+                (None, None)
+            };
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"salary_evidence":salary,"captured_at":captured_at}),
+            );
+        }
         "/api/listing-inspect/discard" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             candidate_task::discard(id)?;
@@ -1508,10 +1532,10 @@ fn serve(
                             }
                             Ok(false) => {
                                 let existing = ws
-                                    .job_capture(&job_id)
+                                    .job_capture_metadata(&job_id)
                                     .ok()
                                     .flatten()
-                                    .and_then(|(metadata, _)| {
+                                    .and_then(|metadata| {
                                         serde_json::from_slice::<Value>(&metadata).ok()
                                     })
                                     .unwrap_or(Value::Null);
@@ -3816,6 +3840,45 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn saved_salary_evidence_endpoint_reads_captured_source() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let added = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.test/job","title":"Engineer","employer":"Example"}),
+            1,
+        )
+        .unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}}}).to_string();
+        let metadata = json!({"source_url":"https://example.test/job","captured_at":1750000000,"structured_source_status":"captured","structured_source_scripts":[posting]}).to_string();
+        ws.save_job_capture(
+            &id,
+            metadata.as_bytes(),
+            &[b"\x89PNG\r\n\x1a\nfixture".to_vec()],
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"id": id.as_str()}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/listing-salary-evidence HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["salary_evidence"]["currency"], "EUR");
+        assert_eq!(result["salary_evidence"]["value"]["minValue"], 60000);
+        assert_eq!(result["captured_at"], 1750000000);
+    }
     #[test]
     #[ignore = "queries the existing local Ollama inventory without loading a model"]
     fn model_inventory_http_reads_local_ollama() {

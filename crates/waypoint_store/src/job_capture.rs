@@ -51,7 +51,8 @@ impl Store {
         transaction.commit()?;
         Ok(added == 1)
     }
-    pub fn job_capture(&self, id: &str) -> Result<Option<JobCapture>, StoreError> {
+    /// Read the bounded metadata without loading or decrypting screenshot segments.
+    pub fn job_capture_metadata(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let metadata: Option<Vec<u8>> = self
             .conn
             .query_row(
@@ -68,7 +69,18 @@ impl Store {
             .as_ref()
             .filter(|s| s.kind() == SealerKind::Dpapi)
             .ok_or_else(|| failure(waypoint_seal::SealError::Unavailable))?;
-        let metadata = sealer.unseal(&metadata).map_err(failure)?;
+        Ok(Some(sealer.unseal(&metadata).map_err(failure)?))
+    }
+
+    pub fn job_capture(&self, id: &str) -> Result<Option<JobCapture>, StoreError> {
+        let Some(metadata) = self.job_capture_metadata(id)? else {
+            return Ok(None);
+        };
+        let sealer = self
+            .sealer
+            .as_ref()
+            .filter(|s| s.kind() == SealerKind::Dpapi)
+            .ok_or_else(|| failure(waypoint_seal::SealError::Unavailable))?;
         let mut statement = self.conn.prepare(
             "SELECT sealed_png FROM job_capture_segments WHERE job_id=?1 ORDER BY sequence",
         )?;
@@ -130,6 +142,11 @@ mod tests {
             br#"{"structured_source_scripts":["fictional original listing"]}"#
         );
         assert_eq!(segments, vec![png.clone()]);
+        assert_eq!(
+            store.job_capture_metadata("job").unwrap().unwrap(),
+            metadata
+        );
+        assert!(store.job_capture_metadata("missing").unwrap().is_none());
         let encrypted: Vec<u8> = store
             .conn
             .query_row(
@@ -150,5 +167,17 @@ mod tests {
         assert!(!encrypted_metadata
             .windows(b"fictional original listing".len())
             .any(|w| w == b"fictional original listing"));
+        store
+            .conn
+            .execute(
+                "UPDATE job_capture_segments SET sealed_png=?1 WHERE job_id='job'",
+                [b"invalid".as_slice()],
+            )
+            .unwrap();
+        assert_eq!(
+            store.job_capture_metadata("job").unwrap().unwrap(),
+            metadata
+        );
+        assert!(store.job_capture("job").is_err());
     }
 }
