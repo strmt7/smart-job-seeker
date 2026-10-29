@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Batch search coverage summary — 2026-10-29
+
+- Batch web-search completion now reports requested, attempted, successful, failed and unattempted provider pages, plus counts of pages with truncated result processing, unresponsive engines, or unknown engine availability. The interface calls pages attempted rather than completed and shows the counts after normal completion, cancellation, interruption, or recovery. These are provider-page counts, not estimates of all jobs or websites searched; candidate links remain unverified.
+- A fictional loopback provider returned one empty successful page and one HTTP 503; the batch reported one success and one failure. Additional tests covered an early stop, replay and mixed coverage, and the UI summary. The web suite passed (197 passed, 64 ignored), along with web Clippy, formatting and the search-coverage UI test. No external search or application was sent.
+
 ## Capture before reviewed link navigation — 2026-10-29
 
 - Before opening a user-reviewed application link, the navigation worker now attempts to save bounded screenshots of the current page in the attempt folder. Capture failure or an unavailable record adds a manual-review warning; a failed capture also attempts to record an incomplete event and manual-review status. The normal page capture limits still apply and screenshots do not prove hidden content was captured. A user navigating manually before requesting a rescan cannot be captured retroactively.

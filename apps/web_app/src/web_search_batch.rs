@@ -57,6 +57,32 @@ fn send(tx: &SyncSender<Message>, mut message: Message, cancel: &AtomicBool) -> 
         }
     }
 }
+
+/// Count requested provider pages, not jobs or distinct websites. Provider
+/// engine availability and provider-side truncation are reported separately.
+fn coverage(total: usize, history: &[Value]) -> Value {
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    let mut limited = 0usize;
+    let mut engines_unavailable = 0usize;
+    let mut availability_unknown = 0usize;
+    for page in history {
+        if page.get("error").is_some() {
+            failed += 1;
+        } else if let Some(data) = page.get("data") {
+            succeeded += 1;
+            if data["limited"] == true {
+                limited += 1;
+            }
+            match data["unresponsive_engines"].as_u64() {
+                Some(0) => {}
+                Some(_) => engines_unavailable += 1,
+                None => availability_unknown += 1,
+            }
+        }
+    }
+    json!({"requested_pages":total,"attempted_pages":history.len(),"succeeded_pages":succeeded,"failed_pages":failed,"unattempted_pages":total.saturating_sub(history.len()),"limited_pages":limited,"pages_with_unresponsive_engines":engines_unavailable,"pages_with_unknown_engine_availability":availability_unknown})
+}
 pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> Result<(), String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
@@ -203,7 +229,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 task.total,
                 task.cancel.load(Ordering::Acquire),
             );
-            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"history":task.history});
+            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history});
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone()));
             *tasks = None;
@@ -219,9 +245,9 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 task.cancel.load(Ordering::Acquire),
             );
             let response = if cancelled {
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"history":task.history})
+                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"coverage":coverage(total, &task.history),"history":task.history})
             } else {
-                json!({"status":"failed","processed":processed,"total":total,"error":"Batch search stopped before completion","history":task.history})
+                json!({"status":"failed","processed":processed,"total":total,"error":"Batch search stopped before completion","coverage":coverage(total, &task.history),"history":task.history})
             };
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone()));
@@ -245,6 +271,112 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::time::Instant;
+    #[test]
+    fn coverage_distinguishes_failed_limited_and_unattempted_pages() {
+        let history = vec![
+            json!({"data":{"results":[],"limited":true,"unresponsive_engines":2}}),
+            json!({"error":"Provider returned HTTP 503"}),
+            json!({"data":{"results":[],"limited":false,"unresponsive_engines":null}}),
+        ];
+        assert_eq!(
+            coverage(5, &history),
+            json!({
+                "requested_pages":5,"attempted_pages":3,"succeeded_pages":2,
+                "failed_pages":1,"unattempted_pages":2,"limited_pages":1,
+                "pages_with_unresponsive_engines":1,"pages_with_unknown_engine_availability":1
+            })
+        );
+    }
+
+    #[test]
+    fn completed_batch_reports_failed_pages_in_coverage() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(3);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "mixed-coverage".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 3,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+        });
+        tx.send(Message::Query(
+            "role".into(),
+            1,
+            Ok(json!({"results":[],"limited":true,"unresponsive_engines":null})),
+        ))
+        .unwrap();
+        tx.send(Message::Query(
+            "role".into(),
+            2,
+            Err("provider failed".into()),
+        ))
+        .unwrap();
+        tx.send(Message::Done(true)).unwrap();
+        let _ = poll("mixed-coverage", 0).unwrap();
+        let _ = poll("mixed-coverage", 1).unwrap();
+        let done = poll("mixed-coverage", 2).unwrap();
+        assert_eq!(done["coverage"]["succeeded_pages"], 1);
+        assert_eq!(done["coverage"]["failed_pages"], 1);
+        assert_eq!(done["coverage"]["unattempted_pages"], 1);
+        assert_eq!(done["coverage"]["limited_pages"], 1);
+        assert_eq!(done["limit_reached"], true);
+        assert_eq!(poll("mixed-coverage", 0).unwrap(), done);
+    }
+
+    #[test]
+    fn local_provider_failure_is_counted_after_a_successful_page() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let provider = std::thread::spawn(move || {
+            for page in 1..=2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let (status, body) = if page == 1 {
+                    ("200 OK", r#"{"results":[],"unresponsive_engines":[]}"#)
+                } else {
+                    ("503 Service Unavailable", "unavailable")
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        start(
+            "mixed-local-provider".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec!["fixture role".into()],
+            2,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = poll("mixed-local-provider", acknowledged).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["coverage"]["succeeded_pages"], 1);
+                assert_eq!(result["coverage"]["failed_pages"], 1);
+                assert_eq!(result["coverage"]["unattempted_pages"], 0);
+                assert!(result["history"][1]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("503"));
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        provider.join().unwrap();
+    }
     #[test]
     fn results_are_replayed_until_acknowledged_and_completion_is_recoverable() {
         let _lock = TEST_LOCK.lock().unwrap();
