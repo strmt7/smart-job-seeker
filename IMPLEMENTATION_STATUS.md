@@ -207,6 +207,11 @@
 - The per-request resident-model snapshot now also covers local drafting, template suggestions, document excerpts, fit and duplicate analysis, link ranking, search planning and model-assisted listing extraction. Each guarded request stops if the selected model is no longer the eligible resident model. Visual-review workers already perform their own checks.
 - With one build job and one test thread, the residency-change fixture and web-app Clippy passed. No live model or peak memory was measured; the runtime can still change between the snapshot and generation, so this is not a no-freeze guarantee. No application was sent.
 
+## Bounded answer revision repair — 2026-10-29
+
+- Application-answer and template-passage drafting retain the required style revision and allow one repair when its structured output or qualification citations are invalid. Runtime and residency failures are not retried. Citation validity does not prove factual support; user review remains necessary.
+- With one build job and one test thread, three answer tests and one template-suggestion test passed. Web-app Clippy passed before the final test-only addition. No live model, employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
