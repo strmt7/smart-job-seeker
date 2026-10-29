@@ -1,7 +1,7 @@
 //! Inspect one selected public search result for schema.org JobPosting data.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use waypoint_applications::driver::BrowserDriver;
 use waypoint_inference::{Inference, OllamaInference};
 
@@ -16,11 +16,31 @@ pub struct InspectedListing {
 struct Task {
     id: String,
     rx: mpsc::Receiver<Result<InspectedListing, String>>,
+    result: Option<Result<Arc<InspectedListing>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
+}
+
+pub fn pending() -> Result<Option<String>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Listing inspection unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone()))
+}
+
+pub fn discard(id: &str) -> Result<(), String> {
+    if poll(id)?.is_none() {
+        return Err("Listing inspection is still running; wait until it finishes".into());
+    }
+    complete(
+        id,
+        json!({"status":"failed","error":"Listing inspection was discarded"}),
+    )
 }
 
 fn bounded(value: &str, max: usize) -> String {
@@ -306,7 +326,11 @@ pub fn start(id: String, url: String) -> Result<(), String> {
         return Err("A listing inspection is running or awaiting its result".into());
     }
     let (tx, rx) = mpsc::channel();
-    *tasks = Some(Task { id, rx });
+    *tasks = Some(Task {
+        id,
+        rx,
+        result: None,
+    });
     drop(tasks);
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(|| -> Result<InspectedListing, String> {
@@ -344,28 +368,140 @@ pub fn start(id: String, url: String) -> Result<(), String> {
     Ok(())
 }
 
-pub fn poll(id: &str) -> Result<Option<Result<InspectedListing, String>>, String> {
+pub fn poll(id: &str) -> Result<Option<Result<Arc<InspectedListing>, String>>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Listing inspection unavailable")?;
     let task = tasks
-        .as_ref()
+        .as_mut()
         .filter(|task| task.id == id)
         .ok_or("Listing inspection not found")?;
+    if let Some(result) = &task.result {
+        return Ok(Some(result.clone()));
+    }
     match task.rx.try_recv() {
         Ok(result) => {
-            *tasks = None;
+            let result = result.map(Arc::new);
+            task.result = Some(result.clone());
             Ok(Some(result))
         }
         Err(mpsc::TryRecvError::Empty) => Ok(None),
         Err(mpsc::TryRecvError::Disconnected) => {
-            *tasks = None;
-            Err("Listing inspection stopped unexpectedly".into())
+            let result = Err("Listing inspection stopped unexpectedly".into());
+            task.result = Some(result.clone());
+            Ok(Some(result))
         }
     }
+}
+
+pub fn completed(id: &str) -> Result<Option<Value>, String> {
+    Ok(COMPLETED
+        .lock()
+        .map_err(|_| "Listing inspection unavailable")?
+        .as_ref()
+        .filter(|(task_id, _)| task_id == id)
+        .map(|(_, value)| value.clone()))
+}
+
+pub fn complete(id: &str, value: Value) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Listing inspection unavailable")?;
+    if !tasks
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.result.is_some())
+    {
+        return Err("Listing inspection not found".into());
+    }
+    *COMPLETED
+        .lock()
+        .map_err(|_| "Listing inspection unavailable")? = Some((id.to_owned(), value));
+    *tasks = None;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_save_retains_inspection_and_success_response_can_be_retried() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let (_tx, rx) = mpsc::channel();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "save-retry".into(),
+            rx,
+            result: Some(Ok(Arc::new(InspectedListing {
+                job: json!({"url":"https://example.org/job","title":"Engineer","employer":""}),
+                capture: ListingCapture {
+                    metadata: json!({}),
+                    segments: vec![],
+                },
+            }))),
+        });
+        let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut call = |path: &str, input: Value| {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = input.to_string();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let result = crate::serve(
+                &mut server,
+                &mut workspace,
+                &mut None,
+                "fixture-token",
+                port,
+            );
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            (result, response)
+        };
+        let status = "/api/listing-inspect/status";
+        let request = || json!({"task_id":"save-retry"});
+        let (_, response) = call("/api/listing-inspect/pending", json!({}));
+        let pending_response: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(pending_response["task_id"], "save-retry");
+        assert!(call(status, request()).0.is_err());
+        {
+            let mut task = TASK.lock().unwrap();
+            let listing = task
+                .as_mut()
+                .unwrap()
+                .result
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .unwrap();
+            Arc::get_mut(listing).unwrap().job["employer"] = json!("Example");
+        }
+        let (_, response) = call(status, request());
+        let first: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(first["status"], "complete");
+        let (_, response) = call(status, request());
+        assert_eq!(
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap(),
+            first
+        );
+        let (_tx, rx) = mpsc::channel();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "discard-test".into(),
+            rx,
+            result: None,
+        });
+        let discard_endpoint = "/api/listing-inspect/discard";
+        assert!(call(discard_endpoint, json!({"task_id":"discard-test"}))
+            .0
+            .unwrap_err()
+            .contains("still running"));
+        TASK.lock().unwrap().as_mut().unwrap().result = Some(Err("fixture failure".into()));
+        let (_, response) = call(discard_endpoint, json!({"task_id":"discard-test"}));
+        let discarded: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(discarded["discarded"], true);
+        assert!(pending().unwrap().is_none());
+    }
 
     #[test]
     #[ignore = "starts one browser against a fictional local listing"]

@@ -1399,16 +1399,34 @@ fn serve(
             candidate_task::start(id.clone(), parsed.to_string())?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
+        "/api/listing-inspect/pending" => {
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":candidate_task::pending()?}),
+            );
+        }
+        "/api/listing-inspect/discard" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            candidate_task::discard(id)?;
+            json_reply(stream, "200 OK", json!({"discarded":true}));
+        }
         "/api/listing-inspect/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
+            if let Some(result) = candidate_task::completed(id)? {
+                json_reply(stream, "200 OK", result);
+                return Ok(());
+            }
             match candidate_task::poll(id)? {
                 None => json_reply(stream, "200 OK", json!({"status":"running"})),
                 Some(Err(error)) => {
-                    json_reply(stream, "200 OK", json!({"status":"failed","error":error}))
+                    let result = json!({"status":"failed","error":error});
+                    candidate_task::complete(id, result.clone())?;
+                    json_reply(stream, "200 OK", result)
                 }
                 Some(Ok(inspected)) => {
-                    let job = inspected.job;
-                    let result = manual_job::add(ws, &job, now())?;
+                    let job = &inspected.job;
+                    let result = manual_job::add(ws, job, now())?;
                     let job_id =
                         JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)
                             .map_err(|e| e.to_string())?;
@@ -1437,7 +1455,7 @@ fn serve(
                             }
                         }
                     };
-                    if result["existing"].as_bool() == Some(false) {
+                    {
                         let reason = if job["extraction"] == "local_model" {
                             if job["page_text_truncated"] == true {
                                 "Review locally extracted listing; page text was truncated and application route is unverified"
@@ -1458,11 +1476,10 @@ fn serve(
                         )
                         .map_err(|e| e.to_string())?;
                     }
-                    json_reply(
-                        stream,
-                        "200 OK",
-                        json!({"status":"complete","job":job,"saved":result,"capture":capture}),
-                    );
+                    let response =
+                        json!({"status":"complete","job":job,"saved":result,"capture":capture});
+                    candidate_task::complete(id, response.clone())?;
+                    json_reply(stream, "200 OK", response);
                 }
             }
         }
