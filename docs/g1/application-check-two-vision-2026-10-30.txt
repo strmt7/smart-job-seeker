@@ -1,0 +1,33 @@
+   Compiling aws-lc-sys v0.46.0
+   Compiling aws-lc-rs v1.18.2
+   Compiling rustls-webpki v0.103.16
+   Compiling rustls v0.23.46
+   Compiling libsqlite3-sys v0.30.1
+   Compiling rusqlite v0.32.1
+   Compiling tokio-rustls v0.26.6
+   Compiling waypoint_store v0.1.0 (C:\Users\<user>\Documents\ChatGPT\smart-job-seeker\crates\waypoint_store)
+   Compiling hyper-rustls v0.27.10
+   Compiling rustls-platform-verifier v0.6.2
+   Compiling reqwest v0.13.1
+   Compiling waypoint_workspace v0.1.0 (C:\Users\<user>\Documents\ChatGPT\smart-job-seeker\crates\waypoint_workspace)
+   Compiling waypoint_web v0.1.0 (C:\Users\<user>\Documents\ChatGPT\smart-job-seeker\apps\web_app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 03s
+     Running unittests src\main.rs (target\debug\deps\waypoint_web-5be585d27274d02c.exe)
+
+running 1 test
+test application_check::tests::live_vision_reports_fictional_forms_without_unsupported_application_claim ... fictional application-check-form.html: Local vision may be an application form; quoted page text: Fictional job application. This is an unverified viewport-only assessment; model judgments can be wrong.
+fictional application-check-contact.html: Local vision may be an application form; quoted page text: Contact our support team. This is an unverified viewport-only assessment; model judgments can be wrong.
+
+thread 'application_check::tests::live_vision_reports_fictional_forms_without_unsupported_application_claim' (18572) panicked at apps\web_app\src\application_check.rs:479:17:
+Local vision may be an application form; quoted page text: Contact our support team. This is an unverified viewport-only assessment; model judgments can be wrong.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    application_check::tests::live_vision_reports_fictional_forms_without_unsupported_application_claim
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 272 filtered out; finished in 5.57s
+
+error: test failed, to rerun pass `-p waypoint_web --bin waypoint_web`

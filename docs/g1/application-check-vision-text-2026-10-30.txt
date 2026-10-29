@@ -1,0 +1,13 @@
+   Compiling waypoint_web v0.1.0 (C:\Users\<user>\Documents\ChatGPT\smart-job-seeker\apps\web_app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.96s
+     Running unittests src\main.rs (target\debug\deps\waypoint_web-5be585d27274d02c.exe)
+
+running 1 test
+test application_check::tests::live_vision_reports_fictional_forms_without_unsupported_application_claim ... fictional application-check-form.html: Local vision may be an application form; quoted page text: Fictional job application. Text check quote: job application. This is an unverified viewport-only assessment; model judgments can be wrong.
+fictional application-check-contact.html: Local vision could not corroborate its application-form judgment; quoted page text: Contact our support team. This is an unverified viewport-only assessment; model judgments can be wrong.
+fictional application-check-italian.html: Local vision may be an application form; quoted page text: Candidati per la posizione di progettista. Text check quote: Candidati per la posizione di progettista. This is an unverified viewport-only assessment; model judgments can be wrong.
+fictional application-check-italian-contact.html: Local vision could not corroborate its application-form judgment; quoted page text: Richiedi assistenza per il prodotto. This is an unverified viewport-only assessment; model judgments can be wrong.
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 272 filtered out; finished in 4.16s
+
