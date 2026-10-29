@@ -214,7 +214,7 @@ fn fit_assessment_digest(
 ) -> Result<(Vec<String>, String, String), String> {
     let (_, listing, _) = fit_listing_digest(ws, job_id, facts, instructions)?;
     let pool = fit_semantic_pool(facts, &listing);
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v1-semantic-pool-v10","facts":facts,"pool":pool,"instructions":instructions,"listing":listing}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v1-semantic-pool-v11","facts":facts,"pool":pool,"instructions":instructions,"listing":listing}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 

@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## First-pass conflict review — 2026-10-29
+
+- The conservative negation prerequisite for candidate-fact contradictions now also applies when validating the initial model rubric and later rubric updates. A partial positive fact without an English negation marker is counted as unknown, not as a contradiction. This marker does not prove a conflict, may miss implicit or non-English conflicts, and the model's semantic judgments still require review. The input digest version was changed so existing assessments become stale.
+- In a fictional end-to-end test, the resident qwen3.5:9b model left one year of SQL unknown against a five-year requirement. It also left an explicitly stated six-year Python fact unknown against a five-year requirement. An experimental follow-up search failed to recover that fact and was removed; this false negative remains unresolved. One example is not a general accuracy measurement.
+- The web suite passed (193 passed, 64 ignored), along with web Clippy and formatting. The live test used one already GPU-resident local model after a free-memory preflight; peak resource use was not measured. No application was sent.
+
 ## Explicit conflicts in additional fit evidence — 2026-10-29
 
 - The additional search for initially unknown requirements can now propose an explicit contradiction as well as support; the separate qualification comparison must agree before the judgment contributes to the score. In this recovery path, a contradiction is considered only when the cited fact has an English negation marker. This is a conservative lexical prerequisite, not proof of a relevant conflict; other languages or implicit conflicts may remain unknown. It does not govern the first-pass rubric.

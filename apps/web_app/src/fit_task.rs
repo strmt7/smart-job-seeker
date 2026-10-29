@@ -796,6 +796,7 @@ fn validate(
         };
         let mut status = item["status"].as_str().ok_or("Missing criterion status")?;
         let mut explanation = bounded(&item["explanation"])?;
+        let mut discarded_fact_reference = false;
         // A candidate saying they want remote work does not establish that the
         // job offers it. Until there is cited listing evidence, keep the
         // preference unknown rather than treating a candidate fact as a match.
@@ -809,8 +810,26 @@ fn validate(
             status = "unknown";
             explanation = "The model did not provide verified job-listing evidence for this preference; review it manually.".into();
         }
+        // A partial positive fact cannot by itself prove a qualification is
+        // absent. Apply the same conservative prerequisite to the first model
+        // pass and all later validations, not just the recovery pass.
+        if source == "listing" && status == "contradicted" {
+            let index = item["fact_index"]
+                .as_u64()
+                .filter(|n| *n > 0 && *n <= facts.len() as u64)
+                .ok_or("Invalid qualification reference")? as usize;
+            if !has_explicit_negation(&facts[index - 1]) {
+                status = "unknown";
+                discarded_fact_reference = true;
+                explanation = "The cited fact does not explicitly negate this requirement; partial experience alone does not establish a conflict. Review it manually.".into();
+            }
+        }
         let fact = match status {
-            "unknown" if item["fact_index"].is_null() || source == "preference" => {
+            "unknown"
+                if item["fact_index"].is_null()
+                    || source == "preference"
+                    || discarded_fact_reference =>
+            {
                 unknown += weight;
                 unknown_count += 1;
                 None
@@ -896,6 +915,27 @@ fn validate(
 mod tests {
     use super::*;
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn first_pass_cannot_turn_partial_experience_into_a_conflict() {
+        let facts = vec![
+            "Used SQL for one year".to_owned(),
+            "Never held a nursing license".to_owned(),
+        ];
+        let listing = "Requires five years of SQL and an active nursing license.";
+        let source = json!({"summary":"fixture","criteria":[
+            {"source":"listing","excerpt":"five years of SQL","importance":"required","status":"contradicted","fact_index":1,"explanation":"Only one year"},
+            {"source":"listing","excerpt":"active nursing license","importance":"required","status":"contradicted","fact_index":2,"explanation":"Never held"}
+        ]});
+        let result = validate(source.clone(), &facts, "", listing).unwrap();
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["rubric"][0]["qualification"], Value::Null);
+        assert_eq!(result["rubric"][1]["status"], "contradicted");
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":50}));
+        let mut invalid = source;
+        invalid["criteria"][0]["fact_index"] = json!(3);
+        assert!(validate(invalid, &facts, "", listing).is_err());
+    }
 
     #[test]
     fn unknown_evidence_proposals_are_bounded_validated_and_cross_checked() {
@@ -1124,6 +1164,35 @@ mod tests {
         assert_eq!(
             result["rubric"][2]["status"], "contradicted",
             "an explicit denial should be recognized as a conflict"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_full_fit_does_not_treat_partial_experience_as_disproof() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let facts = vec![
+            "Used SQL for one year".into(),
+            "Used Python for six years".into(),
+        ];
+        let listing = "Required: five years of SQL and five years of Python.";
+        let result = assess(&mut model, &facts, "", listing).unwrap();
+        println!("fictional full assessment: {result}");
+        let rubric = result["rubric"].as_array().unwrap();
+        assert!(
+            rubric.iter().any(|item| item["excerpt"]
+                .as_str()
+                .is_some_and(|text| text.to_lowercase().contains("sql"))
+                && item["status"] == "unknown"),
+            "SQL experience is partial, not proof of a conflict"
         );
     }
 
