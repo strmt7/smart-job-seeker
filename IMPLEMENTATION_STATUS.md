@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Automatic discovery of a local converter for packaging — 2026-10-29
+
+- Windows prototype packaging now automatically selects a LibreOffice distribution in standard machine or per-user locations when its executable and license are present. `--libreoffice-dir` selects a different source; `--no-libreoffice` opts out. Bundling still inventories and checks copied files and may substantially increase package size and packaging time. If LibreOffice is absent, packaging reports that separate setup is needed; automatic download and clean-host installation are not implemented.
+- Discovery selected this host's installed LibreOffice, and fictional packaging and installer fixtures passed, including a missing-license candidate. An attempt to copy the real distribution into an isolated temporary folder and run a conversion was rejected by automatic approval review with the stated reason `blocked by policy`; therefore no copied-distribution conversion or full real bundle was qualified. The installed converter was tested in the earlier plain-text PDF checkpoint, which is not proof that a bundled copy works.
+- Crawl4AI was unavailable through the current tool inventory, PATH and default Python environment; no external page research or download-source claim was made. Peak packaging resources were not measured.
+
 ## Pending PDF conversion recovery — 2026-10-29
 
 - The interface can now discover a running or finished-but-uncollected PDF conversion after a lost start response or tab refresh, and prefers the current server task over an older tab-stored ID. Status retries reuse the existing saved result instead of writing a duplicate document. Recovery is in-memory only and does not survive an application restart.

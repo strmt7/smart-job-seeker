@@ -18,6 +18,19 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
     (root / 'LICENSE.html').write_text('fictional license', encoding='utf-8')
     (root / 'program' / 'soffice.com').write_bytes(b'fictional executable')
     (root / 'program' / 'naïve #1.dat').write_bytes(b'fictional data')
+    program_files = Path(temp) / 'program-files'
+    local_app = Path(temp) / 'local-app'
+    (program_files / 'LibreOffice' / 'program').mkdir(parents=True)
+    (program_files / 'LibreOffice' / 'program' / 'soffice.com').write_bytes(b'incomplete')
+    user_office = local_app / 'Programs' / 'LibreOffice'
+    (user_office / 'program').mkdir(parents=True)
+    (user_office / 'program' / 'soffice.com').write_bytes(b'fictional executable')
+    (user_office / 'LICENSE.txt').write_text('fictional license', encoding='utf-8')
+    env = {'PROGRAMFILES': str(program_files), 'LOCALAPPDATA': str(local_app)}
+    assert packager.discover_libreoffice(env) == user_office
+    (program_files / 'LibreOffice' / 'LICENSE.html').write_text('fictional license', encoding='utf-8')
+    assert packager.discover_libreoffice(env) == program_files / 'LibreOffice'
+    assert packager.discover_libreoffice({}) is None
     output = Path(temp) / 'bundle.zip'
     with zipfile.ZipFile(output, 'w') as archive:
         inventory = packager.add_libreoffice(archive, root)

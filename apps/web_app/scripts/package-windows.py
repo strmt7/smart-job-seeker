@@ -23,6 +23,20 @@ PDF_WHEELS = (
     ('pillow-12.3.0-cp312-cp312-win_amd64.whl', 'https://files.pythonhosted.org/packages/45/89/da2f7971a317f83d807fdd4065c0af40208e59e692cc43d315a71a0e96d1/pillow-12.3.0-cp312-cp312-win_amd64.whl', 'a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09'),
 )
 
+def discover_libreoffice(environment):
+    """Find a local candidate; bundling still validates and inventories it."""
+    candidates = []
+    for key in ('PROGRAMFILES', 'PROGRAMW6432', 'PROGRAMFILES(X86)'):
+        if environment.get(key):
+            candidates.append(Path(environment[key]) / 'LibreOffice')
+    if environment.get('LOCALAPPDATA'):
+        candidates.append(Path(environment['LOCALAPPDATA']) / 'Programs' / 'LibreOffice')
+    for root in candidates:
+        if ((root / 'program' / 'soffice.com').is_file()
+            and any((root / name).is_file() for name in ('LICENSE', 'LICENSE.txt', 'LICENSE.html'))):
+            return root
+    return None
+
 def add_libreoffice(archive, root):
     """Bundle an existing complete distribution without modifying the host."""
     root = Path(root).resolve(strict=True)
@@ -125,9 +139,16 @@ def main():
     parser.add_argument('--release', action='store_true')
     parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
-    parser.add_argument('--libreoffice-dir', help='Optional complete LibreOffice distribution to bundle for PDF conversion')
+    office = parser.add_mutually_exclusive_group()
+    office.add_argument('--libreoffice-dir', help='Bundle this complete LibreOffice distribution for PDF conversion')
+    office.add_argument('--no-libreoffice', action='store_true', help='Do not automatically bundle an installed LibreOffice distribution')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
+    office_root = None if args.no_libreoffice else (Path(args.libreoffice_dir) if args.libreoffice_dir else discover_libreoffice(os.environ))
+    if office_root is not None:
+        print(f'Bundling LibreOffice from {office_root}; this can substantially increase package size.')
+    elif not args.no_libreoffice:
+        print('No complete local LibreOffice distribution was found; document conversion will require separate setup.')
     output = Path(args.output).resolve()
     if not output.is_relative_to(REPO) or output.suffix.lower() != '.zip' or output.exists():
         raise ValueError('Output must be a new .zip path inside the repository')
@@ -198,7 +219,7 @@ def main():
             add(exe,'app/waypoint_web.exe');add(dlls[0],f'app/{dlls[0].name}')
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
-            office_hashes = add_libreoffice(archive, args.libreoffice_dir) if args.libreoffice_dir else {}
+            office_hashes = add_libreoffice(archive, office_root) if office_root else {}
             runtime_hashes = {}
             for info in archive.infolist():
                 if info.filename.startswith('app/dependencies/python/'):
