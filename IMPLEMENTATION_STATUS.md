@@ -217,6 +217,11 @@
 - A malformed fit assessment gets one bounded local repair attempt. Qualification indices and exact listing excerpts are still checked after repair; runtime failures are not retried. The resulting score remains subjective and citations do not establish correctness.
 - With one build job and one test thread, six fit-assessment tests and web-app Clippy passed. No live model, employer site or peak resources were measured. No application was sent.
 
+## Partial listing extraction — 2026-10-29
+
+- Local-model listing extraction preserves a verified title and employer when optional location or description cannot be substantiated. Unsupported or missing optional fields stay empty, and the job is flagged for review. Exact excerpts still do not prove the model selected the correct posting.
+- With one build job and one test thread, eight candidate tests passed (three browser fixtures initially ignored), and the fictional browser text-extraction fixture passed separately using a fake model. Web-app Clippy passed before the final test-only addition; JavaScript syntax passed. No live model, employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

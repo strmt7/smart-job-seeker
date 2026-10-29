@@ -267,8 +267,22 @@ fn extract_page_text(
         }
         Ok(text.to_owned())
     };
+    let title = field("title", 200, true)?;
+    let employer = field("employer", 200, true)?;
+    let mut warnings = Vec::new();
+    let mut optional = |name: &str, limit: usize| match field(name, limit, false) {
+        Ok(text) if !text.is_empty() => text,
+        _ => {
+            warnings.push(format!(
+                "{name} was missing or could not be verified against the page"
+            ));
+            String::new()
+        }
+    };
+    let location = optional("location", 200);
+    let description = optional("description", 30000);
     Ok(
-        json!({"url":url,"title":field("title",200,true)?,"employer":field("employer",200,true)?,"location":field("location",200,false)?,"description":field("description",30000,false)?,"remote":false,"extraction":"local_model"}),
+        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":false,"extraction":"local_model","extraction_warnings":warnings}),
     )
 }
 
@@ -751,6 +765,15 @@ mod tests {
         let job =
             extract_page_text(&mut Fake(valid.clone()), source, "https://example.org/job").unwrap();
         assert_eq!(job["title"], "Research Engineer");
+        let mut partial = valid.clone();
+        partial["location"] = json!("Invented place");
+        partial["description"] = json!("Invented responsibilities");
+        let partial =
+            extract_page_text(&mut Fake(partial), source, "https://example.org/job").unwrap();
+        assert_eq!(partial["title"], "Research Engineer");
+        assert_eq!(partial["location"], "");
+        assert_eq!(partial["description"], "");
+        assert_eq!(partial["extraction_warnings"].as_array().unwrap().len(), 2);
         let mut bad = valid;
         bad["employer"] = json!("Invented Company");
         assert!(extract_page_text(&mut Fake(bad), source, "https://example.org/job").is_err());
@@ -775,6 +798,12 @@ mod tests {
         );
         let job = extract_page_text(&mut model, &text, "https://example.org/job").unwrap();
         assert_eq!(job["employer"], "Example Lab");
+        let mut partial = Fake(
+            json!({"title":"Research Engineer","employer":"Example Lab","location":"Invented location","description":""}),
+        );
+        let job = extract_page_text(&mut partial, &text, "https://example.org/job").unwrap();
+        assert_eq!(job["location"], "");
+        assert_eq!(job["extraction_warnings"].as_array().unwrap().len(), 2);
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 }

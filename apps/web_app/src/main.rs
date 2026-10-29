@@ -1689,6 +1689,13 @@ fn serve(
                         ws.mark_manual_review(&job_id, reason, now())
                             .map_err(|e| e.to_string())?;
                     }
+                    if job["extraction_warnings"]
+                        .as_array()
+                        .is_some_and(|warnings| !warnings.is_empty())
+                    {
+                        ws.mark_manual_review(&job_id, "Some listing details are missing or could not be verified against the page", now())
+                            .map_err(|e| e.to_string())?;
+                    }
                     if capture["saved"] == false || capture["complete"] == false {
                         ws.mark_manual_review(
                             &job_id,
