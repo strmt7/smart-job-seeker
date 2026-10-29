@@ -99,7 +99,7 @@ struct ReviewSession {
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
     attachments: Vec<(String, std::path::PathBuf)>,
-    last_visual_freshness_task: Option<String>,
+    last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
 }
 
@@ -2836,7 +2836,7 @@ fn serve(
                 visible,
                 staged_files: vec![],
                 attachments: vec![],
-                last_visual_freshness_task: None,
+                last_visual_freshness_key: None,
                 record,
             });
         }
@@ -3229,7 +3229,13 @@ fn serve(
                             current.preview.manual_review.push(reason.into());
                         }
                     }
-                    if current.last_visual_freshness_task.as_deref() != Some(id) {
+                    let freshness_key = visual_review::freshness_record_key(
+                        id,
+                        freshness,
+                        fresh_screenshot.as_deref(),
+                    );
+                    if current.last_visual_freshness_key.as_deref() != Some(freshness_key.as_str())
+                    {
                         let saved = current.record.as_mut().is_some_and(|record| {
                             let captured = if freshness == "changed" {
                                 fresh_screenshot.as_deref().and_then(|image| record.screenshot_with_name(image).ok())
@@ -3238,12 +3244,11 @@ fn serve(
                             record.event(json!({"type":"visual_freshness_checked","time":now(),"task_id":id,"status":freshness,"screenshot":captured.map(|name| format!("screenshots/{name}")),"note":"Image differences can include animation; matching images do not prove correctness."})).is_ok()
                         });
                         if saved {
-                            current.last_visual_freshness_task = Some(id.to_owned());
+                            current.last_visual_freshness_key = Some(freshness_key);
                         }
                         result["freshness_record_saved"] = json!(saved);
                     } else {
-                        // A later retry is a new observation; the first check was
-                        // already recorded and we do not store a duplicate capture.
+                        // The same task, status and image were already recorded.
                         result["freshness_record_saved"] = json!(false);
                     }
                 }
@@ -5614,7 +5619,7 @@ mod tests {
                 visible: false,
                 staged_files: vec![],
                 attachments: vec![],
-                last_visual_freshness_task: None,
+                last_visual_freshness_key: None,
                 record: None,
             });
             let (mut stream, _) = listener.accept().unwrap();
@@ -5912,6 +5917,18 @@ mod tests {
                 .iter()
                 .any(|reason| reason.reason == "Form changed during visual review"));
             drop(stream);
+            session
+                .as_mut()
+                .unwrap()
+                .driver
+                .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                    selector: "#candidate".into(),
+                    value: PacketValue::Text("Changed again visually".into()),
+                })
+                .unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
+            drop(stream);
             visual_review::set_completed_fixture(
                 "fixture-vision-stale",
                 "test-session",
@@ -5936,6 +5953,25 @@ mod tests {
                 })
                 .unwrap();
             let events = std::fs::read_to_string(record.join("events.jsonl")).unwrap();
+            let freshness_events: Vec<Value> = events
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter(|event| {
+                    event["type"] == "visual_freshness_checked"
+                        && event["task_id"] == "fixture-vision"
+                })
+                .collect();
+            assert_eq!(freshness_events.len(), 2);
+            assert_ne!(
+                freshness_events[0]["screenshot"],
+                freshness_events[1]["screenshot"]
+            );
+            let first = record.join(freshness_events[0]["screenshot"].as_str().unwrap());
+            let second = record.join(freshness_events[1]["screenshot"].as_str().unwrap());
+            assert_ne!(
+                std::fs::read(first).unwrap(),
+                std::fs::read(second).unwrap()
+            );
             assert!(
                 events.contains("Revised")
                     && events.contains("manual@example.invalid")
@@ -6101,6 +6137,14 @@ mod tests {
             "{response}"
         );
         let body = r#"{"task_id":"fixture-vision"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/visual-review-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let payload: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(payload["visual_freshness"], "changed");
+        assert_eq!(payload["freshness_record_saved"], true);
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/visual-review-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();

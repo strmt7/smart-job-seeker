@@ -50,6 +50,18 @@ pub fn image_freshness(original_hash: Option<&str>, fresh_image: Option<&str>) -
     }
 }
 
+/// Identify an observed freshness state without storing screenshot bytes here.
+/// Re-polling the same task after another visual change must create a new
+/// record, while an identical recapture need not duplicate it.
+pub fn freshness_record_key(task_id: &str, freshness: &str, image: Option<&str>) -> String {
+    let image_hash = image.map(|data| waypoint_domain::Sha256Digest::of(data).as_str().to_owned());
+    waypoint_domain::Sha256Digest::of(
+        &json!({"task_id":task_id,"freshness":freshness,"image_hash":image_hash}).to_string(),
+    )
+    .as_str()
+    .to_owned()
+}
+
 /// Limit reviewed answers independently of the number of observations per image.
 pub const MAX_EXPECTED_FIELDS: usize = 200;
 
@@ -366,6 +378,28 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn freshness_record_identity_tracks_the_actual_recapture() {
+        let original = freshness_record_key("task", "same", Some("image-a"));
+        assert_eq!(
+            original,
+            freshness_record_key("task", "same", Some("image-a"))
+        );
+        assert_ne!(
+            original,
+            freshness_record_key("task", "changed", Some("image-b"))
+        );
+        assert_ne!(
+            freshness_record_key("task", "changed", Some("image-b")),
+            freshness_record_key("task", "changed", Some("image-c"))
+        );
+        assert_ne!(
+            original,
+            freshness_record_key("another-task", "same", Some("image-a"))
+        );
+        assert_ne!(original, freshness_record_key("task", "unavailable", None));
+    }
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]

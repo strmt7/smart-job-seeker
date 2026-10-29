@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Repeated visual freshness records — 2026-10-29
+
+- Re-polling a completed form visual review now records a new freshness event and screenshot when the recaptured image or freshness status differs from the last recorded observation. An identical retry remains deduplicated. A failed record write is not marked saved and may be retried. This does not establish that the form is correct or complete.
+- A single real headless browser on a fictional local fixture filled a form, changed the same field twice, polled the same review twice, and verified two recorded events referencing distinct saved screenshot bytes. No application was submitted. The web suite passed (194 passed, 64 ignored), as did web Clippy and formatting. The browser test ran after a free-memory preflight; peak resource use was not measured.
+
 ## First-pass conflict review — 2026-10-29
 
 - The conservative negation prerequisite for candidate-fact contradictions now also applies when validating the initial model rubric and later rubric updates. A partial positive fact without an English negation marker is counted as unknown, not as a contradiction. This marker does not prove a conflict, may miss implicit or non-English conflicts, and the model's semantic judgments still require review. The input digest version was changed so existing assessments become stale.
