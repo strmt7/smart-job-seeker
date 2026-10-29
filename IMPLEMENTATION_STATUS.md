@@ -117,6 +117,11 @@
 - When a model suggestion conflicts with an available exact-label or autocomplete suggestion, neither value is proposed for that field. Other mappings remain available; required fields are flagged for manual review. Matching values still require user review and do not establish correctness.
 - With one build job and one test thread, seven suggestion tests, three non-browser form-preview tests, and two targeted conflict tests passed; four browser tests were ignored. Web-app Clippy passed before the final test-only addition. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Partial model form mappings — 2026-10-29
+
+- Invalid, unknown or restricted individual model mappings no longer discard unrelated valid mappings. Duplicate or invalid known selectors remain unmapped, including from exact fallback; required unmapped fields remain review obligations. Model results and exact hints still need user review.
+- With one build job and one test thread, eight suggestion tests and four non-browser form-preview tests passed (four browser tests ignored); web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

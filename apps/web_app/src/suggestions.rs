@@ -158,7 +158,7 @@ pub fn suggest(
     let (output, _) = inference
         .generate_structured("form_mapping", &prompt, 1024)
         .map_err(|e| e.to_string())?;
-    let mut mappings = validate_suggestions(schema, profile, &output)?;
+    let (mut mappings, invalid_selectors) = validate_suggestions(schema, profile, &output)?;
     // Conflicting interpretations must not become a reviewed-looking suggestion.
     // Keep both the model and exact candidate out until the user decides.
     let conflicts: HashSet<String> = mappings
@@ -176,13 +176,17 @@ pub fn suggest(
             (!agrees).then(|| model.field_selector.clone())
         })
         .collect();
-    mappings.retain(|mapping| !conflicts.contains(&mapping.field_selector));
+    mappings.retain(|mapping| {
+        !conflicts.contains(&mapping.field_selector)
+            && !invalid_selectors.contains(&mapping.field_selector)
+    });
     let mut selected: HashSet<String> = mappings
         .iter()
         .map(|mapping| mapping.field_selector.clone())
         .collect();
     for mapping in exact {
         if !conflicts.contains(&mapping.field_selector)
+            && !invalid_selectors.contains(&mapping.field_selector)
             && selected.insert(mapping.field_selector.clone())
         {
             mappings.push(mapping);
@@ -309,7 +313,7 @@ fn validate_suggestions(
     schema: &FormSchema,
     profile: &serde_json::Map<String, Value>,
     output: &Value,
-) -> Result<Vec<ProposedMapping>, String> {
+) -> Result<(Vec<ProposedMapping>, HashSet<String>), String> {
     let items = output
         .get("mappings")
         .and_then(Value::as_array)
@@ -318,53 +322,62 @@ fn validate_suggestions(
         return Err("Model returned too many mappings".into());
     }
     let mut seen = HashSet::new();
+    let mut invalid = HashSet::new();
     let mut result = Vec::new();
     for item in items {
-        let selector = item
-            .get("selector")
-            .and_then(Value::as_str)
-            .ok_or("Mapping is missing selector")?;
-        let key = item
-            .get("profile_key")
-            .and_then(Value::as_str)
-            .ok_or("Mapping is missing profile key")?;
+        let Some(selector) = item.get("selector").and_then(Value::as_str) else {
+            continue;
+        };
         if !seen.insert(selector) {
-            return Err("Model returned a duplicate field".into());
+            invalid.insert(selector.to_owned());
+            continue;
         }
-        let field = schema
-            .fields
-            .iter()
-            .find(|f| f.selector == selector)
-            .ok_or("Model returned an unknown field")?;
-        if field.sensitive
-            || !super::PROFILE_FIELDS.contains(&key)
-            || matches!(
-                key,
-                "instructions"
-                    | "work_authorization"
-                    | "document_instructions"
-                    | "cv_template_id"
-                    | "cover_template_id"
-            )
-        {
-            return Err("Model requested a restricted field or profile key".into());
+        let candidate = (|| {
+            let key = item.get("profile_key").and_then(Value::as_str)?;
+            let field = schema
+                .fields
+                .iter()
+                .find(|field| field.selector == selector)?;
+            if field.sensitive
+                || !super::PROFILE_FIELDS.contains(&key)
+                || matches!(
+                    key,
+                    "instructions"
+                        | "work_authorization"
+                        | "document_instructions"
+                        | "cv_template_id"
+                        | "cover_template_id"
+                )
+            {
+                return None;
+            }
+            if !matches!(
+                field.field_type,
+                FormFieldType::Text
+                    | FormFieldType::Email
+                    | FormFieldType::TextArea
+                    | FormFieldType::Select { .. }
+                    | FormFieldType::Radio { .. }
+            ) {
+                return None;
+            }
+            let value = profile
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty() && value.len() <= MAX_PROFILE_VALUE)?;
+            Some(ProposedMapping {
+                field_selector: selector.to_owned(),
+                value: PacketValue::Text(value.to_owned()),
+            })
+        })();
+        if let Some(candidate) = candidate {
+            result.push(candidate);
+        } else {
+            invalid.insert(selector.to_owned());
         }
-        let value = profile
-            .get(key)
-            .and_then(Value::as_str)
-            .filter(|v| !v.trim().is_empty() && v.len() <= MAX_PROFILE_VALUE)
-            .ok_or("Model selected an unavailable profile value")?;
-        match &field.field_type {
-            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => (),
-            FormFieldType::Select { .. } | FormFieldType::Radio { .. } => (),
-            _ => return Err("Model selected an unsupported field or option".into()),
-        }
-        result.push(ProposedMapping {
-            field_selector: selector.to_owned(),
-            value: PacketValue::Text(value.to_owned()),
-        });
     }
-    Ok(result)
+    result.retain(|mapping| !invalid.contains(&mapping.field_selector));
+    Ok((result, invalid))
 }
 
 #[cfg(test)]
@@ -595,10 +608,41 @@ mod tests {
                 response,
                 last_prompt: String::new(),
             };
-            assert!(suggest(&mut model, &form(), &profile).is_err());
+            assert!(suggest(&mut model, &form(), &profile).unwrap().is_empty());
         }
     }
 
+    #[test]
+    fn mixed_invalid_mappings_preserve_valid_fields_but_duplicates_remain_unmapped() {
+        let mut schema = form();
+        schema.fields.push(FormField {
+            selector: "#email".into(),
+            label: "Email".into(),
+            field_type: FormFieldType::Email,
+            required: true,
+            sensitive: false,
+            autocomplete: Some("email".into()),
+        });
+        let mut model = FakeInference {
+            response: json!({"mappings":[
+                {"selector":"#candidate","profile_key":"first_name"},
+                {"selector":"#email","profile_key":"email"},
+                {"selector":"#email","profile_key":"first_name"},
+                {"selector":"#other","profile_key":"first_name"},
+                {"selector":"#visa","profile_key":"first_name"},
+                {"profile_key":"first_name"}
+            ]}),
+            last_prompt: String::new(),
+        };
+        let matches = suggest(
+            &mut model,
+            &schema,
+            &json!({"first_name":"Example","email":"example@example.invalid"}),
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].field_selector, "#candidate");
+    }
     #[test]
     fn local_model_can_propose_a_concrete_non_exact_option_for_review() {
         let mut schema = form();
@@ -685,6 +729,10 @@ mod tests {
             response: mapping,
             last_prompt: String::new(),
         };
-        assert!(suggest(&mut sensitive, &schema, &json!({"country":"France"})).is_err());
+        assert!(
+            suggest(&mut sensitive, &schema, &json!({"country":"France"}))
+                .unwrap()
+                .is_empty()
+        );
     }
 }
