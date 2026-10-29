@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Form review with empty profiles and non-text controls — 2026-10-29
+
+- Model-assisted sensitivity review now runs even when no usable profile keys are available, and it inspects checkbox, date, file and multi-select labels as well as mappable controls. The existing deterministic mapping restrictions remain in force. An explicit prompt distinction leaves ordinary contact fields unmapped rather than classifying them as sensitive solely because the profile is empty.
+- A fictional local `qwen3.5:9b` test (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context) flagged Portuguese work eligibility and consent questions with and without a profile email; the ordinary email field was not flagged in the final empty-profile run. An earlier prompt incorrectly flagged that email and was revised. The fictional local two-step prefill and vision fixture also passed. These are limited examples: model errors, unclassified batches and offline fallback can still miss sensitive wording.
+- The web suite passed 181 tests with 55 ignored; the two live model fixtures were run separately after RAM and residency preflight. Web Clippy and formatting passed with one Cargo job. No real employer site or application submission was exercised; peak resources were not measured.
+
 ## Model-assisted form review flags — 2026-10-29
 
 - The local mapping model can identify additional fields for manual handling, including wording not covered by the fixed sensitivity markers. Valid flagged selectors suppress both model mappings and exact-autocomplete fallback. The review session presents these fields as sensitive and refuses them in generated answers, reviewed prefill and file attachment paths; the underlying browser schema remains unchanged for freshness checks and approval hashes. A missing or invalid model review list produces a warning, and recognized flags from a partially invalid bounded list are retained.
