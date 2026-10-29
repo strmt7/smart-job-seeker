@@ -7,7 +7,7 @@ use waypoint_applications::form_mapping::{
 };
 use waypoint_inference::Inference;
 
-const MAX_FIELDS: usize = 200;
+pub const MAX_FIELDS: usize = 200;
 const MODEL_BATCH_FIELDS: usize = 40;
 const MAX_MAPPING_PROMPT: usize = 24_000;
 const MAX_PROFILE_VALUE: usize = 2000;

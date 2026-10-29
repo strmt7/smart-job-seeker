@@ -137,6 +137,11 @@
 - Non-exact dropdown and radio options are interpreted in up to five sequential batches of ten fields, capped at 12,000 bytes of field data per batch. Unresolved choices are reported for manual review; duplicate selections for one field are discarded. Exact matches remain available beyond the batch limit.
 - With one build job and one test thread, twelve suggestion tests and web-app Clippy passed. No live model, employer site or peak resources were measured. No application was sent.
 
+## Long-form reviewed fill — 2026-10-29
+
+- Reviewed fill accepts up to 200 distinct fields, matching the mapping limit. Its request body is separately capped at 1 MiB; other normal request limits remain unchanged. Larger answers can still exceed this byte limit and need manual handling. Oversized-form guidance recognizes the current mapping-limit message.
+- With one build job and one test thread, ten reviewed-path tests passed (four ignored), including a 200/201-field boundary test; the ignored local-browser prefill fixture was run separately and passed without submitting. Web-app Clippy and JavaScript syntax checks passed. No live model, employer site or resource peaks were measured.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

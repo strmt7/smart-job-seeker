@@ -62,6 +62,7 @@ use waypoint_search::CampaignConstraints;
 use waypoint_workspace::{DiscoveryTarget, FactOrigin, LiveFetcher, Workspace};
 
 const MAX_REQUEST: usize = 64 * 1024;
+const MAX_FORM_FILL_REQUEST: usize = 1024 * 1024;
 const MAX_DOCUMENT: usize = 10 * 1024 * 1024;
 const SESSION_TTL: Duration = Duration::from_secs(120);
 const VISIBLE_SESSION_TTL: Duration = Duration::from_secs(600);
@@ -382,8 +383,8 @@ fn reviewed_form_answers(
     use waypoint_applications::form_mapping::{FormFieldType, PacketValue, ProposedMapping};
     let answers = answers
         .as_array()
-        .filter(|a| a.len() <= 80)
-        .ok_or("Answers must be a list of at most 80 fields")?;
+        .filter(|a| a.len() <= suggestions::MAX_FIELDS)
+        .ok_or("Answers must be a list of at most 200 fields")?;
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     for answer in answers {
@@ -463,6 +464,9 @@ fn prepare_reviewed_fill(
         let selected = selection
             .as_array()
             .ok_or("Selected fields must be a list")?;
+        if selected.len() > suggestions::MAX_FIELDS {
+            return Err("Select at most 200 fields to fill".into());
+        }
         let mut selectors = std::collections::HashSet::new();
         for value in selected {
             let selector = value.as_str().ok_or("Invalid selected field")?;
@@ -485,6 +489,9 @@ fn prepare_reviewed_fill(
     }
     if prepared.suggestions.is_empty() {
         return Err("Select at least one field to fill".into());
+    }
+    if prepared.suggestions.len() > suggestions::MAX_FIELDS {
+        return Err("Select at most 200 fields to fill".into());
     }
     let omitted = preview.suggestions.iter().any(|original| {
         !prepared
@@ -1034,6 +1041,8 @@ fn serve(
     }
     let body_limit = if method == "POST" && path == "/api/documents/upload" {
         MAX_DOCUMENT
+    } else if method == "POST" && path == "/api/form/fill" {
+        MAX_FORM_FILL_REQUEST
     } else {
         MAX_REQUEST - header_end
     };
@@ -4335,6 +4344,39 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn reviewed_fill_supports_bounded_long_forms() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
+        let fields: Vec<_> = (0..201)
+            .map(|index| FormField {
+                selector: format!("#field-{index}"),
+                label: format!("Field {index}"),
+                field_type: FormFieldType::Text,
+                required: false,
+                sensitive: false,
+                autocomplete: None,
+            })
+            .collect();
+        let preview = form_preview::FormPreview {
+            schema: FormSchema {
+                origin: "https://example.org".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+        };
+        let answers: Vec<_> = (0..200)
+            .map(|index| json!({"selector":format!("#field-{index}"),"value":"Example"}))
+            .collect();
+        let (prepared, _) = prepare_reviewed_fill(&preview, &json!({"answers":answers})).unwrap();
+        assert_eq!(prepared.suggestions.len(), 200);
+        let too_many: Vec<_> = (0..201)
+            .map(|index| json!({"selector":format!("#field-{index}"),"value":"Example"}))
+            .collect();
+        assert!(prepare_reviewed_fill(&preview, &json!({"answers":too_many})).is_err());
+    }
     #[test]
     fn fit_input_digest_changes_when_preferences_change() {
         let mut ws = Workspace::in_memory().unwrap();
