@@ -30,6 +30,7 @@ impl FormPreview {
             .cloned()
             .map(|mut field| {
                 field.sensitive |= self.model_review_selectors.contains(&field.selector);
+                field.label = field_review_label(&self.schema, &field);
                 field
             })
             .collect()
@@ -70,7 +71,7 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
         .fields
         .iter()
         .filter(|field| selected.contains(field.selector.as_str()))
-        .map(|field| field.label.clone())
+        .map(|field| field_review_label(&preview.schema, field))
         .collect();
     let remaining = preview
         .schema
@@ -91,9 +92,30 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
                         }
                 })
         })
-        .map(|field| field.label.clone())
+        .map(|field| field_review_label(&preview.schema, field))
         .collect();
     (filled, remaining)
+}
+
+/// Repeated labels are common in address sections. Preserve the site's label
+/// while making each unresolved control distinguishable in review messages.
+fn field_review_label(
+    schema: &FormSchema,
+    field: &waypoint_applications::form_mapping::FormField,
+) -> String {
+    let matching: Vec<_> = schema
+        .fields
+        .iter()
+        .filter(|other| other.label == field.label)
+        .collect();
+    if matching.len() <= 1 {
+        return field.label.clone();
+    }
+    let position = matching
+        .iter()
+        .position(|other| other.selector == field.selector)
+        .map_or(0, |index| index + 1);
+    format!("{} (field {position} of {})", field.label, matching.len())
 }
 
 pub struct FillContext<'a> {
@@ -392,7 +414,15 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
         .fields
         .iter()
         .filter(|field| field.required)
-        .map(|field| format!("Required field needs review: {}", field.label))
+        .flat_map(|field| {
+            [
+                format!("Required field needs review: {}", field.label),
+                format!(
+                    "Required field needs review: {}",
+                    field_review_label(&preview.schema, field)
+                ),
+            ]
+        })
         .collect();
     preview.manual_review.retain(|reason| {
         // The aggregate suggestion diagnostic is replaced by the field-specific
@@ -1048,6 +1078,92 @@ mod tests {
                 "Required field needs review: Missing",
             ]
         );
+    }
+
+    #[test]
+    fn duplicate_labels_identify_the_unfilled_field_and_refresh_correctly() {
+        use waypoint_applications::form_mapping::FormField;
+        let fields = ["#personal-email", "#work-email"]
+            .into_iter()
+            .map(|selector| FormField {
+                selector: selector.into(),
+                label: "Email".into(),
+                field_type: FormFieldType::Email,
+                required: true,
+                sensitive: false,
+                autocomplete: None,
+            })
+            .collect();
+        let mut preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![ProposedMapping {
+                field_selector: "#personal-email".into(),
+                value: PacketValue::Text("avery@example.invalid".into()),
+            }],
+            manual_review: vec!["Visual review required".into()],
+            model_review_selectors: Default::default(),
+        };
+        let shown = preview.fields_for_review();
+        assert_eq!(shown[0].label, "Email (field 1 of 2)");
+        assert_eq!(shown[1].label, "Email (field 2 of 2)");
+        let (filled, missing) = fill_coverage(&preview);
+        assert_eq!(filled, ["Email (field 1 of 2)"]);
+        assert_eq!(missing, ["Email (field 2 of 2)"]);
+        refresh_required_review(&mut preview);
+        assert_eq!(
+            preview.manual_review,
+            [
+                "Visual review required",
+                "Required field needs review: Email (field 2 of 2)"
+            ]
+        );
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#work-email".into(),
+            value: PacketValue::Text("work@example.invalid".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert_eq!(preview.manual_review, ["Visual review required"]);
+        assert_eq!(preview.schema.fields[0].label, "Email");
+    }
+
+    #[test]
+    #[ignore = "starts one local browser against a fictional form without submitting"]
+    fn duplicate_labels_are_distinguishable_on_a_live_form() {
+        use waypoint_applications::driver::BrowserDriver;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-duplicate-labels.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview =
+            suggest_without_model(live, &serde_json::json!({}), "Model unavailable").unwrap();
+        let fields = preview.fields_for_review();
+        assert_eq!(
+            fields
+                .iter()
+                .map(|field| field.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Email (field 1 of 2)", "Email (field 2 of 2)"]
+        );
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Required field needs review: Email (field 1 of 2)"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Required field needs review: Email (field 2 of 2)"));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     struct Model;

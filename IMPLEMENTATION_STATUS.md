@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Repeated form labels — 2026-10-29
+
+- Form review now distinguishes repeated identical labels by their order in the inspected schema, both in the field list and in required-field coverage messages. The site's original label and schema remain unchanged for mapping, approval and browser verification. Numbering is a review aid, not proof that visually similar fields have the same meaning.
+- A fictional local browser form with two required Email controls produced separate numbered fields and warnings without submitting. A focused test verified that filling one mapping clears only its corresponding warning. The web suite passed (199 passed, 64 ignored before adding the separately run browser fixture), followed by web Clippy, formatting and the focused test. Peak resource use was not measured.
+
 ## File-input format checks — 2026-10-29
 
 - Before attaching a local file, the browser driver checks the file control's declared `accept` hint against its extension and a small set of common MIME types. Explicitly incompatible or unresolvable types require manual review; the driver checks the hint again after attachment and during later file verification. An HTML `accept` hint is not proof of server acceptance, and the fixed MIME mapping can leave other formats for manual review.
