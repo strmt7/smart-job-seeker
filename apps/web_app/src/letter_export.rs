@@ -16,6 +16,13 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+pub fn pending() -> Result<Option<(String, String)>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Export state unavailable")?
+        .as_ref()
+        .map(|task| (task.id.clone(), task.job_id.clone())))
+}
 pub fn start(
     id: String,
     job_id: String,
@@ -263,6 +270,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("awaiting its result"));
+        assert_eq!(
+            super::pending().unwrap(),
+            Some(("first".into(), "fictional".into()))
+        );
         let ws = waypoint_workspace::Workspace::in_memory().unwrap();
         assert_eq!(
             super::poll("first", &ws).unwrap()["error"],

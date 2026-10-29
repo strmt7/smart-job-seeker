@@ -3667,6 +3667,17 @@ fn serve(
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/letter/export-pending" => {
+            let pending = letter_export::pending()?;
+            json_reply(
+                stream,
+                "200 OK",
+                match pending {
+                    Some((task_id, job_id)) => json!({"task_id":task_id,"job_id":job_id}),
+                    None => json!({"task_id":null}),
+                },
+            );
+        }
         "/api/letter/export-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", letter_export::poll(id, ws)?);
