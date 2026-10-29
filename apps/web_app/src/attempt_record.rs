@@ -762,14 +762,59 @@ impl AttemptRecord {
                 }
             })
             .collect();
-        let safe = if safe.trim_matches('.').trim().is_empty() {
+        // Reserve space for our sequence and a short extension even when the
+        // original upload already uses the filesystem's component limit.
+        // The name requested by the caller is retained in the manifest below.
+        let safe = safe.trim_end_matches(['.', ' ']);
+        let (stem, extension) = match safe.rsplit_once('.') {
+            Some((stem, extension))
+                if !extension.is_empty()
+                    && extension.len() <= 32
+                    && extension
+                        .chars()
+                        .all(|character| !character.is_whitespace()) =>
+            {
+                (stem, format!(".{extension}"))
+            }
+            _ => (safe, String::new()),
+        };
+        let mut end = stem.len().min(96);
+        while !stem.is_char_boundary(end) {
+            end -= 1;
+        }
+        let stem = stem[..end].trim_end_matches(['.', ' ']);
+        let stem = if stem.trim_matches('.').trim().is_empty() {
             "document"
         } else {
-            safe.as_str()
+            stem
         };
-        self.sequence += 1;
-        let filename = format!("{:04}-{safe}", self.sequence);
-        fs::write(self.dir.join("materials").join(&filename), bytes).map_err(|e| e.to_string())?;
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Material sequence exhausted")?;
+        let filename = format!("{:04}-{stem}{extension}", self.sequence);
+        let materials = self.dir.join("materials");
+        let mut file = tempfile::NamedTempFile::new_in(&materials).map_err(|e| e.to_string())?;
+        file.write_all(bytes).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())?;
+        file.persist_noclobber(materials.join(&filename))
+            .map_err(|e| e.to_string())?;
+        let mut manifest = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(materials.join("manifest.jsonl"))
+            .map_err(|e| format!("Material was saved but its manifest could not be opened: {e}"))?;
+        serde_json::to_writer(
+            &mut manifest,
+            &json!({"requested_name":name,"stored_name":filename,"bytes":bytes.len(),"sha256":waypoint_domain::sha256_hex(bytes)}),
+        )
+        .map_err(|e| format!("Material was saved but its manifest could not be written: {e}"))?;
+        manifest.write_all(b"\n").map_err(|e| {
+            format!("Material was saved but its manifest could not be written: {e}")
+        })?;
+        manifest.flush().map_err(|e| {
+            format!("Material was saved but its manifest could not be flushed: {e}")
+        })?;
         Ok(filename)
     }
 }
@@ -868,6 +913,52 @@ mod tests {
     use super::*;
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
+
+    #[test]
+    fn materials_preserve_bytes_with_long_names_and_do_not_overwrite() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        std::fs::create_dir(dir.path().join("materials")).unwrap();
+        let mut record = AttemptRecord {
+            dir: dir.path().to_path_buf(),
+            sequence: 0,
+        };
+        let original = format!("{}.pdf", "x".repeat(251));
+        let name = record.material(&original, b"fictional pdf").unwrap();
+        assert!(name.ends_with(".pdf"));
+        assert!(name.len() <= 160);
+        assert_eq!(
+            std::fs::read(dir.path().join("materials").join(&name)).unwrap(),
+            b"fictional pdf"
+        );
+        let unicode = format!("{}.pdf", "é".repeat(120));
+        let second = record.material(&unicode, b"another pdf").unwrap();
+        assert!(second.ends_with(".pdf") && second.len() <= 160);
+        assert_eq!(
+            std::fs::read(dir.path().join("materials").join(&second)).unwrap(),
+            b"another pdf"
+        );
+        record.sequence = 0;
+        assert!(record.material(&original, b"replacement").is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("materials").join(&name)).unwrap(),
+            b"fictional pdf"
+        );
+        let manifest =
+            std::fs::read_to_string(dir.path().join("materials/manifest.jsonl")).unwrap();
+        let entries: Vec<Value> = manifest
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["requested_name"], original);
+        assert_eq!(entries[0]["stored_name"], name);
+        assert_eq!(
+            entries[0]["sha256"],
+            waypoint_domain::sha256_hex(b"fictional pdf")
+        );
+        assert_eq!(entries[1]["requested_name"], unicode);
+    }
 
     #[test]
     fn visual_result_can_be_saved_without_session_polling() {
