@@ -1,0 +1,12 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function searchCoverage(');
+const end = source.indexOf('\nfunction webCandidate(', start);
+assert.ok(start >= 0 && end > start, 'search coverage renderer must exist');
+const render = vm.runInNewContext(`(${source.slice(start, end)})`);
+assert.match(render({results_examined: 30, results_reported: 100, unresponsive_engines: null, limited: true}), /30 examined of 100 provider results.*Provider did not report engine availability/);
+assert.match(render({results_examined: 0, results_reported: 0, unresponsive_engines: 0}), /0 engines reported unavailable/);
+assert.match(render({results_examined: 2, unresponsive_engines: 1}), /1 engine reported unavailable/);
+console.log('Search coverage UI checks passed.');

@@ -1433,6 +1433,9 @@ fn serve(
             web_search::start(id.clone(), provider.to_owned(), query.to_owned())?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
+        "/api/web-search/pending" => {
+            json_reply(stream, "200 OK", json!({"task_id":web_search::pending()?}));
+        }
         "/api/web-search/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", web_search::poll(id)?);

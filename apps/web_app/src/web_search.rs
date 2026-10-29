@@ -9,6 +9,8 @@ struct Task {
     rx: mpsc::Receiver<Result<Value, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// Keep one bounded terminal result so a lost response can be read again.
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 
 pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
     if query.trim().is_empty() || query.len() > 500 || query.chars().any(char::is_control) {
@@ -162,10 +164,9 @@ pub(crate) fn parse_excluding(
     let unavailable = data
         .get("unresponsive_engines")
         .and_then(Value::as_array)
-        .map(|v| v.len())
-        .unwrap_or(0);
+        .map(|v| v.len());
     Ok(
-        json!({"results":links,"results_examined":examined,"unresponsive_engines":unavailable,"limited":examined < results.len(),"previously_seen":previously_seen}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable,"limited":examined < results.len(),"previously_seen":previously_seen}),
     )
 }
 
@@ -193,24 +194,44 @@ pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
 }
 
+/// Find a running or unread search after a client loses the start response.
+pub fn pending() -> Result<Option<String>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Web search unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone()))
+}
+
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
-    let task = tasks
-        .as_ref()
-        .filter(|task| task.id == id)
-        .ok_or("Web search not found")?;
+    let Some(task) = tasks.as_ref().filter(|task| task.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Web search unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or("Web search not found".into());
+    };
     match task.rx.try_recv() {
         Ok(result) => {
+            let terminal = match result {
+                Ok(data) => json!({"status":"complete","data":data}),
+                Err(error) => json!({"status":"failed","error":error}),
+            };
+            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
+                Some((id.to_owned(), terminal.clone()));
             *tasks = None;
-            match result {
-                Ok(data) => Ok(json!({"status":"complete","data":data})),
-                Err(error) => Ok(json!({"status":"failed","error":error})),
-            }
+            Ok(terminal)
         }
         Err(mpsc::TryRecvError::Empty) => Ok(json!({"status":"running"})),
         Err(mpsc::TryRecvError::Disconnected) => {
+            let terminal = json!({"status":"failed","error":"Web search stopped unexpectedly"});
+            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
+                Some((id.to_owned(), terminal.clone()));
             *tasks = None;
-            Err("Web search stopped unexpectedly".into())
+            Ok(terminal)
         }
     }
 }
@@ -241,6 +262,14 @@ mod tests {
         assert_eq!(data["results"][1]["engines"], json!(["fallback"]));
         assert_eq!(data["results"][2]["engines"], json!([]));
         assert_eq!(data["results"][2]["published_date"], "");
+        assert!(data["unresponsive_engines"].is_null());
+        assert_eq!(data["results_reported"], 3);
+        let healthy = parse(&json!({"results":[],"unresponsive_engines":[]}).to_string()).unwrap();
+        assert_eq!(healthy["unresponsive_engines"], 0);
+        let degraded =
+            parse(&json!({"results":[],"unresponsive_engines":[["engine","timeout"]]}).to_string())
+                .unwrap();
+        assert_eq!(degraded["unresponsive_engines"], 1);
         let engines: Vec<String> = (0..10).map(|i| format!("{i}{}", "x".repeat(100))).collect();
         let long = parse(&json!({"results":[{"title":"Role", "url":"https://example.org/long", "engines":engines, "publishedDate":"x".repeat(100)}]}).to_string()).unwrap();
         let engines = long["results"][0]["engines"].as_array().unwrap();
@@ -315,11 +344,36 @@ mod tests {
             "materials engineer".into(),
         )
         .unwrap();
+        assert_eq!(pending().unwrap().as_deref(), Some("fixture-search"));
+        let api_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let api_port = api_listener.local_addr().unwrap().port();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", api_port)).unwrap();
+        let body = "{}";
+        write!(client, "POST /api/web-search/pending HTTP/1.1\r\nHost: 127.0.0.1:{api_port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = api_listener.accept().unwrap();
+        let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
+        crate::serve(
+            &mut server,
+            &mut workspace,
+            &mut None,
+            "fixture-token",
+            api_port,
+        )
+        .unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["task_id"], "fixture-search");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             let result = poll("fixture-search").unwrap();
             if result["status"] == "complete" {
                 assert_eq!(result["data"]["results"][0]["title"], "Fictional role");
+                assert_eq!(poll("fixture-search").unwrap(), result);
+                assert!(!busy());
+                assert!(pending().unwrap().is_none());
                 break;
             }
             assert_eq!(result["status"], "running", "{result}");
@@ -327,5 +381,16 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         provider.join().unwrap();
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "stopped-fixture".into(),
+            rx,
+        });
+        let failed = poll("stopped-fixture").unwrap();
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(poll("stopped-fixture").unwrap(), failed);
+        assert!(poll("fixture-search").is_err());
+        assert!(!busy());
     }
 }

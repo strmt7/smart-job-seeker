@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Search coverage reporting checkpoint — 2026-10-29
+
+- Search results now distinguish an omitted engine-availability report from an explicit zero and show examined versus provider-returned result counts. The denominator is one provider response, not global market coverage.
+- The latest completed single-search result or failure remains available for repeat status reads, so a lost response need not discard its candidates. A pending-task endpoint lets the web UI resume a search whose start response was lost while its task remains active or unread. Only one terminal result is retained in memory; recovery does not survive an app restart.
+- Four web-search tests, the search coverage UI formatter test and web Clippy passed; the existing visual-comparison UI test also passed. A local HTTP handler test recovered a fictional pending task, and a synthetic headless Edge page with mocked responses resumed it without another start request. A separate synthetic fixture displayed the unavailable-status wording at 1200 and 375 pixels. These checks did not test a running app or a public search provider. Hosted CI and peak resource use were not measured.
+
 ## Source-only listing capture checkpoint — 2026-10-29
 
 - When screenshot capture fails, listing metadata can now be sealed separately using DPAPI and retained without claiming an image was captured. A later screenshot capture keeps its own metadata, while salary evidence continues to refer to the earlier retained source. The salary detail warns when the capture URL differs from, or cannot be compared with, the current job URL. Application records include the source-only metadata separately from screenshots.
