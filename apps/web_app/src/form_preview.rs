@@ -329,11 +329,16 @@ fn build_preview(
     }
     let suggestions = if !blocked {
         let mapped = match inference {
-            Some(inference) => crate::suggestions::suggest(inference, &live.schema, profile),
+            Some(inference) => {
+                crate::suggestions::suggest_with_diagnostics(inference, &live.schema, profile)
+            }
             None => Err(no_model_reason.to_owned()),
         };
         match mapped {
-            Ok(items) => items,
+            Ok((items, warnings)) => {
+                manual_review.extend(warnings);
+                items
+            }
             Err(error) => {
                 manual_review.push(format!(
                     "{error}; only exact labels or standard autocomplete hints are suggested"
@@ -369,9 +374,35 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
         .filter(|field| field.required)
         .map(|field| format!("Required field needs review: {}", field.label))
         .collect();
-    preview
-        .manual_review
-        .retain(|reason| !field_warnings.contains(reason));
+    preview.manual_review.retain(|reason| {
+        if field_warnings.contains(reason) {
+            return false;
+        }
+        for prefix in [
+            "Conflicting suggestions need review: ",
+            "Invalid or duplicate suggestion needs review: ",
+        ] {
+            if let Some(label) = reason.strip_prefix(prefix) {
+                let fields: Vec<_> = preview
+                    .schema
+                    .fields
+                    .iter()
+                    .filter(|field| field.label == label)
+                    .collect();
+                if !fields.is_empty()
+                    && fields.iter().all(|field| {
+                        preview
+                            .suggestions
+                            .iter()
+                            .any(|mapping| mapping.field_selector == field.selector)
+                    })
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    });
     let (_, required) = fill_coverage(preview);
     preview.manual_review.extend(
         required
@@ -539,7 +570,7 @@ mod tests {
             },
             walls: vec![],
         };
-        let preview = suggest_for_live_form(
+        let mut preview = suggest_for_live_form(
             live,
             &mut ConflictingModel,
             &json!({"first_name":"Example", "last_name":"Person"}),
@@ -550,6 +581,16 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason == "Required field needs review: First name"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Conflicting suggestions need review: First name"));
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#first".into(),
+            value: PacketValue::Text("Example".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(preview.manual_review.is_empty());
     }
     #[test]
     fn wall_stops_before_suggestions() {

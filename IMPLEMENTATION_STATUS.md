@@ -122,6 +122,11 @@
 - Invalid, unknown or restricted individual model mappings no longer discard unrelated valid mappings. Duplicate or invalid known selectors remain unmapped, including from exact fallback; required unmapped fields remain review obligations. Model results and exact hints still need user review.
 - With one build job and one test thread, eight suggestion tests and four non-browser form-preview tests passed (four browser tests ignored); web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Form mapping explanations — 2026-10-29
+
+- The form preview explains which fields had conflicting, invalid or duplicate model suggestions and flags unidentifiable entries without exposing profile values. Field-specific warnings clear when all fields sharing the label receive reviewed mappings.
+- With one build job and one test thread, eight suggestion tests and four non-browser form-preview tests passed (four browser tests ignored); web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
