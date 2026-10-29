@@ -47,6 +47,15 @@ def discover_libreoffice(environment):
             return root
     return None
 
+def select_libreoffice(no_libreoffice, configured_root, environment):
+    """Require a converter for the default package; permit an explicit opt-out."""
+    if no_libreoffice:
+        return None
+    root = Path(configured_root) if configured_root else discover_libreoffice(environment)
+    if root is None:
+        raise ValueError('LibreOffice was not found; install it or pass --libreoffice-dir. Use --no-libreoffice only for an intentionally incomplete bundle.')
+    return root
+
 def add_libreoffice(archive, root):
     """Bundle an existing complete distribution without modifying the host."""
     root = Path(root).resolve(strict=True)
@@ -154,11 +163,11 @@ def main():
     office.add_argument('--no-libreoffice', action='store_true', help='Do not automatically bundle an installed LibreOffice distribution')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
-    office_root = None if args.no_libreoffice else (Path(args.libreoffice_dir) if args.libreoffice_dir else discover_libreoffice(os.environ))
+    office_root = select_libreoffice(args.no_libreoffice, args.libreoffice_dir, os.environ)
     if office_root is not None:
         print(f'Bundling LibreOffice from {office_root}; this can substantially increase package size.')
-    elif not args.no_libreoffice:
-        print('No complete local LibreOffice distribution was found; document conversion will require separate setup.')
+    else:
+        print('LibreOffice bundling was explicitly disabled; document conversion will require separate setup.')
     output = Path(args.output).resolve()
     if not output.is_relative_to(REPO) or output.suffix.lower() != '.zip' or output.exists():
         raise ValueError('Output must be a new .zip path inside the repository')

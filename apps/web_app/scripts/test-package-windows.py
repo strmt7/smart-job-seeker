@@ -32,6 +32,15 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
     (program_files / 'LibreOffice' / 'LICENSE.html').write_text('fictional license', encoding='utf-8')
     assert packager.discover_libreoffice(env) == program_files / 'LibreOffice'
     assert packager.discover_libreoffice({}) is None
+    try:
+        packager.select_libreoffice(False, None, {})
+    except ValueError as error:
+        assert 'LibreOffice was not found' in str(error)
+    else:
+        raise AssertionError('Default package must not silently omit the converter')
+    assert packager.select_libreoffice(True, None, {}) is None
+    assert packager.select_libreoffice(False, str(root), {}) == root
+    assert packager.select_libreoffice(False, None, env) == program_files / 'LibreOffice'
     configured = {'WAYPOINT_SOFFICE': str(root / 'program' / 'soffice.com'), **env}
     assert packager.discover_libreoffice(configured) == root
     path_env = {'PATH': os.pathsep.join([str(program_files / 'LibreOffice' / 'missing'), str(root / 'program')]), **env}
