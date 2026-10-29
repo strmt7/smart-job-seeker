@@ -252,6 +252,11 @@
 - Duplicate candidates now normalize dotted employer initials such as `I.B.M.` to `IBM`. When comparing a single compact employer token, the index also checks up to 200 older records marked as missing employer tokens. Matches remain pending review; they are not merged. Existing pairs are not retroactively rescanned by this change, and the bounded legacy scan can miss candidates.
 - With one build job and one test thread, nine duplicate-detection tests and web-app Clippy passed. No live boards or peak resources were measured. No application was sent.
 
+## Related employer requisition review — 2026-10-29
+
+- Duplicate indexing now flags a matching requisition under moderately related employer names for user review, even if title overlap is low. The explanation includes employer, title and description overlap. Identifiers can be reused by unrelated organizations, so this is not an automatic merge; existing pairs are not retroactively rescanned and candidate scans remain bounded.
+- With one build job and one test thread, ten duplicate tests and web-app Clippy passed. No live boards or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

@@ -197,7 +197,17 @@ impl Store {
         let candidate_count = candidates.len();
         let mut result = Vec::new();
         for other in candidates {
-            if overlap(&employer_tokens, &employer_words(&other.employer)) < 65 {
+            let employer_score = overlap(&employer_tokens, &employer_words(&other.employer));
+            let same_requisition = job
+                .requisition_id
+                .as_deref()
+                .zip(other.requisition_id.as_deref())
+                .is_some_and(|(a, b)| {
+                    a.trim().len() >= 3 && a.trim().eq_ignore_ascii_case(b.trim())
+                });
+            // An exact identifier with a related employer is a review signal,
+            // not proof: different employers may reuse identifiers.
+            if employer_score < 65 && !(same_requisition && employer_score >= 40) {
                 continue;
             }
             let score = title_score(&job.title, &other.title);
@@ -208,13 +218,6 @@ impl Store {
             } else {
                 0
             };
-            let same_requisition = job
-                .requisition_id
-                .as_deref()
-                .zip(other.requisition_id.as_deref())
-                .is_some_and(|(a, b)| {
-                    a.trim().len() >= 3 && a.trim().eq_ignore_ascii_case(b.trim())
-                });
             if score < 65
                 && !(score >= 30 && description_score >= 75)
                 && description_score < 85
@@ -227,7 +230,7 @@ impl Store {
             } else {
                 (other.id.as_str(), job.id.as_str())
             };
-            let reason = format!("Similar employer; title overlap {score}%, description overlap {description_score}%. {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" });
+            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, description overlap {description_score}%. {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=excluded.reason", params![job_a,job_b,score,reason])?;
             let (status, preferred_job) = self.conn.query_row(
                 "SELECT status,preferred_job FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
@@ -537,6 +540,42 @@ mod tests {
         assert_eq!(store.possible_duplicates().unwrap().len(), 1);
     }
 
+    #[test]
+    fn matching_requisition_with_related_employer_is_reviewed_not_merged() {
+        let mut store = Store::in_memory().unwrap();
+        let first = job(
+            "first",
+            "Research Scientist",
+            "Example Research",
+            Some("REQ-42"),
+        );
+        let second = job(
+            "second",
+            "Lab Specialist",
+            "Example Holdings",
+            Some("req-42"),
+        );
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(pairs[0].reason.contains("Employer token overlap 50%"));
+        assert!(pairs[0].reason.contains("Matching requisition"));
+        assert_eq!(store.all_jobs().unwrap().len(), 2);
+        assert!(store.has_duplicate_hold("first").unwrap());
+        assert!(store.has_duplicate_hold("second").unwrap());
+        let third = job(
+            "third",
+            "Lab Specialist",
+            "Example Ventures",
+            Some("OTHER-9"),
+        );
+        store.upsert_job(&third).unwrap();
+        assert!(store.find_possible_duplicates(&third).unwrap().is_empty());
+    }
     #[test]
     fn dotted_employer_acronyms_match_without_merging_and_include_older_missing_index() {
         assert_eq!(
