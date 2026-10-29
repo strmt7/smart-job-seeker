@@ -3,8 +3,9 @@
 ## Search planner input checkpoint — 2026-10-29
 
 - Local search planning now reads at most 20 eligible reviewed facts through the existing bounded sealed-data path instead of loading the entire fact history. Proposed phrases still require user review before a search.
+- Plans are bound to their selected facts and instructions. The status endpoint reports stale when those inputs changed, and the UI rechecks before copying a phrase into a search field. Changes after copying still require user review.
 - A pending-plan endpoint and a one-result in-memory replay let the UI recover an active or completed plan after a lost response or tab refresh. They do not survive an application restart and do not launch web searches automatically.
-- The encrypted-workspace test passed with more than 20 fictional facts, a corrected fact, an unreviewed fact and an oversized fact; the selected 20 matched the prior full-read ordering. Two planner tests and the planner-recovery UI test passed. A synthetic headless Edge fixture displayed fictional recovered phrases at 1200 and 375 pixels without issuing a new planning request. No real local model or public provider was exercised for these changes. Peak memory was not measured, and other paths may still load larger data sets.
+- The encrypted-workspace test passed with more than 20 fictional facts, a corrected fact, an unreviewed fact and an oversized fact; the selected 20 matched the prior full-read ordering. Three planner/context tests, the planner-recovery UI test and web Clippy passed. A synthetic headless Edge fixture displayed fictional recovered phrases and rejected a stale phrase at 1200 and 375 pixels without issuing a new planning request. No real local model or public provider was exercised for these changes. Peak memory was not measured, and other paths may still load larger data sets.
 
 ## Search coverage reporting checkpoint — 2026-10-29
 

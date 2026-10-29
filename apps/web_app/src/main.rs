@@ -147,6 +147,27 @@ const PROFILE_FIELDS: &[&str] = &[
     "auto_assess_ai",
 ];
 
+fn search_plan_context(ws: &Workspace) -> Result<(Vec<String>, String, String), String> {
+    let facts: Vec<String> = ws
+        .reviewed_facts_bounded(20, 1000)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|fact| fact.text)
+        .collect();
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let instructions: String = profile["instructions"]
+        .as_str()
+        .unwrap_or("")
+        .chars()
+        .take(2000)
+        .collect();
+    let digest = Sha256Digest::of(&json!({"facts":facts,"instructions":instructions}).to_string());
+    Ok((facts, instructions, digest.as_str().to_owned()))
+}
+
 fn fit_inputs(
     ws: &Workspace,
     job_id: &JobIdentityId,
@@ -1681,24 +1702,7 @@ fn serve(
             json_reply(stream, "200 OK", json!({"results":results}));
         }
         "/api/search-plan/start" => {
-            let facts: Vec<String> = ws
-                .reviewed_facts_bounded(20, 1000)
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(|fact| fact.text)
-                .collect();
-            let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
-                Some(text) => {
-                    serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?
-                }
-                None => json!({}),
-            };
-            let instructions: String = profile["instructions"]
-                .as_str()
-                .unwrap_or("")
-                .chars()
-                .take(2000)
-                .collect();
+            let (facts, instructions, digest) = search_plan_context(ws)?;
             if facts.is_empty() && instructions.trim().is_empty() {
                 return Err("Add qualifications or search instructions first".into());
             }
@@ -1706,7 +1710,7 @@ fn serve(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let id = random_id()?;
-            search_planner::start(id.clone(), model, facts, instructions)?;
+            search_planner::start(id.clone(), model, facts, instructions, digest)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/search-plan/pending" => {
@@ -1718,7 +1722,28 @@ fn serve(
         }
         "/api/search-plan/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            json_reply(stream, "200 OK", search_planner::poll(id)?);
+            let result = search_planner::poll(id)?;
+            if result["status"] == "complete"
+                && result["input_digest"].as_str() != Some(search_plan_context(ws)?.2.as_str())
+            {
+                json_reply(
+                    stream,
+                    "200 OK",
+                    json!({"status":"stale","error":"Qualifications or search instructions changed; generate new phrases."}),
+                );
+            } else {
+                json_reply(stream, "200 OK", result);
+            }
+        }
+        "/api/search-plan/current" => {
+            let digest = body["input_digest"]
+                .as_str()
+                .ok_or("missing input digest")?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"current":digest == search_plan_context(ws)?.2}),
+            );
         }
         "/api/discover/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
@@ -3875,6 +3900,24 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn search_plan_digest_tracks_reviewed_facts_and_instructions() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let id = ws
+            .add_fact("Fictional engineer", FactOrigin::UserAttested)
+            .unwrap();
+        ws.save_candidate_profile(&json!({"instructions":"Remote"}).to_string())
+            .unwrap();
+        let digest = search_plan_context(&ws).unwrap().2;
+        ws.save_candidate_profile(&json!({"instructions":"Hybrid"}).to_string())
+            .unwrap();
+        assert_ne!(search_plan_context(&ws).unwrap().2, digest);
+        ws.save_candidate_profile(&json!({"instructions":"Remote"}).to_string())
+            .unwrap();
+        assert_eq!(search_plan_context(&ws).unwrap().2, digest);
+        ws.correct_fact(&id, "Fictional analyst", 1).unwrap();
+        assert_ne!(search_plan_context(&ws).unwrap().2, digest);
+    }
     #[cfg(windows)]
     #[test]
     fn saved_salary_evidence_endpoint_reads_captured_source() {

@@ -5,6 +5,7 @@ use waypoint_inference::{Inference, OllamaInference};
 
 struct Task {
     id: String,
+    input_digest: String,
     result: Option<Result<Vec<String>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -23,6 +24,7 @@ pub fn start(
     model: String,
     facts: Vec<String>,
     instructions: String,
+    input_digest: String,
 ) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     {
@@ -32,6 +34,7 @@ pub fn start(
         }
         *task = Some(Task {
             id: id.clone(),
+            input_digest,
             result: None,
         });
     }
@@ -67,7 +70,9 @@ pub fn poll(id: &str) -> Result<Value, String> {
         None => Ok(json!({"status":"running"})),
         Some(result) => {
             let terminal = match result {
-                Ok(queries) => json!({"status":"complete","queries":queries}),
+                Ok(queries) => {
+                    json!({"status":"complete","queries":queries,"input_digest":task.input_digest})
+                }
                 Err(error) => json!({"status":"failed","error":error}),
             };
             *COMPLETED
@@ -174,6 +179,7 @@ mod tests {
         use std::net::{TcpListener, TcpStream};
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-plan".into(),
+            input_digest: "fictional-digest".into(),
             result: Some(Ok(vec!["Rust engineer".into()])),
         });
         assert_eq!(pending().unwrap().as_deref(), Some("fictional-plan"));
@@ -203,11 +209,48 @@ mod tests {
         assert!(pending().unwrap().is_none());
         *TASK.lock().unwrap() = Some(Task {
             id: "failed-plan".into(),
+            input_digest: "fictional-digest".into(),
             result: Some(Err("fixture failure".into())),
         });
         let failed = poll("failed-plan").unwrap();
         assert_eq!(failed["status"], "failed");
         assert_eq!(poll("failed-plan").unwrap(), failed);
         assert!(poll("fictional-plan").is_err());
+        let fact = workspace
+            .add_fact(
+                "Fictional engineer",
+                waypoint_workspace::FactOrigin::UserAttested,
+            )
+            .unwrap();
+        let digest = crate::search_plan_context(&workspace).unwrap().2;
+        *TASK.lock().unwrap() = Some(Task {
+            id: "stale-plan".into(),
+            input_digest: digest,
+            result: Some(Ok(vec!["Engineer".into()])),
+        });
+        workspace
+            .correct_fact(&fact, "Fictional analyst", 1)
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = json!({"task_id":"stale-plan"}).to_string();
+        write!(client, "POST /api/search-plan/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(
+            &mut server,
+            &mut workspace,
+            &mut None,
+            "fixture-token",
+            port,
+        )
+        .unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let response: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(response["status"], "stale");
+        assert!(response.get("queries").is_none());
     }
 }
