@@ -23,6 +23,38 @@ PDF_WHEELS = (
     ('pillow-12.3.0-cp312-cp312-win_amd64.whl', 'https://files.pythonhosted.org/packages/45/89/da2f7971a317f83d807fdd4065c0af40208e59e692cc43d315a71a0e96d1/pillow-12.3.0-cp312-cp312-win_amd64.whl', 'a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09'),
 )
 
+def add_libreoffice(archive, root):
+    """Bundle an existing complete distribution without modifying the host."""
+    root = Path(root).resolve(strict=True)
+    if not root.is_dir() or not (root / 'program' / 'soffice.com').is_file():
+        raise ValueError('LibreOffice directory must contain program/soffice.com')
+    if not any((root / name).is_file() for name in ('LICENSE', 'LICENSE.txt', 'LICENSE.html')):
+        raise ValueError('LibreOffice distribution must include its license')
+    files = []
+    total = 0
+    for path in root.rglob('*'):
+        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+            raise ValueError('LibreOffice distribution contains a link or junction')
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in relative.split('/')) or re.search(r'[\\:*?"<>|\x00-\x1f]', relative):
+            raise ValueError(f'Unsupported LibreOffice file path: {relative}')
+        total += path.stat().st_size
+        files.append((path, relative))
+        if len(files) > 50000 or total > 2 * 1024 * 1024 * 1024:
+            raise ValueError('LibreOffice distribution exceeds package limits')
+    hashes = {}
+    for path, relative in sorted(files):
+        destination = 'app/dependencies/libreoffice/' + relative
+        sha = hashlib.sha256()
+        with path.open('rb') as src, archive.open(destination, 'w') as dest:
+            while chunk := src.read(1024 * 1024):
+                sha.update(chunk)
+                dest.write(chunk)
+        hashes['dependencies/libreoffice/' + relative] = sha.hexdigest()
+    return hashes
+
 def add_pdf_wheels(archive, wheel_dir=None):
     for name, url, expected_hash in PDF_WHEELS:
         with tempfile.TemporaryFile() as temporary:
@@ -93,6 +125,7 @@ def main():
     parser.add_argument('--release', action='store_true')
     parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
+    parser.add_argument('--libreoffice-dir', help='Optional complete LibreOffice distribution to bundle for PDF conversion')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
     output = Path(args.output).resolve()
@@ -165,6 +198,7 @@ def main():
             add(exe,'app/waypoint_web.exe');add(dlls[0],f'app/{dlls[0].name}')
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
+            office_hashes = add_libreoffice(archive, args.libreoffice_dir) if args.libreoffice_dir else {}
             runtime_hashes = {}
             for info in archive.infolist():
                 if info.filename.startswith('app/dependencies/python/'):
@@ -185,8 +219,9 @@ def main():
                 for index,path in enumerate(files): add(path,f'app/licenses/crates/{name}-{version}/{index}-{path.name}')
                 inventory.append({'name':name,'version':version,'license':license_expr,'files':len(files)})
             archive.writestr('app/licenses/dependencies.json',json.dumps(inventory,indent=2))
-            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'python_files':runtime_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
-            archive.writestr('INSTALL.txt','Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. Microsoft Visual C++ runtime, a Chromium browser, Ollama, and document conversion tools may need separate installation. See app/README.md.\n')
+            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'python_files':runtime_hashes,'libreoffice_files':office_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
+            office_note = 'LibreOffice is bundled.' if office_hashes else 'LibreOffice is not bundled and needs separate setup for document conversion.'
+            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} Microsoft Visual C++ runtime, a Chromium browser, and Ollama may need separate installation. See app/README.md.\n')
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise

@@ -38,6 +38,26 @@ foreach ($entry in $pythonFiles) {
         throw "Bundled Python file is missing or damaged: $name. Extract the complete package and try again."
     }
 }
+$officeFiles = @()
+if ($null -ne $manifest.libreoffice_files) {
+    $officeFiles = @($manifest.libreoffice_files.PSObject.Properties)
+}
+if ($officeFiles.Count -gt 0) {
+    $officeLicense = @('dependencies/libreoffice/LICENSE', 'dependencies/libreoffice/LICENSE.txt', 'dependencies/libreoffice/LICENSE.html') | Where-Object { $manifest.libreoffice_files.$_ }
+    if ($officeFiles.Count -gt 50000 -or -not $manifest.libreoffice_files.'dependencies/libreoffice/program/soffice.com' -or -not $officeLicense) {
+        throw 'Package manifest contains an incomplete LibreOffice runtime inventory.'
+    }
+    foreach ($entry in $officeFiles) {
+        $name = $entry.Name
+        if (-not $name.StartsWith('dependencies/libreoffice/', [StringComparison]::Ordinal) -or $name -match '[\\:*?"<>|\x00-\x1f]' -or $name -match '(^|/)\.{1,2}(/|$)|//|[. ](/|$)' -or $entry.Value -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'Package manifest contains an invalid LibreOffice runtime entry.'
+        }
+        $file = Join-Path $source $name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+            throw "Bundled LibreOffice file is missing or damaged: $name. Extract the complete package and try again."
+        }
+    }
+}
 $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Waypoint.lnk'
 if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcut)) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null

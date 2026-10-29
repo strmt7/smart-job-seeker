@@ -40,7 +40,8 @@ pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> b
     expected == actual
 }
 
-/// Describe the commands in this fill operation, not the form's current validity.
+/// Describe commands and required fields that still need review. This is not a
+/// browser validity check: the page may change values after the commands run.
 pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
     let selected: std::collections::HashSet<_> = preview
         .suggestions
@@ -58,7 +59,21 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
         .schema
         .fields
         .iter()
-        .filter(|field| field.required && !selected.contains(field.selector.as_str()))
+        .filter(|field| {
+            field.required
+                && !preview.suggestions.iter().any(|mapping| {
+                    mapping.field_selector == field.selector
+                        && match &mapping.value {
+                            PacketValue::Text(value) | PacketValue::Date(value) => {
+                                !value.trim().is_empty()
+                            }
+                            PacketValue::TextList(values) => !values.is_empty(),
+                            PacketValue::Bool(value) => *value,
+                            PacketValue::FileRef { name } => !name.trim().is_empty(),
+                            PacketValue::None => false,
+                        }
+                })
+        })
         .map(|field| field.label.clone())
         .collect();
     (filled, remaining)
@@ -360,6 +375,53 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn coverage_flags_empty_required_values_for_review() {
+        use waypoint_applications::form_mapping::FormField;
+        let fields = [
+            ("#name", "Name", FormFieldType::Text),
+            ("#consent", "Consent", FormFieldType::Checkbox),
+            ("#email", "Email", FormFieldType::Email),
+            ("#missing", "Missing", FormFieldType::Text),
+        ]
+        .into_iter()
+        .map(|(selector, label, field_type)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type,
+            required: true,
+            sensitive: false,
+            autocomplete: None,
+        })
+        .collect();
+        let preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#name".into(),
+                    value: PacketValue::Text("  ".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#consent".into(),
+                    value: PacketValue::Bool(false),
+                },
+                ProposedMapping {
+                    field_selector: "#email".into(),
+                    value: PacketValue::Text("test@example.test".into()),
+                },
+            ],
+            manual_review: vec![],
+        };
+        let (filled, review) = fill_coverage(&preview);
+        assert_eq!(filled, vec!["Name", "Consent", "Email"]);
+        assert_eq!(review, vec!["Name", "Consent", "Missing"]);
+    }
 
     struct Model;
     impl Inference for Model {

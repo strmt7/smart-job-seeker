@@ -24,6 +24,9 @@ jobs:
           node apps/web_app/tests/visual-review-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./apps/web_app/scripts/test-build-paths.ps1
+          ./apps/web_app/scripts/test-install-package.ps1
+          python ./apps/web_app/scripts/test-package-windows.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt

@@ -1,5 +1,22 @@
 # Implementation checkpoint
 
+## Required-field review checkpoint — 2026-10-29
+
+- Required fields mapped to empty text or an unchecked checkbox remain in the review list after autofill. This list is not browser validation; separate attachments and subsequent page changes still require inspection.
+- With one Cargo build job and one test thread, the web-app suite passed 142 tests with 37 ignored. `cargo fmt --all -- --check`, the UI syntax and visual comparison checks, and the local build and package fixture checks passed. Direct `cargo clippy` without the helper's OpenSSL environment failed to find `OPENSSL_DIR`; the retry with the existing OpenSSL installation configured passed. This checkpoint did not exercise a live employer form or submit an application.
+
+## Optional document conversion bundle — 2026-10-29
+
+- The Windows packager can include a supplied LibreOffice distribution with `--libreoffice-dir`. It inventories the files by SHA-256, retains the distribution license and lets the installer verify the files before copying them into the existing private converter location. This is an optional packaging input, not automatic download or setup.
+- `test-package-windows.py` verifies hashes and rejection of a missing license with a fictional three-file distribution. `test-install-package.ps1` copied fictional packages with and without a converter and verified that a damaged converter or absent license inventory is rejected before an installation directory is created; no executable was launched. Both scripts are registered in Windows CI but hosted execution has not been checked. On 2026-10-29 the local LibreOffice 26.2.5.2 distribution (13,930 files, 857,096,674 bytes) streamed through the bundler into a discard sink in 54.7 seconds. No archive, installer or conversion was run in that check. A full package, clean-host installation and bundled conversion remain untested. Resource peaks were not measured.
+- Automatic dependency provisioning remains incomplete, including the OpenSSL development build prerequisite and automatic installation of LibreOffice, browser and Ollama. No applications were sent.
+
+## Model inventory layout checkpoint — 2026-10-29
+
+- The local model list has a bounded height, wraps long names and can receive keyboard focus for scrolling.
+- `node --check apps/web_app/web/app.js` passed. A synthetic static fixture using the current stylesheet and 100 fictional entries was checked in headless Edge at 1200 and 375 pixels: the list remained bounded, had no horizontal overflow, and scrolled with Page Down. This did not exercise the running application or its model inventory endpoint.
+- Automatic dependency provisioning and clean-host installation remain incomplete. The package includes OpenSSL and Python; the development build still requires an OpenSSL development installation, and browser, document conversion and model setup are not automatically provisioned. Peak resource use was not measured. No applications were sent.
+
 ## Visual comparison checkpoint — 2026-10-29
 
 - Current revision: see `git log -1`. Visual comparison labels do not report a match when any capture changed or could not be checked for freshness; duplicate and missing observations remain unverified.
