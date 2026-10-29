@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Fictional multi-step review — 2026-10-29
+
+- Headless form review now explains how to reopen the application in a visible browser when a possible next-step control is detected. Navigation still requires the user's action; the app does not automatically click a next button as a result of this change.
+- A local two-step fictional form exercised the existing production mapping, reviewed prefill and visual-observation paths with resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context). A test-only click simulated the navigation gesture between steps. After reinspection the browser filled the second field, left work authorization empty and the visual model transcribed the visible values on both steps. The fixture recorded no submission. This does not validate autonomous navigation, real employers, different layouts, or the browser UI rescan endpoint end to end.
+- The live model/browser fixture passed after a RAM/residency preflight; four non-live form-preview tests passed with eight browser/model tests ignored. UI guidance and visual-comparison checks, web Clippy and formatting passed with one Cargo job. Peak resources were not measured.
+
 ## Multilingual prefill and visual fixture — 2026-10-29
 
 - A fictional local-browser fixture now exercises the existing local-model mapping, a simulated reviewed prefill grant, DOM verification and screenshot-based model observation together. With resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), the browser filled the German first-name and email fields, while five German, Spanish and French sensitive fields stayed empty. The vision response separately transcribed the two values and reported each of those five fields blank. No submit action was taken.

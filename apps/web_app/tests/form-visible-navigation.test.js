@@ -1,0 +1,14 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function formRequiresVisibleBrowser('));
+assert.ok(line);
+const needsVisible = vm.runInNewContext(`(${line})`);
+const next = 'A possible next-step control was found. Navigate and inspect the next page manually; the total number of steps is unknown';
+assert.equal(needsVisible({visible:false, fields:[], manual_review:[next]}), true);
+assert.equal(needsVisible({visible:true, fields:[], manual_review:[next]}), false);
+assert.equal(needsVisible({visible:false, fields:[{sensitive:true}], manual_review:[]}), true);
+assert.equal(needsVisible({visible:false, fields:[], manual_review:[]}), false);
+assert.ok(source.includes('if(formRequiresVisibleBrowser(result))'));
+console.log('Form navigation guidance checks passed.');

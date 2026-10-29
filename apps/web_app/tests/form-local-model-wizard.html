@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Fictional application</title>
+<style>body{font:18px sans-serif;margin:35px}label{display:block;margin:18px 0}input{display:block;width:300px;font-size:18px}</style></head>
+<body><form onsubmit="event.preventDefault();document.body.dataset.submitted='yes'">
+<section id="step-one">
+  <label for="given">Your given name</label><input id="given" required>
+  <button type="button" id="next" onclick="document.getElementById('step-one').hidden=true;document.getElementById('step-two').hidden=false">Next</button>
+</section>
+<section id="step-two" hidden>
+  <label for="email">Email address</label><input id="email" type="email" required>
+  <label for="permit">Work authorization</label><input id="permit">
+  <button type="submit">Submit application</button>
+</section>
+</form></body></html>

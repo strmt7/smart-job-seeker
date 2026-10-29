@@ -442,6 +442,152 @@ mod tests {
         exercise_local_model_form_pipeline(false, true);
     }
 
+    #[test]
+    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    fn live_local_model_reinspects_and_prefills_a_fictional_wizard() {
+        use waypoint_domain::GrantId;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        assert_eq!(
+            waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
+            4096
+        );
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-local-model-wizard.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_resident_context();
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
+        let first = inspect_and_suggest(&mut driver, &mut llm, &url, &profile).unwrap();
+        assert!(first.schema.multi_step);
+        assert!(first
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("next-step")));
+        assert_eq!(first.suggestions.len(), 1);
+        assert_eq!(first.suggestions[0].field_selector, "#given");
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("wizard-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Fictional role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("wizard-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut completed = Vec::new();
+        let mut fill =
+            |driver: &mut waypoint_browser::CdpDriver, preview: &FormPreview, grant_id: &str| {
+                let mut grant = ApprovalGrant {
+                    id: GrantId::new(grant_id).unwrap(),
+                    intent_id: intent.clone(),
+                    bound_payload_sha256: Sha256Digest::of(
+                        &serde_json::to_string(&preview.suggestions).unwrap(),
+                    ),
+                    profile_revision: 1,
+                    packet_sha256: packet.clone(),
+                    form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+                    destination_origin: preview.schema.origin.clone(),
+                    operation: GrantOperation::Prefill,
+                    nonce: "fictional".into(),
+                    explicit_user_gesture: true,
+                    consumed: false,
+                    expired: false,
+                };
+                apply_reviewed_text_fields(
+                    &mut ws,
+                    &job_id,
+                    driver,
+                    &url,
+                    preview,
+                    &mut grant,
+                    FillContext {
+                        intent: &intent,
+                        packet_digest: &packet,
+                        source_reviewed: true,
+                        timestamp: 1,
+                        completed: &mut completed,
+                    },
+                )
+            };
+        assert_eq!(fill(&mut driver, &first, "wizard-first").unwrap(), 1);
+        driver.verify_text_value("#given", "Avery").unwrap();
+        let visual_first = crate::visual_review::analyze(
+            addr,
+            "qwen3.5:9b",
+            &driver.screenshot_base64().unwrap(),
+            &[("Your given name".into(), "Avery".into())],
+        )
+        .unwrap();
+        assert_eq!(
+            visual_first["comparisons"][0]["status"],
+            "matches_transcription"
+        );
+        // This click simulates a user's navigation gesture on this local fixture.
+        // It does not implement automatic next-button navigation in the app.
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#next".into(),
+            })
+            .unwrap();
+        let live = driver.inspect_current().unwrap();
+        assert_ne!(first.schema, live.schema);
+        let second = suggest_for_live_form(live, &mut llm, &profile).unwrap();
+        assert_eq!(second.suggestions.len(), 1);
+        assert_eq!(second.suggestions[0].field_selector, "#email");
+        assert!(second
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#permit" && field.sensitive));
+        assert_eq!(fill(&mut driver, &second, "wizard-second").unwrap(), 1);
+        driver
+            .verify_text_value("#email", "avery@example.invalid")
+            .unwrap();
+        driver.verify_text_value("#permit", "").unwrap();
+        let visual_second = crate::visual_review::analyze(
+            addr,
+            "qwen3.5:9b",
+            &driver.screenshot_base64().unwrap(),
+            &[("Email address".into(), "avery@example.invalid".into())],
+        )
+        .unwrap();
+        println!("wizard visual stage one: {visual_first}; stage two: {visual_second}");
+        assert_eq!(
+            visual_second["comparisons"][0]["status"],
+            "matches_transcription"
+        );
+        assert!(visual_second["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["label"] == "Work authorization" && item["visible_value"] == ""));
+        assert_eq!(
+            driver.read_attribute("body", "data-submitted").unwrap(),
+            None
+        );
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
     fn exercise_local_model_form_pipeline(altered: bool, multilingual: bool) {
         use base64::Engine;
         use waypoint_domain::GrantId;
