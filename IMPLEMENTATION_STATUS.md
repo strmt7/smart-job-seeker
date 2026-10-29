@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Listing-backed preference comparison — 2026-10-29
+
+- Fit assessment now makes a separate local-model request for up to six extracted preference excerpts of at most 200 bytes, using at most the first 3,000 bytes of the listing. Its reported selection count, truncation and failure are visible. Every returned ID must be unique and complete, and every positive or conflicting judgment must cite an exact quote from the supplied listing excerpt. An unavailable or invalid response leaves the prior conservative assessment intact; unselected preferences remain unknown. The match detail shows cited listing text for both matches and conflicts. Older assessments become stale.
+- A fictional four-preference test with locally resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context) returned the expected supported, contradicted, contradicted and unknown statuses. Three full-assessment repeats for a second fictional case each scored 87%, range 73–100%. In that case the model inferred accessible product development from an accessibility requirement even though the prompt requested explicit evidence; the cited text alone cannot validate that inference. Neither example proves general accuracy, stable results across models or runs, or that similar criteria are not double-counted. The score remains an estimate for review, and missing or truncated evidence can change it.
+- Ten focused fit tests passed, plus the two separately run live fixtures. Web Clippy, JavaScript syntax and fit badge checks passed with one Cargo build job. An earlier concurrent rebuild failed because Windows had locked the running live-test executable; the sequential retry passed. Resource preflight required one fully resident model and 12 GiB free system memory; peak usage was not measured. No employer site or application submission was exercised.
+
 ## Fit evidence and repeatability checkpoint — 2026-10-29
 
 - A preference is no longer credited or contradicted solely from a candidate fact: absent a valid exact listing citation, it becomes unknown. The current prompt does not request that citation, so preferences normally remain unknown and need manual review. The headline is derived from rubric counts instead of model-generated prose. Saved assessments with the prior input version are stale.
