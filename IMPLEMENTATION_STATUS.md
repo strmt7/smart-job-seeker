@@ -102,6 +102,11 @@
 - Visual review compares up to 200 supported filled fields across captured segments, increased from 20. Further fields are explicitly reported as omitted. Each model response remains limited to 20 observations per segment, and review remains advisory; hidden content may be missed.
 - With one build job and one test thread, nine visual-review tests passed (one unrelated PDF test ignored), web-app Clippy passed, and the visual comparison UI check passed. No live vision model or employer site was tested; peak resource use was not measured. No application was sent.
 
+## Dense visual segments — 2026-10-29
+
+- When a segment returns the maximum 20 model observations, the application is marked for manual review and the normal and recovered review flows warn that additional fields may have been missed. The saved visual result includes the limit indicator. Fewer observations also do not prove completeness.
+- With one build job and one test thread, ten visual-review tests passed (one unrelated PDF test ignored), web-app Clippy passed, and the visual comparison UI check passed. No live model, real employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

@@ -3043,6 +3043,19 @@ fn serve(
                         };
                         return Err(format!("The page URL or dimensions changed; this visual observation is no longer current.{record_note}"));
                     }
+                    if result["visual_review"]["observation_limit_reached"] == true {
+                        let reason = "Visual segment reached the observation limit; inspect remaining fields manually";
+                        ws.mark_manual_review(&current.job_id, reason, now())
+                            .map_err(|e| format!("Visual coverage may be incomplete, but its manual-review flag could not be saved: {e}"))?;
+                        if !current
+                            .preview
+                            .manual_review
+                            .iter()
+                            .any(|item| item == reason)
+                        {
+                            current.preview.manual_review.push(reason.into());
+                        }
+                    }
                     let fresh_screenshot = result["segment"].as_u64().and_then(|segment| {
                         let (clip_width, y, clip_height, _, _) =
                             visual_review::segment_geometry(width, height, segment as usize)

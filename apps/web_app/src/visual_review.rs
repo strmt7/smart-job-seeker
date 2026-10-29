@@ -72,11 +72,13 @@ pub fn expected_value(value: &waypoint_applications::form_mapping::PacketValue) 
     (text.len() <= 1000).then_some(text)
 }
 
+const MAX_OBSERVATIONS: usize = 20;
+
 fn validate(output: &Value) -> Result<Value, String> {
     let observations = output
         .get("observations")
         .and_then(Value::as_array)
-        .filter(|items| items.len() <= 20)
+        .filter(|items| items.len() <= MAX_OBSERVATIONS)
         .ok_or("Vision model did not return bounded observations")?;
     let mut clean = Vec::new();
     for item in observations {
@@ -134,7 +136,7 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
             json!({"label":label,"expected":value,"status":status})
         })
         .collect();
-    json!({"observations":items,"comparisons":comparisons})
+    json!({"observations":items,"comparisons":comparisons,"observation_limit_reached":items.len() == MAX_OBSERVATIONS})
 }
 
 /// Derive one bounded clip without scrolling or clicking. Larger pages are explicitly incomplete.
@@ -233,7 +235,7 @@ fn analyze(
     image: &str,
     expected: &[(String, String)],
 ) -> Result<Value, String> {
-    let prompt = "Transcribe only visible form field labels and their displayed values in the image. For a visible checkbox use checked or unchecked; for a multi-select list the visible selected labels separated by comma and space. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.";
+    let prompt = "Transcribe up to 20 visible form field labels and their displayed values in the image. For a visible checkbox use checked or unchecked; for a multi-select list the visible selected labels separated by comma and space. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.";
     let result = generate_vision(addr, model, image, prompt)?;
     let observed = validate(&result)?;
     Ok(compare(&observed, expected))
@@ -520,6 +522,19 @@ mod tests {
         .unwrap();
         let result = compare(&different, &[("First name".into(), "Example".into())]);
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
+    }
+    #[test]
+    fn observation_limit_is_reported_as_possible_incomplete_coverage() {
+        let observations = (0..MAX_OBSERVATIONS)
+            .map(|i| json!({"label":format!("Field {i}"),"visible_value":"value"}))
+            .collect::<Vec<_>>();
+        let result = compare(
+            &validate(&json!({"observations":observations})).unwrap(),
+            &[],
+        );
+        assert_eq!(result["observation_limit_reached"], true);
+        let result = compare(&validate(&json!({"observations":[]})).unwrap(), &[]);
+        assert_eq!(result["observation_limit_reached"], false);
     }
     #[test]
     fn rejects_unbounded_or_malformed_observations() {
