@@ -1,0 +1,11 @@
+{
+  "context": 4096,
+  "prompt": "For each independent fictional case decide whether the candidate fact supports, contradicts, or leaves unknown the stated requirement. Do not infer qualifications or durations. Return JSON {\"checks\":[{\"id\":1,\"status\":\"supported\"|\"contradicted\"|\"unknown\"}]} with exactly one check per case. Cases: 1 requirement Rust experience; fact Built software using Rust. 2 requirement SQL experience; fact Used Python for data cleaning. 3 requirement Must work onsite; fact Can work only remotely. 4 requirement Five years of Python experience; fact Used Python for analysis.",
+  "free_bytes": 26294321152,
+  "gpu_bytes": 11808280576,
+  "done": true,
+  "response": "{\"checks\":[{\"id\":1,\"status\":\"supported\"},{\"id\":2,\"status\":\"contradicted\"},{\"id\":3,\"status\":\"contradicted\"},{\"id\":4,\"status\":\"unknown\"}]}",
+  "done_reason": "stop",
+  "digest": "c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a",
+  "model": "qwen3.5:9b"
+}

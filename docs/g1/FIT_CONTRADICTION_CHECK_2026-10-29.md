@@ -1,0 +1,9 @@
+# Local-model contradiction check — 2026-10-29
+
+An independent fictional probe asked local `qwen3.5:9b` to classify four requirement/fact pairs as supported, contradicted or unknown. The cases covered a directly supported skill, an unrelated skill, an explicit onsite/remote conflict, and a duration not supplied in the fact.
+
+In the [initial response](fit-evidence-check-before-2026-10-29.json), the model incorrectly classified Python experience as contradicting an SQL requirement; that fact leaves SQL unknown. After an explicit definition that contradiction requires a conflict and a different skill is unknown, the [repeat response](fit-evidence-check-after-2026-10-29.json) returned the expected four classifications. These are direct Ollama requests, not an independent verifier and not evidence of general accuracy.
+
+The production job-fit prompt now includes that distinction, and the input-binding version was advanced so old assessments become stale. The [production-path fictional repeat](production-fit-contradiction-2026-10-29.txt) kept SQL and a PhD as unknown and returned the same 55% midpoint and 10–100% range seen in the earlier test. The focused test now explicitly checks those rubric statuses. The model still interprets the evidence, and the prompt does not guarantee correct classifications on other cases; no automatic second-model verification was added.
+
+The tests used local `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, with a 4,096-token context and one fully GPU-resident model. Before the production-path run, sampled free system memory was 24.77 GiB and dedicated GPU usage 10.86 GiB; after it, 24.73 GiB and 10.86 GiB. These are snapshots, not continuous peaks. The ignored production test requires external resource preflight and uses a no-default-features build. No real candidate data, employer website, or application submission was used.
