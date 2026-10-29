@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Grouped numeric interval review — 2026-10-29
+
+- The conservative preference check now recognizes comma- and dot-separated three-digit groups as candidate integers and downgrades both supported and contradicted model judgments when a cited interval straddles the preference's number. It does not resolve locale, units, decimal values, mixed separators or unrelated numbers; it only flags a potential ambiguity for manual review. Existing assessments become stale.
+- The fictional local-model ambiguity fixture now includes a grouped salary case. In the initial run the model incorrectly marked the overlapping range as contradicted; after the guard covered both judgment directions, four of five cases matched expectations. The accessibility-auditing case still failed, so the live qualification test remains failing. This small test does not establish general accuracy; the guard depends on the model citing the full interval.
+- Eleven focused fit tests passed with five live tests ignored. The qualification test was run separately with resident `qwen3.5:9b` after a RAM/residency preflight and failed as above. Web Clippy and formatting passed with one Cargo job; peak resource use and real employer listings were not measured. No application was submitted.
+
 ## Numeric preference interval guard — 2026-10-29
 
 - A model-supported preference is downgraded to unknown when its single plain integer lies above the lower bound and at or below the upper bound of a plainly written two-integer interval in its cited listing excerpt. The review explanation identifies the numeric overlap. This generic conservative guard does not interpret units, signs, decimal/grouping formats, all interval expressions or semantic meaning; it cannot verify a model judgment and may require manual review even for unrelated quantities. Earlier saved fit assessments become stale.

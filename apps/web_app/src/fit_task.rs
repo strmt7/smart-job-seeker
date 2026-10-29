@@ -373,7 +373,7 @@ fn compare_preferences(
         let preference = original["criteria"][id - 1]["excerpt"]
             .as_str()
             .unwrap_or("");
-        let numerical_review = status == "supported"
+        let numerical_review = matches!(status, "supported" | "contradicted")
             && quote
                 .as_str()
                 .is_some_and(|text| interval_straddles_number(preference, text));
@@ -405,7 +405,8 @@ fn compare_preferences(
 
 /// Conservatively flag an interval crossing a single stated number. This only
 /// downgrades a model judgment; it does not infer units or establish a match.
-/// Formatted or ambiguous numbers are deliberately not interpreted.
+/// Comma/dot three-digit groups are candidates for manual review, not a
+/// locale or currency interpretation. Other ambiguous formats are ignored.
 fn interval_straddles_number(preference: &str, quote: &str) -> bool {
     fn integers(text: &str) -> Vec<(usize, usize, u64)> {
         let bytes = text.as_bytes();
@@ -420,11 +421,39 @@ fn interval_straddles_number(preference: &str, quote: &str) -> bool {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if let Ok(number) = text[start..i].parse::<u64>() {
-                result.push((start, i, number));
-            } else {
+            let Ok(mut number) = text[start..i].parse::<u64>() else {
                 return Vec::new();
+            };
+            let mut separator = None;
+            while i + 1 < bytes.len()
+                && matches!(bytes[i], b',' | b'.')
+                && bytes[i + 1].is_ascii_digit()
+            {
+                let current = bytes[i];
+                if separator.is_some_and(|previous| previous != current)
+                    || (separator.is_none() && i - start > 3)
+                {
+                    return Vec::new();
+                }
+                separator = Some(current);
+                i += 1;
+                let group_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i - group_start != 3 {
+                    return Vec::new();
+                }
+                let Ok(group) = text[group_start..i].parse::<u64>() else {
+                    return Vec::new();
+                };
+                let Some(value) = number.checked_mul(1000).and_then(|n| n.checked_add(group))
+                else {
+                    return Vec::new();
+                };
+                number = value;
             }
+            result.push((start, i, number));
         }
         result
     }
@@ -1204,6 +1233,38 @@ mod tests {
         assert_eq!(result["rubric"][0]["status"], "unknown");
         assert_eq!(result["score"], 50);
         assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+
+        let preference = "At least EUR 80,000 gross annually";
+        let listing = "Salary range EUR 60,000 to EUR 80,000 gross per year.";
+        let original = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let fallback = validate(original.clone(), &[], preference, listing).unwrap();
+        let result = compare_preferences(
+            &mut Fixture(
+                json!({"items":[{"id":1,"status":"supported","quote":listing,"explanation":"The maximum meets the minimum"}]}),
+            ),
+            original,
+            fallback,
+            &[],
+            preference,
+            listing,
+        );
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+
+        let original = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let fallback = validate(original.clone(), &[], preference, listing).unwrap();
+        let result = compare_preferences(
+            &mut Fixture(
+                json!({"items":[{"id":1,"status":"contradicted","quote":listing,"explanation":"The range can fall below the minimum"}]}),
+            ),
+            original,
+            fallback,
+            &[],
+            preference,
+            listing,
+        );
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
     }
 
     #[test]
@@ -1215,9 +1276,30 @@ mod tests {
         assert!(interval_straddles_number("at least 80", "60–100"));
         assert!(!interval_straddles_number("at least 80", "80 to 100"));
         assert!(!interval_straddles_number("at least 80", "60 to 79"));
-        assert!(!interval_straddles_number(
+        assert!(interval_straddles_number(
             "at least 80,000",
             "60,000 to 80,000"
+        ));
+        assert!(interval_straddles_number(
+            "minimum 80.000",
+            "60.000–100.000 EUR"
+        ));
+        assert!(interval_straddles_number(
+            "minimum 1200000",
+            "1,000,000 to 1,500,000"
+        ));
+        assert!(!interval_straddles_number("minimum 80.5", "60–90"));
+        assert!(!interval_straddles_number(
+            "minimum 80000",
+            "60,00 to 90,00"
+        ));
+        assert!(!interval_straddles_number(
+            "minimum 80000",
+            "60,000.50 to 90,000.50"
+        ));
+        assert!(!interval_straddles_number(
+            "minimum 80000",
+            "80,000 to 100,000"
         ));
         assert!(!interval_straddles_number(
             "at least 80",
@@ -1307,6 +1389,11 @@ mod tests {
             (
                 "At least EUR 80000 gross annual salary is required",
                 "Salary range EUR 60000 to EUR 80000 gross per year.",
+                "unknown",
+            ),
+            (
+                "At least EUR 80,000 gross annual salary is required",
+                "Salary range EUR 60,000 to EUR 80,000 gross per year.",
                 "unknown",
             ),
             (
