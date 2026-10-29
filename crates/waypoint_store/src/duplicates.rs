@@ -38,7 +38,24 @@ fn title_score(a: &str, b: &str) -> u32 {
 }
 
 fn employer_words(s: &str) -> BTreeSet<String> {
-    words(s)
+    // Preserve the sequence of dotted initials before word-set sorting.
+    let normalized = s
+        .split_whitespace()
+        .map(|token| {
+            let parts: Vec<_> = token.trim_end_matches('.').split('.').collect();
+            if (2..=10).contains(&parts.len())
+                && parts.iter().all(|part| {
+                    part.chars().count() == 1 && part.chars().all(char::is_alphanumeric)
+                })
+            {
+                parts.concat()
+            } else {
+                token.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    words(&normalized)
         .into_iter()
         .filter(|w| {
             ![
@@ -154,6 +171,27 @@ impl Store {
             }
             if candidates.len() >= 200 {
                 break;
+            }
+        }
+        // Older dotted-initial-only employers were marked missing because each
+        // indexed token was one character. Scan that bounded bucket when a
+        // single compact acronym could correspond to one of those records.
+        if tokens.len() == 1 && tokens[0].chars().count() <= 10 && candidates.len() < 200 {
+            let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM job_duplicate_coverage c JOIN jobs j ON j.id=c.job_id WHERE c.status='missing_employer' AND j.id<>?1 ORDER BY j.id LIMIT 200")?;
+            let mut count = 0usize;
+            for row in stmt.query_map([job.id.as_str()], Self::row_to_job)? {
+                count += 1;
+                let other = row?;
+                if seen.insert(other.id.as_str().to_owned()) {
+                    candidates.push(other);
+                }
+                if candidates.len() >= 200 {
+                    bounded = true;
+                    break;
+                }
+            }
+            if count >= 200 {
+                bounded = true;
             }
         }
         let candidate_count = candidates.len();
@@ -499,6 +537,41 @@ mod tests {
         assert_eq!(store.possible_duplicates().unwrap().len(), 1);
     }
 
+    #[test]
+    fn dotted_employer_acronyms_match_without_merging_and_include_older_missing_index() {
+        assert_eq!(
+            employer_words("I.B.M. Corporation"),
+            employer_words("IBM Ltd")
+        );
+        assert_eq!(
+            employer_words("A.B. Research"),
+            employer_words("AB Research")
+        );
+        assert_ne!(
+            employer_words("A B Research"),
+            employer_words("AB Research")
+        );
+        let mut store = Store::in_memory().unwrap();
+        let older = job("old", "Senior Software Engineer", "I.B.M. Inc", None);
+        store.upsert_job(&older).unwrap();
+        // Simulate an older release which could not index single-letter tokens.
+        store.conn.execute("INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,'missing_employer',0)",[older.id.as_str()]).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
+                [older.id.as_str()],
+            )
+            .unwrap();
+        let newer = job("new", "Sr Software Developer", "IBM Ltd", None);
+        store.upsert_job(&newer).unwrap();
+        let matches = store.find_possible_duplicates(&newer).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].status, "pending");
+        assert!(store.has_duplicate_hold("old").unwrap());
+        assert!(store.has_duplicate_hold("new").unwrap());
+        assert_eq!(store.all_jobs().unwrap().len(), 2);
+    }
     #[test]
     fn international_legal_suffixes_do_not_hide_a_possible_duplicate() {
         let mut store = Store::in_memory().unwrap();

@@ -247,6 +247,11 @@
 - A ranking run normalizes reviewed qualification strings once and reuses them for each listing. Existing token, phrase, duplicate and denominator behavior is preserved; job descriptions are still read one at a time. Runtime and peak memory were not measured, and the overall job result set is still accumulated.
 - With one build job and one test thread, ten search tests, 40 workspace tests (two network tests ignored), and web-app Clippy passed. No live model or employer site was tested and no real application was sent.
 
+## Dotted employer acronym duplicates — 2026-10-29
+
+- Duplicate candidates now normalize dotted employer initials such as `I.B.M.` to `IBM`. When comparing a single compact employer token, the index also checks up to 200 older records marked as missing employer tokens. Matches remain pending review; they are not merged. Existing pairs are not retroactively rescanned by this change, and the bounded legacy scan can miss candidates.
+- With one build job and one test thread, nine duplicate-detection tests and web-app Clippy passed. No live boards or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
