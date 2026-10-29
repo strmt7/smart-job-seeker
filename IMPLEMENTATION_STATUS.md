@@ -212,6 +212,11 @@
 - Application-answer and template-passage drafting retain the required style revision and allow one repair when its structured output or qualification citations are invalid. Runtime and residency failures are not retried. Citation validity does not prove factual support; user review remains necessary.
 - With one build job and one test thread, three answer tests and one template-suggestion test passed. Web-app Clippy passed before the final test-only addition. No live model, employer site or peak resources were measured. No application was sent.
 
+## Fit assessment repair — 2026-10-29
+
+- A malformed fit assessment gets one bounded local repair attempt. Qualification indices and exact listing excerpts are still checked after repair; runtime failures are not retried. The resulting score remains subjective and citations do not establish correctness.
+- With one build job and one test thread, six fit-assessment tests and web-app Clippy passed. No live model, employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
