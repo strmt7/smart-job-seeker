@@ -2208,6 +2208,9 @@ fn serve(
             convert_task::start(task_id.clone(), name, bytes, kind)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/documents/convert-pdf-pending" => {
+            json_reply(stream, "200 OK", convert_task::pending()?);
+        }
         "/api/documents/convert-pdf-status" => {
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", convert_task::poll(task_id, ws)?);
@@ -4089,6 +4092,7 @@ mod tests {
     fn markdown_conversion_endpoint_saves_plain_text_pdf() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
+        let _guard = convert_task::TEST_LOCK.lock().unwrap();
         let mut ws = Workspace::in_memory().unwrap();
         ws.add_document(
             "fictional-text",
@@ -4110,6 +4114,19 @@ mod tests {
         let start: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         let id = start["task_id"].as_str().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/documents/convert-pdf-pending HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let pending: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(pending["task_id"], id);
+        assert_eq!(pending["active"], true);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
         loop {
             let result = convert_task::poll(id, &ws).unwrap();

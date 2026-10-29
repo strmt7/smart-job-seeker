@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Pending PDF conversion recovery — 2026-10-29
+
+- The interface can now discover a running or finished-but-uncollected PDF conversion after a lost start response or tab refresh, and prefers the current server task over an older tab-stored ID. Status retries reuse the existing saved result instead of writing a duplicate document. Recovery is in-memory only and does not survive an application restart.
+- Three focused conversion tests and the UI recovery helper test passed. A local HTTP fixture started a fictional Markdown conversion with installed LibreOffice, discovered the same task through the new pending endpoint and saved the PDF. Web Clippy, JavaScript syntax and formatting passed with one Cargo job. No rendered browser session, real document, employer site or submission was exercised; peak resource use was not measured.
+
 ## Plain-text PDF conversion — 2026-10-29
 
 - Saved UTF-8 `.txt` and `.md` files can now be converted to PDF through the existing local background conversion workflow. Markdown is converted as plain source text, not rendered markup; the UI says so. Input is bounded to 10 MiB, invalid UTF-8, NUL and empty text are rejected, and the original saved document is retained. Conversion uses the existing isolated LibreOffice profile, 30-second limit and 768 MiB Windows worker limit.

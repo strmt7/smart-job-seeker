@@ -128,6 +128,7 @@ let conversionFollowing=false;
 function updateConversionControl(){const button=document.querySelector('#resume-conversion');button.hidden=!sessionStorage.getItem('waypoint-conversion');button.disabled=conversionFollowing;}
 async function followConversion(id){if(conversionFollowing)return;conversionFollowing=true;updateConversionControl();try{let result;do{await new Promise(resolve=>setTimeout(resolve,1000));result=await api('/api/documents/convert-pdf-status',{task_id:id});}while(result.status==='running');sessionStorage.removeItem('waypoint-conversion');if(result.status!=='complete')throw new Error(result.error || 'Conversion failed');await refresh();notify(`${result.name} saved. Review its layout before use.`);}finally{conversionFollowing=false;updateConversionControl();}}
 function conversionError(error){if(error.message==='Conversion not found')sessionStorage.removeItem('waypoint-conversion');updateConversionControl();notify(`${error.message}${sessionStorage.getItem('waypoint-conversion')?' · Resume the pending conversion to retry.':''}`);}
+async function recoverPendingConversion(){if(conversionFollowing)return;const active=await api('/api/documents/convert-pdf-pending',{});if(active.active && typeof active.task_id==='string')sessionStorage.setItem('waypoint-conversion',active.task_id);updateConversionControl();const pending=sessionStorage.getItem('waypoint-conversion');if(pending)await followConversion(pending);}
 document.querySelector('#resume-conversion').addEventListener('click',()=>{const pending=sessionStorage.getItem('waypoint-conversion');if(pending)followConversion(pending).catch(conversionError);});
 let pdfPreviewBusy=false,documentReviewGeneration=0;
 function beginDocumentReview(){documentReviewGeneration++;if(pdfPreviewBusy)document.querySelector('#pdf-preview').replaceChildren();return documentReviewGeneration;}
@@ -353,7 +354,7 @@ async function storageStatus(){const result=await api('/api/storage/status',{});
 document.querySelector('#storage-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;try{await api('/api/storage/configure',{path:form.elements.path.value.trim()});await storageStatus();notify('Folder saved. Restart Waypoint to use it; existing data stays where it is.');}catch(e){notify(e.message);}finally{button.disabled=false;}});
 storageStatus().catch(e=>{document.querySelector('#storage-info').textContent=e.message;});
 
-const pendingConversion=sessionStorage.getItem('waypoint-conversion');updateConversionControl();if(pendingConversion)followConversion(pendingConversion).catch(conversionError);
+updateConversionControl();void recoverPendingConversion().catch(conversionError);
 
 try{const pending=JSON.parse(sessionStorage.getItem('waypoint-form-inspection') || 'null');if(pending)followFormInspection(pending.task,pending.job).then(()=>{if(pending.queued&&reviewQueue[0]===pending.job){reviewQueue.shift();saveReviewQueue();}}).catch(e=>{if(e.message==='Form inspection not found')sessionStorage.removeItem('waypoint-form-inspection');notify(e.message);}).finally(()=>{reviewQueueBusy=false;renderReviewQueue();});}catch(_){sessionStorage.removeItem('waypoint-form-inspection');reviewQueueBusy=false;}
 

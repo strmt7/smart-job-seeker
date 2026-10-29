@@ -11,11 +11,25 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // A lost response can be retried without saving the same PDF a second time.
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 pub enum ConversionKind {
     Docx,
     Image,
     PlainText,
+}
+
+/// Recover an active or completed-but-uncollected conversion after a lost
+/// start response. Only one task exists, and its PDF bytes stay in the worker.
+pub fn pending() -> Result<Value, String> {
+    let tasks = TASK.lock().map_err(|_| "Conversion state unavailable")?;
+    Ok(match tasks.as_ref() {
+        Some(task) => {
+            json!({"active":true,"task_id":task.id,"name":task.name,"ready":task.result.is_some()})
+        }
+        None => json!({"active":false}),
+    })
 }
 
 pub fn start(id: String, name: String, bytes: Vec<u8>, kind: ConversionKind) -> Result<(), String> {
@@ -111,6 +125,7 @@ mod tests {
     use super::*;
     #[test]
     fn saved_conversion_can_be_retried_without_duplicate_documents() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let ws = Workspace::in_memory().unwrap();
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-pdf-task".into(),
@@ -124,8 +139,33 @@ mod tests {
     }
 
     #[test]
+    fn pending_conversion_can_be_recovered_before_and_after_worker_finishes() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let ws = Workspace::in_memory().unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "lost-start".into(),
+            name: "fictional.pdf".into(),
+            result: None,
+        });
+        assert_eq!(
+            pending().unwrap(),
+            json!({"active":true,"task_id":"lost-start","name":"fictional.pdf","ready":false})
+        );
+        TASK.lock().unwrap().as_mut().unwrap().result = Some(Ok(b"%PDF-fixture".to_vec()));
+        let ready = pending().unwrap();
+        assert_eq!(ready["ready"], true);
+        assert!(ready.get("bytes").is_none());
+        let result = poll(ready["task_id"].as_str().unwrap(), &ws).unwrap();
+        assert_eq!(result["status"], "complete");
+        assert_eq!(pending().unwrap(), json!({"active":false}));
+        assert_eq!(poll("lost-start", &ws).unwrap(), result);
+        assert_eq!(ws.documents().unwrap().len(), 1);
+    }
+
+    #[test]
     #[ignore = "uses installed LibreOffice to convert fictional UTF-8 text"]
     fn background_text_conversion_saves_one_pdf() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let ws = Workspace::in_memory().unwrap();
         let source = "Fictional CV\nAvery Example\nMünchen · São Paulo\n"
             .as_bytes()
@@ -157,6 +197,7 @@ mod tests {
     }
     #[test]
     fn oversized_conversion_reports_a_terminal_result_on_retry() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let ws = Workspace::in_memory().unwrap();
         *TASK.lock().unwrap() = Some(Task {
             id: "oversized-fixture".into(),
@@ -171,6 +212,7 @@ mod tests {
     #[test]
     #[ignore = "converts a fictional certificate image with local Pillow"]
     fn background_image_conversion_saves_a_reviewable_pdf() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let fixture = std::env::var("WAYPOINT_IMAGE_FIXTURE").unwrap();
         let bytes = std::fs::read(fixture).unwrap();
         assert!(crate::pdf_extract::image_to_pdf(b"invalid image").is_err());
@@ -206,6 +248,7 @@ mod tests {
     #[test]
     #[ignore = "uses an installed LibreOffice and a fictional DOCX fixture"]
     fn background_conversion_saves_a_pdf() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let fixture = std::env::var("WAYPOINT_CONVERSION_FIXTURE").unwrap();
         let ws = Workspace::in_memory().unwrap();
         start(
