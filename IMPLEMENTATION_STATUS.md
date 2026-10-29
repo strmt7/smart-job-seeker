@@ -242,6 +242,11 @@
 - Active-fact reads filter superseded rows in SQLite before unsealing, and single-claim lookups use an ID predicate, both through the shared sealed-text reader. This removes the previous full-history vector and repeated linear supersession scans from these paths. Active results still occupy memory and SQLite can use temporary storage; performance and peak memory were not measured.
 - With one build job and one test thread, all 47 store tests passed before the final targeted-query adjustment; afterward six store work tests, the encrypted-workspace fixture and web-app Clippy passed. No live employer site or model was tested. No application was sent.
 
+## Ranking normalization reuse — 2026-10-29
+
+- A ranking run normalizes reviewed qualification strings once and reuses them for each listing. Existing token, phrase, duplicate and denominator behavior is preserved; job descriptions are still read one at a time. Runtime and peak memory were not measured, and the overall job result set is still accumulated.
+- With one build job and one test thread, ten search tests, 40 workspace tests (two network tests ignored), and web-app Clippy passed. No live model or employer site was tested and no real application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

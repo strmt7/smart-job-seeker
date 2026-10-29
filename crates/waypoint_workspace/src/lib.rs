@@ -26,8 +26,8 @@ use waypoint_inference::ResourceBudgets;
 use waypoint_policy::PermissionRegistry;
 use waypoint_search::coverage::{CoverageReport, SourceFetchState, SourceStatus};
 use waypoint_search::{
-    check_constraints, dedup_decision, evidence_overlap, freshness, identity_key,
-    CampaignConstraints, ConstraintOutcome, DedupDecision, Freshness,
+    check_constraints, dedup_decision, freshness, identity_key, CampaignConstraints,
+    ConstraintOutcome, DedupDecision, EvidenceMatcher, Freshness,
 };
 use waypoint_store::{Store, StoreError, StoredJob};
 
@@ -958,6 +958,7 @@ impl Workspace {
         now_unix: i64,
     ) -> Result<RankedResults, WorkspaceError> {
         let mut results = RankedResults::default();
+        let matcher = EvidenceMatcher::new(profile_skills);
         self.store
             .visit_jobs_with_descriptions(|job, description| {
                 let outcomes = check_constraints(
@@ -987,7 +988,7 @@ impl Workspace {
                     "{} {} {} {}",
                     job.title, job.employer, job.location, description
                 );
-                let (score, matched_skills) = evidence_overlap(profile_skills, &text);
+                let (score, matched_skills) = matcher.score(&text);
                 let observed_at = job
                     .last_seen
                     .as_deref()

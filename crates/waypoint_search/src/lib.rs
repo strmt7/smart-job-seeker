@@ -238,34 +238,54 @@ pub fn freshness(observed_at_unix: i64, now_unix: i64, stale_after_seconds: i64)
 ///
 /// Token-aware so short skills ("C", "R") cannot match inside unrelated words,
 /// while real-world tokens ("c++", "c#", ".net", "node.js") still match.
-pub fn evidence_overlap(profile_skills: &[String], text: &str) -> (f32, Vec<String>) {
-    if profile_skills.is_empty() {
-        return (0.0, vec![]);
-    }
-    let hay = text.to_lowercase();
-    let tokens: Vec<&str> = hay
-        .split(|c: char| !(c.is_alphanumeric() || matches!(c, '+' | '#' | '.' | '-')))
-        .filter(|t| !t.is_empty())
-        .collect();
-    let mut matched: Vec<String> = Vec::new();
-    for skill in profile_skills {
-        let s = skill.trim().to_lowercase();
-        if s.is_empty() {
-            continue;
-        }
-        let hit = if s.contains(' ') {
-            hay.contains(&s)
-        } else {
-            tokens
+/// Precompute profile normalization once when scoring many listings.
+pub struct EvidenceMatcher<'a> {
+    skills: Vec<(&'a str, String)>,
+    denominator: usize,
+}
+impl<'a> EvidenceMatcher<'a> {
+    pub fn new(profile_skills: &'a [String]) -> Self {
+        Self {
+            skills: profile_skills
                 .iter()
-                .any(|t| *t == s || t.trim_end_matches('.') == s || t.trim_start_matches('.') == s)
-        };
-        if hit {
-            matched.push(skill.clone());
+                .map(|skill| (skill.as_str(), skill.trim().to_lowercase()))
+                .collect(),
+            denominator: profile_skills.len(),
         }
     }
-    let score = matched.len() as f32 / profile_skills.len() as f32;
-    (score, matched)
+    pub fn score(&self, text: &str) -> (f32, Vec<String>) {
+        if self.denominator == 0 {
+            return (0.0, vec![]);
+        }
+        let hay = text.to_lowercase();
+        let tokens: Vec<&str> = hay
+            .split(|c: char| !(c.is_alphanumeric() || matches!(c, '+' | '#' | '.' | '-')))
+            .filter(|token| !token.is_empty())
+            .collect();
+        let mut matched = Vec::new();
+        for (original, skill) in &self.skills {
+            if skill.is_empty() {
+                continue;
+            }
+            let hit = if skill.contains(' ') {
+                hay.contains(skill.as_str())
+            } else {
+                tokens.iter().any(|token| {
+                    *token == skill
+                        || token.trim_end_matches('.') == skill
+                        || token.trim_start_matches('.') == skill
+                })
+            };
+            if hit {
+                matched.push((*original).to_owned());
+            }
+        }
+        (matched.len() as f32 / self.denominator as f32, matched)
+    }
+}
+
+pub fn evidence_overlap(profile_skills: &[String], text: &str) -> (f32, Vec<String>) {
+    EvidenceMatcher::new(profile_skills).score(text)
 }
 
 /* ------------------------------ lexical matching ----------------------------- */
@@ -377,6 +397,42 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn reusable_evidence_matcher_preserves_literal_token_and_denominator_behavior() {
+        let skills: Vec<String> = [
+            "C",
+            "R",
+            "C++",
+            "C#",
+            ".NET",
+            "Rust",
+            "  Rust  ",
+            "",
+            "élève",
+            "research engineer",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let matcher = EvidenceMatcher::new(&skills);
+        let (score, matched) =
+            matcher.score("Seeking an élève research engineer with C++, C#, .NET and Rust.");
+        assert_eq!(
+            matched,
+            [
+                "C++",
+                "C#",
+                ".NET",
+                "Rust",
+                "  Rust  ",
+                "élève",
+                "research engineer"
+            ]
+        );
+        assert_eq!(score, 0.7);
+        assert_eq!(matcher.score("Customer relations"), (0.0, vec![]));
+        assert_eq!(EvidenceMatcher::new(&[]).score("anything"), (0.0, vec![]));
+    }
     #[test]
     fn lexical_overlap_reports_missing() {
         let (score, missing) = lexical_overlap(
