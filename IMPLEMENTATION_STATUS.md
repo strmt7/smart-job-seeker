@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Bounded form-sensitivity repair — 2026-10-29
+
+- When a mapping response is received but its sensitivity-review list is missing or malformed, the app now makes one bounded local repair request using field descriptions without candidate profile values. Valid known flags from either response are retained. If repair fails or is invalid, the existing warning remains and exact fallback may still be offered; model inference failure itself is not retried by this mechanism.
+- A fictional test deliberately removed the initial review list and used resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context) for the repair. It flagged the Portuguese work-eligibility field and prevented a misleading email autocomplete fallback. This single example does not establish general classification accuracy or eliminate false negatives.
+- The web suite passed 182 tests with 57 live/browser tests ignored; the repair fixture was run separately after RAM/residency preflight. Web Clippy and formatting passed with one Cargo job. No real employer site or application submission was exercised; peak resource use was not measured.
+
 ## Model-flagged browser prefill fixture — 2026-10-29
 
 - A fictional Portuguese browser fixture now exercises the local model's review flags through the real prefill boundary. The work-eligibility field has a misleading email autocomplete hint and the consent checkbox uses a neutral ID. With resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), both fields were flagged and the separate contact email was mapped. A forged flagged-field mapping was rejected before the simulated grant was consumed; the approved fictional contact value was then filled, while browser checks and visual observations showed the flagged fields blank. The fixture did not submit.
