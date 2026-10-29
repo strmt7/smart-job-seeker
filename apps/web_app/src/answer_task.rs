@@ -217,6 +217,38 @@ mod tests {
             Some(""),
             "model did not abstain from unsupported years"
         );
+
+        recording.responses.clear();
+        let supported = Inputs {
+            session_id: "fictional".into(),
+            selector: "#skills".into(),
+            digest: "fixture".into(),
+            question: "What relevant data skills do you bring?".into(),
+            listing: "A laboratory data role asks for SQL expertise and six years of experience."
+                .into(),
+            facts: vec!["Used Python to clean laboratory data".into()],
+            instructions: "Write in a concise, direct tone.".into(),
+        };
+        let drafted = generate(&mut recording, &supported);
+        println!("fictional supported-answer result: {drafted:?}");
+        assert_eq!(
+            recording.responses.len(),
+            2,
+            "expected initial answer and style revision"
+        );
+        for response in &recording.responses {
+            let text = response["text"].as_str().unwrap().to_ascii_lowercase();
+            assert!(text.contains("python"));
+            assert!(
+                !text.contains("sql") && !text.contains("six years") && !text.contains("6 years"),
+                "job requirements leaked into candidate experience: {text}"
+            );
+        }
+        assert!(
+            drafted.is_ok(),
+            "a supported fictional answer should remain reviewable"
+        );
+        assert_eq!(drafted.unwrap()["facts"], json!([1]));
     }
     struct Fake {
         calls: usize,
