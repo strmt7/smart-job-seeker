@@ -409,7 +409,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 let model = crate::resident_model().ok().flatten().ok_or("No structured job found and no eligible local model is loaded; review manually")?;
                 let _lease = crate::doc_suggest::lease()?;
                 let (page_text, truncated) = browser.page_text_bounded(16_000).map_err(|e|e.to_string())?;
-                let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?;
+                let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
                 let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
                 let mut job=extract_page_text(&mut inference,&page_text,&current)?;
                 job["page_text_truncated"]=json!(truncated);

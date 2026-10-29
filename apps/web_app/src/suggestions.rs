@@ -660,8 +660,7 @@ mod tests {
         let model =
             waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
                 .unwrap()
-                .with_context_window(4096)
-                .unwrap();
+                .with_resident_context();
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),

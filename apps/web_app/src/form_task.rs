@@ -125,7 +125,8 @@ pub fn start(
             let live = open_application_page(&mut driver, &url)?;
             let preview = if let Some(model) = model {
                 let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())?
+                    .with_resident_context();
                 let mut llm = crate::resident_inference::ResidentInference::new(
                     llm,
                     model,

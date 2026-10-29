@@ -100,7 +100,8 @@ pub fn start(
                 return Err("Resident model changed; ranking was not started".into());
             }
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?
+                .with_resident_context();
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,

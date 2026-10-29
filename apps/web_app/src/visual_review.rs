@@ -289,6 +289,11 @@ fn generate_vision_with_context(
     if image.is_empty() || image.len() > 4 * 1024 * 1024 || prompt.len() > 24_000 {
         return Err("Vision input exceeds limits".into());
     }
+    let context = match context {
+        Some(value) if (1024..=131_072).contains(&value) => value,
+        Some(_) => return Err("Invalid visual review context size".into()),
+        None => waypoint_inference::ollama::resident_context(addr, model)?,
+    };
     let details = serde_json::to_vec(&json!({"model":model})).map_err(|e| e.to_string())?;
     let (status, details) =
         waypoint_inference::ollama::http_request(addr, "POST", "/api/show", Some(&details), 3000)?;
@@ -302,12 +307,7 @@ fn generate_vision_with_context(
         return Err("The resident model did not report vision capability; inspect manually".into());
     }
     let mut body = json!({"model":model,"prompt":prompt,"images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
-    if let Some(context) = context {
-        if !(1024..=131_072).contains(&context) {
-            return Err("Invalid visual review context size".into());
-        }
-        body["options"]["num_ctx"] = context.into();
-    }
+    body["options"]["num_ctx"] = context.into();
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let (status, data) = waypoint_inference::ollama::http_request(
         addr,
@@ -393,8 +393,7 @@ mod tests {
                 (format!("Question {i:02}"), value)
             })
             .collect();
-        let result =
-            analyze_with_context(addr, "qwen3.5:9b", &image, &expected, Some(4096)).unwrap();
+        let result = analyze(addr, "qwen3.5:9b", &image, &expected).unwrap();
         println!("fictional dense visual result: {result}");
         let comparisons = result["comparisons"].as_array().unwrap();
         assert_eq!(comparisons.len(), 16);
@@ -579,15 +578,15 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            for step in 0..2 {
+            for step in 0..3 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
-                assert!(line.contains(if step == 0 {
-                    "/api/show"
-                } else {
-                    "/api/generate"
+                assert!(line.contains(match step {
+                    0 => "/api/ps",
+                    1 => "/api/show",
+                    _ => "/api/generate",
                 }));
                 let mut length = 0;
                 loop {
@@ -602,9 +601,14 @@ mod tests {
                 }
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
-                let body: Value = serde_json::from_slice(&body).unwrap();
-                let response = if step == 0 { json!({"capabilities":["vision"]}) } else {
+                let body: Value = if body.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::from_slice(&body).unwrap()
+                };
+                let response = if step == 0 { json!({"models":[{"name":"fictional-model","size":1000,"size_vram":1000,"context_length":4096}]}) } else if step == 1 { json!({"capabilities":["vision"]}) } else {
                     assert_eq!(body["images"][0], "fictional-image");
+                    assert_eq!(body["options"]["num_ctx"], 4096);
                     json!({"done":true,"done_reason":"stop","response":json!({"observations":[{"label":"Name","visible_value":"Example"},{"label":"Travel","visible_value":"checked"},{"label":"Skills","visible_value":"Rust, Python"}]}).to_string()})
                 }.to_string();
                 write!(

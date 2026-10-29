@@ -62,6 +62,7 @@ pub struct OllamaInference {
     addr: SocketAddr,
     model: String,
     context_window: Option<u32>,
+    resident_context: bool,
     pub think: bool,
     cancel_flag: Arc<AtomicBool>,
 }
@@ -74,6 +75,7 @@ impl OllamaInference {
             addr,
             model: model.into(),
             context_window: None,
+            resident_context: false,
             think: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
         })
@@ -86,7 +88,16 @@ impl OllamaInference {
             return Err(InferenceError::BudgetExceeded);
         }
         self.context_window = Some(tokens);
+        self.resident_context = false;
         Ok(self)
+    }
+
+    /// Reuse the context of the single eligible resident model for each
+    /// request. This is a snapshot, not a reservation against other clients.
+    pub fn with_resident_context(mut self) -> Self {
+        self.context_window = None;
+        self.resident_context = true;
+        self
     }
 
     pub fn cancel_handle(&self) -> Arc<AtomicBool> {
@@ -277,7 +288,15 @@ impl Inference for OllamaInference {
             "think": false,
             "options": {"num_predict": max_output_tokens, "temperature": 0.0},
         });
-        if let Some(tokens) = self.context_window {
+        let context = if self.resident_context {
+            Some(
+                resident_context(self.addr, &self.model)
+                    .map_err(InferenceError::RuntimeUnreachable)?,
+            )
+        } else {
+            self.context_window
+        };
+        if let Some(tokens) = context {
             body["options"]["num_ctx"] = tokens.into();
         }
         let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
@@ -311,6 +330,42 @@ impl Inference for OllamaInference {
         self.cancel_flag.store(true, Ordering::Relaxed);
         Ok(())
     }
+}
+
+/// Query the local runtime immediately before generation. Refuse missing,
+/// ambiguous, offloaded, oversized, or contextless resident models.
+pub fn resident_context(addr: SocketAddr, model: &str) -> Result<u32, String> {
+    if addr.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) {
+        return Err("runtime must use literal IPv4 loopback".into());
+    }
+    let (status, bytes) = http_request(addr, "GET", "/api/ps", None, 3000)?;
+    if status != 200 {
+        return Err(format!("local runtime returned HTTP {status}"));
+    }
+    let value: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "invalid resident model response")?;
+    resident_context_from_ps(&value, model)
+}
+
+fn resident_context_from_ps(value: &Value, model: &str) -> Result<u32, String> {
+    let models = value["models"]
+        .as_array()
+        .ok_or("resident model list unavailable")?;
+    if models.len() != 1 || models[0]["name"].as_str() != Some(model) {
+        return Err("eligible resident model changed".into());
+    }
+    let size = models[0]["size"]
+        .as_u64()
+        .filter(|size| *size > 0 && *size <= 14 * 1024 * 1024 * 1024)
+        .ok_or("resident model size unavailable or over budget")?;
+    if models[0]["size_vram"].as_u64() != Some(size) {
+        return Err("resident model is not fully GPU-resident".into());
+    }
+    let context = models[0]["context_length"]
+        .as_u64()
+        .filter(|n| (1024..=131_072).contains(n))
+        .ok_or("resident context unavailable or outside supported bounds")?;
+    Ok(context as u32)
 }
 
 fn resident_memory(model: Option<&Value>) -> (Option<u64>, Option<u64>) {
@@ -494,6 +549,79 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resident_context_requires_a_single_matching_gpu_model() {
+        let valid = serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096}]});
+        assert_eq!(resident_context_from_ps(&valid, "local").unwrap(), 4096);
+        for invalid in [
+            serde_json::json!({"models":[]}),
+            serde_json::json!({"models":[{"name":"other","size":1000,"size_vram":1000,"context_length":4096}]}),
+            serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":999,"context_length":4096}]}),
+            serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000}]}),
+            serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096},{"name":"other"}]}),
+        ] {
+            assert!(resident_context_from_ps(&invalid, "local").is_err());
+        }
+    }
+
+    #[test]
+    fn resident_generation_reuses_reported_context() {
+        use std::io::{BufRead, BufReader};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for step in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert!(line.contains(if step == 0 {
+                    "/api/ps"
+                } else {
+                    "/api/generate"
+                }));
+                let mut length = 0;
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let response = if step == 0 {
+                    serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096}]})
+                } else {
+                    let body: Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(body["options"]["num_ctx"], 4096);
+                    serde_json::json!({"done":true,"done_reason":"stop","response":"{\"ok\":true}"})
+                }.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                )
+                .unwrap();
+            }
+        });
+        let mut model = OllamaInference::new(&format!("http://{addr}"), "local")
+            .unwrap()
+            .with_resident_context();
+        assert_eq!(
+            model
+                .generate_structured("fixture", "fictional", 100)
+                .unwrap()
+                .0["ok"],
+            true
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn explicit_context_window_is_bounded() {
