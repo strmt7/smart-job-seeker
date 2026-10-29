@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Preference ambiguity and temporary score review — 2026-10-29
+
+- The match detail now lets users explore changes to individual rubric judgments and recalculates the same fixed-weight midpoint and range. These changes are temporary: they do not save corrections, update the job badge, alter the stored assessment, or establish that other criteria were checked. The model output and its cited evidence remain visible.
+- A new ignored live-model qualification test exercises four fictional ambiguous preference cases. On local `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), only 2/4 judgments matched the expected result: the model incorrectly treated web accessibility auditing as accessible product development and the top of a salary range as a guaranteed minimum. Each erroneous single-criterion assessment displayed 100% with a 100–100% rubric range. The test failed as intended; an additional prompt attempt still scored 2/4 and was discarded. This is a small fictional benchmark, not a general accuracy estimate. The model's assessments remain unverified and users must check them.
+- Ten focused fit tests passed with five live tests ignored; the new live qualification test was run separately and failed as described. JavaScript syntax and fit badge/control checks passed, including changing a temporary judgment and checking the recomputed range. No rendered browser session, real listing, application submission, or peak-resource measurement was performed.
+
 ## Listing-backed preference comparison — 2026-10-29
 
 - Fit assessment now makes a separate local-model request for up to six extracted preference excerpts of at most 200 bytes, using at most the first 3,000 bytes of the listing. Its reported selection count, truncation and failure are visible. Every returned ID must be unique and complete, and every positive or conflicting judgment must cite an exact quote from the supplied listing excerpt. An unavailable or invalid response leaves the prior conservative assessment intact; unselected preferences remain unknown. The match detail shows cited listing text for both matches and conflicts. Older assessments become stale.

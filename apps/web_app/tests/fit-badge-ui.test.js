@@ -12,4 +12,28 @@ assert.equal(label(55, {lower: 60, upper: 100}), '55% AI estimate · range unava
 assert.equal(label(-1, {lower: 0, upper: 100}), 'Estimate unavailable');
 assert.ok(source.includes('fitBadgeLabel(item.score,item.score_range)'), 'batch badges must use their stored range');
 assert.ok(source.includes('fitBadgeLabel(score,result.assessment?.score_range)'), 'new assessments must use their range');
+const scoreLine = source.split('\n').find(value => value.startsWith('function fitRubricScore('));
+assert.ok(scoreLine, 'temporary correction calculation must exist');
+const calculate = vm.runInNewContext(`(${scoreLine})`);
+const rubric = [
+  {importance:'required',status:'supported'},
+  {importance:'required',status:'unknown'},
+  {importance:'preferred',status:'contradicted'}
+];
+assert.equal(JSON.stringify(calculate(rubric)), JSON.stringify({score:64,lower:43,upper:86}));
+rubric[0].status='unknown';
+assert.equal(JSON.stringify(calculate(rubric)), JSON.stringify({score:43,lower:0,upper:86}));
+assert.equal(calculate([{importance:'required',status:'invented'}]), null);
+assert.ok(source.includes('it does not save corrections or change the job badge'), 'temporary edits must be clearly labelled');
+assert.ok(source.includes('fitReviewControls(a.rubric)'), 'assessment must expose the controls');
+const controlsLine = source.split('\n').find(value => value.startsWith('function fitReviewControls('));
+function fakeNode(tag,text='') { return {tag,textContent:text,children:[],listeners:{},append(...nodes){this.children.push(...nodes);},setAttribute(){},addEventListener(event,callback){this.listeners[event]=callback;}}; }
+const context = {fitRubricScore:calculate,element:(tag,text)=>fakeNode(tag,text),document:{createElement:tag=>fakeNode(tag)}};
+const controls = vm.runInNewContext(`(${controlsLine})`,context)(rubric);
+const selects = controls.children.filter(node=>node.tag==='label').map(node=>node.children[0]);
+assert.equal(selects.length,3);
+assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 43% · 0–86% range');
+selects[1].value='supported';
+selects[1].listeners.change();
+assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 64% · 43–86% range');
 console.log('Fit badge UI checks passed.');

@@ -1190,6 +1190,69 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "qualification benchmark requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_preference_comparison_distinguishes_ambiguous_cases() {
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (_, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let cases = [
+            (
+                "I prefer accessible product development",
+                "Required: experience with web accessibility. This role audits websites.",
+                "unknown",
+            ),
+            (
+                "Remote work from Germany is required",
+                "Fully remote, available to candidates located in the United States.",
+                "contradicted",
+            ),
+            (
+                "At least EUR 80000 gross annual salary is required",
+                "Salary range EUR 60000 to EUR 80000 gross per year.",
+                "unknown",
+            ),
+            (
+                "Visa sponsorship is required",
+                "Employment authorization is required; no information about sponsorship is stated.",
+                "unknown",
+            ),
+        ];
+        let mut passed = 0;
+        for (preference, listing, expected) in cases {
+            let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+            let baseline = validate(raw.clone(), &[], preference, listing).unwrap();
+            let result = compare_preferences(&mut model, raw, baseline, &[], preference, listing);
+            let actual = result["rubric"][0]["status"].as_str().unwrap();
+            let completed = result["preference_comparison"]["status"] == "completed";
+            println!("preference={preference:?}; expected={expected}; actual={actual}; completed={completed}; result={result}");
+            if completed && actual == expected {
+                passed += 1;
+            }
+        }
+        println!("correct completed comparisons: {passed}/{}", cases.len());
+        assert_eq!(
+            passed,
+            cases.len(),
+            "local model failed the ambiguity benchmark"
+        );
+    }
+
+    #[test]
     fn fixed_rubric_is_repeatable_and_preserves_unknown_range() {
         let facts = vec![
             "Python experience".to_owned(),
