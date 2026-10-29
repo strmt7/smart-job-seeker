@@ -1,0 +1,9 @@
+# Local model and browser prefill check — 2026-10-29
+
+The ignored `live_local_model_prefills_and_visually_checks_fictional_form` test exercises a local HTML fixture through the production browser driver, model-assisted form interpretation, a simulated one-use prefill grant, DOM value verification, screenshot capture, and local-model visual transcription. It does not navigate a multistep application or click a submit control.
+
+In the [recorded run](local-model-browser-pipeline-2026-10-29.txt), the local model proposed the fictional given-name and email mappings. The browser filled both and verified their DOM values. The sensitive work-authorization field was not proposed or filled. The model then transcribed both filled values from the [captured screenshot](local-model-filled-form-2026-10-29.png), and the comparisons matched. The test checked both the browser trace and the fixture's submit marker; neither indicated a submission. The grant was a test fixture, not a real user's approval.
+
+This single local form has ordinary text fields and a simple layout. It does not establish accuracy on employer sites, custom controls, inaccessible forms, multistep workflows, or delivery. A screenshot transcription is advisory and is not proof that an external site received or retained an answer.
+
+The test used local `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, with a fully GPU-resident 4,096-token context. The pre-test snapshot was 24.17 GiB free system memory and 10.85 GiB dedicated GPU use; a later snapshot was 23.34 GiB and 10.99 GiB. These are point-in-time samples, not continuous peaks. The ignored test requires external resource preflight and uses the no-default-features build. It accessed no employer website and sent no application.

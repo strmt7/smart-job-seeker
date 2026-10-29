@@ -248,7 +248,7 @@ pub fn start(
     Ok(())
 }
 
-fn analyze(
+pub(crate) fn analyze(
     addr: std::net::SocketAddr,
     model: &str,
     image: &str,

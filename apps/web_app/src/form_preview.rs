@@ -425,6 +425,137 @@ mod tests {
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
 
     #[test]
+    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    fn live_local_model_prefills_and_visually_checks_fictional_form() {
+        use base64::Engine;
+        use waypoint_domain::GrantId;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        assert_eq!(
+            waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
+            4096
+        );
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-local-model-pipeline.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_resident_context();
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let preview = inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery", "email":"avery@example.invalid", "work_authorization":"unknown"})).unwrap();
+        println!(
+            "fictional preview: mappings={:?}; review={:?}",
+            preview.suggestions, preview.manual_review
+        );
+        assert!(preview
+            .suggestions
+            .iter()
+            .any(|item| item.field_selector == "#given"
+                && item.value == PacketValue::Text("Avery".into())));
+        assert!(preview
+            .suggestions
+            .iter()
+            .any(|item| item.field_selector == "#email"
+                && item.value == PacketValue::Text("avery@example.invalid".into())));
+        assert!(!preview
+            .suggestions
+            .iter()
+            .any(|item| item.field_selector == "#permit"));
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("model-pipeline-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Fictional role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("model-pipeline-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("model-pipeline-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        let filled = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            &url,
+            &preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap();
+        assert_eq!(filled, 2);
+        driver.verify_text_value("#given", "Avery").unwrap();
+        driver
+            .verify_text_value("#email", "avery@example.invalid")
+            .unwrap();
+        let image = driver.screenshot_base64().unwrap();
+        let output_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/model-eval");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        std::fs::write(
+            output_dir.join("local-model-filled-form.png"),
+            base64::engine::general_purpose::STANDARD
+                .decode(&image)
+                .unwrap(),
+        )
+        .unwrap();
+        let visual = crate::visual_review::analyze(
+            addr,
+            "qwen3.5:9b",
+            &image,
+            &[
+                ("Your given name".into(), "Avery".into()),
+                ("Email address".into(), "avery@example.invalid".into()),
+            ],
+        )
+        .unwrap();
+        println!("fictional post-fill visual review: {visual}");
+        for label in ["Your given name", "Email address"] {
+            assert!(visual["comparisons"].as_array().unwrap().iter().any(|item| item["label"] == label && item["status"] == "matches_transcription"), "visual review did not confirm {label}");
+        }
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+        assert_eq!(
+            driver.read_attribute("body", "data-submitted").unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn coverage_flags_empty_required_values_for_review() {
         use waypoint_applications::form_mapping::FormField;
         let fields = [
