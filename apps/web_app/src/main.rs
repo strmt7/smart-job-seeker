@@ -820,6 +820,26 @@ fn resident_model_status() -> Result<Value, String> {
     model_diagnostics(&data)
 }
 
+fn installed_model_inventory(data: &Value) -> Result<Value, String> {
+    let models = data["models"]
+        .as_array()
+        .ok_or("Ollama did not report installed models")?;
+    let mut entries = Vec::new();
+    let mut invalid = 0usize;
+    for model in models.iter().take(100) {
+        let Some(name) = model["name"].as_str().filter(|name| {
+            !name.trim().is_empty() && name.len() <= 256 && !name.chars().any(char::is_control)
+        }) else {
+            invalid += 1;
+            continue;
+        };
+        entries.push(json!({"name":name,"disk_bytes":model["size"].as_u64()}));
+    }
+    Ok(
+        json!({"models":entries,"reported_count":models.len(),"examined":models.len().min(100),"invalid":invalid}),
+    )
+}
+
 fn model_diagnostics(data: &Value) -> Result<Value, String> {
     let eligible = eligible_resident_model(data)?;
     let models = data["models"]
@@ -1056,6 +1076,18 @@ fn serve(
                 Err(error) => json!({"model":null,"state":"unreachable","error":error}),
             },
         );
+        return Ok(());
+    }
+    if method == "GET" && path == "/api/model-inventory" {
+        let addr = "127.0.0.1:11434"
+            .parse()
+            .map_err(|_| "invalid runtime address")?;
+        let (status, bytes) = http_request(addr, "GET", "/api/tags", None, 3000)?;
+        if status != 200 {
+            return Err(format!("Ollama returned HTTP {status}"));
+        }
+        let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid Ollama response")?;
+        json_reply(stream, "200 OK", installed_model_inventory(&data)?);
         return Ok(());
     }
     if method == "GET" && path == "/api/tool-status" {
@@ -3783,6 +3815,41 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "queries the existing local Ollama inventory without loading a model"]
+    fn model_inventory_http_reads_local_ollama() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "GET /api/model-inventory HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\n\r\n").unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(result["reported_count"].as_u64().is_some());
+        assert!(result["models"].as_array().is_some());
+    }
+    #[test]
+    fn model_inventory_is_bounded_and_reports_invalid_entries() {
+        let mut models: Vec<Value> = (0..101)
+            .map(|index| json!({"name":format!("model-{index}"),"size":1024}))
+            .collect();
+        models[1] = json!({"name":"invalid\nname","size":12});
+        models[2] = json!({"name":"no-size"});
+        let result = installed_model_inventory(&json!({"models":models})).unwrap();
+        assert_eq!(result["reported_count"], 101);
+        assert_eq!(result["examined"], 100);
+        assert_eq!(result["invalid"], 1);
+        assert_eq!(result["models"].as_array().unwrap().len(), 99);
+        assert!(result["models"][1]["disk_bytes"].is_null());
+        assert!(installed_model_inventory(&json!({})).is_err());
+    }
     #[test]
     fn fit_fact_selection_prefers_listing_terms_and_keeps_a_bounded_set() {
         let mut facts: Vec<String> = (0..25)
