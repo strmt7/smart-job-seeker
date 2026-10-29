@@ -222,6 +222,11 @@
 - Local-model listing extraction preserves a verified title and employer when optional location or description cannot be substantiated. Unsupported or missing optional fields stay empty, and the job is flagged for review. Exact excerpts still do not prove the model selected the correct posting.
 - With one build job and one test thread, eight candidate tests passed (three browser fixtures initially ignored), and the fictional browser text-extraction fixture passed separately using a fake model. Web-app Clippy passed before the final test-only addition; JavaScript syntax passed. No live model, employer site or peak resources were measured. No application was sent.
 
+## CV and cover-letter draft recovery — 2026-10-29
+
+- An active draft can be discovered after a lost start response; the latest completed result can be replayed for ten minutes in the running process, with context rechecked on status reads. Expiration is applied on the next poll or a new draft, not by a background timer. Draft content is not persisted by this recovery cache.
+- With one build job and one test thread, two draft tests, the recovery UI fixture and JavaScript syntax checks passed. Web-app Clippy passed before the final cache-clear and test additions. No live model, installed-app startup, employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

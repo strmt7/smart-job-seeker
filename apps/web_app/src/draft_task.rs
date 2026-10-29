@@ -10,6 +10,14 @@ struct Task {
     result: Option<Result<Value, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
+pub fn pending() -> Result<Option<(String, String)>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Draft state unavailable")?
+        .as_ref()
+        .map(|task| (task.id.clone(), task.job_id.clone())))
+}
 pub struct Inputs {
     pub job_id: String,
     pub digest: String,
@@ -26,6 +34,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             return Err("A draft is running or awaiting its result".into());
         }
         let lease = crate::doc_suggest::lease()?;
+        *COMPLETED.lock().map_err(|_| "Draft state unavailable")? = None;
         *task = Some(Task {
             id: id.clone(),
             job_id: input.job_id.clone(),
@@ -72,25 +81,33 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Draft state unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Draft task not found")?;
-    match task.result.take() {
-        None => Ok(json!({"status":"running"})),
-        Some(Ok(draft)) => {
-            let (job_id, kind, digest) =
-                (task.job_id.clone(), task.kind.clone(), task.digest.clone());
-            *tasks = None;
-            Ok(
-                json!({"status":"complete","draft":draft,"job_id":job_id,"kind":kind,"digest":digest}),
-            )
+    let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
+        let mut completed = COMPLETED.lock().map_err(|_| "Draft state unavailable")?;
+        if completed
+            .as_ref()
+            .is_some_and(|(_, _, at)| at.elapsed() > std::time::Duration::from_secs(600))
+        {
+            *completed = None;
         }
-        Some(Err(error)) => {
-            *tasks = None;
-            Ok(json!({"status":"failed","error":error}))
+        return completed
+            .as_ref()
+            .filter(|(task_id, _, _)| task_id == id)
+            .map(|(_, result, _)| result.clone())
+            .ok_or("Draft task not found".into());
+    };
+    let Some(result) = task.result.take() else {
+        return Ok(json!({"status":"running"}));
+    };
+    let output = match result {
+        Ok(draft) => {
+            json!({"status":"complete","draft":draft,"job_id":task.job_id,"kind":task.kind,"digest":task.digest})
         }
-    }
+        Err(error) => json!({"status":"failed","error":error}),
+    };
+    *COMPLETED.lock().map_err(|_| "Draft state unavailable")? =
+        Some((id.to_owned(), output.clone(), std::time::Instant::now()));
+    *tasks = None;
+    Ok(output)
 }
 fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     let paragraphs = value
@@ -182,6 +199,31 @@ mod tests {
                 },
             ))
         }
+    }
+    #[test]
+    fn completed_draft_is_replayable_and_pending_is_identified() {
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-draft".into(),
+            job_id: "fictional-job".into(),
+            kind: "cv".into(),
+            digest: "fixture".into(),
+            result: Some(Ok(json!({"paragraphs":[]}))),
+        });
+        assert_eq!(
+            pending().unwrap(),
+            Some(("fictional-draft".into(), "fictional-job".into()))
+        );
+        let first = poll("fictional-draft").unwrap();
+        assert_eq!(first["status"], "complete");
+        assert_eq!(poll("fictional-draft").unwrap(), first);
+        assert!(poll("different").is_err());
+        *COMPLETED.lock().unwrap() = Some((
+            "expired".into(),
+            json!({"status":"complete"}),
+            std::time::Instant::now() - std::time::Duration::from_secs(601),
+        ));
+        assert!(poll("expired").is_err());
+        assert!(COMPLETED.lock().unwrap().is_none());
     }
     #[test]
     fn performs_both_passes_and_checks_citations() {

@@ -3857,6 +3857,16 @@ fn serve(
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/draft/pending" => {
+            json_reply(
+                stream,
+                "200 OK",
+                match draft_task::pending()? {
+                    Some((task_id, job_id)) => json!({"task_id":task_id,"job_id":job_id}),
+                    None => json!({"task_id":null}),
+                },
+            );
+        }
         "/api/draft/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             let mut result = draft_task::poll(id)?;
