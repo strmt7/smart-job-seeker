@@ -1346,7 +1346,13 @@ fn serve(
         }
         "/api/web-search/batch-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            json_reply(stream, "200 OK", web_search_batch::poll(id)?);
+            let acknowledged = body["acknowledged"].as_u64().unwrap_or(0);
+            let acknowledged =
+                usize::try_from(acknowledged).map_err(|_| "Invalid batch acknowledgement")?;
+            json_reply(stream, "200 OK", web_search_batch::poll(id, acknowledged)?);
+        }
+        "/api/web-search/batch-pending" => {
+            json_reply(stream, "200 OK", web_search_batch::pending()?);
         }
         "/api/web-search/batch-cancel" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;

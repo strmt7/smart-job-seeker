@@ -96,22 +96,62 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
         return Err("Job description is too large; review manually".into());
     }
     let description = bounded(&waypoint_connectors::description_text(raw), 30_000);
-    let location = &job["jobLocation"];
-    let first = if let Some(list) = location.as_array() {
-        list.first().unwrap_or(&Value::Null)
-    } else {
-        location
+    let locations = match job["jobLocation"].as_array() {
+        Some(list) => list.iter().take(20).collect::<Vec<_>>(),
+        None => vec![&job["jobLocation"]],
     };
-    let address = &first["address"];
-    let parts: Vec<&str> = ["addressLocality", "addressRegion", "addressCountry"]
-        .iter()
-        .filter_map(|key| address[*key].as_str())
-        .filter(|s| !s.trim().is_empty())
-        .collect();
-    let location = bounded(&parts.join(", "), 200);
+    let mut extracted = Vec::new();
+    for place in locations {
+        let address = &place["address"];
+        let text = if let Some(text) = address.as_str() {
+            bounded(text, 200)
+        } else {
+            let parts: Vec<&str> = ["addressLocality", "addressRegion", "addressCountry"]
+                .iter()
+                .filter_map(|key| {
+                    address[*key]
+                        .as_str()
+                        .or_else(|| address[*key]["name"].as_str())
+                })
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+            bounded(&parts.join(", "), 200)
+        };
+        if !text.is_empty()
+            && !extracted
+                .iter()
+                .any(|item: &String| item.eq_ignore_ascii_case(&text))
+        {
+            extracted.push(text);
+        }
+    }
     let remote = job["jobLocationType"]
         .as_str()
         .is_some_and(|v| v.eq_ignore_ascii_case("TELECOMMUTE"));
+    if remote {
+        let requirements = &job["applicantLocationRequirements"];
+        let regions: Vec<&Value> = match requirements.as_array() {
+            Some(items) => items.iter().take(20).collect(),
+            None => vec![requirements],
+        };
+        let mut names = Vec::new();
+        for region in regions {
+            if let Some(name) = region.as_str().or_else(|| region["name"].as_str()) {
+                let name = bounded(name, 100);
+                if !name.is_empty()
+                    && !names
+                        .iter()
+                        .any(|item: &String| item.eq_ignore_ascii_case(&name))
+                {
+                    names.push(name);
+                }
+            }
+        }
+        if !names.is_empty() {
+            extracted.push(format!("Applicant location: {}", names.join(", ")));
+        }
+    }
+    let location = bounded(&extracted.join("; "), 200);
     Ok(Some(
         json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"extraction":"structured"}),
     ))
@@ -353,6 +393,35 @@ mod tests {
         assert!(parse(&["{}".into()], "https://example.org/job")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn extracts_multiple_locations_and_country_objects() {
+        let posting =
+            json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},
+            "jobLocation":[
+                {"address":{"addressLocality":"Berlin","addressCountry":{"name":"Germany"}}},
+                {"address":{"addressLocality":"Paris","addressCountry":"France"}},
+                {"address":{"addressLocality":"Berlin","addressCountry":{"name":"Germany"}}}
+            ]})
+            .to_string();
+        let job = parse(&[posting], "https://example.org/jobs/123")
+            .unwrap()
+            .unwrap();
+        assert_eq!(job["location"], "Berlin, Germany; Paris, France");
+        assert_eq!(job["url"], "https://example.org/jobs/123");
+    }
+
+    #[test]
+    fn remote_applicant_locations_are_retained_as_restrictions() {
+        let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},
+            "jobLocationType":"TELECOMMUTE",
+            "applicantLocationRequirements":[{"@type":"Country","name":"Germany"},{"@type":"Country","name":"France"}]}).to_string();
+        let job = parse(&[posting], "https://example.org/jobs/123")
+            .unwrap()
+            .unwrap();
+        assert_eq!(job["remote"], true);
+        assert_eq!(job["location"], "Applicant location: Germany, France");
     }
 
     #[test]

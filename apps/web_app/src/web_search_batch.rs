@@ -7,7 +7,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 struct Task {
     id: String,
@@ -15,25 +15,40 @@ struct Task {
     cancel: Arc<AtomicBool>,
     total: usize,
     processed: usize,
+    pending: Option<Value>,
+    history: Vec<Value>,
 }
 enum Message {
     Query(String, u8, Result<Value, String>),
     Done(bool),
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 pub fn busy() -> bool {
     TASK.lock().map(|t| t.is_some()).unwrap_or(true)
 }
+pub fn pending() -> Result<Value, String> {
+    let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
+    Ok(match tasks.as_ref() {
+        Some(task) => json!({"active":true,"task_id":task.id,"history":task.history}),
+        None => {
+            let completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
+            match completed.as_ref() {
+                Some((id, result)) => json!({"active":false,"last":{"task_id":id,"result":result}}),
+                None => json!({"active":false}),
+            }
+        }
+    })
+}
 fn send(tx: &SyncSender<Message>, mut message: Message, cancel: &AtomicBool) -> bool {
-    let until = Instant::now() + Duration::from_secs(30);
     loop {
         match tx.try_send(message) {
             Ok(()) => return true,
             Err(TrySendError::Full(m)) => {
                 message = m;
-                if cancel.load(Ordering::Acquire) || Instant::now() >= until {
+                if cancel.load(Ordering::Acquire) {
                     return false;
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -79,6 +94,8 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         cancel,
         total,
         processed: 0,
+        pending: None,
+        history: Vec::new(),
     });
     drop(task);
     std::thread::spawn(move || {
@@ -136,23 +153,49 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
     });
     Ok(())
 }
-pub fn poll(id: &str) -> Result<Value, String> {
+pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Batch web search not found")?;
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Web search unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| "Batch web search not found".into());
+    };
+    if acknowledged > task.processed {
+        return Err("Invalid batch acknowledgement".into());
+    }
+    if acknowledged
+        < task
+            .processed
+            .saturating_sub(usize::from(task.pending.is_some()))
+    {
+        return Ok(
+            json!({"status":"running","processed":task.processed,"total":task.total,"history":task.history}),
+        );
+    }
+    if let Some(pending) = &task.pending {
+        if acknowledged < task.processed {
+            return Ok(pending.clone());
+        }
+        task.pending = None;
+    }
     match task.rx.try_recv() {
         Ok(Message::Query(query, page, result)) => {
             task.processed += 1;
-            Ok(match result {
+            let response = match result {
                 Ok(data) => {
                     json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"page":page,"data":data})
                 }
                 Err(error) => {
                     json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"page":page,"error":error})
                 }
-            })
+            };
+            task.pending = Some(response.clone());
+            task.history.push(response.clone());
+            Ok(response)
         }
         Ok(Message::Done(limit_reached)) => {
             let (processed, total, cancelled) = (
@@ -160,10 +203,11 @@ pub fn poll(id: &str) -> Result<Value, String> {
                 task.total,
                 task.cancel.load(Ordering::Acquire),
             );
+            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"history":task.history});
+            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
+                Some((id.to_owned(), response.clone()));
             *tasks = None;
-            Ok(
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached}),
-            )
+            Ok(response)
         }
         Err(TryRecvError::Empty) => {
             Ok(json!({"status":"running","processed":task.processed,"total":task.total}))
@@ -174,14 +218,15 @@ pub fn poll(id: &str) -> Result<Value, String> {
                 task.total,
                 task.cancel.load(Ordering::Acquire),
             );
-            *tasks = None;
-            if cancelled {
-                Ok(
-                    json!({"status":"complete","processed":processed,"total":total,"cancelled":true}),
-                )
+            let response = if cancelled {
+                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"history":task.history})
             } else {
-                Ok(json!({"status":"failed","error":"Batch search stopped before completion"}))
-            }
+                json!({"status":"failed","processed":processed,"total":total,"error":"Batch search stopped before completion","history":task.history})
+            };
+            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
+                Some((id.to_owned(), response.clone()));
+            *tasks = None;
+            Ok(response)
         }
     }
 }
@@ -199,6 +244,106 @@ pub fn cancel(id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    use std::time::Instant;
+    #[test]
+    fn results_are_replayed_until_acknowledged_and_completion_is_recoverable() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(2);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "replay".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 1,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+        });
+        tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
+            .unwrap();
+        tx.send(Message::Done(false)).unwrap();
+        let first = poll("replay", 0).unwrap();
+        assert_eq!(first["query"], "role");
+        assert_eq!(poll("replay", 0).unwrap(), first);
+        let recovered = pending().unwrap();
+        assert_eq!(recovered["task_id"], "replay");
+        assert_eq!(recovered["history"][0], first);
+        assert!(poll("replay", 2).is_err());
+        let done = poll("replay", 1).unwrap();
+        assert_eq!(done["status"], "complete");
+        assert_eq!(done["history"][0], first);
+        assert_eq!(poll("replay", 1).unwrap(), done);
+        assert_eq!(pending().unwrap()["last"]["result"], done);
+    }
+
+    #[test]
+    fn interrupted_batch_preserves_received_pages() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "interrupted".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 2,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+        });
+        tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
+            .unwrap();
+        drop(tx);
+        let page = poll("interrupted", 0).unwrap();
+        let failed = poll("interrupted", 1).unwrap();
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["history"][0], page);
+        assert_eq!(poll("interrupted", 0).unwrap(), failed);
+        assert_eq!(pending().unwrap()["last"]["result"], failed);
+    }
+
+    #[test]
+    fn http_clients_can_recover_pages_after_another_client_finishes() {
+        use std::net::{TcpListener, TcpStream};
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(3);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "http-recovery".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 2,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+        });
+        tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
+            .unwrap();
+        tx.send(Message::Query("role".into(), 2, Ok(json!({"results":[]}))))
+            .unwrap();
+        tx.send(Message::Done(false)).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let mut request = |path: &str, data: Value| {
+            let body = data.to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let status = "/api/web-search/batch-status";
+        let first = request(status, json!({"task_id":"http-recovery","acknowledged":0}));
+        let second = request(status, json!({"task_id":"http-recovery","acknowledged":1}));
+        let done = request(status, json!({"task_id":"http-recovery","acknowledged":2}));
+        assert_eq!(done["history"], json!([first, second]));
+        assert_eq!(
+            request(status, json!({"task_id":"http-recovery","acknowledged":0})),
+            done
+        );
+        let recover = request("/api/web-search/batch-pending", json!({}));
+        assert_eq!(recover["last"]["result"], done);
+    }
     #[test]
     fn searches_sequentially_deduplicates_and_reports_each_query() {
         let _lock = TEST_LOCK.lock().unwrap();
@@ -236,7 +381,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut batches = Vec::new();
         loop {
-            let result = poll("test-batch").unwrap();
+            let result = poll("test-batch", batches.len()).unwrap();
             if result["status"] == "complete" {
                 assert_eq!(result["processed"], 2);
                 break;
@@ -292,7 +437,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut results = Vec::new();
         loop {
-            let result = poll("page-test").unwrap();
+            let result = poll("page-test", results.len()).unwrap();
             if result["status"] == "complete" {
                 assert_eq!(result["processed"], 2);
                 break;
