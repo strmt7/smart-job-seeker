@@ -124,8 +124,13 @@ pub fn start(
                 .map_err(|e| e.to_string())?;
             let live = open_application_page(&mut driver, &url)?;
             let preview = if let Some(model) = model {
-                let mut llm = OllamaInference::new("http://127.0.0.1:11434", model)
+                let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                     .map_err(|e| e.to_string())?;
+                let mut llm = crate::resident_inference::ResidentInference::new(
+                    llm,
+                    model,
+                    crate::resident_model,
+                );
                 form_preview::suggest_for_live_form(live, &mut llm, &profile)?
             } else {
                 form_preview::suggest_without_model(live, &profile, &no_model_reason)?

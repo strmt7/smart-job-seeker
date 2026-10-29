@@ -197,6 +197,11 @@
 - Each application-page check and its replay retain the original listing URL. The status endpoint reports a changed URL as stale and the interface rechecks the displayed URL when jobs refresh. The result remains advisory and does not establish that an application is complete or open.
 - With one build job and one test thread, four application-check tests passed (one browser fixture ignored), including a local endpoint/replay fixture for a changed URL. The recovery UI fixture, JavaScript syntax check and web-app Clippy passed. No live employer site or peak resources were measured. No application was sent.
 
+## Form inference residency checks — 2026-10-29
+
+- Form inspection and navigation recheck the selected model's reported residency before each model request, including sequential mapping and option batches. If the check fails or the selected resident model changes, that model call is not made and existing fallback/review behavior applies. This is a snapshot and cannot prevent external runtime changes between check and generation.
+- With one build job and one test thread, the residency-change fixture, twelve suggestion tests and web-app Clippy passed. No live model or peak memory measurement was made, so this is not a no-freeze guarantee. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
