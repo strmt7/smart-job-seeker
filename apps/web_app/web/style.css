@@ -159,3 +159,5 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 #model-inventory-info ul:focus-visible{outline:3px solid #68bfc1;outline-offset:2px}
 #model-inventory-info li{padding:8px 0;border-top:1px solid #e1ebe8;color:#263e4d;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
 #model-inventory-info .review-label{margin:0!important}
+
+.attachment-name{min-width:0;max-width:100%;overflow-wrap:anywhere}

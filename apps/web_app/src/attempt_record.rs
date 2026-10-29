@@ -750,50 +750,18 @@ impl AttemptRecord {
         Ok(name)
     }
     pub fn material(&mut self, name: &str, bytes: &[u8]) -> Result<String, String> {
-        let safe: String = name
-            .chars()
-            .map(|c| {
-                if c.is_control()
-                    || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-                {
-                    '_'
-                } else {
-                    c
-                }
-            })
-            .collect();
         // Reserve space for our sequence and a short extension even when the
         // original upload already uses the filesystem's component limit.
         // The name requested by the caller is retained in the manifest below.
-        let safe = safe.trim_end_matches(['.', ' ']);
-        let (stem, extension) = match safe.rsplit_once('.') {
-            Some((stem, extension))
-                if !extension.is_empty()
-                    && extension.len() <= 32
-                    && extension
-                        .chars()
-                        .all(|character| !character.is_whitespace()) =>
-            {
-                (stem, format!(".{extension}"))
-            }
-            _ => (safe, String::new()),
-        };
-        let mut end = stem.len().min(96);
-        while !stem.is_char_boundary(end) {
-            end -= 1;
-        }
-        let stem = stem[..end].trim_end_matches(['.', ' ']);
-        let stem = if stem.trim_matches('.').trim().is_empty() {
-            "document"
-        } else {
-            stem
-        };
+        let safe = portable_name(name, 96);
         self.sequence = self
             .sequence
             .checked_add(1)
             .ok_or("Material sequence exhausted")?;
-        let filename = format!("{:04}-{stem}{extension}", self.sequence);
-        let materials = self.dir.join("materials");
+        let filename = format!("{:04}-{safe}", self.sequence);
+        // On Windows canonicalization yields an extended-length path, so a
+        // valid component remains writable in a deeply nested workspace.
+        let materials = fs::canonicalize(self.dir.join("materials")).map_err(|e| e.to_string())?;
         let mut file = tempfile::NamedTempFile::new_in(&materials).map_err(|e| e.to_string())?;
         file.write_all(bytes).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
@@ -816,6 +784,65 @@ impl AttemptRecord {
             format!("Material was saved but its manifest could not be flushed: {e}")
         })?;
         Ok(filename)
+    }
+}
+
+fn portable_name(name: &str, stem_limit: usize) -> String {
+    let safe: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let safe = safe.trim_end_matches(['.', ' ']);
+    let (stem, extension) = match safe.rsplit_once('.') {
+        Some((stem, extension))
+            if !extension.is_empty()
+                && extension.len() <= 32
+                && extension.chars().all(|c| !c.is_whitespace()) =>
+        {
+            (stem, format!(".{extension}"))
+        }
+        _ => (safe, String::new()),
+    };
+    let mut end = stem.len().min(stem_limit);
+    while !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    let stem = stem[..end].trim_end_matches(['.', ' ']);
+    let stem = if stem.trim_matches('.').trim().is_empty() {
+        "document"
+    } else {
+        stem
+    };
+    format!("{stem}{extension}")
+}
+
+/// Name presented to a website when attaching a saved document. A separate
+/// prefix is needed for Windows device names because this name has no sequence.
+pub fn attachment_filename(name: &str) -> String {
+    let safe = portable_name(name, 120);
+    let stem = safe.split('.').next().unwrap_or("").trim_end_matches(' ');
+    let upper = stem.to_ascii_uppercase();
+    let reserved = matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        upper.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    });
+    if reserved {
+        format!("_{safe}")
+    } else {
+        safe
     }
 }
 
@@ -913,6 +940,25 @@ mod tests {
     use super::*;
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
+
+    #[test]
+    fn attachment_names_are_windows_safe_and_keep_the_extension() {
+        assert_eq!(attachment_filename("resume.pdf"), "resume.pdf");
+        assert_eq!(attachment_filename("CON.pdf"), "_CON.pdf");
+        assert_eq!(attachment_filename("lpt1.pdf"), "_lpt1.pdf");
+        assert_eq!(attachment_filename("COM¹.pdf"), "_COM¹.pdf");
+        assert_eq!(attachment_filename("résumé.pdf"), "résumé.pdf");
+        let long = format!("{}.pdf", "é".repeat(120));
+        let name = attachment_filename(&long);
+        assert!(name.ends_with(".pdf") && name.len() <= 153);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        std::fs::write(dir.path().join(&name), b"fictional pdf").unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join(&name)).unwrap(),
+            b"fictional pdf"
+        );
+    }
 
     #[test]
     fn materials_preserve_bytes_with_long_names_and_do_not_overwrite() {

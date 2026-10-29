@@ -1168,7 +1168,7 @@ fn serve(
             .iter()
             .map(|f| json!({"id":f.id,"text":f.text,"requires_review":f.requires_review}))
             .collect();
-        let documents: Vec<Value> = ws.documents().map_err(|e| e.to_string())?.iter().map(|doc| json!({"id":doc.id,"name":doc.name,"size":doc.size,"created_at":doc.created_at})).collect();
+        let documents: Vec<Value> = ws.documents().map_err(|e| e.to_string())?.iter().map(|doc| json!({"id":doc.id,"name":doc.name,"attachment_name":attempt_record::attachment_filename(&doc.name),"size":doc.size,"created_at":doc.created_at})).collect();
         let reviews: Vec<Value> = ws
             .manual_reviews()
             .map_err(|e| e.to_string())?
@@ -3618,6 +3618,13 @@ fn serve(
                         .into(),
                 );
             }
+            let name = attempt_record::attachment_filename(&doc.name);
+            if body["expected_attachment_name"]
+                .as_str()
+                .is_some_and(|expected| expected != name)
+            {
+                return Err("Attachment filename changed; review it before attaching".into());
+            }
             let visual_review = match body["visual_review_attempt"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -3659,31 +3666,13 @@ fn serve(
                     record.status("manual_review", now())?;
                 }
                 let stored = record.material(&doc.name, &bytes)?;
-                record.event(json!({"type":"document_requested","time":now(),"selector":selector,"name":doc.name,"material":stored}))?;
+                record.event(json!({"type":"document_requested","time":now(),"selector":selector,"name":doc.name,"attachment_name":name,"material":stored}))?;
             }
-            let name: String = doc
-                .name
-                .chars()
-                .map(|c| {
-                    if c.is_control()
-                        || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-                    {
-                        '_'
-                    } else {
-                        c
-                    }
-                })
-                .collect();
-            let name = if name.trim_matches('.').trim().is_empty() {
-                "document"
-            } else {
-                name.as_str()
-            };
             let dir = tempfile::Builder::new()
                 .prefix("waypoint-document-")
                 .tempdir()
                 .map_err(|e| e.to_string())?;
-            let path = dir.path().join(name);
+            let path = dir.path().join(&name);
             std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
             let grant_id = random_id()?;
             let payload = json!({"selector":selector,"document_id":document_id,"document_sha256":waypoint_domain::sha256_hex(&bytes)}).to_string();
@@ -3718,7 +3707,7 @@ fn serve(
                 .attachments
                 .push((selector.to_owned(), path, current.id.clone()));
             if let Some(record) = &mut current.record {
-                record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name}))?;
+                record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name,"attachment_name":name}))?;
                 if let Ok(image) = current.driver.screenshot_base64() {
                     let name = record.screenshot_with_name(&image)?;
                     record.event(json!({"type":"attachment_viewport","time":now(),"selector":selector,"screenshot":format!("screenshots/{name}")}))?;
@@ -3743,7 +3732,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"ok":true,"name":doc.name,"manual_review":current.preview.manual_review}),
+                json!({"ok":true,"name":doc.name,"attachment_name":name,"manual_review":current.preview.manual_review}),
             );
         }
         "/api/form/session-status" => {
@@ -5492,6 +5481,34 @@ mod tests {
     }
 
     #[test]
+    fn state_shows_the_filename_that_would_be_attached() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            let name = format!("{}.pdf", "x".repeat(251));
+            ws.add_document("long-name", &name, b"%PDF-fictional", 1)
+                .unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+        });
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let state: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let doc = &state["documents"][0];
+        let original = format!("{}.pdf", "x".repeat(251));
+        assert_eq!(doc["name"], original);
+        assert_eq!(
+            doc["attachment_name"],
+            attempt_record::attachment_filename(&original)
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn stored_document_text_can_be_reviewed_without_creating_facts() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -5549,13 +5566,10 @@ mod tests {
             .unwrap();
             let profile = json!({"first_name":"Synthetic","country":"Germany"});
             ws.save_candidate_profile(&profile.to_string()).unwrap();
-            ws.add_document(
-                "fictional-doc",
-                "fictional-cv.pdf",
-                b"%PDF-fictional resume",
-                1,
-            )
-            .unwrap();
+            let doc_name = format!("{}.pdf", "x".repeat(251));
+            let staged_name = attempt_record::attachment_filename(&doc_name);
+            ws.add_document("fictional-doc", &doc_name, b"%PDF-fictional resume", 1)
+                .unwrap();
             let review_attempt = "0123456789abcdef0123456789abcdef";
             let pdf = b"%PDF-fictional resume";
             let mut review_record =
@@ -5834,6 +5848,11 @@ mod tests {
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
             let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(error.contains("Attachment filename changed"));
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
             let current = session.as_mut().unwrap();
             assert_eq!(
@@ -5842,9 +5861,9 @@ mod tests {
                     .read_attribute("#resume", "data-attached")
                     .unwrap()
                     .as_deref(),
-                Some("fictional-cv.pdf")
+                Some(staged_name.as_str())
             );
-            let staged_path = current.staged_files[0].path().join("fictional-cv.pdf");
+            let staged_path = current.staged_files[0].path().join(&staged_name);
             assert_eq!(
                 std::fs::read(&staged_path).unwrap(),
                 b"%PDF-fictional resume"
@@ -6134,12 +6153,24 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("Review the visual findings"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc","visual_review_attempt":"0123456789abcdef0123456789abcdef","reviewed_visual_findings":true}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc","visual_review_attempt":"0123456789abcdef0123456789abcdef","reviewed_visual_findings":true,"expected_attachment_name":"stale.pdf"}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/attach HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Attachment filename changed"));
+        let staged_name = attempt_record::attachment_filename(&format!("{}.pdf", "x".repeat(251)));
+        let body = json!({"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc","visual_review_attempt":"0123456789abcdef0123456789abcdef","reviewed_visual_findings":true,"expected_attachment_name":staged_name}).to_string();
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/attach HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("200 OK"), "{response}");
+        assert_eq!(
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+                ["attachment_name"],
+            staged_name
+        );
         let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#candidate"],"answers":[{"selector":"#later-answer","value":"Changed"}]}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();

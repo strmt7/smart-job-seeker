@@ -1,0 +1,12 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function attachmentNameNotice('));
+assert.ok(line, 'attachment filename notice must exist');
+const notice = vm.runInNewContext(`(${line})`);
+assert.equal(notice({name:'resume.pdf',attachment_name:'resume.pdf'}), 'Website filename: resume.pdf');
+assert.equal(notice({name:'CON.pdf',attachment_name:'_CON.pdf'}), 'Website filename: _CON.pdf (adjusted for Windows; the saved document name is unchanged).');
+assert.match(notice({name:'resume.pdf'}), /unavailable/);
+assert.ok(source.includes('expected_attachment_name:selectedDoc.attachment_name'), 'reviewed filename must be sent with attachment');
+console.log('Attachment filename notice checks passed.');
