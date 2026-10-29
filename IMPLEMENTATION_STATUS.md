@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## DOCX insertion formatting — 2026-10-29
+
+- Exact DOCX edits that insert text without deleting the matched passage now preserve the original runs instead of rewriting the whole match. An insertion at the beginning of the match uses the following run's style; otherwise it uses the preceding run's style. The chosen style may not match the user's intent and still requires visual review. Unicode and unique-match checks remain in force.
+- A fictional DOCX with bold, italic and underlined runs was edited, converted using installed LibreOffice, rendered and visually inspected. The inserted phrase appeared in the adjacent bold run while the original italic and underlined text remained styled. Focused tests also exercised insertions at the beginning, inside and end of a passage. This single fixture does not establish fidelity across real templates, pagination or arbitrary edits. The local vision model was not run for this fixture.
+- The web suite passed (201 passed, 67 ignored), the styled conversion fixture was run separately, and web Clippy and formatting passed. Peak resources were not measured. No application was sent.
+
 ## Preserve unchanged DOCX run formatting — 2026-10-29
 
 - For a unique exact DOCX replacement with a nonempty changed span, unchanged Unicode prefix and suffix text remain in their existing runs, so their styles are preserved. The changed span uses the first changed run's style. Pure insertions retain the earlier first-run behavior because the intended insertion style is ambiguous; a no-op returns the original bytes after uniqueness validation.

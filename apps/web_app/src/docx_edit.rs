@@ -1,6 +1,7 @@
 //! Apply one exact, reviewed text replacement within a DOCX body, header or footer paragraph.
 //! Text spanning Word runs is supported. Unchanged prefix and suffix runs are
-//! retained where possible; changed text uses the first changed run's style.
+//! retained where possible; changed text uses the first changed run's style and
+//! pure insertions use an adjacent run's style.
 use quick_xml::{events::Event, name::ResolveResult, NsReader};
 use std::io::{Cursor, Write};
 
@@ -176,27 +177,31 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
         .take_while(|(a, b)| a == b)
         .map(|(ch, _)| ch.len_utf8())
         .sum();
-    let changed_before = &before[prefix..before.len() - suffix];
-    let (start, end, inserted_text) = if changed_before.is_empty() {
-        // Pure insertion at a run boundary has ambiguous styling. Retain the
-        // existing first-run behavior rather than guessing an adjacent style.
-        (match_start, match_start + before.len(), after)
-    } else {
-        (
-            match_start + prefix,
-            match_start + before.len() - suffix,
-            &after[prefix..after.len() - suffix],
-        )
-    };
+    let start = match_start + prefix;
+    let end = match_start + before.len() - suffix;
+    let inserted_text = &after[prefix..after.len() - suffix];
     let blocks = parse_blocks(&xml)?;
     let mut patches: Vec<(usize, usize, Vec<u8>)> = Vec::new();
     let mut position = 0;
     let mut inserted = false;
     for node in &blocks[block_index] {
         let next = position + node.text.len();
-        if start < next && end > position {
+        // Insertions use the preceding run's style at an interior boundary;
+        // at the start of the match they use the following run's style.
+        let insertion_here = start == end
+            && !inserted
+            && if prefix == 0 {
+                position <= start && start < next
+            } else {
+                position < start && start <= next
+            };
+        if (start < next && end > position) || insertion_here {
             let local_start = start.saturating_sub(position);
-            let local_end = (end - position).min(node.text.len());
+            let local_end = if insertion_here {
+                local_start
+            } else {
+                (end - position).min(node.text.len())
+            };
             let mut replacement = String::new();
             replacement.push_str(&node.text[..local_start]);
             if !inserted {
@@ -225,6 +230,9 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
             ));
         }
         position = next;
+    }
+    if !inserted {
+        return Err("Could not locate the DOCX edit position".into());
     }
     patches.sort_by_key(|p| p.0);
     let mut out = Vec::with_capacity(xml.len() + after.len());
@@ -334,6 +342,46 @@ mod tests {
             replace(&doc, "Sénior Software Engineer", "Sénior Software Engineer").unwrap(),
             doc
         );
+        let inserted = replace(
+            &doc,
+            "Sénior Software Engineer",
+            "Sénior Principal Software Engineer",
+        )
+        .unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(&inserted)).unwrap();
+        let mut body = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.contains(
+            r#"<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Sénior Principal </w:t></w:r>"#
+        ));
+        assert!(body.contains(r#"<w:r><w:rPr><w:i/></w:rPr><w:t>Software</w:t></w:r>"#));
+        assert!(body.contains(r#"<w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t xml:space="preserve"> Engineer</w:t></w:r>"#));
+        let prefixed = replace(&doc, "Software", "Senior Software").unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(prefixed)).unwrap();
+        let mut body = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.contains(
+            r#"<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Sénior </w:t></w:r>"#
+        ));
+        assert!(body.contains(r#"<w:r><w:rPr><w:i/></w:rPr><w:t>Senior Software</w:t></w:r>"#));
+        for (before, after) in [
+            ("Software", "Senior Software"),
+            ("Software", "Software specialist"),
+            ("Sénior", "Séniorly"),
+        ] {
+            let edited = replace(&doc, before, after).unwrap();
+            assert!(crate::document_extract::extract("fixture.docx", &edited)
+                .unwrap()
+                .contains(after));
+        }
     }
 
     #[test]
@@ -351,6 +399,30 @@ mod tests {
         assert!(crate::document_extract::extract("fixture.docx", &edited)
             .unwrap()
             .contains("Sénior Systems Engineer"));
+        let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)
+            .unwrap();
+        file.write_all(&pdf).unwrap();
+    }
+
+    #[test]
+    #[ignore = "converts a fictional styled DOCX using local LibreOffice"]
+    fn styled_run_insertion_converts_to_pdf() {
+        let input = std::env::var("WAYPOINT_STYLED_FIXTURE").expect("fixture path");
+        let output = std::env::var("WAYPOINT_STYLED_PDF").expect("new PDF output path");
+        let original = std::fs::read(input).unwrap();
+        let edited = replace(
+            &original,
+            "Sénior Software Engineer",
+            "Sénior Principal Software Engineer",
+        )
+        .unwrap();
+        assert!(crate::document_extract::extract("fixture.docx", &edited)
+            .unwrap()
+            .contains("Sénior Principal Software Engineer"));
         let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
         let mut file = std::fs::OpenOptions::new()
             .write(true)
