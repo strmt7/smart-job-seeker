@@ -1526,15 +1526,41 @@ mod tests {
         let listing = "Example Labs seeks a software engineer. Required: Python, SQL and experience with web accessibility. Preferred: cloud deployment. The role is remote within Germany.";
         let preferences = "Remote work is required; I prefer accessible product development.";
         let mut scores = Vec::new();
+        let mut rubrics = Vec::new();
         for run in 1..=3 {
             let result = assess(&mut model, &facts, preferences, listing);
             println!("repeatability run {run}: {result:?}");
             if let Ok(assessment) = result {
                 scores.push(assessment["score"].as_u64().unwrap());
+                let mut rubric: Vec<String> = assessment["rubric"]
+                    .as_array()
+                    .expect("validated assessment has a rubric")
+                    .iter()
+                    .map(|item| {
+                        json!({
+                            "source": item["source"],
+                            "excerpt": item["excerpt"],
+                            "importance": item["importance"],
+                            "status": item["status"],
+                            "qualification": item["qualification"],
+                        })
+                        .to_string()
+                    })
+                    .collect();
+                rubric.sort();
+                rubrics.push(rubric);
             }
         }
         println!("valid runs: {}; scores: {scores:?}", scores.len());
         assert_eq!(scores.len(), 3, "all assessments must validate");
+        assert!(
+            scores.windows(2).all(|pair| pair[0] == pair[1]),
+            "scores changed between identical assessments"
+        );
+        assert!(
+            rubrics.windows(2).all(|pair| pair[0] == pair[1]),
+            "criteria or evidence changed between identical assessments"
+        );
     }
 
     #[test]
