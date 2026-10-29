@@ -42,8 +42,13 @@ pub fn start(id: String, model: String, name: String, bytes: Vec<u8>) -> Result<
         let _guard = guard;
         let result = std::panic::catch_unwind(|| {
             let text = crate::document_extract::extract(&name, &bytes)?;
-            let mut llm =
-                OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
+            let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+                .map_err(|e| e.to_string())?;
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
             suggest(&mut llm, &text)
         })
         .unwrap_or_else(|_| Err("Document review stopped unexpectedly".into()));

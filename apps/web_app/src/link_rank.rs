@@ -99,8 +99,13 @@ pub fn start(
             if crate::resident_model()?.as_deref() != Some(model.as_str()) {
                 return Err("Resident model changed; ranking was not started".into());
             }
-            let mut llm =
-                OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
+            let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+                .map_err(|e| e.to_string())?;
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
             rank(&mut llm, &links, &context)
         })
         .unwrap_or_else(|_| Err("Link ranking stopped unexpectedly".into()));

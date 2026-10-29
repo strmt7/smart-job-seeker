@@ -202,6 +202,11 @@
 - Form inspection and navigation recheck the selected model's reported residency before each model request, including sequential mapping and option batches. If the check fails or the selected resident model changes, that model call is not made and existing fallback/review behavior applies. This is a snapshot and cannot prevent external runtime changes between check and generation.
 - With one build job and one test thread, the residency-change fixture, twelve suggestion tests and web-app Clippy passed. No live model or peak memory measurement was made, so this is not a no-freeze guarantee. No application was sent.
 
+## Local inference residency across workflows — 2026-10-29
+
+- The per-request resident-model snapshot now also covers local drafting, template suggestions, document excerpts, fit and duplicate analysis, link ranking, search planning and model-assisted listing extraction. Each guarded request stops if the selected model is no longer the eligible resident model. Visual-review workers already perform their own checks.
+- With one build job and one test thread, the residency-change fixture and web-app Clippy passed. No live model or peak memory was measured; the runtime can still change between the snapshot and generation, so this is not a no-freeze guarantee. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

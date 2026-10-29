@@ -1,4 +1,4 @@
-//! Recheck the shared local-model budget before each application form inference.
+//! Recheck the shared local-model budget before each guarded inference request.
 use waypoint_inference::{CapabilityReport, Inference, InferenceError, UsageReport};
 
 pub struct ResidentInference<I, F> {

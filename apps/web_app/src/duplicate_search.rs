@@ -34,8 +34,13 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
-            let mut llm =
-                OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
+            let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+                .map_err(|e| e.to_string())?;
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
             search(&mut llm, &target, &candidates)
         })
         .unwrap_or_else(|_| Err("Duplicate search stopped unexpectedly".into()));
