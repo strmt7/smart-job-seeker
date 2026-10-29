@@ -1,5 +1,15 @@
 # Implementation checkpoint
 
+## Search-plan identifier check — 2026-10-29
+
+- Locally generated search phrases are checked against normalized known profile identifiers, including the full name, email, address, links and phone number. Unsafe phrases are omitted with a visible count; if none remain, planning fails. The identifier list is not added separately to the model prompt, although user-provided qualifications or instructions may contain identifying text. This is not an exhaustive PII detector, and users are still asked to review phrases before searching.
+- The plan digest includes the identifier list so a profile change invalidates old suggestions. Three focused planner/context tests, the planner-recovery UI test and web Clippy passed. A synthetic Edge fixture displayed the omission count and review reminder at 1200 and 375 pixels without issuing a planning request. The local Ollama inventory reported zero resident models and NVIDIA GPU telemetry was unavailable; no model was loaded and no live model or public provider was exercised. Peak memory was not measured.
+
+## Visual label comparison checkpoint — 2026-10-29
+
+- Visual field comparison now treats ASCII line breaks, repeated spacing and ASCII letter case consistently in both the backend and web UI. Duplicate normalized labels remain unobserved, and values must still match exactly. Non-ASCII formatting is not silently normalized.
+- Eight focused visual-review tests, the UI comparison test and web Clippy passed with one build job. The model comparison was tested with fictional observations, not a live vision model or employer form; peak resource use was not measured.
+
 ## Direct upload-form inspection checkpoint — 2026-10-29
 
 - Form inspection and application-page checking retain a page that already has a visible file-upload control instead of following another application link. This is a hint to review the current page, not proof that it accepts applications; pages without an upload continue through the existing link-selection path.
@@ -81,6 +91,11 @@
 - Validation on Windows with `CARGO_BUILD_JOBS=1` and `RUST_TEST_THREADS=1`: `build-windows.ps1 -Test` passed 140 tests with 36 ignored; `cargo test -p waypoint_store` passed 45; `cargo test -p waypoint_workspace` passed with one live journey ignored; `test-build-paths.ps1` and `node --check apps/web_app/web/app.js` passed.
 - The full workspace suite, live model, third-party employer workflows, fresh-host installation and resource peaks were not measured for this checkpoint. No applications were sent.
 - Next: complete automatic, verifiable Windows dependency provisioning and validate it on a clean host; continue end-to-end local-fixture application preparation and visual review.
+
+## Planner validation checkpoint — 2026-10-29
+
+- A generated plan retains usable phrases when individual suggestions are invalid or contain known personal identifiers. The interface reports omitted counts and still requires review; the identifier check is not exhaustive. Plans remain bounded to ten suggestions.
+- With one build job and one test thread, three search-plan tests, eight visual-review tests and web-app Clippy passed. The search-plan recovery, binding and visual-review JavaScript checks passed. No model was loaded or application sent. A real model, installed-app startup, third-party applications and peak resource use were not measured for this checkpoint.
 
 The table below records a historical checkpoint, not current release evidence.
 

@@ -6,7 +6,13 @@ use waypoint_inference::{Inference, OllamaInference};
 struct Task {
     id: String,
     input_digest: String,
-    result: Option<Result<Vec<String>, String>>,
+    result: Option<Result<GeneratedPlan, String>>,
+}
+#[derive(Clone)]
+struct GeneratedPlan {
+    queries: Vec<String>,
+    omitted_private: usize,
+    omitted_invalid: usize,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -25,6 +31,7 @@ pub fn start(
     facts: Vec<String>,
     instructions: String,
     input_digest: String,
+    protected: Vec<String>,
 ) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     {
@@ -43,7 +50,7 @@ pub fn start(
         let result = std::panic::catch_unwind(|| {
             let mut llm =
                 OllamaInference::new("http://127.0.0.1:11434", model).map_err(|e| e.to_string())?;
-            generate(&mut llm, &facts, &instructions)
+            generate(&mut llm, &facts, &instructions, &protected)
         })
         .unwrap_or_else(|_| Err("Search planning stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
@@ -70,8 +77,8 @@ pub fn poll(id: &str) -> Result<Value, String> {
         None => Ok(json!({"status":"running"})),
         Some(result) => {
             let terminal = match result {
-                Ok(queries) => {
-                    json!({"status":"complete","queries":queries,"input_digest":task.input_digest})
+                Ok(plan) => {
+                    json!({"status":"complete","queries":plan.queries,"omitted_private":plan.omitted_private,"omitted_invalid":plan.omitted_invalid,"input_digest":task.input_digest})
                 }
                 Err(error) => json!({"status":"failed","error":error}),
             };
@@ -85,11 +92,50 @@ pub fn poll(id: &str) -> Result<Value, String> {
     }
 }
 
+fn normalized_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The identifier list is used for local validation and is not added to the prompt.
+/// User-provided facts or instructions may themselves contain identifying text.
+pub fn protected_identifiers(profile: &Value) -> Vec<String> {
+    let first = profile["first_name"].as_str().unwrap_or("").trim();
+    let last = profile["last_name"].as_str().unwrap_or("").trim();
+    let mut values = Vec::new();
+    if !first.is_empty() && !last.is_empty() {
+        values.push(normalized_identifier(&format!("{first} {last}")));
+    }
+    for key in ["email", "phone", "address", "linkedin", "website"] {
+        if let Some(value) = profile[key]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let normalized = normalized_identifier(value);
+            if key == "phone"
+                && normalized.len() >= 10
+                && normalized.bytes().all(|b| b.is_ascii_digit())
+            {
+                values.push(normalized[normalized.len() - 7..].to_owned());
+            }
+            values.push(normalized);
+        }
+    }
+    values.retain(|value| value.chars().count() >= 6);
+    values.sort();
+    values.dedup();
+    values
+}
+
 fn generate(
     llm: &mut dyn Inference,
     facts: &[String],
     instructions: &str,
-) -> Result<Vec<String>, String> {
+    protected: &[String],
+) -> Result<GeneratedPlan, String> {
     if facts.is_empty() && instructions.trim().is_empty() {
         return Err("Add qualifications or search instructions first".into());
     }
@@ -105,15 +151,33 @@ fn generate(
         return Err("Model must return 1 to 10 search phrases".into());
     }
     let mut queries: Vec<String> = Vec::new();
+    let mut omitted_private = 0;
+    let mut omitted_invalid = 0;
     for value in values {
-        let query = value.as_str().ok_or("Search phrase is not text")?.trim();
+        let Some(query) = value.as_str() else {
+            omitted_invalid += 1;
+            continue;
+        };
+        let query = query.trim();
+        if query.contains('@') {
+            omitted_private += 1;
+            continue;
+        }
         if !(3..=50).contains(&query.chars().count())
             || query.len() > 200
             || query.chars().any(char::is_control)
-            || query.contains('@')
             || query.contains("://")
         {
-            return Err("Model returned an invalid search phrase".into());
+            omitted_invalid += 1;
+            continue;
+        }
+        let normalized = normalized_identifier(query);
+        if protected
+            .iter()
+            .any(|identifier| normalized.contains(identifier))
+        {
+            omitted_private += 1;
+            continue;
         }
         if !queries
             .iter()
@@ -122,7 +186,14 @@ fn generate(
             queries.push(query.to_owned());
         }
     }
-    Ok(queries)
+    if queries.is_empty() {
+        return Err("No usable search phrases remained after validation".into());
+    }
+    Ok(GeneratedPlan {
+        queries,
+        omitted_private,
+        omitted_invalid,
+    })
 }
 
 #[cfg(test)]
@@ -150,6 +221,28 @@ mod tests {
             ))
         }
     }
+    struct PromptSpy(String);
+    impl Inference for PromptSpy {
+        fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+            unreachable!()
+        }
+        fn generate_structured(
+            &mut self,
+            _: &str,
+            prompt: &str,
+            _: u32,
+        ) -> Result<(Value, UsageReport), InferenceError> {
+            self.0 = prompt.to_owned();
+            Ok((
+                json!({"queries":["Rust engineer"]}),
+                UsageReport {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    wall_time_ms: 0,
+                },
+            ))
+        }
+    }
     #[test]
     fn validates_and_deduplicates_proposed_searches() {
         let facts = vec!["Built Rust services".to_owned()];
@@ -159,18 +252,85 @@ mod tests {
                     json!({"queries":["Rust engineer", "rust engineer", "backend developer"]})
                 ),
                 &facts,
-                ""
+                "",
+                &[]
             )
-            .unwrap(),
+            .unwrap()
+            .queries,
             ["Rust engineer", "backend developer"]
         );
         assert!(generate(
             &mut Fake(json!({"queries":["person@example.org"]})),
             &facts,
-            ""
+            "",
+            &[]
         )
         .is_err());
-        assert!(generate(&mut Fake(json!({"queries":[]})), &facts, "").is_err());
+        assert!(generate(&mut Fake(json!({"queries":[]})), &facts, "", &[]).is_err());
+        let protected = protected_identifiers(
+            &json!({"first_name":"Ada","last_name":"Example","phone":"+41 555 123 4567","address":"12 Fiction Road"}),
+        );
+        assert!(generate(
+            &mut Fake(json!({"queries":["Ada Example engineer"]})),
+            &facts,
+            "",
+            &protected
+        )
+        .is_err());
+        assert!(generate(
+            &mut Fake(json!({"queries":["engineer +41-555-123-4567"]})),
+            &facts,
+            "",
+            &protected
+        )
+        .is_err());
+        assert!(generate(
+            &mut Fake(json!({"queries":["engineer 123-4567"]})),
+            &facts,
+            "",
+            &protected
+        )
+        .is_err());
+        assert!(generate(
+            &mut Fake(json!({"queries":["12 Fiction Road analyst"]})),
+            &facts,
+            "",
+            &protected
+        )
+        .is_err());
+        assert_eq!(
+            generate(
+                &mut Fake(json!({"queries":["remote Rust engineer"]})),
+                &facts,
+                "",
+                &protected
+            )
+            .unwrap()
+            .queries,
+            ["remote Rust engineer"]
+        );
+        let mut spy = PromptSpy(String::new());
+        assert!(generate(&mut spy, &facts, "", &protected).is_ok());
+        assert!(!spy.0.contains("Ada Example"));
+        assert!(!spy.0.contains("415551234567"));
+        let mixed = generate(
+            &mut Fake(json!({"queries":["Ada Example engineer","remote Rust engineer"]})),
+            &facts,
+            "",
+            &protected,
+        )
+        .unwrap();
+        assert_eq!(mixed.queries, ["remote Rust engineer"]);
+        assert_eq!(mixed.omitted_private, 1);
+        let mixed_invalid = generate(
+            &mut Fake(json!({"queries":["person@example.org", "https://example.test", "x", 123, "Rust engineer"]})),
+            &facts,
+            "",
+            &[],
+        ).unwrap();
+        assert_eq!(mixed_invalid.queries, ["Rust engineer"]);
+        assert_eq!(mixed_invalid.omitted_private, 1);
+        assert_eq!(mixed_invalid.omitted_invalid, 3);
     }
 
     #[test]
@@ -180,7 +340,11 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-plan".into(),
             input_digest: "fictional-digest".into(),
-            result: Some(Ok(vec!["Rust engineer".into()])),
+            result: Some(Ok(GeneratedPlan {
+                queries: vec!["Rust engineer".into()],
+                omitted_private: 0,
+                omitted_invalid: 0,
+            })),
         });
         assert_eq!(pending().unwrap().as_deref(), Some("fictional-plan"));
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -226,7 +390,11 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "stale-plan".into(),
             input_digest: digest,
-            result: Some(Ok(vec!["Engineer".into()])),
+            result: Some(Ok(GeneratedPlan {
+                queries: vec!["Engineer".into()],
+                omitted_private: 0,
+                omitted_invalid: 0,
+            })),
         });
         workspace
             .correct_fact(&fact, "Fictional analyst", 1)

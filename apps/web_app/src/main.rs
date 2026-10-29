@@ -147,7 +147,9 @@ const PROFILE_FIELDS: &[&str] = &[
     "auto_assess_ai",
 ];
 
-fn search_plan_context(ws: &Workspace) -> Result<(Vec<String>, String, String), String> {
+fn search_plan_context(
+    ws: &Workspace,
+) -> Result<(Vec<String>, String, String, Vec<String>), String> {
     let facts: Vec<String> = ws
         .reviewed_facts_bounded(20, 1000)
         .map_err(|e| e.to_string())?
@@ -164,8 +166,11 @@ fn search_plan_context(ws: &Workspace) -> Result<(Vec<String>, String, String), 
         .chars()
         .take(2000)
         .collect();
-    let digest = Sha256Digest::of(&json!({"facts":facts,"instructions":instructions}).to_string());
-    Ok((facts, instructions, digest.as_str().to_owned()))
+    let protected = search_planner::protected_identifiers(&profile);
+    let digest = Sha256Digest::of(
+        &json!({"facts":facts,"instructions":instructions,"protected":protected}).to_string(),
+    );
+    Ok((facts, instructions, digest.as_str().to_owned(), protected))
 }
 
 fn check_search_plan_binding(ws: &Workspace, body: &Value) -> Result<(), String> {
@@ -174,7 +179,7 @@ fn check_search_plan_binding(ws: &Workspace, body: &Value) -> Result<(), String>
     };
     let digest = value.as_str().ok_or("Invalid search plan binding")?;
     if digest != search_plan_context(ws)?.2 {
-        return Err("Qualifications or search instructions changed; generate new phrases or edit the search manually.".into());
+        return Err("Profile, qualifications or search instructions changed; generate new phrases or edit the search manually.".into());
     }
     Ok(())
 }
@@ -1715,7 +1720,7 @@ fn serve(
             json_reply(stream, "200 OK", json!({"results":results}));
         }
         "/api/search-plan/start" => {
-            let (facts, instructions, digest) = search_plan_context(ws)?;
+            let (facts, instructions, digest, protected) = search_plan_context(ws)?;
             if facts.is_empty() && instructions.trim().is_empty() {
                 return Err("Add qualifications or search instructions first".into());
             }
@@ -1723,7 +1728,7 @@ fn serve(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let id = random_id()?;
-            search_planner::start(id.clone(), model, facts, instructions, digest)?;
+            search_planner::start(id.clone(), model, facts, instructions, digest, protected)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/search-plan/pending" => {
@@ -1742,7 +1747,7 @@ fn serve(
                 json_reply(
                     stream,
                     "200 OK",
-                    json!({"status":"stale","error":"Qualifications or search instructions changed; generate new phrases."}),
+                    json!({"status":"stale","error":"Profile, qualifications or search instructions changed; generate new phrases."}),
                 );
             } else {
                 json_reply(stream, "200 OK", result);
@@ -3929,6 +3934,13 @@ mod tests {
         ws.save_candidate_profile(&json!({"instructions":"Remote"}).to_string())
             .unwrap();
         assert_eq!(search_plan_context(&ws).unwrap().2, digest);
+        ws.save_candidate_profile(
+            &json!({"instructions":"Remote","first_name":"Ada","last_name":"Example"}).to_string(),
+        )
+        .unwrap();
+        assert_ne!(search_plan_context(&ws).unwrap().2, digest);
+        ws.save_candidate_profile(&json!({"instructions":"Remote"}).to_string())
+            .unwrap();
         ws.correct_fact(&id, "Fictional analyst", 1).unwrap();
         assert_ne!(search_plan_context(&ws).unwrap().2, digest);
         assert!(check_search_plan_binding(&ws, &json!({"plan_digest":digest})).is_err());

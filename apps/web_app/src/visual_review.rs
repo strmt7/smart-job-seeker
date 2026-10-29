@@ -84,23 +84,32 @@ fn validate(output: &Value) -> Result<Value, String> {
 }
 
 fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
+    fn normalized_label(label: &str) -> String {
+        label
+            .split([' ', '\t', '\n', '\r', '\x0c', '\x0b'])
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    }
     let items = observed["observations"]
         .as_array()
         .expect("validated observations");
     let comparisons: Vec<_> = expected
         .iter()
         .map(|(label, value)| {
+            let normalized = normalized_label(label);
             let matches: Vec<_> = items
                 .iter()
                 .filter(|item| {
                     item["label"]
                         .as_str()
-                        .is_some_and(|name| name.trim().eq_ignore_ascii_case(label.trim()))
+                        .is_some_and(|name| normalized_label(name) == normalized)
                 })
                 .collect();
             let unique_expected = expected
                 .iter()
-                .filter(|(name, _)| name.trim().eq_ignore_ascii_case(label.trim()))
+                .filter(|(name, _)| normalized_label(name) == normalized)
                 .count()
                 == 1;
             let status = if !unique_expected || matches.len() != 1 {
@@ -458,6 +467,29 @@ mod tests {
         );
         assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
         assert_eq!(result["comparisons"][1]["status"], "unobserved");
+        let formatted = validate(
+            &json!({"observations":[{"label":" First\n  NAME ","visible_value":"Example"}]}),
+        )
+        .unwrap();
+        let result = compare(&formatted, &[("First name".into(), "Example".into())]);
+        assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
+        let result = compare(
+            &formatted,
+            &[
+                ("First name".into(), "Example".into()),
+                ("FIRST\nNAME".into(), "Example".into()),
+            ],
+        );
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        let duplicate = validate(&json!({"observations":[{"label":"First name","visible_value":"Example"},{"label":"FIRST\nNAME","visible_value":"Example"}]})).unwrap();
+        let result = compare(&duplicate, &[("First name".into(), "Example".into())]);
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        let different = validate(
+            &json!({"observations":[{"label":"\u{feff}First name","visible_value":"Example"}]}),
+        )
+        .unwrap();
+        let result = compare(&different, &[("First name".into(), "Example".into())]);
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
     }
     #[test]
     fn rejects_unbounded_or_malformed_observations() {

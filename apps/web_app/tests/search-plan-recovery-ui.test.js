@@ -26,7 +26,7 @@ async function fixture(saved, active, current = true) {
         api: async (path, body) => {
             calls.push([path, body]);
             if (path === '/api/search-plan/pending') return { task_id: active };
-            if (path === '/api/search-plan/status') return { status: 'complete', queries: ['Fictional engineer'], input_digest: 'fixture-digest' };
+            if (path === '/api/search-plan/status') return { status: 'complete', queries: ['Fictional engineer'], input_digest: 'fixture-digest', omitted_private: 1, omitted_invalid: 2 };
             if (path === '/api/search-plan/current') return { current };
             throw Error(`Unexpected request ${path}`);
         },
@@ -42,6 +42,8 @@ async function fixture(saved, active, current = true) {
     assert.equal(newer.calls[1][1].task_id, 'new-plan');
     assert.equal(newer.button.disabled, false);
     assert.ok(newer.panel.rows.some(row => row.children?.some(child => child.text === 'Fictional engineer')));
+    assert.ok(newer.panel.rows.some(row => row.text.includes('1 suggested phrase was omitted')));
+    assert.ok(newer.panel.rows.some(row => row.text.includes('2 unusable model suggestions were omitted')));
     const currentPhrase = newer.panel.rows.find(row => row.children?.some(child => child.text === 'Fictional engineer'));
     await currentPhrase.children.find(child => child.text === 'Use on web').events.click();
     assert.equal(newer.field.value, 'Fictional engineer');
