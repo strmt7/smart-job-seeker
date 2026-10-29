@@ -2649,12 +2649,8 @@ fn serve(
                     .manual_review
                     .push("Inspection screenshot is unavailable".into());
             }
-            let links = form_links::candidates(&mut driver).unwrap_or_default();
-            let (other_links, other_links_available) =
-                match form_links::other_candidates(&mut driver) {
-                    Ok(links) => (links, true),
-                    Err(_) => (vec![], false),
-                };
+            let (links, other_links, other_links_available) =
+                form_links::links_for_review(&mut driver, &mut preview.manual_review);
             let mut record = match random_id()
                 .and_then(|id| attempt_record::AttemptRecord::start(ws, &job_id, &id, now()))
             {
@@ -2868,32 +2864,16 @@ fn serve(
                             "The job or profile changed during inspection; inspect again".into(),
                         );
                     }
-                    if !current.preview.manual_review.is_empty() {
-                        ws.mark_manual_review(
-                            &current.job_id,
-                            "Application needs manual review",
-                            now(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                    }
-                    let links = form_links::candidates(&mut current.driver).unwrap_or_default();
-                    let (other_links, other_links_available) =
-                        match form_links::other_candidates(&mut current.driver) {
-                            Ok(links) => (links, true),
-                            Err(_) => (vec![], false),
-                        };
+                    let (links, other_links, other_links_available) = form_links::links_for_review(
+                        &mut current.driver,
+                        &mut current.preview.manual_review,
+                    );
                     let screenshot = current.driver.screenshot_base64().ok();
                     if screenshot.is_none() {
                         current
                             .preview
                             .manual_review
                             .push("Inspection screenshot is unavailable".into());
-                        ws.mark_manual_review(
-                            &current.job_id,
-                            "Application needs manual review",
-                            now(),
-                        )
-                        .map_err(|e| e.to_string())?;
                     }
                     if let Some(record) = &mut current.record {
                         if let Err(error) = attempt_record::capture_inspection(
@@ -2908,13 +2888,15 @@ fn serve(
                                 .preview
                                 .manual_review
                                 .push(format!("Inspection evidence incomplete: {error}"));
-                            ws.mark_manual_review(
-                                &current.job_id,
-                                "Application needs manual review",
-                                now(),
-                            )
-                            .map_err(|e| e.to_string())?;
                         }
+                    }
+                    if !current.preview.manual_review.is_empty() {
+                        ws.mark_manual_review(
+                            &current.job_id,
+                            "Application needs manual review",
+                            now(),
+                        )
+                        .map_err(|e| e.to_string())?;
                     }
                     json_reply(
                         stream,

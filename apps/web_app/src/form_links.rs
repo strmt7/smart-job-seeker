@@ -81,6 +81,33 @@ pub fn other_candidates(
     filtered_candidates(driver, true)
 }
 
+/// Preserve link-read failures as review obligations instead of treating them as empty pages.
+pub fn links_for_review(
+    driver: &mut dyn BrowserDriver,
+    review: &mut Vec<String>,
+) -> (
+    Vec<String>,
+    Vec<waypoint_applications::driver::PageLink>,
+    bool,
+) {
+    let likely = match candidates(driver) {
+        Ok(links) => links,
+        Err(_) => {
+            review
+                .push("Likely application links could not be inspected; navigate manually".into());
+            Vec::new()
+        }
+    };
+    let (other, available) = match other_candidates(driver) {
+        Ok(links) => (links, true),
+        Err(_) => {
+            review.push("Other page links could not be inspected; navigate manually".into());
+            (Vec::new(), false)
+        }
+    };
+    (likely, other, available)
+}
+
 fn filtered_candidates(
     driver: &mut dyn BrowserDriver,
     other: bool,
@@ -425,6 +452,40 @@ mod tests {
         fn commit(&mut self) -> Result<SiteAck, DriverError> {
             panic!("candidate discovery must not submit")
         }
+    }
+    #[test]
+    fn link_read_failures_are_recorded_without_conflating_empty_results() {
+        struct FailingLinks;
+        impl BrowserDriver for FailingLinks {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                panic!("no navigation")
+            }
+            fn current_url(&mut self) -> Result<String, DriverError> {
+                Ok("https://jobs.example.org/role".into())
+            }
+            fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+                Err(DriverError("fixture error".into()))
+            }
+            fn page_links(
+                &mut self,
+            ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+                Err(DriverError("fixture error".into()))
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                panic!("no fill")
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                panic!("no submit")
+            }
+        }
+        let mut review = Vec::new();
+        let (likely, other, available) = links_for_review(&mut FailingLinks, &mut review);
+        assert!(likely.is_empty() && other.is_empty() && !available);
+        assert_eq!(review.len(), 2);
+        assert!(review[0].contains("could not be inspected"));
+        let mut review = Vec::new();
+        let (likely, other, available) = links_for_review(&mut Links(vec![]), &mut review);
+        assert!(likely.is_empty() && other.is_empty() && available && review.is_empty());
     }
     #[test]
     fn reviewed_link_requires_the_same_label_and_destination() {
