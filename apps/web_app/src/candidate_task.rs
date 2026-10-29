@@ -472,11 +472,19 @@ mod tests {
             result: Some(Ok(Arc::new(InspectedListing {
                 job: json!({"url":"https://example.org/job","title":"Engineer","employer":""}),
                 capture: ListingCapture {
-                    metadata: json!({}),
+                    metadata: json!({"source_url":"https://example.org/job","captured_at":1750000000,"segments":0,"structured_source_status":"captured","structured_source_scripts":[json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}}}).to_string()]}),
                     segments: vec![],
                 },
             }))),
         });
+        #[cfg(windows)]
+        let directory = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        #[cfg(windows)]
+        let mut workspace = waypoint_workspace::Workspace::open(directory.path()).unwrap();
+        #[cfg(not(windows))]
         let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -520,6 +528,20 @@ mod tests {
         let first: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(first["status"], "complete");
+        #[cfg(windows)]
+        {
+            assert_eq!(first["capture"]["saved"], false);
+            assert_eq!(first["capture"]["source_saved"], true);
+            let (_, salary_response) = call(
+                "/api/listing-salary-evidence",
+                json!({"id":first["saved"]["id"]}),
+            );
+            let salary: Value =
+                serde_json::from_str(salary_response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(salary["salary_evidence"]["value"]["minValue"], 60000);
+            assert_eq!(salary["captured_at"], 1750000000);
+            assert_eq!(salary["matches_current_url"], true);
+        }
         let (_, response) = call(status, request());
         assert_eq!(
             serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap(),
@@ -542,6 +564,21 @@ mod tests {
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(discarded["discarded"], true);
         assert!(pending().unwrap().is_none());
+        #[cfg(windows)]
+        {
+            drop(call);
+            let id = waypoint_domain::JobIdentityId::new(first["saved"]["id"].as_str().unwrap())
+                .unwrap();
+            let later = br#"{"source_url":"https://example.org/job","segments":1}"#;
+            let png = b"\x89PNG\r\n\x1a\nfictional image".to_vec();
+            assert!(workspace.save_job_capture(&id, later, &[png]).unwrap());
+            let source = workspace.job_source_only(&id).unwrap().unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&source).unwrap()["segments"],
+                0
+            );
+            assert_eq!(workspace.job_capture_metadata(&id).unwrap().unwrap(), later);
+        }
     }
 
     #[test]

@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Source-only listing capture checkpoint — 2026-10-29
+
+- When screenshot capture fails, listing metadata can now be sealed separately using DPAPI and retained without claiming an image was captured. A later screenshot capture keeps its own metadata, while salary evidence continues to refer to the earlier retained source. The salary detail warns when the capture URL differs from, or cannot be compared with, the current job URL. Application records include the source-only metadata separately from screenshots.
+- Store tests passed 46/46; a populated v24-to-v25 migration fixture also passed with SQLCipher enabled. The web suite passed 144 tests with 37 ignored, and web Clippy passed. Fictional local handler tests exercised both matching and different capture URLs, the no-screenshot result, source retention, salary retrieval and a later separately recorded screenshot. A synthetic Playwright fixture displayed the different-URL warning at 1200 and 375 pixels. A clean-host upgrade and real-site screenshot failure were not exercised; peak resource use was not measured.
+
 ## Confirmation scan boundary checkpoint — 2026-10-29
 
 - The bounded application-reference scan now stops at a UTF-8 boundary and refuses an identifier token cut by the scan limit. This prevents a panic and avoids accepting a partial reference as a confirmation; it does not send an application.

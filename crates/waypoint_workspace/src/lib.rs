@@ -551,6 +551,18 @@ impl Workspace {
         Ok(self.store.job_capture_metadata(id.as_str())?)
     }
 
+    pub fn save_job_source_only(
+        &self,
+        id: &JobIdentityId,
+        metadata: &[u8],
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self.store.save_job_source_only(id.as_str(), metadata)?)
+    }
+
+    pub fn job_source_only(&self, id: &JobIdentityId) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        Ok(self.store.job_source_only(id.as_str())?)
+    }
+
     pub fn save_gmail_credentials(&self, value: &[u8]) -> Result<(), WorkspaceError> {
         Ok(self.store.save_gmail_credentials(value)?)
     }

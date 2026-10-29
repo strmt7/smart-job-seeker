@@ -1476,25 +1476,33 @@ fn serve(
         "/api/listing-salary-evidence" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
                 .map_err(|e| e.to_string())?;
-            if ws.job(&id).map_err(|e| e.to_string())?.is_none() {
-                return Err("Job not found".into());
-            }
-            let metadata = ws.job_capture_metadata(&id).map_err(|e| e.to_string())?;
-            let (salary, captured_at) = if let Some(metadata) = metadata {
+            let job = ws
+                .job(&id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let metadata = match ws.job_source_only(&id).map_err(|e| e.to_string())? {
+                Some(source) => Some(source),
+                None => ws.job_capture_metadata(&id).map_err(|e| e.to_string())?,
+            };
+            let (salary, captured_at, matches_current_url) = if let Some(metadata) = metadata {
                 let salary = candidate_task::captured_salary_evidence(&metadata)?;
                 let capture: Value = serde_json::from_slice(&metadata)
                     .map_err(|_| "Saved listing metadata is invalid")?;
                 let captured_at = capture["captured_at"]
                     .as_i64()
                     .filter(|time| *time > 0 && *time <= 253_402_300_799);
-                (salary, captured_at)
+                let source_url = capture["source_url"].as_str().filter(|url| !url.is_empty());
+                let matches_current_url = source_url
+                    .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
+                    .map(|(source, current)| source == current);
+                (salary, captured_at, matches_current_url)
             } else {
-                (None, None)
+                (None, None, None)
             };
             json_reply(
                 stream,
                 "200 OK",
-                json!({"salary_evidence":salary,"captured_at":captured_at}),
+                json!({"salary_evidence":salary,"captured_at":captured_at,"matches_current_url":matches_current_url}),
             );
         }
         "/api/listing-inspect/discard" => {
@@ -1522,7 +1530,26 @@ fn serve(
                         JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)
                             .map_err(|e| e.to_string())?;
                     let capture = if inspected.capture.segments.is_empty() {
-                        json!({"saved":false,"complete":false,"reason":"Listing capture unavailable"})
+                        let has_source = inspected.capture.metadata["structured_source_status"]
+                            == "captured"
+                            || matches!(
+                                inspected.capture.metadata["page_text_status"].as_str(),
+                                Some("captured" | "truncated")
+                            );
+                        if !has_source {
+                            json!({"saved":false,"complete":false,"source_saved":false,"reason":"Listing screenshot and source were unavailable"})
+                        } else {
+                            let metadata = serde_json::to_vec(&inspected.capture.metadata)
+                                .map_err(|e| e.to_string())?;
+                            match ws.save_job_source_only(&job_id, &metadata) {
+                                Ok(saved) => {
+                                    json!({"saved":false,"complete":false,"source_saved":saved,"structured_source":if saved { inspected.capture.metadata["structured_source_status"].clone() } else { Value::Null },"reason":"Listing screenshot unavailable; source metadata retained when possible"})
+                                }
+                                Err(_) => {
+                                    json!({"saved":false,"complete":false,"source_saved":false,"reason":"Listing screenshot unavailable and source could not be saved securely"})
+                                }
+                            }
+                        }
                     } else {
                         let metadata = serde_json::to_vec(&inspected.capture.metadata)
                             .map_err(|e| e.to_string())?;
@@ -3856,10 +3883,12 @@ mod tests {
         .unwrap();
         let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
         let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}}}).to_string();
-        let metadata = json!({"source_url":"https://example.test/job","captured_at":1750000000,"structured_source_status":"captured","structured_source_scripts":[posting]}).to_string();
+        let metadata = json!({"source_url":"https://example.test/older-job","captured_at":1750000000,"structured_source_status":"captured","structured_source_scripts":[posting]}).to_string();
+        assert!(ws.save_job_source_only(&id, metadata.as_bytes()).unwrap());
+        let later = json!({"source_url":"https://example.test/job","captured_at":1750000100,"structured_source_status":"unavailable"}).to_string();
         ws.save_job_capture(
             &id,
-            metadata.as_bytes(),
+            later.as_bytes(),
             &[b"\x89PNG\r\n\x1a\nfixture".to_vec()],
         )
         .unwrap();
@@ -3878,6 +3907,7 @@ mod tests {
         assert_eq!(result["salary_evidence"]["currency"], "EUR");
         assert_eq!(result["salary_evidence"]["value"]["minValue"], 60000);
         assert_eq!(result["captured_at"], 1750000000);
+        assert_eq!(result["matches_current_url"], false);
     }
     #[test]
     #[ignore = "queries the existing local Ollama inventory without loading a model"]

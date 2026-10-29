@@ -515,6 +515,7 @@ impl AttemptRecord {
             .ok_or("Job not found")?;
         let description = ws.job_description(id).map_err(|e| e.to_string())?;
         let captured = ws.job_capture(id).map_err(|e| e.to_string())?;
+        let source_only = ws.job_source_only(id).map_err(|e| e.to_string())?;
         let capture_source_url = captured.as_ref().and_then(|(metadata, _)| {
             serde_json::from_slice::<Value>(metadata)
                 .ok()
@@ -547,6 +548,7 @@ impl AttemptRecord {
             "description_sha256": description.as_deref().map(|text| Sha256Digest::of(text).as_str().to_owned()),
             "description": description,
             "page_capture_available": captured.is_some(),
+            "source_only_metadata_available": source_only.is_some(),
             "page_capture_source_url": capture_source_url,
             "page_capture_matches_current_url": capture_matches_current_url,
             "note": "Workspace listing text as saved at the start of this attempt; it may have been extracted or pasted and is not a capture of the original page."
@@ -560,6 +562,10 @@ impl AttemptRecord {
             "No job description was available in the workspace when this attempt started.",
         );
         fs::write(dir.join("original-job.txt"), listing_text).map_err(|e| e.to_string())?;
+        if let Some(source) = source_only {
+            fs::write(dir.join("original-job-source-metadata.json"), source)
+                .map_err(|e| e.to_string())?;
+        }
         if let Some((metadata, segments)) = captured {
             let source_dir = dir.join("original-job-page");
             fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
@@ -596,7 +602,7 @@ impl AttemptRecord {
                     .map_err(|e| e.to_string())?;
             }
         }
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":null,"submitted_by_waypoint":false,"page_capture_available":posting["page_capture_available"],"page_capture_source_url":posting["page_capture_source_url"],"page_capture_matches_current_url":posting["page_capture_matches_current_url"],"note":"External submission is not monitored; this record does not prove whether an application was submitted."});
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":null,"submitted_by_waypoint":false,"page_capture_available":posting["page_capture_available"],"source_only_metadata_available":posting["source_only_metadata_available"],"page_capture_source_url":posting["page_capture_source_url"],"page_capture_matches_current_url":posting["page_capture_matches_current_url"],"note":"External submission is not monitored; this record does not prove whether an application was submitted."});
         fs::write(
             dir.join("attempt.json"),
             serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?,
@@ -1033,6 +1039,8 @@ mod tests {
         .unwrap();
         #[cfg(windows)]
         {
+            let first_source = br#"{"source_url":"https://example.org/jobs/1","segments":0}"#;
+            assert!(ws.save_job_source_only(&id, first_source).unwrap());
             let png = b"\x89PNG\r\n\x1a\nfictional-data".to_vec();
             let metadata=json!({"source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
             assert!(ws
@@ -1053,6 +1061,11 @@ mod tests {
         assert_eq!(listing["description_available"], true);
         #[cfg(windows)]
         {
+            assert_eq!(listing["source_only_metadata_available"], true);
+            assert_eq!(
+                fs::read(record.dir.join("original-job-source-metadata.json")).unwrap(),
+                br#"{"source_url":"https://example.org/jobs/1","segments":0}"#
+            );
             assert_eq!(listing["page_capture_available"], true);
             assert_eq!(listing["page_capture_matches_current_url"], true);
             assert_eq!(

@@ -257,6 +257,9 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX jobs_canonical_url_lookup ON jobs(canonical_url, COALESCE(last_seen,'') DESC, id ASC);
      DELETE FROM job_employer_indexed;
      UPDATE meta SET value='24' WHERE key='schema_version';",
+    // v25 — retain a first listing source even when no screenshot was captured.
+    "CREATE TABLE job_source_only(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_metadata BLOB NOT NULL);
+     UPDATE meta SET value='25' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1027,6 +1030,48 @@ mod tests {
         s.upsert_job(&job("a")).unwrap();
         s.upsert_job(&job("a")).unwrap(); // update path still single row
         assert_eq!(s.job_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn source_only_metadata_migrates_from_v24() {
+        let conn = Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &MIGRATIONS[..24] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES('legacy','Role','Example','','\"discovered\"')", []).unwrap();
+        conn.execute(
+            "INSERT INTO job_capture_metadata(job_id,sealed_metadata) VALUES('legacy',?1)",
+            [b"fictional sealed payload".as_slice()],
+        )
+        .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        let version: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "25");
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(store.job_count().unwrap(), 1);
+        let payload: Vec<u8> = store
+            .conn
+            .query_row(
+                "SELECT sealed_metadata FROM job_capture_metadata WHERE job_id='legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(payload, b"fictional sealed payload");
     }
 
     #[test]

@@ -15,6 +15,44 @@ fn invalid(message: &str) -> StoreError {
     ))
 }
 impl Store {
+    /// Preserve the first source-only observation independently of later images.
+    pub fn save_job_source_only(&self, id: &str, metadata: &[u8]) -> Result<bool, StoreError> {
+        if metadata.is_empty() || metadata.len() > 512 * 1024 {
+            return Err(invalid("Invalid or oversized listing source"));
+        }
+        let sealer = self
+            .sealer
+            .as_ref()
+            .filter(|s| s.kind() == SealerKind::Dpapi)
+            .ok_or_else(|| failure(waypoint_seal::SealError::Unavailable))?;
+        let encrypted = sealer.seal(metadata).map_err(failure)?;
+        let added = self.conn.execute(
+            "INSERT INTO job_source_only(job_id,sealed_metadata) SELECT ?1,?2 WHERE NOT EXISTS(SELECT 1 FROM job_capture_metadata WHERE job_id=?1) ON CONFLICT(job_id) DO NOTHING",
+            params![id, encrypted],
+        )?;
+        Ok(added == 1)
+    }
+
+    pub fn job_source_only(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let sealed: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT sealed_metadata FROM job_source_only WHERE job_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(sealed) = sealed else {
+            return Ok(None);
+        };
+        let sealer = self
+            .sealer
+            .as_ref()
+            .filter(|s| s.kind() == SealerKind::Dpapi)
+            .ok_or_else(|| failure(waypoint_seal::SealError::Unavailable))?;
+        Ok(Some(sealer.unseal(&sealed).map_err(failure)?))
+    }
+
     pub fn save_job_capture(
         &self,
         id: &str,
@@ -105,6 +143,7 @@ mod tests {
         assert!(plain
             .save_job_capture("job", b"{}", std::slice::from_ref(&png))
             .is_err());
+        assert!(plain.save_job_source_only("job", b"{}").is_err());
         let Some(sealer) =
             waypoint_seal::platform_sealer().filter(|s| s.kind() == SealerKind::Dpapi)
         else {
@@ -129,6 +168,10 @@ mod tests {
                 posted_at: None,
             })
             .unwrap();
+        let source_only = br#"{"source_url":"https://example.test/first","segments":0}"#;
+        assert!(store.save_job_source_only("job", source_only).unwrap());
+        assert!(!store.save_job_source_only("job", b"second").unwrap());
+        assert_eq!(store.job_source_only("job").unwrap().unwrap(), source_only);
         let metadata = br#"{"structured_source_scripts":["fictional original listing"]}"#;
         assert!(store
             .save_job_capture("job", metadata, std::slice::from_ref(&png))
@@ -142,6 +185,8 @@ mod tests {
             br#"{"structured_source_scripts":["fictional original listing"]}"#
         );
         assert_eq!(segments, vec![png.clone()]);
+        // Later screenshots keep their own metadata and cannot overwrite the first source.
+        assert_eq!(store.job_source_only("job").unwrap().unwrap(), source_only);
         assert_eq!(
             store.job_capture_metadata("job").unwrap().unwrap(),
             metadata
