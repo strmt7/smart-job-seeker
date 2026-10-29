@@ -198,7 +198,7 @@ impl Inference for OllamaInference {
             return Err(InferenceError::ReasoningUnavailable);
         }
 
-        // 4. Capability details from /api/ps and /api/show.
+        // 4. Report the resident instance, not a model's theoretical maximum.
         let ps = self.get_json("/api/ps", PROBE_TIMEOUT_MS)?;
         let served = ps
             .get("models")
@@ -207,40 +207,19 @@ impl Inference for OllamaInference {
                 models.iter().find(|m| {
                     m.get("name")
                         .and_then(|n| n.as_str())
-                        .is_some_and(|n| n.starts_with(&self.model))
+                        .is_some_and(|n| n == self.model)
                 })
             });
-        let (gpu_bytes, quantization) = match served {
-            Some(m) => {
-                let gpu = m
-                    .get("size_vram_bytes")
-                    .and_then(|v| v.as_u64())
-                    .or_else(|| m.get("size").and_then(|v| v.as_u64()));
-                let q = m
-                    .pointer("/details/quantization_level")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                (gpu, q)
-            }
-            None => (None, "unknown".to_string()),
+        let (gpu_bytes, cpu_bytes) = resident_memory(served);
+        let quantization = match served {
+            Some(m) => m
+                .pointer("/details/quantization_level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            None => "unknown".to_string(),
         };
-        let context = served
-            .is_some()
-            .then(|| {
-                self.get_json("/api/show", PROBE_TIMEOUT_MS)
-                    .ok()
-                    .and_then(|show| {
-                        show.get("model_info")
-                            .and_then(|mi| mi.as_object())
-                            .and_then(|mi| {
-                                mi.iter()
-                                    .find(|(k, _)| k.contains("context_length"))
-                                    .and_then(|(_, v)| v.as_u64())
-                            })
-                    })
-            })
-            .flatten();
+        let context = served.and_then(|m| m.get("context_length").and_then(Value::as_u64));
 
         Ok(CapabilityReport {
             backend: "ollama".into(),
@@ -249,16 +228,7 @@ impl Inference for OllamaInference {
             context_window_tokens: context.unwrap_or(0).min(u32::MAX as u64) as u32,
             supports_reasoning: true,
             supports_structured_output: true,
-            cpu_offload_bytes: served
-                .map(|m| {
-                    let size = m.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let vram = m
-                        .get("size_vram_bytes")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(size);
-                    size.saturating_sub(vram)
-                })
-                .unwrap_or(0),
+            cpu_offload_bytes: cpu_bytes,
             gpu_reserved_bytes: gpu_bytes,
         })
     }
@@ -325,6 +295,18 @@ impl Inference for OllamaInference {
     fn cancel(&mut self) -> Result<(), InferenceError> {
         self.cancel_flag.store(true, Ordering::Relaxed);
         Ok(())
+    }
+}
+
+fn resident_memory(model: Option<&Value>) -> (Option<u64>, Option<u64>) {
+    let Some(model) = model else {
+        return (None, None);
+    };
+    let gpu = model.get("size_vram").and_then(Value::as_u64);
+    let size = model.get("size").and_then(Value::as_u64);
+    match (size, gpu) {
+        (Some(total), Some(gpu)) if total > 0 && gpu <= total => (Some(gpu), Some(total - gpu)),
+        _ => (None, None),
     }
 }
 
@@ -487,6 +469,22 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn residency_reports_actual_gpu_and_unknown_incomplete_data() {
+        let model = serde_json::json!({"size": 1000, "size_vram": 700});
+        assert_eq!(resident_memory(Some(&model)), (Some(700), Some(300)));
+        let full = serde_json::json!({"size": 1000, "size_vram": 1000});
+        assert_eq!(resident_memory(Some(&full)), (Some(1000), Some(0)));
+        for invalid in [
+            serde_json::json!({"size":1000}),
+            serde_json::json!({"size":1000,"size_vram":1001}),
+            serde_json::json!({"size":0,"size_vram":0}),
+        ] {
+            assert_eq!(resident_memory(Some(&invalid)), (None, None));
+        }
+        assert_eq!(resident_memory(None), (None, None));
+    }
 
     #[test]
     fn structured_generation_requires_explicit_natural_completion() {

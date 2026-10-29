@@ -19,8 +19,8 @@ pub struct CapabilityReport {
     pub context_window_tokens: u32,
     pub supports_reasoning: bool,
     pub supports_structured_output: bool,
-    /// Zero means fully GPU-resident per backend report; any CPU offload > 0.
-    pub cpu_offload_bytes: u64,
+    /// Zero means fully GPU-resident; None means residency is unknown.
+    pub cpu_offload_bytes: Option<u64>,
     /// Reserved GPU (dedicated) memory in bytes at probe time, if known.
     pub gpu_reserved_bytes: Option<u64>,
 }
@@ -203,7 +203,7 @@ impl Inference for StubInference {
             context_window_tokens: 16_384,
             supports_reasoning: true,
             supports_structured_output: true,
-            cpu_offload_bytes: 0,
+            cpu_offload_bytes: Some(0),
             gpu_reserved_bytes: None,
         })
     }
@@ -245,7 +245,7 @@ mod tests {
         let mut s = StubInference::qualified();
         let r = s.probe().unwrap();
         assert!(r.supports_reasoning);
-        assert_eq!(r.cpu_offload_bytes, 0);
+        assert_eq!(r.cpu_offload_bytes, Some(0));
     }
 
     #[test]

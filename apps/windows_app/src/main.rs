@@ -192,10 +192,10 @@ impl AppController {
                             .gpu_reserved_bytes
                             .map(|b| format!("{:.2} GiB reserved", b as f64 / 1073741824.0))
                             .unwrap_or_else(|| "VRAM not reported".into());
-                        let offload = if cap.cpu_offload_bytes == 0 {
-                            "fully GPU-resident".to_string()
-                        } else {
-                            format!("{} bytes on CPU", cap.cpu_offload_bytes)
+                        let offload = match cap.cpu_offload_bytes {
+                            Some(0) => "fully GPU-resident".to_string(),
+                            Some(bytes) => format!("{bytes} bytes on CPU"),
+                            None => "CPU offload not reported".to_string(),
                         };
                         Update::Model(format!(
                             "Qualified: {} ({}) — {} — {} — context {} tokens — structured output: yes, reasoning: yes",
