@@ -132,6 +132,11 @@
 - Forms up to 200 fields can be mapped in sequential batches of at most 40 eligible fields with a 24,000-byte prompt limit. Batch results are validated against their own fields; failed batches are reported and retain exact-hint fallback. Larger forms remain available for manual review. Option interpretation is separately bounded.
 - With one build job and one test thread, nine suggestion tests, four non-browser preview tests and the added failed-batch fixture passed; four browser tests were ignored. Web-app Clippy passed before the final test-only addition. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Bounded option interpretation — 2026-10-29
+
+- Non-exact dropdown and radio options are interpreted in up to five sequential batches of ten fields, capped at 12,000 bytes of field data per batch. Unresolved choices are reported for manual review; duplicate selections for one field are discarded. Exact matches remain available beyond the batch limit.
+- With one build job and one test thread, twelve suggestion tests and web-app Clippy passed. No live model, employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
