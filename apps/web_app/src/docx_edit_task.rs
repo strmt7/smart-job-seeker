@@ -17,6 +17,12 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 fn job_context_digest(ws: &waypoint_workspace::Workspace, job: &str) -> Result<String, String> {
     let job = waypoint_domain::JobIdentityId::new(job).map_err(|e| e.to_string())?;
     let (_, _, _, fit_digest) = crate::fit_inputs(ws, &job)?;
+    let revision = ws.profile_revision().map_err(|e| e.to_string())?;
+    let listing = ws
+        .job(&job)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
+    let description = ws.job_description(&job).map_err(|e| e.to_string())?;
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(profile) => serde_json::from_str(&profile).map_err(|_| "Stored profile is invalid")?,
         None => json!({}),
@@ -28,7 +34,7 @@ fn job_context_digest(ws: &waypoint_workspace::Workspace, job: &str) -> Result<S
         .take(2000)
         .collect();
     Ok(sha256_hex(
-        json!({"job":job.as_str(), "fit":fit_digest, "document_instructions":instructions})
+        json!({"job":listing, "description":description, "fit":fit_digest, "profile_revision":revision, "document_instructions":instructions})
             .to_string()
             .as_bytes(),
     ))
@@ -291,6 +297,51 @@ mod tests {
             .unwrap()
             .contains("instructions changed"));
         assert_eq!(ws.documents().unwrap().len(), 1);
+    }
+    #[test]
+    fn context_tracks_corrections_outside_the_selected_fit_facts() {
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job = JobIdentityId::new("fictional-correction").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: job.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional role"),
+        )
+        .unwrap();
+        let mut facts = Vec::new();
+        for index in 0..25 {
+            let text = format!("Unrelated qualification {index}");
+            let id = ws
+                .add_fact(&text, waypoint_workspace::FactOrigin::UserAttested)
+                .unwrap();
+            facts.push((id, text));
+        }
+        let selected = crate::fit_inputs(&ws, &job).unwrap().0;
+        let (outside, _) = facts
+            .iter()
+            .find(|(_, text)| !selected.contains(text))
+            .unwrap();
+        let before_revision = ws.profile_revision().unwrap();
+        let before = job_context_digest(&ws, job.as_str()).unwrap();
+        ws.correct_fact(outside, "Revised unrelated qualification", 1)
+            .unwrap();
+        assert!(ws.profile_revision().unwrap() > before_revision);
+        assert_ne!(before, job_context_digest(&ws, job.as_str()).unwrap());
     }
     #[test]
     fn job_record_preserves_original_edits_and_output() {

@@ -162,6 +162,11 @@
 - A job-linked template conversion now checks a digest of its job-fit context and document instructions before saving; changed context stops the save. The fit context uses bounded, selected qualifications, so this does not prove that every possible candidate change is detected. Edits without a job retain their existing source-file check.
 - With one build job and one test thread, the context-change fixture and existing template-record test passed; four conversion fixtures were ignored. Web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Template edit correction tracking — 2026-10-29
+
+- Job-linked template conversion freshness now includes the workspace correction revision and the full stored job record and description, in addition to its bounded fit context and document instructions. A correction outside the selected fit facts changes the context. Adding a new fact does not itself advance the correction revision; the fit selection remains bounded.
+- With one build job and one test thread, three template-edit tests passed (four conversion fixtures ignored), and web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
