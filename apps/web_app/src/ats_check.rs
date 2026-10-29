@@ -45,16 +45,22 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     if xml.len() > 4 * 1024 * 1024 {
         return Err("DOCX body exceeds the CV check limit".into());
     }
-    let mut reader = quick_xml::Reader::from_reader(xml.as_slice());
+    let mut reader = quick_xml::NsReader::from_reader(xml.as_slice());
     let mut tables = 0;
     let mut text_boxes = 0;
     loop {
-        match reader.read_event().map_err(|_| "Malformed DOCX XML")? {
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|_| "Malformed DOCX XML")?;
+        let word = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if
+            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+        match event {
             quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
-                if e.name().as_ref() == b"w:tbl" {
+                if word && e.local_name().as_ref() == b"tbl" {
                     tables += 1;
                 }
-                if e.name().as_ref() == b"w:txbxContent" {
+                if word && e.local_name().as_ref() == b"txbxContent" {
                     text_boxes += 1;
                 }
             }
@@ -74,7 +80,7 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
         ));
     }
     if headers {
-        notes.push("DOCX has header files; this extractor only reads the document body, so check that contact details are also present there.".into());
+        notes.push("DOCX has header files; some parsers may miss header content, so check that contact details are also present in the body.".into());
     }
     notes.push("DOCX visual layout and column order are not fully assessed.".into());
     Ok(notes)
@@ -238,7 +244,7 @@ mod tests {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
         zip.start_file("word/document.xml", options).unwrap();
-        zip.write_all(br#"<w:document xmlns:w="urn:fixture"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Rust experience</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:txbxContent><w:p><w:r><w:t>Example</w:t></w:r></w:p></w:txbxContent></w:body></w:document>"#).unwrap();
+        zip.write_all(br#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:tbl><d:tr><d:tc><d:p><d:r><d:t>Rust experience</d:t></d:r></d:p></d:tc></d:tr></d:tbl><d:txbxContent><d:p><d:r><d:t>Example</d:t></d:r></d:p></d:txbxContent></d:body></d:document>"#).unwrap();
         zip.start_file("word/header1.xml", options).unwrap();
         zip.write_all(b"<header/>").unwrap();
         let bytes = zip.finish().unwrap().into_inner();

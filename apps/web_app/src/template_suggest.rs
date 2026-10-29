@@ -137,7 +137,7 @@ mod tests {
                 zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
-        writer.write_all(b"<w:document xmlns:w='urn:test'><w:p><w:r><w:t>Fictional research</w:t></w:r></w:p></w:document>").unwrap();
+        writer.write_all(b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:p><w:r><w:t>Fictional research</w:t></w:r></w:p></w:document>").unwrap();
         Inputs {
             document_id: "d".into(),
             document_name: "source.docx".into(),

@@ -9,7 +9,7 @@ use std::{
 };
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
-    Icon, TrayIcon, TrayIconBuilder,
+    Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 use winit::{
     event::{Event, StartCause},
@@ -66,6 +66,19 @@ pub fn run(url: String, stop: Arc<AtomicBool>, worker: JoinHandle<()>) -> Result
                     stop.store(true, Ordering::Release);
                     shutting_down = true;
                     quit.set_text("Closing server…");
+                }
+            }
+            while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+                if !shutting_down
+                    && matches!(
+                        event,
+                        TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        }
+                    )
+                {
+                    let _ = webbrowser::open(&url);
                 }
             }
             if worker.is_finished() {

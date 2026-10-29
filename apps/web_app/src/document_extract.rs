@@ -1,5 +1,5 @@
 //! Local bounded extraction for UTF-8 and DOCX body, header, and footer text.
-use quick_xml::{events::Event, Reader};
+use quick_xml::{events::Event, name::ResolveResult, NsReader};
 use std::io::{Cursor, Read};
 
 const MAX_XML: u64 = 4 * 1024 * 1024;
@@ -112,15 +112,21 @@ fn extract_docx(bytes: &[u8]) -> Result<String, String> {
 }
 
 fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
-    let mut reader = Reader::from_reader(xml);
+    let mut reader = NsReader::from_reader(xml);
     let mut in_text = false;
     loop {
-        match reader.read_event().map_err(|_| "Malformed DOCX XML")? {
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|_| "Malformed DOCX XML")?;
+        let word = matches!(namespace, ResolveResult::Bound(ns) if
+            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+        match event {
             Event::DocType(_) => {
                 return Err("DOCX document type declarations are not supported".into())
             }
-            Event::Start(e) if e.name().as_ref() == b"w:t" => in_text = true,
-            Event::End(e) if e.name().as_ref() == b"w:t" => in_text = false,
+            Event::Start(e) if word && e.local_name().as_ref() == b"t" => in_text = true,
+            Event::End(e) if word && e.local_name().as_ref() == b"t" => in_text = false,
             Event::Text(e) if in_text => {
                 let text = e.decode().map_err(|_| "Invalid DOCX text encoding")?;
                 let decoded =
@@ -134,11 +140,14 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
                     quick_xml::escape::unescape(&entity).map_err(|_| "Unsupported DOCX entity")?;
                 output.push_str(&decoded);
             }
-            Event::Empty(e) if e.name().as_ref() == b"w:tab" => output.push('\t'),
-            Event::Empty(e) if e.name().as_ref() == b"w:br" || e.name().as_ref() == b"w:cr" => {
+            Event::Empty(e) if word && e.local_name().as_ref() == b"tab" => output.push('\t'),
+            Event::Empty(e)
+                if word
+                    && (e.local_name().as_ref() == b"br" || e.local_name().as_ref() == b"cr") =>
+            {
                 output.push('\n')
             }
-            Event::End(e) if e.name().as_ref() == b"w:p" => output.push('\n'),
+            Event::End(e) if word && e.local_name().as_ref() == b"p" => output.push('\n'),
             Event::Eof => break,
             _ => (),
         }
@@ -177,6 +186,15 @@ mod tests {
         assert_eq!(
             extract("cv.docx", &archive(xml)).unwrap(),
             "Rust & SQL\t2024\nEngineer"
+        );
+    }
+
+    #[test]
+    fn extracts_word_text_with_alternate_and_default_namespaces() {
+        let xml = r#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:p><d:r><d:t>Skills</d:t><d:tab/><d:t>Rust</d:t></d:r></d:p><p xmlns="http://purl.oclc.org/ooxml/wordprocessingml/main"><r><t>Engineer</t></r></p></d:body></d:document>"#;
+        assert_eq!(
+            extract("cv.docx", &archive(xml)).unwrap(),
+            "Skills\tRust\nEngineer"
         );
     }
 

@@ -56,6 +56,7 @@ try {
     $buildReceipt = @{
         profile = $profile
         sqlcipher = $true
+        openssl_root = $root
         executable_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo "target/$profile/waypoint_web.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
         openssl_dll = $dlls[0].Name
         openssl_sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()

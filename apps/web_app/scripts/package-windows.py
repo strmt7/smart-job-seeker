@@ -115,7 +115,11 @@ def main():
         or receipt.get('cargo_lock_sha256') != digest(REPO / 'Cargo.lock')):
         raise ValueError('Build receipt does not match the executable, runtime or Cargo.lock; rebuild first')
     program_files = Path(os.environ.get('ProgramFiles', 'C:/Program Files'))
-    roots = [Path(args.openssl_root)] if args.openssl_root else [program_files / 'OpenSSL-Win64', program_files / 'OpenSSL']
+    # The build may have run in another process with a custom OpenSSL root.
+    # Explicit overrides take precedence over the path recorded in its receipt.
+    roots = ([Path(args.openssl_root)] if args.openssl_root else
+             [Path(receipt['openssl_root'])] if isinstance(receipt.get('openssl_root'), str) and receipt['openssl_root'] else
+             [program_files / 'OpenSSL-Win64', program_files / 'OpenSSL'])
     matching = [root for root in roots if (root / 'bin' / dlls[0].name).is_file()
                 and digest(root / 'bin' / dlls[0].name) == digest(dlls[0])
                 and (root / 'license.txt').is_file()]

@@ -2382,6 +2382,10 @@ fn serve(
         }
         "/api/form/inspect-status" => {
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
+            if let Some(error) = form_task::completed_failure(task_id)? {
+                json_reply(stream, "200 OK", json!({"status":"failed","error":error}));
+                return Ok(());
+            }
             let Some(finished) = form_task::poll(task_id)? else {
                 json_reply(stream, "200 OK", json!({"status":"running"}));
                 return Ok(());
@@ -2412,6 +2416,7 @@ fn serve(
                     } else {
                         error
                     };
+                    form_task::acknowledge_failure(task_id, error.clone())?;
                     json_reply(stream, "200 OK", json!({"status":"failed","error":error}));
                     return Ok(());
                 }
@@ -2507,31 +2512,67 @@ fn serve(
                 .as_mut()
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
-            let recognized = form_links::candidates(&mut current.driver)?;
-            let links = form_links::other_candidates(&mut current.driver)?
-                .into_iter()
-                .filter(|link| !recognized.contains(&link.url))
-                .collect();
+            let (context, links, snapshot_digest) = link_rank::snapshot(&mut current.driver)?;
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let task_id = random_id()?;
-            link_rank::start(task_id.clone(), current.id.clone(), model, links)?;
+            link_rank::start(
+                task_id.clone(),
+                current.id.clone(),
+                model,
+                links,
+                context,
+                snapshot_digest,
+            )?;
             current.created = Instant::now();
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/form/link-rank-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            let result = link_rank::poll(id)?;
+            let mut result = link_rank::poll(id)?;
             if matches!(result["status"].as_str(), Some("running" | "complete")) {
-                let current = session
-                    .as_mut()
-                    .filter(|s| {
-                        Some(s.id.as_str()) == result["session_id"].as_str()
-                            && s.created.elapsed() <= s.ttl
-                    })
-                    .ok_or("The form session expired; inspect the page again")?;
-                current.created = Instant::now();
+                let current = session.as_mut().filter(|s| {
+                    Some(s.id.as_str()) == result["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                });
+                if let Some(current) = current {
+                    current.created = Instant::now();
+                    if result["status"] == "complete" {
+                        let fresh = link_rank::snapshot(&mut current.driver);
+                        if fresh.as_ref().ok().map(|(_, _, digest)| digest.as_str())
+                            != result["snapshot_digest"].as_str()
+                        {
+                            ws.mark_manual_review(
+                                &current.job_id,
+                                "Application page changed during link ranking",
+                                now(),
+                            )
+                            .map_err(|e| e.to_string())?;
+                            let note = "The application page changed or could not be rechecked; inspect it again.";
+                            current.preview.manual_review.push(note.into());
+                            if let Some(record) = &mut current.record {
+                                let _ = record.event(
+                                    json!({"type":"link_ranking_stale","time":now(),"note":note}),
+                                );
+                            }
+                            result =
+                                json!({"status":"failed","session_id":current.id,"error":note});
+                        }
+                    }
+                } else if result["status"] == "complete" {
+                    result = json!({"status":"failed","session_id":result["session_id"],"error":"The review session ended or changed; inspect the page again"});
+                } else {
+                    // Keep the task recoverable until its worker finishes. The
+                    // final result is discarded because this session is gone.
+                    result["session_unavailable"] = json!(true);
+                }
+            }
+            if result["status"] != "running" {
+                link_rank::complete(id, result.clone())?;
+            }
+            if let Some(object) = result.as_object_mut() {
+                object.remove("snapshot_digest");
             }
             json_reply(stream, "200 OK", result);
         }
@@ -3346,6 +3387,7 @@ fn serve(
             let current = session
                 .as_ref()
                 .filter(|current| current.created.elapsed() <= current.ttl);
+            let pending_inspection = form_task::pending()?;
             json_reply(
                 stream,
                 "200 OK",
@@ -3353,7 +3395,9 @@ fn serve(
                     Some(current) => {
                         json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible})
                     }
-                    None => json!({"active":false}),
+                    None => {
+                        json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job}))})
+                    }
                 },
             );
         }
@@ -3641,6 +3685,9 @@ fn serve_loop(
                 eprintln!("Could not record expired review session: {error}");
                 session = None;
             }
+        }
+        if let Err(error) = link_rank::collect_orphaned(session.as_ref().map(|s| s.id.as_str())) {
+            eprintln!("Could not release an expired link ranking: {error}");
         }
         match listener.accept() {
             Ok((mut stream, _)) => {

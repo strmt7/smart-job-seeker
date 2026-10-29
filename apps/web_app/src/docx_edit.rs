@@ -1,6 +1,6 @@
 //! Apply one exact, reviewed text replacement within a DOCX body, header or footer paragraph.
 //! Text spanning Word runs is supported; the replacement uses the first run's style.
-use quick_xml::{events::Event, Reader};
+use quick_xml::{events::Event, name::ResolveResult, NsReader};
 use std::io::{Cursor, Write};
 
 struct Node {
@@ -11,17 +11,22 @@ struct Node {
     text: String,
 }
 fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
-    let mut reader = Reader::from_reader(xml);
+    let mut reader = NsReader::from_reader(xml);
     let mut stack: Vec<Vec<Node>> = Vec::new();
     let mut blocks = Vec::new();
     let mut active: Option<(usize, usize, usize)> = None;
     loop {
         let before = reader.buffer_position() as usize;
-        let event = reader.read_event().map_err(|_| "Malformed DOCX body")?;
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|_| "Malformed DOCX body")?;
+        let word = matches!(namespace, ResolveResult::Bound(ns) if
+            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         let after = reader.buffer_position() as usize;
         match event {
             Event::DocType(_) => return Err("DOCX document types are unsupported".into()),
-            Event::Start(ref e) if e.name().as_ref() == b"w:p" => {
+            Event::Start(ref e) if word && e.local_name().as_ref() == b"p" => {
                 if let Some(parent) = stack.last_mut() {
                     if !parent.is_empty() {
                         blocks.push(std::mem::take(parent));
@@ -29,7 +34,7 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                 }
                 stack.push(Vec::new());
             }
-            Event::End(ref e) if e.name().as_ref() == b"w:p" => {
+            Event::End(ref e) if word && e.local_name().as_ref() == b"p" => {
                 if active.is_some() {
                     return Err("Invalid DOCX text structure".into());
                 }
@@ -38,13 +43,13 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                     blocks.push(group);
                 }
             }
-            Event::Start(ref e) if e.name().as_ref() == b"w:t" && !stack.is_empty() => {
+            Event::Start(ref e) if word && e.local_name().as_ref() == b"t" && !stack.is_empty() => {
                 if active.is_some() {
                     return Err("Nested DOCX text is unsupported".into());
                 }
                 active = Some((before, after, after));
             }
-            Event::End(ref e) if e.name().as_ref() == b"w:t" && active.is_some() => {
+            Event::End(ref e) if word && e.local_name().as_ref() == b"t" && active.is_some() => {
                 let (tag_start, tag_end, start) = active.take().ok_or("Invalid DOCX text")?;
                 let raw =
                     std::str::from_utf8(&xml[start..before]).map_err(|_| "Invalid DOCX UTF-8")?;
@@ -66,7 +71,8 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                     });
             }
             Event::Empty(ref e)
-                if matches!(e.name().as_ref(), b"w:tab" | b"w:br" | b"w:cr")
+                if word
+                    && matches!(e.local_name().as_ref(), b"tab" | b"br" | b"cr")
                     && !stack.is_empty() =>
             {
                 let current = stack.last_mut().unwrap();
@@ -213,7 +219,7 @@ mod tests {
     use std::io::Read;
     #[test]
     fn replacement_preserves_unedited_parts_and_handles_split_runs() {
-        let xml = r#"<w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Research </w:t></w:r><w:r><w:t>engineer &amp; scientist</w:t></w:r></w:p></w:body></w:document>"#;
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Research </w:t></w:r><w:r><w:t>engineer &amp; scientist</w:t></w:r></w:p></w:body></w:document>"#;
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         writer
             .start_file(
@@ -252,7 +258,7 @@ mod tests {
             writer
                 .start_file(name, zip::write::SimpleFileOptions::default())
                 .unwrap();
-            write!(writer, "<w:p><w:r><w:t>{text}</w:t></w:r></w:p>").unwrap();
+            write!(writer, "<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:r><w:t>{text}</w:t></w:r></w:p>").unwrap();
         }
         let doc = writer.finish().unwrap().into_inner();
         let extracted = crate::document_extract::extract("sample.docx", &doc).unwrap();
@@ -269,7 +275,7 @@ mod tests {
                 .start_file(name, zip::write::SimpleFileOptions::default())
                 .unwrap();
             writer
-                .write_all(b"<w:p><w:r><w:t>shared phrase</w:t></w:r></w:p>")
+                .write_all(b"<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:r><w:t>shared phrase</w:t></w:r></w:p>")
                 .unwrap();
         }
         let ambiguous = writer.finish().unwrap().into_inner();
@@ -279,7 +285,7 @@ mod tests {
     }
     #[test]
     fn ambiguous_or_cross_paragraph_matches_are_rejected() {
-        let xml = r#"<w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:t>Repeated</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:body></w:document>"#;
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Repeated</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:body></w:document>"#;
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         writer
             .start_file(
@@ -291,6 +297,25 @@ mod tests {
         let doc = writer.finish().unwrap().into_inner();
         assert!(replace(&doc, "Repeated", "Changed").is_err());
         assert!(replace(&doc, "RepeatedRepeated", "Changed").is_err());
+    }
+
+    #[test]
+    fn edits_alternate_namespace_without_changing_other_parts() {
+        let xml = r#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:p><d:r><d:t>Data </d:t></d:r><d:r><d:t>analyst</d:t></d:r></d:p></d:body></d:document>"#;
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(xml.as_bytes()).unwrap();
+        let doc = writer.finish().unwrap().into_inner();
+        let edited = replace(&doc, "Data analyst", "Research analyst").unwrap();
+        assert_eq!(
+            crate::document_extract::extract("cv.docx", &edited).unwrap(),
+            "Research analyst"
+        );
     }
 
     #[test]

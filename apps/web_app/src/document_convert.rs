@@ -27,6 +27,12 @@ pub fn office_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PROGRAMFILES(X86)") {
         candidates.push(PathBuf::from(path).join("LibreOffice/program/soffice.com"));
     }
+    if let Some(path) = std::env::var_os("PROGRAMW6432") {
+        candidates.push(PathBuf::from(path).join("LibreOffice/program/soffice.com"));
+    }
+    if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(path).join("Programs/LibreOffice/program/soffice.com"));
+    }
     candidates.into_iter().find(|p| p.is_file())
 }
 

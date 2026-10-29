@@ -323,7 +323,15 @@ fn build_preview(
                 manual_review.push(format!(
                     "{error}; only exact labels or standard autocomplete hints are suggested"
                 ));
-                crate::suggestions::suggest_exact(&live.schema, profile)?
+                match crate::suggestions::suggest_exact(&live.schema, profile) {
+                    Ok(items) => items,
+                    Err(fallback_error) => {
+                        manual_review.push(format!(
+                            "Automatic field suggestions are unavailable: {fallback_error}. Continue manually."
+                        ));
+                        Vec::new()
+                    }
+                }
             }
         }
     } else {
@@ -409,6 +417,38 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("captcha")));
         assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    fn oversized_form_remains_open_for_manual_review() {
+        use waypoint_applications::form_mapping::FormField;
+        let fields = (0..81)
+            .map(|index| FormField {
+                selector: format!("#field-{index}"),
+                label: format!("Field {index}"),
+                field_type: FormFieldType::Text,
+                required: false,
+                sensitive: false,
+                autocomplete: None,
+            })
+            .collect();
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let preview = suggest_without_model(live, &json!({}), "No model").unwrap();
+        assert_eq!(preview.schema.fields.len(), 81);
+        assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("too many fields")));
     }
 
     #[test]

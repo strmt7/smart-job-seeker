@@ -53,11 +53,20 @@ struct Task {
     url: String,
     profile_digest: Sha256Digest,
     visible: bool,
+    failure: Option<String>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED_FAILURE: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
+}
+
+pub fn pending() -> Result<Option<(String, String)>, String> {
+    let task = TASK.lock().map_err(|_| "Form inspection unavailable")?;
+    Ok(task
+        .as_ref()
+        .map(|task| (task.id.clone(), task.job_id.as_str().to_owned())))
 }
 
 pub fn start(
@@ -88,6 +97,7 @@ pub fn start(
         url: url.clone(),
         profile_digest: profile_digest.clone(),
         visible,
+        failure: None,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -120,12 +130,25 @@ pub fn start(
 pub fn poll(id: &str) -> Result<Option<Finished>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Form inspection unavailable")?;
     let task = tasks
-        .as_ref()
+        .as_mut()
         .filter(|task| task.id == id)
         .ok_or("Form inspection not found")?;
+    if let Some(error) = &task.failure {
+        return Ok(Some(Finished {
+            job_id: task.job_id.clone(),
+            url: task.url.clone(),
+            profile_digest: task.profile_digest.clone(),
+            visible: task.visible,
+            result: Err(error.clone()),
+        }));
+    }
     match task.receiver.try_recv() {
         Ok(result) => {
-            *tasks = None;
+            if let Err(error) = &result.result {
+                task.failure = Some(error.clone());
+            } else {
+                *tasks = None;
+            }
             Ok(Some(result))
         }
         Err(mpsc::TryRecvError::Empty) => Ok(None),
@@ -137,10 +160,36 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
                 visible: task.visible,
                 result: Err("Form inspection stopped unexpectedly".into()),
             };
-            *tasks = None;
+            task.failure = Some("Form inspection stopped unexpectedly".into());
             Ok(Some(failed))
         }
     }
+}
+
+pub fn completed_failure(id: &str) -> Result<Option<String>, String> {
+    let completed = COMPLETED_FAILURE
+        .lock()
+        .map_err(|_| "Form inspection unavailable")?;
+    Ok(completed
+        .as_ref()
+        .filter(|(task_id, _)| task_id == id)
+        .map(|(_, error)| error.clone()))
+}
+
+pub fn acknowledge_failure(id: &str, error: String) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Form inspection unavailable")?;
+    if !tasks
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.failure.is_some())
+    {
+        return Err("Form inspection failure not found".into());
+    }
+    let mut completed = COMPLETED_FAILURE
+        .lock()
+        .map_err(|_| "Form inspection unavailable")?;
+    *completed = Some((id.to_owned(), error));
+    *tasks = None;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -150,16 +199,85 @@ mod tests {
     use waypoint_applications::form_mapping::{
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn inspection_failure_survives_review_flag_error() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let _guard = TEST_LOCK.lock().unwrap();
+        let posting = serde_json::json!({"url":"https://example.org/temporary","title":"Engineer","employer":"Fixture"});
+        let mut source = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(&mut source, &posting, 1).unwrap();
+        let job_id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-write-error".into(),
+            receiver,
+            job_id: job_id.clone(),
+            url: "https://example.org/temporary".into(),
+            profile_digest: Sha256Digest::of("fixture"),
+            visible: false,
+            failure: None,
+        });
+        assert_eq!(
+            pending().unwrap(),
+            Some(("fixture-write-error".into(), job_id.as_str().into()))
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = serde_json::json!({"task_id":"fixture-write-error"}).to_string();
+        let make_client = || {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/inspect-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            client
+        };
+        let _first_client = make_client();
+        let (mut server, _) = listener.accept().unwrap();
+        assert!(crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).is_err());
+        assert!(busy());
+        assert!(poll("fixture-write-error")
+            .unwrap()
+            .unwrap()
+            .result
+            .is_err());
+        assert_eq!(
+            crate::manual_job::add(&mut ws, &posting, 1).unwrap()["id"],
+            job_id.as_str()
+        );
+        let mut client = make_client();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert_eq!(ws.manual_reviews().unwrap().len(), 1);
+        assert!(!busy());
+    }
 
     #[test]
     fn disconnected_worker_keeps_job_context_for_manual_review() {
+        let _guard = TEST_LOCK.lock().unwrap();
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
+        #[cfg(all(windows, feature = "sqlcipher"))]
+        let dir = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        #[cfg(all(windows, feature = "sqlcipher"))]
+        let mut ws = waypoint_workspace::Workspace::open_encrypted(dir.path()).unwrap();
+        #[cfg(not(all(windows, feature = "sqlcipher")))]
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
         let added = crate::manual_job::add(
             &mut ws,
             &serde_json::json!({
-                "url":"https://example.org/job", "title":"Engineer", "employer":"Fixture"
+                "url":"https://example.org/job", "title":"Engineer", "employer":"Fixture", "description":"Fictional role description"
             }),
             1,
         )
@@ -174,7 +292,10 @@ mod tests {
             url: "https://example.org/job".into(),
             profile_digest: Sha256Digest::of("fictional-profile"),
             visible: false,
+            failure: None,
         });
+        assert!(poll("fictional-task").unwrap().unwrap().result.is_err());
+        assert!(poll("fictional-task").unwrap().unwrap().result.is_err());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -194,12 +315,61 @@ mod tests {
         assert!(reviews[0]
             .reason
             .contains("Form inspection stopped unexpectedly"));
+        let revision = ws.manual_review_reasons(&job_id).unwrap()[0].revision;
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/form/inspect-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let repeated: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(repeated, result);
+        assert_eq!(
+            ws.manual_review_reasons(&job_id).unwrap()[0].revision,
+            revision
+        );
+        #[cfg(all(windows, feature = "sqlcipher"))]
+        {
+            let records: Vec<_> = std::fs::read_dir(dir.path().join("application-records"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            assert_eq!(records.len(), 1);
+            let record = &records[0];
+            let original: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(record.join("original-job.json")).unwrap())
+                    .unwrap();
+            assert_eq!(original["description"], "Fictional role description");
+            assert_eq!(original["source_url"], "https://example.org/job");
+            let attempt: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(record.join("attempt.json")).unwrap())
+                    .unwrap();
+            assert_eq!(attempt["status"], "manual_review");
+            let events = std::fs::read_to_string(record.join("events.jsonl")).unwrap();
+            let inspections: Vec<serde_json::Value> = events
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .filter(|event: &serde_json::Value| event["type"] == "page_inspected")
+                .collect();
+            assert_eq!(inspections.len(), 1);
+            assert_eq!(inspections[0]["screenshot_available"], false);
+            assert!(inspections[0]["manual_review"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("stopped unexpectedly"))));
+        }
         assert!(!busy());
     }
 
     #[test]
     #[ignore = "starts a local browser while holding the model lease"]
     fn busy_model_does_not_block_form_inspection() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let _lease = crate::doc_suggest::lease().unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
         let url = url::Url::from_file_path(path).unwrap().to_string();
