@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Additional evidence for unknown requirements — 2026-10-29
+
+- Fit assessment now asks the local model to revisit up to six initially unknown listing criteria against the selected candidate facts. Candidate facts must be referenced by valid index and then pass the existing separate qualification comparison before they affect the score. Responses with missing, duplicate, or invalid IDs or fact indices, model failures, and payloads over 6,000 bytes leave the original unknowns in place. The UI reports selection and proposal counts; the changed input digest marks older assessments stale.
+- On the previously recorded fictional qwen3.5:9b case, the first pass again missed explicitly stated Python experience. The additional search proposed the existing fact, the independent comparison agreed, and the resulting rubric marked Python supported while leaving the unstated SQL and chemistry doctorate unknown. The score was 70% with a 40–100% range. One example does not demonstrate broad accuracy, repeatability or calibration, and two passes of the same model can agree incorrectly.
+- The web suite passed (192 passed, 62 ignored), along with web Clippy, formatting and the fit-badge UI test. The live test used one already GPU-resident model with a 4,096-token context after a free-memory preflight. Peak resource use was not measured. No application was sent.
+
 ## Qualification judgment cross-check — 2026-10-29
 
 - Local fit assessment now asks the resident model to independently compare cited candidate facts with listing requirements and nearby job context. It does not show the initial judgment to the second pass. Agreement is not verification of truth; disagreement, malformed or unavailable responses, and requests over the 6,000-byte payload budget downgrade affected judgments to unknown. The interface reports the check and its limitations. Existing assessments become stale through the input-digest version change.
