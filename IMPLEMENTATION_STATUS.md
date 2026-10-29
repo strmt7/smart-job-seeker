@@ -172,6 +172,11 @@
 - AI-suggested replacements carry their source, job and supporting-context digest into the edit queue. Before conversion, the server rejects a queued suggestion if that context or the selected job changed. Manual replacements remain available without a model binding. The digest tracks the workspace correction revision; newly added facts remain subject to bounded fit selection.
 - With one build job and one test thread, the queued-context fixture and web-app Clippy passed, and JavaScript syntax was checked. No live model, rendered UI, employer site or resource peaks were measured. No application was sent.
 
+## Template suggestion queue interaction — 2026-10-29
+
+- A synthetic Playwright/Edge fixture exercised the actual document editor JavaScript at 1200 px and 375 px: changing the selected job after applying a suggestion was rejected, and restoring the original job produced a queued request carrying the suggestion digest and job identity. No page errors occurred. The fixture used mocked API responses and no application stylesheet, so it is not a visual-design or live-model qualification. Browser plugin not available; Playwright was the fallback.
+- Screenshots and the fixture script are in the ignored `target/visual-checks/` directory. No employer site was contacted and no application was sent. Peak resource use was not measured.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
