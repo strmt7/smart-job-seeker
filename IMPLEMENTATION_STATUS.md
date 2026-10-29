@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Capture before reviewed link navigation — 2026-10-29
+
+- Before opening a user-reviewed application link, the navigation worker now attempts to save bounded screenshots of the current page in the attempt folder. Capture failure or an unavailable record adds a manual-review warning; a failed capture also attempts to record an incomplete event and manual-review status. The normal page capture limits still apply and screenshots do not prove hidden content was captured. A user navigating manually before requesting a rescan cannot be captured retroactively.
+- A local headless-browser fixture filled a fictional field, saved two bounded page segments before opening another fictional local page, and checked their record events and files. A forced screenshot-file collision produced an incomplete-capture event. This exercised the capture helper and local browser, not the public-HTTPS navigation endpoint or a live employer. No application was submitted. The web suite passed (194 passed, 64 ignored), as did web Clippy and formatting; peak resources were not measured.
+
 ## Attachments across form inspections — 2026-10-29
 
 - Form attachment verification is now scoped to the inspection session where the upload control was observed. A later inspection retains the staged files and records but warns that prior-section uploads cannot be verified on the current section; it does not report an absent old selector as a failed current attachment. A new inspection may also be a rescan of the same page, so this conservative warning can require additional manual review. It does not prove earlier uploads survived navigation.

@@ -194,6 +194,7 @@ pub fn start(
     });
     drop(tasks);
     std::thread::spawn(move || {
+        let mut navigation_capture_warning = None;
         let navigation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<form_preview::FormPreview, String> {
                 let fresh = session
@@ -218,6 +219,14 @@ pub fn start(
                     }
                     let parsed = waypoint_net::parse_url(&target).map_err(|e| e.to_string())?;
                     waypoint_net::resolve_public(&parsed).map_err(|e| e.to_string())?;
+                    match session.record.as_mut() {
+                        Some(record) => {
+                            if let Err(error) = crate::attempt_record::capture_before_navigation(&mut session.driver, record, crate::now()) {
+                                navigation_capture_warning = Some(format!("The previous section could not be fully captured before navigation: {error}"));
+                            }
+                        }
+                        None => navigation_capture_warning = Some("The previous section could not be captured because the application record is unavailable".into()),
+                    }
                     let live = session.driver.open(&target).map_err(|e| e.to_string())?;
                     let actual = session.driver.current_url().map_err(|e| e.to_string())?;
                     let actual =
@@ -275,6 +284,9 @@ pub fn start(
                 manual_review: vec![error],
             },
         };
+        if let Some(warning) = navigation_capture_warning {
+            preview.manual_review.push(warning);
+        }
         let result = crate::random_id()
             .map_err(|reason| NavigationFailure {
                 job_id: session.job_id.clone(),

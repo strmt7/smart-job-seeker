@@ -846,6 +846,23 @@ pub fn capture_page(
     Ok(())
 }
 
+/// Preserve the current section immediately before opening a reviewed link.
+/// Capture failure remains visible even if the browser subsequently navigates.
+pub fn capture_before_navigation(
+    driver: &mut waypoint_browser::CdpDriver,
+    record: &mut AttemptRecord,
+    timestamp: i64,
+) -> Result<(), String> {
+    record.event(json!({"type":"navigation_capture_started","time":timestamp}))?;
+    if let Err(error) = capture_page(driver, record, timestamp) {
+        let _ = record
+            .event(json!({"type":"navigation_capture_incomplete","time":timestamp,"error":error}));
+        let _ = record.status("manual_review", timestamp);
+        return Err(error);
+    }
+    record.event(json!({"type":"navigation_capture_complete","time":timestamp}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1070,7 +1087,7 @@ mod tests {
         // Force a collision on the second segment. The first segment and its
         // capture ID must remain attributable even without a completion event.
         fs::write(record.dir.join("screenshots/0005.png"), b"existing").unwrap();
-        assert!(capture_page(&mut driver, &mut record, 3).is_err());
+        assert!(capture_before_navigation(&mut driver, &mut record, 3).is_err());
         assert_eq!(
             fs::read(record.dir.join("screenshots/0005.png")).unwrap(),
             b"existing"
@@ -1086,6 +1103,12 @@ mod tests {
             .filter(|event| event["type"] == "page_capture_started")
             .collect();
         assert_eq!(starts.len(), 3);
+        assert!(entries
+            .iter()
+            .any(|event| event["type"] == "navigation_capture_incomplete"));
+        assert!(!entries
+            .iter()
+            .any(|event| event["type"] == "navigation_capture_complete"));
         assert_ne!(starts[1]["capture_id"], starts[2]["capture_id"]);
         let failed_id = &starts[1]["capture_id"];
         assert_eq!(
@@ -1101,6 +1124,49 @@ mod tests {
             .any(|event| event["type"] == "page_capture" && &event["capture_id"] == failed_id));
         assert!(entries.iter().any(|event| event["type"] == "page_capture"
             && event["capture_id"] == starts[2]["capture_id"]));
+        driver
+            .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                selector: "#candidate".into(),
+                value: waypoint_applications::form_mapping::PacketValue::Text(
+                    "Manual fixture change".into(),
+                ),
+            })
+            .unwrap();
+        capture_before_navigation(&mut driver, &mut record, 5).unwrap();
+        let entries: Vec<Value> = fs::read_to_string(record.dir.join("events.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let start = entries
+            .iter()
+            .rposition(|event| event["type"] == "navigation_capture_started")
+            .unwrap();
+        let end = entries
+            .iter()
+            .rposition(|event| event["type"] == "navigation_capture_complete")
+            .unwrap();
+        assert!(start < end);
+        let captured: Vec<_> = entries[start..end]
+            .iter()
+            .filter(|event| event["type"] == "page_capture_segment")
+            .collect();
+        assert_eq!(captured.len(), 2);
+        assert!(captured.iter().all(|event| record
+            .dir
+            .join(event["screenshot"].as_str().unwrap())
+            .is_file()));
+        let next = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/application-check-contact.html")
+            .canonicalize()
+            .unwrap();
+        driver
+            .open(url::Url::from_file_path(next).unwrap().as_str())
+            .unwrap();
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     #[test]
