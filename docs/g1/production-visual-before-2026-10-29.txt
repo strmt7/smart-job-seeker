@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running unittests src\main.rs (target\debug\deps\waypoint_web-7a4042ab05987d90.exe)
+
+running 1 test
+
+thread 'visual_review::tests::live_visual_review_detects_a_fictional_mismatch' (19496) panicked at crates\waypoint_inference\src\ollama.rs:467:28:
+range start index 26621 out of range for slice of length 26619
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test visual_review::tests::live_visual_review_detects_a_fictional_mismatch ... FAILED
+
+failures:
+
+failures:
+    visual_review::tests::live_visual_review_detects_a_fictional_mismatch
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 208 filtered out; finished in 0.07s
+
+error: test failed, to rerun pass `-p waypoint_web --bin waypoint_web`

@@ -406,7 +406,7 @@ pub fn http_request(
                             break;
                         }
                     } else if let Some(len) = content_length(&headers) {
-                        if raw.len() >= split + 4 + len {
+                        if raw.len().saturating_sub(split + 4) >= len {
                             break;
                         }
                     }
@@ -435,7 +435,8 @@ pub fn http_request(
         decode_chunked(body_raw).ok_or("invalid chunked body")?
     } else {
         match content_length(&headers) {
-            Some(len) => body_raw[..len.min(body_raw.len())].to_vec(),
+            Some(len) if body_raw.len() >= len => body_raw[..len].to_vec(),
+            Some(_) => return Err("incomplete content-length body".into()),
             None => body_raw.to_vec(),
         }
     };
@@ -464,18 +465,27 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut pos = 0;
     loop {
-        let line_end = body[pos..].windows(2).position(|w| w == b"\r\n")? + pos;
+        let line_end = body
+            .get(pos..)?
+            .windows(2)
+            .position(|w| w == b"\r\n")?
+            .checked_add(pos)?;
         let size_str = std::str::from_utf8(&body[pos..line_end]).ok()?;
         let size = usize::from_str_radix(size_str.trim().split(';').next()?, 16).ok()?;
         pos = line_end + 2;
         if size == 0 {
-            return Some(out);
+            let remainder = body.get(pos..)?;
+            return (remainder.starts_with(b"\r\n")
+                || remainder.windows(4).any(|w| w == b"\r\n\r\n"))
+            .then_some(out);
         }
-        if pos + size > body.len() {
+        let end = pos.checked_add(size)?;
+        let next = end.checked_add(2)?;
+        if body.get(end..next)? != b"\r\n" {
             return None;
         }
-        out.extend_from_slice(&body[pos..pos + size]);
-        pos += size + 2; // skip trailing CRLF
+        out.extend_from_slice(body.get(pos..end)?);
+        pos = next;
     }
 }
 
@@ -581,7 +591,7 @@ mod tests {
     #[test]
     fn http_parses_content_length_responses() {
         let addr = spawn_server(
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"ok\":true}\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 12\r\n\r\n{\"ok\":true}\n",
         );
         let (status, body) = http_request(addr, "GET", "/x", None, 2000).unwrap();
         assert_eq!(status, 200);
@@ -598,6 +608,29 @@ mod tests {
         assert_eq!(status, 200);
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
+    }
+
+    #[test]
+    fn fragmented_chunks_are_incomplete_until_the_terminator() {
+        let body = b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n";
+        for end in 0..body.len() {
+            assert!(
+                decode_chunked(&body[..end]).is_none(),
+                "prefix length {end}"
+            );
+        }
+        assert_eq!(decode_chunked(body).unwrap(), b"abcde");
+        assert!(decode_chunked(b"3\r\nabcXX0\r\n\r\n").is_none());
+        assert!(decode_chunked(b"ffffffffffffffff\r\n").is_none());
+    }
+
+    #[test]
+    fn short_content_length_response_is_an_error() {
+        let addr = spawn_server(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort");
+        assert_eq!(
+            http_request(addr, "GET", "/x", None, 2000).unwrap_err(),
+            "incomplete content-length body"
+        );
     }
 
     #[test]

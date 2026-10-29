@@ -1,0 +1,9 @@
+# Production visual-model check — 2026-10-29
+
+The ignored `live_visual_review_detects_a_fictional_mismatch` test exercises the application's visual transcription and comparison path using `fictional-form.png`, a synthetic form. The expected email was deliberately changed so a correct transcription should produce one mismatch and three matches. The test uses the existing Ollama model `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`.
+
+The [initial run](production-visual-before-2026-10-29.txt) failed before transcription: the loopback HTTP client's chunk decoder panicked when the response was fragmented immediately after chunk data. The decoder now waits for complete delimiters and checks arithmetic and framing; a separate content-length fix rejects prematurely closed responses. Prefix-fragmentation and truncated-body tests cover these failures.
+
+The [repeat](production-visual-after-2026-10-29.txt) transcribed the four fixture fields and flagged the intentionally different email as `differs_from_transcription`. This is one successful synthetic case, not a general visual-accuracy measurement. The production comparison is advisory and does not prove a site accepted an answer. No employer website or application was contacted.
+
+Before the successful run, a resource preflight measured 29.22 GiB free system memory and 4.53 GiB dedicated GPU use with no model resident. After loading the 4,096-token context fully on GPU, the pre-test sample was 24.16 GiB free and 11.51 GiB dedicated GPU use. After the test it was 24.00 GiB and 11.25 GiB. These are snapshots, not continuous peaks. The test requests the already-resident context explicitly; the production default remains unchanged. The no-default-features test build does not verify SQLCipher integration.

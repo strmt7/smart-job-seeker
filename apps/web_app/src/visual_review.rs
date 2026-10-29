@@ -254,8 +254,18 @@ fn analyze(
     image: &str,
     expected: &[(String, String)],
 ) -> Result<Value, String> {
+    analyze_with_context(addr, model, image, expected, None)
+}
+
+fn analyze_with_context(
+    addr: std::net::SocketAddr,
+    model: &str,
+    image: &str,
+    expected: &[(String, String)],
+    context: Option<u32>,
+) -> Result<Value, String> {
     let prompt = "Transcribe up to 20 visible form field labels and their displayed values in the image. For a visible checkbox use checked or unchecked; for a multi-select list the visible selected labels separated by comma and space. Return JSON: {\"observations\":[{\"label\":\"...\",\"visible_value\":\"...\"}]}. Do not infer hidden or unreadable values. An empty array is allowed.";
-    let result = generate_vision(addr, model, image, prompt)?;
+    let result = generate_vision_with_context(addr, model, image, prompt, context)?;
     let observed = validate(&result)?;
     Ok(compare(&observed, expected))
 }
@@ -265,6 +275,16 @@ pub(crate) fn generate_vision(
     model: &str,
     image: &str,
     prompt: &str,
+) -> Result<Value, String> {
+    generate_vision_with_context(addr, model, image, prompt, None)
+}
+
+fn generate_vision_with_context(
+    addr: std::net::SocketAddr,
+    model: &str,
+    image: &str,
+    prompt: &str,
+    context: Option<u32>,
 ) -> Result<Value, String> {
     if image.is_empty() || image.len() > 4 * 1024 * 1024 || prompt.len() > 24_000 {
         return Err("Vision input exceeds limits".into());
@@ -281,7 +301,13 @@ pub(crate) fn generate_vision(
     {
         return Err("The resident model did not report vision capability; inspect manually".into());
     }
-    let body = json!({"model":model,"prompt":prompt,"images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
+    let mut body = json!({"model":model,"prompt":prompt,"images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
+    if let Some(context) = context {
+        if !(1024..=131_072).contains(&context) {
+            return Err("Invalid visual review context size".into());
+        }
+        body["options"]["num_ctx"] = context.into();
+    }
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let (status, data) = waypoint_inference::ollama::http_request(
         addr,
@@ -340,6 +366,48 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_visual_review_detects_a_fictional_mismatch() {
+        use base64::Engine;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let image = base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("../tests/fictional-form.png"));
+        let expected = vec![
+            ("Full name".into(), "Avery Example".into()),
+            ("Email".into(), "different@example.invalid".into()),
+            ("Location".into(), "Berlin".into()),
+            ("Available to travel".into(), "checked".into()),
+        ];
+        let result =
+            analyze_with_context(addr, "qwen3.5:9b", &image, &expected, Some(4096)).unwrap();
+        println!("fictional visual result: {result}");
+        let comparisons = result["comparisons"].as_array().unwrap();
+        for label in ["Full name", "Location", "Available to travel"] {
+            assert!(
+                comparisons
+                    .iter()
+                    .any(|v| v["label"] == label && v["status"] == "matches_transcription"),
+                "unverified field: {label}"
+            );
+        }
+        assert!(
+            comparisons
+                .iter()
+                .any(|v| v["label"] == "Email" && v["status"] == "differs_from_transcription"),
+            "mismatch was not detected"
+        );
+    }
     #[test]
     fn image_freshness_reports_changes_and_missing_capture() {
         let digest = waypoint_domain::Sha256Digest::of("fictional-image");
