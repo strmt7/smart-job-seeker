@@ -28,6 +28,8 @@ jobs:
           node apps/web_app/tests/draft-recovery-ui.test.js
           node apps/web_app/tests/visual-dense-retry-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/partial-fill-visual-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/search-coverage-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/fit-badge-ui.test.js
