@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Employer initials in duplicate discovery — 2026-10-29
+
+- Duplicate candidate indexing now includes a bounded ASCII employer-initial key, so an abbreviated employer and its expanded name can become a review pair even without a shared employer word. Existing title, description or requisition evidence is still required; matching initials can belong to unrelated employers, so pairs remain pending review and jobs are never merged automatically. The existing token and candidate limits still apply, and non-ASCII initials, employer aliases and unseen candidates can be missed.
+- Schema migration 26 marks existing employer indexes for the existing bounded reindex workflow; existing jobs and prior duplicate decisions remain intact. The migration and reindex were tested on an in-memory fictional database, including both import orders and a distinct role. Large-workspace migration and peak resource consumption were not measured.
+- Store, workspace and web tests passed (51, 40 and 197 respectively; 65 ignored across these suites), as did scoped Clippy and formatting. No external search or application was sent.
+
 ## Batch search coverage summary — 2026-10-29
 
 - Batch web-search completion now reports requested, attempted, successful, failed and unattempted provider pages, plus counts of pages with truncated result processing, unresponsive engines, or unknown engine availability. The interface calls pages attempted rather than completed and shows the counts after normal completion, cancellation, interruption, or recovery. These are provider-page counts, not estimates of all jobs or websites searched; candidate links remain unverified.

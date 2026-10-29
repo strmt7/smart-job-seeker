@@ -260,6 +260,9 @@ const MIGRATIONS: &[&str] = &[
     // v25 — retain a first listing source even when no screenshot was captured.
     "CREATE TABLE job_source_only(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_metadata BLOB NOT NULL);
      UPDATE meta SET value='25' WHERE key='schema_version';",
+    // v26 — rebuild bounded employer tokens to include acronym candidates.
+    "DELETE FROM job_employer_indexed;
+     UPDATE meta SET value='26' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1056,7 +1059,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "25");
+        assert_eq!(version, "26");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
@@ -1094,6 +1097,38 @@ mod tests {
             Some("legacy")
         );
         assert_eq!(store.duplicate_coverage_counts().unwrap(), (1, 0, 0, 0));
+    }
+
+    #[test]
+    fn acronym_index_migration_rechecks_existing_jobs_and_preserves_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        for migration in &MIGRATIONS[..25] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for (id, employer) in [
+            ("a", "IBM Ltd"),
+            ("b", "International Business Machines Corporation"),
+        ] {
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,'Software Engineer',?2,'Berlin','\"discovered\"')", params![id, employer]).unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [id])
+                .unwrap();
+            conn.execute("INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,'complete',0)", [id]).unwrap();
+        }
+        conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES('a','b',100,'prior review','different')", []).unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert_eq!(store.duplicate_coverage_counts().unwrap().1, 2);
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            store.index_next_duplicate_job("a").unwrap().as_deref(),
+            Some("b")
+        );
+        assert!(!store.duplicate_index_pending().unwrap());
+        assert!(store.possible_duplicates().unwrap().is_empty());
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        assert_eq!(store.job_count().unwrap(), 2);
     }
 
     #[test]

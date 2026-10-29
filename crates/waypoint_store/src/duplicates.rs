@@ -87,6 +87,55 @@ fn employer_words(s: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// A candidate key only: unrelated employers can share initials. Keep the
+/// original word order, and reject long or non-ASCII abbreviations instead of
+/// inventing transliterations.
+fn employer_acronym(s: &str) -> Option<String> {
+    let raw: Vec<String> = s
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .filter(|word| {
+            !matches!(
+                word.as_str(),
+                "inc"
+                    | "incorporated"
+                    | "ltd"
+                    | "limited"
+                    | "llc"
+                    | "gmbh"
+                    | "corp"
+                    | "corporation"
+                    | "company"
+                    | "plc"
+                    | "ag"
+                    | "bv"
+                    | "nv"
+                    | "sa"
+                    | "sas"
+                    | "sarl"
+                    | "srl"
+                    | "spa"
+                    | "pty"
+                    | "oy"
+                    | "ab"
+                    | "kg"
+            )
+        })
+        .collect();
+    let acronym = if raw.len() == 1 {
+        raw[0].clone()
+    } else if (2..=6).contains(&raw.len()) {
+        raw.iter().filter_map(|word| word.chars().next()).collect()
+    } else {
+        return None;
+    };
+    (acronym.len() >= 2
+        && acronym.len() <= 6
+        && acronym.bytes().all(|byte| byte.is_ascii_lowercase()))
+    .then_some(acronym)
+}
+
 impl Store {
     /// Add a previously missing identifier and refresh its review candidates atomically.
     pub fn add_requisition_and_refresh(&self, job: &StoredJob) -> rusqlite::Result<bool> {
@@ -118,8 +167,13 @@ impl Store {
                 .cmp(&a.chars().count())
                 .then_with(|| a.cmp(b))
         });
-        let mut bounded = tokens.len() > 8;
-        tokens.truncate(8);
+        let acronym = employer_acronym(&job.employer);
+        let token_limit = if acronym.is_some() { 7 } else { 8 };
+        let mut bounded = tokens.len() > token_limit;
+        tokens.truncate(token_limit);
+        if let Some(key) = &acronym {
+            tokens.push(format!("@acr:{key}"));
+        }
         // Mark complete only after comparisons finish, so interrupted indexing is retried.
         self.conn.execute(
             "DELETE FROM job_employer_indexed WHERE job_id=?1",
@@ -176,7 +230,14 @@ impl Store {
         // Older dotted-initial-only employers were marked missing because each
         // indexed token was one character. Scan that bounded bucket when a
         // single compact acronym could correspond to one of those records.
-        if tokens.len() == 1 && tokens[0].chars().count() <= 10 && candidates.len() < 200 {
+        if tokens
+            .iter()
+            .filter(|token| !token.starts_with("@acr:"))
+            .count()
+            == 1
+            && tokens[0].chars().count() <= 10
+            && candidates.len() < 200
+        {
             let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM job_duplicate_coverage c JOIN jobs j ON j.id=c.job_id WHERE c.status='missing_employer' AND j.id<>?1 ORDER BY j.id LIMIT 200")?;
             let mut count = 0usize;
             for row in stmt.query_map([job.id.as_str()], Self::row_to_job)? {
@@ -198,6 +259,9 @@ impl Store {
         let mut result = Vec::new();
         for other in candidates {
             let employer_score = overlap(&employer_tokens, &employer_words(&other.employer));
+            let same_acronym = acronym
+                .as_ref()
+                .is_some_and(|key| employer_acronym(&other.employer).as_ref() == Some(key));
             let same_requisition = job
                 .requisition_id
                 .as_deref()
@@ -207,7 +271,7 @@ impl Store {
                 });
             // An exact identifier with a related employer is a review signal,
             // not proof: different employers may reuse identifiers.
-            if employer_score < 65 && !(same_requisition && employer_score >= 40) {
+            if employer_score < 65 && !(same_requisition && employer_score >= 40) && !same_acronym {
                 continue;
             }
             let score = title_score(&job.title, &other.title);
@@ -230,7 +294,7 @@ impl Store {
             } else {
                 (other.id.as_str(), job.id.as_str())
             };
-            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, description overlap {description_score}%. {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" });
+            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, description overlap {description_score}%. {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=excluded.reason", params![job_a,job_b,score,reason])?;
             let (status, preferred_job) = self.conn.query_row(
                 "SELECT status,preferred_job FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
@@ -408,6 +472,42 @@ mod tests {
             source: "fixture".into(),
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
+        }
+    }
+
+    #[test]
+    fn employer_initials_find_expanded_names_without_merging() {
+        assert_eq!(
+            employer_acronym("International Business Machines Corporation").as_deref(),
+            Some("ibm")
+        );
+        assert_eq!(employer_acronym("I.B.M. Ltd").as_deref(), Some("ibm"));
+        for reverse in [false, true] {
+            let mut store = Store::in_memory().unwrap();
+            let a = job("a", "Senior Software Engineer", "IBM Ltd", None);
+            let b = job(
+                "b",
+                "Senior Software Developer",
+                "International Business Machines Corporation",
+                None,
+            );
+            let order = if reverse { [&b, &a] } else { [&a, &b] };
+            for item in order {
+                store.upsert_job(item).unwrap();
+                store.find_possible_duplicates(item).unwrap();
+            }
+            let matches = store.possible_duplicates().unwrap();
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].status, "pending");
+            assert!(matches[0]
+                .reason
+                .contains("initials can belong to different employers"));
+            assert_eq!(store.all_jobs().unwrap().len(), 2);
+            assert!(store.has_duplicate_hold("a").unwrap());
+            assert!(store.has_duplicate_hold("b").unwrap());
+            let other = job("other", "Restaurant Manager", "IBM", None);
+            store.upsert_job(&other).unwrap();
+            assert!(store.find_possible_duplicates(&other).unwrap().is_empty());
         }
     }
 
