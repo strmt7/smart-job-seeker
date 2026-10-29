@@ -261,7 +261,7 @@ pub fn start(
             },
         ))
         .unwrap_or_else(|_| Err("Application navigation stopped unexpectedly".into()));
-        let preview = match navigation {
+        let mut preview = match navigation {
             Ok(preview) => preview,
             Err(error) => form_preview::FormPreview {
                 model_review_selectors: Default::default(),
@@ -282,6 +282,9 @@ pub fn start(
                 review_saved: false,
             })
             .map(|new_id| {
+                if !session.attachments.is_empty() {
+                    preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
+                }
                 session.id = new_id;
                 session.profile_digest = Sha256Digest::of(&profile.to_string());
                 session.preview = preview;

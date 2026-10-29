@@ -98,7 +98,9 @@ struct ReviewSession {
     completed_selectors: Vec<String>,
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
-    attachments: Vec<(String, std::path::PathBuf)>,
+    // Attachment verification is scoped to the inspection session in which
+    // the control was observed; later wizard sections can reuse selectors.
+    attachments: Vec<(String, std::path::PathBuf, String)>,
     last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
 }
@@ -3418,7 +3420,11 @@ fn serve(
                 .filter_map(|item| item["selector"].as_str().map(str::to_owned))
                 .collect();
             let mut attachment_changed = false;
-            for (selector, path) in &current.attachments {
+            for (selector, path, _) in current
+                .attachments
+                .iter()
+                .filter(|(_, _, inspection)| inspection == &current.id)
+            {
                 if current.driver.verify_local_file(selector, path).is_err() {
                     attachment_changed = true;
                     current.preview.manual_review.push(format!(
@@ -3705,10 +3711,12 @@ fn serve(
                     "Document attachment may be incomplete; review the form: {error}"
                 ));
             }
+            current.attachments.retain(|(previous, _, inspection)| {
+                previous != selector || inspection != &current.id
+            });
             current
                 .attachments
-                .retain(|(previous, _)| previous != selector);
-            current.attachments.push((selector.to_owned(), path));
+                .push((selector.to_owned(), path, current.id.clone()));
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name}))?;
                 if let Ok(image) = current.driver.screenshot_base64() {
@@ -5862,6 +5870,13 @@ mod tests {
                 .driver
                 .attach_local_file("#resume", &staged_path)
                 .unwrap();
+            // An earlier wizard section can contain an unrelated upload control.
+            // It must not be verified against the currently displayed page.
+            session.as_mut().unwrap().attachments.push((
+                "#earlier-upload".into(),
+                staged_path.clone(),
+                "previous-inspection".into(),
+            ));
             session.as_mut().unwrap().filled = false;
             let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
@@ -5872,6 +5887,13 @@ mod tests {
                 .manual_review
                 .iter()
                 .any(|reason| reason.contains("Attachment at #resume could not be verified")));
+            assert!(!session
+                .as_ref()
+                .unwrap()
+                .preview
+                .manual_review
+                .iter()
+                .any(|reason| reason.contains("#earlier-upload")));
             drop(stream);
             let _vision_guard = visual_review::TEST_TASK_LOCK.lock().unwrap();
             let current = session.as_mut().unwrap();

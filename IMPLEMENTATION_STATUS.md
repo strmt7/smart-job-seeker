@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Attachments across form inspections — 2026-10-29
+
+- Form attachment verification is now scoped to the inspection session where the upload control was observed. A later inspection retains the staged files and records but warns that prior-section uploads cannot be verified on the current section; it does not report an absent old selector as a failed current attachment. A new inspection may also be a rescan of the same page, so this conservative warning can require additional manual review. It does not prove earlier uploads survived navigation.
+- A headless-browser fixture verified that a prior-inspection attachment selector is not checked against the current page while a changed current attachment still triggers review. The web suite passed (194 passed, 64 ignored), with web Clippy and formatting. Separately, the pre-existing fictional two-stage wizard passed with the resident local model and visual checks, using a simulated user gesture to advance. Automatic wizard-button navigation and live employer-site behavior remain unverified; no application was sent. Peak resources were not measured.
+
 ## Repeated visual freshness records — 2026-10-29
 
 - Re-polling a completed form visual review now records a new freshness event and screenshot when the recaptured image or freshness status differs from the last recorded observation. An identical retry remains deduplicated. A failed record write is not marked saved and may be retried. This does not establish that the form is correct or complete.
