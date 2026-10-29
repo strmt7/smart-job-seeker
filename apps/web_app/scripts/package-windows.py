@@ -26,6 +26,16 @@ PDF_WHEELS = (
 def discover_libreoffice(environment):
     """Find a local candidate; bundling still validates and inventories it."""
     candidates = []
+    configured = environment.get('WAYPOINT_SOFFICE')
+    if configured:
+        executable = Path(configured)
+        if executable.name.lower() == 'soffice.com' and executable.parent.name.lower() == 'program':
+            candidates.append(executable.parent.parent)
+    for entry in environment.get('PATH', '').split(os.pathsep):
+        if entry:
+            directory = Path(entry)
+            if directory.name.lower() == 'program':
+                candidates.append(directory.parent)
     for key in ('PROGRAMFILES', 'PROGRAMW6432', 'PROGRAMFILES(X86)'):
         if environment.get(key):
             candidates.append(Path(environment[key]) / 'LibreOffice')

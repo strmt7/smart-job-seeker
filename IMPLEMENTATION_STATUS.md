@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Converter discovery for packaging — 2026-10-29
+
+- The Windows package builder can now discover a complete local LibreOffice distribution from `WAYPOINT_SOFFICE` or a `program` directory on `PATH`, before checking standard installation locations. It still requires the converter executable and a distribution license, and bundling retains the existing file, size and hash checks. Missing or invalid configured candidates fall through to other locations.
+- Fictional small-distribution tests covered configured and PATH discovery, fallback, bundling and the license requirement. On this host discovery selected the existing `C:\Program Files\LibreOffice`; no full distribution was copied or qualified in this checkpoint. Automatic acquisition on a machine without a converter, clean-host installation and bundled conversion remain unverified or unimplemented. No external download was performed.
+
 ## Employer initials in duplicate discovery — 2026-10-29
 
 - Duplicate candidate indexing now includes a bounded ASCII employer-initial key, so an abbreviated employer and its expanded name can become a review pair even without a shared employer word. Existing title, description or requisition evidence is still required; matching initials can belong to unrelated employers, so pairs remain pending review and jobs are never merged automatically. The existing token and candidate limits still apply, and non-ASCII initials, employer aliases and unseen candidates can be missed.

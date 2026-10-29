@@ -1,6 +1,7 @@
 """Exercise optional converter bundling with fictional, small local files."""
 import hashlib
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import zipfile
@@ -31,9 +32,15 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
     (program_files / 'LibreOffice' / 'LICENSE.html').write_text('fictional license', encoding='utf-8')
     assert packager.discover_libreoffice(env) == program_files / 'LibreOffice'
     assert packager.discover_libreoffice({}) is None
+    configured = {'WAYPOINT_SOFFICE': str(root / 'program' / 'soffice.com'), **env}
+    assert packager.discover_libreoffice(configured) == root
+    path_env = {'PATH': os.pathsep.join([str(program_files / 'LibreOffice' / 'missing'), str(root / 'program')]), **env}
+    assert packager.discover_libreoffice(path_env) == root
+    invalid = {'WAYPOINT_SOFFICE': str(Path(temp) / 'missing' / 'program' / 'soffice.com'), **env}
+    assert packager.discover_libreoffice(invalid) == program_files / 'LibreOffice'
     output = Path(temp) / 'bundle.zip'
     with zipfile.ZipFile(output, 'w') as archive:
-        inventory = packager.add_libreoffice(archive, root)
+        inventory = packager.add_libreoffice(archive, packager.discover_libreoffice(path_env))
     with zipfile.ZipFile(output) as archive:
         assert len(inventory) == 3
         for name, digest in inventory.items():
