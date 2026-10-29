@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="pt"><head><meta charset="utf-8"><title>Fictional review form</title>
+<style>body{font:18px sans-serif;margin:35px}label{display:block;margin:18px 0}input[type=text],input[type=email]{display:block;width:420px;font-size:18px}</style></head>
+<body><form onsubmit="event.preventDefault();document.body.dataset.submitted='yes'">
+<label for="candidate">Tem autorização legal para trabalhar neste país?</label>
+<input id="candidate" type="text" autocomplete="email">
+<label for="contact">Endereço de e-mail</label><input id="contact" type="email" autocomplete="email">
+<label for="q3">Concorda com o tratamento dos seus dados pessoais?</label><input id="q3" type="checkbox">
+<button type="submit">Enviar candidatura</button>
+</form></body></html>

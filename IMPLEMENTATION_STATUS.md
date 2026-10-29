@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Model-flagged browser prefill fixture — 2026-10-29
+
+- A fictional Portuguese browser fixture now exercises the local model's review flags through the real prefill boundary. The work-eligibility field has a misleading email autocomplete hint and the consent checkbox uses a neutral ID. With resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), both fields were flagged and the separate contact email was mapped. A forged flagged-field mapping was rejected before the simulated grant was consumed; the approved fictional contact value was then filled, while browser checks and visual observations showed the flagged fields blank. The fixture did not submit.
+- The live browser/model fixture passed after RAM/residency preflight; five focused non-live form-preview tests passed with nine browser/model tests ignored. Web Clippy and formatting passed with one Cargo job. This is one synthetic layout with simulated approval, not a general accuracy or real-employer result; peak resources were not measured.
+
 ## Form review with empty profiles and non-text controls — 2026-10-29
 
 - Model-assisted sensitivity review now runs even when no usable profile keys are available, and it inspects checkbox, date, file and multi-select labels as well as mappable controls. The existing deterministic mapping restrictions remain in force. An explicit prompt distinction leaves ordinary contact fields unmapped rather than classifying them as sensitive solely because the profile is empty.
