@@ -358,3 +358,13 @@ New application records now store materials under bounded, UTF-8-safe names that
 Form attachment now uses a bounded Windows-safe temporary filename, retains the saved document name, and shows the website-facing filename before the attachment gesture. The UI sends the reviewed name and the API rejects a mismatch; compatibility callers that omit the optional name are not bound by that check. The attempt event records both names. A local browser fixture attached a fictional PDF whose saved name was 255 bytes, verified the staged file and rejected a stale filename. A rendered desktop and narrow-screen check used a mocked local API; it exercised the filename notice and request but did not contact an employer. Older application records remain unchanged, and website behavior is not established by these fixtures.
 
 Wider-web search now retains up to 100 valid candidates from each provider page, matching its existing 100-item examination bound; previously it stopped after 30 and could leave additional results on the same page unexamined. The global 600-link batch cap, single in-flight request, 2 MiB response cap and five-page-per-phrase limit remain. If a page has more valid candidates than the remaining batch budget, coverage reports how many were omitted instead of describing them as unexamined. A fictional loopback provider returned 70 candidates on one page and a later new result after 70 duplicates; the search tests passed. A rendered local mock exercised pagination and the coverage notice. These are unverified links, not confirmed vacancies or application pages; no live provider or employer was contacted.
+
+## Fit input coverage — 2026-10-30
+
+New job-fit assessments report when the bounded model input excludes part of
+the saved listing or search instructions. Their cache binding includes the full
+saved description and instructions, so a change outside the model's input limit
+also makes the old assessment stale. Existing assessments are invalidated by
+the input version change. The percentage remains a deterministic calculation
+over a model-generated rubric, not a calibrated probability; its displayed
+range does not account for omitted text or model interpretation errors.

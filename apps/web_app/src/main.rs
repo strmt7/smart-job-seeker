@@ -216,8 +216,45 @@ fn fit_assessment_digest(
 ) -> Result<(Vec<String>, String, String), String> {
     let (_, listing, _) = fit_listing_digest(ws, job_id, facts, instructions)?;
     let pool = fit_semantic_pool(facts, &listing);
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v1-semantic-pool-v13","facts":facts,"pool":pool,"instructions":instructions,"listing":listing}).to_string()).as_str().to_owned();
+    let description = ws
+        .job_description(job_id)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let full_instructions = profile["instructions"].as_str().unwrap_or("");
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v1-semantic-pool-v14","facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
+}
+
+fn fit_source_coverage(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+    listing: &str,
+    instructions: &str,
+) -> Result<Value, String> {
+    let job = ws
+        .job(job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
+    let description = ws
+        .job_description(job_id)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let full_listing = format!(
+        "Title: {}\nEmployer: {}\nLocation: {}\nDescription: {}",
+        job.title, job.employer, job.location, description
+    );
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let full_instructions = profile["instructions"].as_str().unwrap_or("");
+    Ok(
+        json!({"listing_used_chars":listing.chars().count(),"listing_total_chars":full_listing.chars().count(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count()}),
+    )
 }
 
 /// Keep strong lexical candidates, then sample across the bounded inventory
@@ -1798,10 +1835,12 @@ fn serve(
             if result["status"] == "complete" {
                 let job_id = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job")?)
                     .map_err(|e| e.to_string())?;
-                let (_, _, _, _, digest) = fit_assessment_inputs(ws, &job_id)?;
+                let (_, _, instructions, listing, digest) = fit_assessment_inputs(ws, &job_id)?;
                 if result["input_digest"].as_str() != Some(digest.as_str()) {
                     result = json!({"status":"failed","error":"Job or candidate inputs changed during assessment; assess again"});
                 } else if result["saved"].is_null() {
+                    result["assessment"]["source_coverage"] =
+                        fit_source_coverage(ws, &job_id, &listing, &instructions)?;
                     ws.save_fit_assessment(&job_id, result.to_string().as_bytes())
                         .map_err(|e| format!("Could not save assessment; retry after resolving the workspace error: {e}"))?;
                     result["saved"] = json!(true);
@@ -4304,6 +4343,29 @@ mod tests {
         let omitted = facts.iter().position(|fact| !pool.contains(fact)).unwrap();
         facts[omitted].push_str(" corrected");
         let (_, _, after) = fit_assessment_digest(&ws, &id, &facts, "").unwrap();
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn assessment_tracks_and_reports_inputs_beyond_model_limits() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let description = format!("{} final requirement", "é".repeat(8100));
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/long-role","title":"Engineer","employer":"Fixture","description":description}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let prefix = "x".repeat(2000);
+        ws.save_candidate_profile(&json!({"instructions":format!("{prefix} first")}).to_string())
+            .unwrap();
+        let (_, _, instructions, listing, before) = fit_assessment_inputs(&ws, &id).unwrap();
+        let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
+        assert_eq!(coverage["listing_used_chars"], 8000);
+        assert!(coverage["listing_total_chars"].as_u64().unwrap() > 8000);
+        assert_eq!(coverage["instructions_used_chars"], 2000);
+        assert!(coverage["instructions_total_chars"].as_u64().unwrap() > 2000);
+        ws.save_candidate_profile(&json!({"instructions":format!("{prefix} changed")}).to_string())
+            .unwrap();
+        let (_, _, new_instructions, new_listing, after) = fit_assessment_inputs(&ws, &id).unwrap();
+        assert_eq!(instructions, new_instructions);
+        assert_eq!(listing, new_listing);
         assert_ne!(before, after);
     }
 
