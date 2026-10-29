@@ -1,8 +1,14 @@
 # Implementation checkpoint
 
+## Visual comparison checkpoint — 2026-10-29
+
+- Current revision: see `git log -1`. Visual comparison labels do not report a match when any capture changed or could not be checked for freshness; duplicate and missing observations remain unverified.
+- With `CARGO_BUILD_JOBS=1` and `RUST_TEST_THREADS=1`, the eight `visual_review::tests` passed and `cargo clippy -p waypoint_web --all-targets -- -D warnings` passed. `node apps/web_app/tests/visual-review-ui.test.js` and `apps/web_app/scripts/test-build-paths.ps1` passed. The Windows CI workflow now runs both checks.
+- A real vision-model review, rendered-browser verification, hosted CI, the full workspace suite and peak resource use were not measured for this checkpoint. No applications were sent. Automatic Windows dependency installation remains incomplete.
+
 ## Local model inventory checkpoint — 2026-10-29
 
-- Current revision: see `git log -1`. Settings can list up to 100 installed Ollama models and their reported disk sizes. Disk size is not a GPU memory or readiness measurement; the app does not install or load models.
+- Revision: `2202d6c`. Settings can list up to 100 installed Ollama models and their reported disk sizes. Disk size is not a GPU memory or readiness measurement; the app does not install or load models.
 - Validation with `CARGO_BUILD_JOBS=1` and `RUST_TEST_THREADS=1`: `build-windows.ps1 -Test` passed 141 tests with 37 ignored. `cargo test -p waypoint_web model_inventory_http_reads_local_ollama -- --ignored --test-threads=1` passed against the existing local service without loading a model. `node --check apps/web_app/web/app.js` passed.
 - The full workspace suite, a clean-host installation and peak resource usage were not measured. No applications were sent. Automatic dependency and model provisioning remain incomplete.
 

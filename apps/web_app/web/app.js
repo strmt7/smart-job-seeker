@@ -44,6 +44,11 @@ async function followApplicationCheck(task,job){if(applicationCheckFollowing)ret
 function element(tag,text,cls){const e=document.createElement(tag);e.textContent=text;if(cls)e.className=cls;return e;}
 function updateSelection(){document.querySelector('#selected-count').textContent=`${selectedJobs.size} selected`;document.querySelector('#shortlist-selected').disabled=shortlisting || selectedJobs.size===0;document.querySelector('#assess-selected').disabled=shortlisting || fitBatchRunning || autoFitRunning || (!fitBatch && (selectedJobs.size===0 || selectedJobs.size>10));document.querySelector('#select-visible').disabled=shortlisting;document.querySelector('#clear-selection').disabled=shortlisting || selectedJobs.size===0;}
 function showFitBadge(badge,text){badge.textContent=text;badge.hidden=false;if(badge._selectedMirror){badge._selectedMirror.textContent=text;badge._selectedMirror.hidden=false;}}
+function visualComparisonStatus(item,expected,observations,allFresh){
+ if(!allFresh)return 'capture changed or freshness could not be confirmed';
+ const label=item.label.trim().toLowerCase(),same=expected.filter(other=>other.label.trim().toLowerCase()===label),matches=observations.filter(other=>other.label.trim().toLowerCase()===label);
+ return same.length!==1 || matches.length!==1?'not uniquely observed':matches[0].visible_value===item.expected?'transcription matches reviewed answer':'transcription differs from reviewed answer';
+}
 function showAutomaticFit(job,result){const badge=fitBadges.get(job),score=result.assessment?.score;if(badge && Number.isInteger(score)){badge.dataset.updated='1';showFitBadge(badge,`${score}% AI estimate`);}}
 function loadFitBadges(entries,generation){
  const queue=[];let running=false;
@@ -210,7 +215,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
   if(fillInProgress || visualButton.disabled)return;
   visualButton.disabled=true;if(fillButton)fillButton.disabled=true;visualPanel.replaceChildren(element('p','Inspecting bounded page segments with the local vision model…'));
   try{
-   let total=null,signature=null,coverage=true,expected=[];const observations=[];
+   let total=null,signature=null,coverage=true,allFresh=true,expected=[];const observations=[];
    for(let segment=0;total===null || segment<total;segment++){
     const started=await api('/api/form/visual-review-start',{session_id:result.session_id,segment});
     sessionStorage.setItem('waypoint-form-vision',JSON.stringify({task:started.task_id,session:result.session_id,segment,comparisons_truncated:started.comparisons_truncated===true}));
@@ -223,7 +228,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
     sessionStorage.removeItem('waypoint-form-vision');
     if(observation.record_saved===false)visualPanel.append(element('p','This visual result could not be saved to the application record.','review-label'));
     if(observation.status!=='complete')throw new Error(observation.error || 'Visual review failed');
-    if(observation.freshness_record_saved===false)visualPanel.append(element('p','This fresh-capture check was not saved to the application record.','review-label'));if(['changed','unavailable'].includes(observation.visual_freshness))await refresh().catch(()=>{});if(observation.visual_freshness==='changed')visualPanel.append(element('p','This page segment changed after the captured image. Inspect the live form and review again; animations can also cause this warning.','review-label'));else if(observation.visual_freshness==='unavailable')visualPanel.append(element('p','A fresh page capture was unavailable. Inspect the live form manually.','review-label'));
+    if(observation.visual_freshness!=='same')allFresh=false;if(observation.freshness_record_saved===false)visualPanel.append(element('p','This fresh-capture check was not saved to the application record.','review-label'));if(['changed','unavailable'].includes(observation.visual_freshness))await refresh().catch(()=>{});if(observation.visual_freshness==='changed')visualPanel.append(element('p','This page segment changed after the captured image. Inspect the live form and review again; animations can also cause this warning.','review-label'));else if(observation.visual_freshness==='unavailable')visualPanel.append(element('p','A fresh page capture was unavailable. Inspect the live form manually.','review-label'));
     const review=observation.visual_review;if(!review || !Array.isArray(review.observations) || !Array.isArray(review.comparisons))throw new Error('Invalid visual review result');
     if(segment===0)expected=review.comparisons;
     observations.push(...review.observations);
@@ -232,7 +237,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
    }
    if(!coverage)visualPanel.append(element('p','The page exceeds the capture bounds; some content was not inspected.','review-label'));
    visualPanel.append(element('p','Comparison with reviewed answers (model transcription may be wrong):','review-label'));
-   for(const item of expected){const label=item.label.trim().toLowerCase(),same=expected.filter(other=>other.label.trim().toLowerCase()===label),matches=observations.filter(other=>other.label.trim().toLowerCase()===label);const status=same.length!==1 || matches.length!==1?'not uniquely observed':matches[0].visible_value===item.expected?'transcription matches reviewed answer':'transcription differs from reviewed answer';visualPanel.append(element('p',`${item.label}: ${status} (reviewed: ${item.expected})`,'review-label'));}
+   for(const item of expected){const status=visualComparisonStatus(item,expected,observations,allFresh);visualPanel.append(element('p',`${item.label}: ${status} (reviewed: ${item.expected})`,'review-label'));}
    visualPanel.append(element('p','Captures can change between segments. This is not proof of correctness or submission approval; review the live form yourself.','footnote'));
   }catch(e){if(/not found|session expired|no longer current/i.test(e.message))sessionStorage.removeItem('waypoint-form-vision');visualPanel.append(element('p',`Visual review incomplete: ${e.message}. Inspect the live form manually.`, 'review-label'));await refresh().catch(()=>{});}finally{visualButton.disabled=false;if(fillButton && !fillCompleted)fillButton.disabled=false;}
  }
