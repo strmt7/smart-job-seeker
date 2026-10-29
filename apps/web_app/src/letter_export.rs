@@ -15,6 +15,7 @@ struct Task {
     result: Option<Result<Vec<u8>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 pub fn start(
     id: String,
     job_id: String,
@@ -65,18 +66,26 @@ pub fn start(
 }
 pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Export state unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|task| task.id == id)
-        .ok_or("Letter export not found")?;
+    let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Export state unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or("Letter export not found".into());
+    };
     let Some(result) = task.result.take() else {
         return Ok(json!({"status":"running"}));
     };
     let job_id = JobIdentityId::new(&task.job_id).map_err(|e| e.to_string())?;
     match result {
         Err(error) => {
+            let output = json!({"status":"failed","error":error});
+            *COMPLETED.lock().map_err(|_| "Export state unavailable")? =
+                Some((id.to_owned(), output.clone()));
             *tasks = None;
-            Ok(json!({"status":"failed","error":error}))
+            Ok(output)
         }
         Ok(pdf) => {
             if crate::draft_context_digest(ws, &job_id, &task.kind)
@@ -84,14 +93,18 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
                 .as_deref()
                 != Some(task.digest.as_str())
             {
+                let output = json!({"status":"failed","error":"The job, qualifications, profile or template changed during export; draft and review again"});
+                *COMPLETED.lock().map_err(|_| "Export state unavailable")? =
+                    Some((id.to_owned(), output.clone()));
                 *tasks = None;
-                return Ok(
-                    json!({"status":"failed","error":"The job, qualifications, profile or template changed during export; draft and review again"}),
-                );
+                return Ok(output);
             }
             if pdf.len() > 10 * 1024 * 1024 {
+                let output = json!({"status":"failed","error":"Exported PDF exceeds 10 MiB"});
+                *COMPLETED.lock().map_err(|_| "Export state unavailable")? =
+                    Some((id.to_owned(), output.clone()));
                 *tasks = None;
-                return Err("Exported PDF exceeds 10 MiB".into());
+                return Ok(output);
             }
             let saved = (|| -> Result<(String, String), String> {
                 let job = ws
@@ -135,10 +148,11 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
                     let record_error = record.err();
                     let job = task.job_id.clone();
                     let kind = task.kind.clone();
+                    let output = json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error});
+                    *COMPLETED.lock().map_err(|_| "Export state unavailable")? =
+                        Some((id.to_owned(), output.clone()));
                     *tasks = None;
-                    Ok(
-                        json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error}),
-                    )
+                    Ok(output)
                 }
                 Err(error) => {
                     task.result = Some(Ok(pdf));
@@ -227,8 +241,11 @@ fn build_docx(text: &str) -> Result<Vec<u8>, String> {
 }
 #[cfg(test)]
 mod tests {
+    static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn completed_export_cannot_be_replaced_before_collection() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         *super::TASK.lock().unwrap() = Some(super::Task {
             id: "first".into(),
             job_id: "fictional".into(),
@@ -247,6 +264,10 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("awaiting its result"));
         let ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        assert_eq!(
+            super::poll("first", &ws).unwrap()["error"],
+            "Fictional conversion error"
+        );
         assert_eq!(
             super::poll("first", &ws).unwrap()["error"],
             "Fictional conversion error"
@@ -289,6 +310,44 @@ mod tests {
         let result = super::poll("stale", &ws).unwrap();
         assert_eq!(result["status"], "failed");
         assert!(ws.documents().unwrap().is_empty());
+    }
+    #[test]
+    fn successful_export_replays_after_lost_response_without_another_document() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let id = JobIdentityId::new("fictional-replay").unwrap();
+        ws.import_job(StoredJob {
+            id: id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: None,
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let digest = crate::draft_context_digest(&ws, &id, "cv").unwrap();
+        *super::TASK.lock().unwrap() = Some(super::Task {
+            id: "replay".into(),
+            job_id: id.as_str().into(),
+            kind: "cv".into(),
+            digest,
+            reviewed_text: "Fictional text".into(),
+            result: Some(Ok(b"%PDF-fictional".to_vec())),
+        });
+        let first = super::poll("replay", &ws).unwrap();
+        assert_eq!(first["status"], "complete");
+        assert_eq!(super::poll("replay", &ws).unwrap(), first);
+        assert_eq!(ws.documents().unwrap().len(), 1);
+        assert!(super::poll("other", &ws).is_err());
     }
     #[test]
     fn generated_record_includes_template_reviewed_text_and_pdf() {
@@ -362,6 +421,7 @@ mod tests {
     #[test]
     #[ignore = "runs a local LibreOffice conversion of fictional text"]
     fn exports_fixture() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         use waypoint_domain::{ApplicationState, JobIdentityId};
         use waypoint_store::StoredJob;
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();

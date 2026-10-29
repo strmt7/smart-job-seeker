@@ -147,6 +147,11 @@
 - Initial inspection and subsequent navigation now record failures to read likely or other page links as manual-review reasons instead of treating errors as empty results. The current job and saved inspection evidence carry the review state; navigation and submission behavior are unchanged.
 - With one build job and one test thread, five link-navigation tests and web-app Clippy passed. No live employer site or resource peaks were measured; no application was sent.
 
+## PDF export response recovery — 2026-10-29
+
+- The most recent completed or failed reviewed PDF export can be polled again after a lost response without creating a second document. This replay is in memory, limited to the latest result and does not survive process restart.
+- With one build job and one test thread, four letter-export tests passed (one local conversion test ignored); web-app Clippy passed before the final test-lock addition. No live model, employer site, installed-app startup or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
