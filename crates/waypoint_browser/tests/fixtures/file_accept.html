@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><body data-changes="0">
+<label for="pdf">PDF upload</label><input id="pdf" type="file" accept="application/pdf,.PDF" onchange="document.body.dataset.changes++">
+<label for="docx">Word upload</label><input id="docx" type="file" accept=".docx,application/msword" onchange="document.body.dataset.changes++">
+<label for="changing">Changing upload</label><input id="changing" type="file" accept=".pdf" onchange="this.accept='.docx'">
+</body></html>

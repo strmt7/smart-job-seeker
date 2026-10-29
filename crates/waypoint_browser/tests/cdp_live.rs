@@ -44,6 +44,50 @@ fn file_url(name: &str) -> String {
 
 #[test]
 #[ignore = "launches one local browser against a fictional form without submitting"]
+fn file_accept_is_checked_before_the_attachment_changes() {
+    use std::io::Write;
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("file_accept.html")).unwrap();
+    let path = std::env::temp_dir().join(format!("waypoint-accept-{}.pdf", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    file.write_all(b"fictional PDF").unwrap();
+    drop(file);
+    let result = driver.attach_local_file("#docx", &path);
+    assert!(result.unwrap_err().0.contains("does not list"));
+    assert_eq!(
+        driver
+            .read_attribute("body", "data-changes")
+            .unwrap()
+            .as_deref(),
+        Some("0")
+    );
+    driver.attach_local_file("#pdf", &path).unwrap();
+    driver.verify_local_file("#pdf", &path).unwrap();
+    assert_eq!(
+        driver
+            .read_attribute("body", "data-changes")
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+    assert!(driver
+        .attach_local_file("#changing", &path)
+        .unwrap_err()
+        .0
+        .contains("does not list"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional form without submitting"]
 fn multilingual_sensitive_labels_are_marked_for_review() {
     let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
     let live = driver

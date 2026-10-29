@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## File-input format checks — 2026-10-29
+
+- Before attaching a local file, the browser driver checks the file control's declared `accept` hint against its extension and a small set of common MIME types. Explicitly incompatible or unresolvable types require manual review; the driver checks the hint again after attachment and during later file verification. An HTML `accept` hint is not proof of server acceptance, and the fixed MIME mapping can leave other formats for manual review.
+- A real headless browser on a fictional local form rejected a PDF from a Word-only input before its change event, accepted it on a PDF input, and reported a control that changed its accepted format after selection. No application was submitted. Browser and web tests passed (6 and 198 respectively, 91 ignored across the suites), along with scoped Clippy and formatting. Peak resource use was not measured.
+
 ## Disputed fit qualification tie-breaker — 2026-10-29
 
 - When an initial contradiction cites a fact without an English negation and the independent qualification comparison instead finds support, a bounded additional blind comparison may resolve it as supported only if that comparison also finds support. At most six disputed items and 6,000 payload bytes are considered; malformed, unavailable or non-supporting results remain unknown. The UI reports the reconciled count and still says model agreement is not proof. The assessment digest version was changed to mark older assessments stale.

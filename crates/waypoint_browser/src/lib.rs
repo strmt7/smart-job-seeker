@@ -61,6 +61,67 @@ fn possible_next_label(label: &str) -> bool {
         })
 }
 
+/// Interpret the browser's `accept` hint for common document formats. This is
+/// not proof the server accepts a file; unknown MIME mappings need review.
+fn check_file_accept(accept: &str, filename: &str) -> Result<(), DriverError> {
+    let accept = accept.trim();
+    if accept.is_empty() {
+        return Ok(());
+    }
+    let extension = std::path::Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "pdf" => Some("application/pdf"),
+        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "doc" => Some("application/msword"),
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "txt" => Some("text/plain"),
+        _ => None,
+    };
+    let mut uncertain = false;
+    for part in accept
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let part = part.to_ascii_lowercase();
+        if let Some(expected) = part.strip_prefix('.') {
+            if !extension.is_empty() && expected == extension {
+                return Ok(());
+            }
+        } else if part == "*/*" {
+            return Ok(());
+        } else if let Some(mime) = mime {
+            if part == mime
+                || part
+                    .strip_suffix("/*")
+                    .is_some_and(|prefix| mime.starts_with(&format!("{prefix}/")))
+            {
+                return Ok(());
+            }
+            if !part.contains('/') {
+                uncertain = true;
+            }
+        } else {
+            uncertain = true;
+        }
+    }
+    if uncertain {
+        Err(DriverError(
+            "Cannot verify the file field's declared formats; review the attachment manually"
+                .into(),
+        ))
+    } else {
+        Err(DriverError(
+            "The file field does not list this file format; review the attachment manually".into(),
+        ))
+    }
+}
+
 pub struct CdpDriver {
     browser: BrowserProcess,
     cdp: Cdp,
@@ -290,6 +351,18 @@ impl CdpDriver {
                 "File field is unavailable; review it manually".into(),
             ));
         }
+        let accept = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && !this.matches(':disabled') ? this.accept : null; }","returnByValue":true})).map_err(derr)?;
+        let accept = accept
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Cannot inspect the file field's declared formats".into())
+            })?;
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
+        check_file_accept(accept, filename)?;
         self.cdp
             .call(
                 "DOM.setFileInputFiles",
@@ -331,6 +404,14 @@ impl CdpDriver {
                 "File was not retained by the field; review the attachment manually".into(),
             ));
         }
+        let accept = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && !this.matches(':disabled') ? this.accept : null; }","returnByValue":true})).map_err(derr)?;
+        let accept = accept
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Cannot inspect the file field's declared formats".into())
+            })?;
+        check_file_accept(accept, name)?;
         Ok(())
     }
 
@@ -2025,6 +2106,30 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn file_accept_checks_extensions_mime_types_and_unknown_formats() {
+        for allowed in [
+            "",
+            ".PDF",
+            "application/pdf",
+            ".docx, application/pdf",
+            "application/*",
+            "*/*",
+        ] {
+            assert!(
+                check_file_accept(allowed, "resume.pdf").is_ok(),
+                "{allowed}"
+            );
+        }
+        assert!(check_file_accept(".docx,application/msword", "resume.pdf").is_err());
+        assert!(check_file_accept("image/*", "resume.pdf").is_err());
+        assert!(check_file_accept("application/x-unknown", "file.unknown")
+            .unwrap_err()
+            .0
+            .contains("Cannot verify"));
+        assert!(check_file_accept(".unknown", "file.unknown").is_ok());
+    }
 
     #[test]
     fn deeply_nested_nodes_keep_order_and_skip_non_content() {
