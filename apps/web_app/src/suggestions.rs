@@ -159,12 +159,32 @@ pub fn suggest(
         .generate_structured("form_mapping", &prompt, 1024)
         .map_err(|e| e.to_string())?;
     let mut mappings = validate_suggestions(schema, profile, &output)?;
+    // Conflicting interpretations must not become a reviewed-looking suggestion.
+    // Keep both the model and exact candidate out until the user decides.
+    let conflicts: HashSet<String> = mappings
+        .iter()
+        .filter_map(|model| {
+            let direct = exact
+                .iter()
+                .find(|item| item.field_selector == model.field_selector)?;
+            let agrees = match (&model.value, &direct.value) {
+                (PacketValue::Text(a), PacketValue::Text(b)) => {
+                    a.trim().eq_ignore_ascii_case(b.trim())
+                }
+                (a, b) => a == b,
+            };
+            (!agrees).then(|| model.field_selector.clone())
+        })
+        .collect();
+    mappings.retain(|mapping| !conflicts.contains(&mapping.field_selector));
     let mut selected: HashSet<String> = mappings
         .iter()
         .map(|mapping| mapping.field_selector.clone())
         .collect();
     for mapping in exact {
-        if selected.insert(mapping.field_selector.clone()) {
+        if !conflicts.contains(&mapping.field_selector)
+            && selected.insert(mapping.field_selector.clone())
+        {
             mappings.push(mapping);
         }
     }
@@ -488,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn model_omissions_can_use_exact_fallback_without_overriding_its_choices() {
+    fn conflicting_model_mapping_is_omitted_while_other_exact_fields_are_retained() {
         let mut schema = form();
         schema.fields[0].label = "First name".into();
         schema.fields.push(FormField {
@@ -511,8 +531,10 @@ mod tests {
             }),
         )
         .unwrap();
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].value, PacketValue::Text("Person".into()));
+        assert_eq!(matches.len(), 1);
+        assert!(!matches
+            .iter()
+            .any(|mapping| mapping.field_selector == "#candidate"));
         assert!(matches
             .iter()
             .any(|mapping| mapping.field_selector == "#email"

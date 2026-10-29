@@ -500,6 +500,58 @@ mod tests {
         }
     }
     #[test]
+    fn conflicting_profile_mapping_remains_a_required_review() {
+        struct ConflictingModel;
+        impl Inference for ConflictingModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    json!({"mappings":[{"selector":"#first","profile_key":"last_name"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![waypoint_applications::form_mapping::FormField {
+                    selector: "#first".into(),
+                    label: "First name".into(),
+                    field_type: FormFieldType::Text,
+                    required: true,
+                    sensitive: false,
+                    autocomplete: Some("given-name".into()),
+                }],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let preview = suggest_for_live_form(
+            live,
+            &mut ConflictingModel,
+            &json!({"first_name":"Example", "last_name":"Person"}),
+        )
+        .unwrap();
+        assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Required field needs review: First name"));
+    }
+    #[test]
     fn wall_stops_before_suggestions() {
         let preview = inspect_and_suggest(
             &mut WalledDriver,

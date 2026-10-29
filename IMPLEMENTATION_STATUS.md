@@ -112,6 +112,11 @@
 - A visual segment reaching the 20-observation limit is rechecked sequentially in two non-overlapping halves; at most 18 captures are attempted for six segments. The job remains flagged for manual review because fields crossing the split or otherwise hidden can be missed. Saved captures identify their half and freshness recaptures use the same geometry.
 - With one build job and one test thread, eleven visual-review tests passed (one unrelated PDF test ignored), web-app Clippy passed, and visual comparison and adaptive-retry UI fixture checks passed. A live model, employer site, full application startup and resource peaks were not measured. No application was sent.
 
+## Conflicting form mappings — 2026-10-29
+
+- When a model suggestion conflicts with an available exact-label or autocomplete suggestion, neither value is proposed for that field. Other mappings remain available; required fields are flagged for manual review. Matching values still require user review and do not establish correctness.
+- With one build job and one test thread, seven suggestion tests, three non-browser form-preview tests, and two targeted conflict tests passed; four browser tests were ignored. Web-app Clippy passed before the final test-only addition. No live model, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
