@@ -192,6 +192,11 @@
 - Application-page checks report detected file-upload, email and standard name-autocomplete controls alongside the field count. These signals can occur on unrelated forms and do not confirm an application or authorize any action; the result remains manual review.
 - With one build job and one test thread, three application-check unit tests passed and the fictional local-browser link/form fixture passed without submitting. Web-app Clippy passed before the final fixture-only addition. No live employer page, model or peak resources were measured.
 
+## Application check freshness — 2026-10-29
+
+- Each application-page check and its replay retain the original listing URL. The status endpoint reports a changed URL as stale and the interface rechecks the displayed URL when jobs refresh. The result remains advisory and does not establish that an application is complete or open.
+- With one build job and one test thread, four application-check tests passed (one browser fixture ignored), including a local endpoint/replay fixture for a changed URL. The recovery UI fixture, JavaScript syntax check and web-app Clippy passed. No live employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

@@ -7,12 +7,13 @@ use waypoint_applications::driver::BrowserDriver;
 struct Task {
     id: String,
     job_id: String,
+    url: String,
     receiver: mpsc::Receiver<(String, bool)>,
     result: Option<(String, bool)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Retain only the most recently saved result for a lost response retry.
-static COMPLETED: Mutex<Option<(String, String, String)>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, String, String, String)>> = Mutex::new(None);
 
 // Follow only one unambiguous same-origin link. In particular, never navigate
 // a URL that looks like a final submit action or contains query parameters.
@@ -126,6 +127,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
         return Err("An application check is already active or awaiting its result".into());
     }
     let (sender, receiver) = mpsc::channel();
+    let inspected_url = url.clone();
     std::thread::spawn(move || {
         let result = (|| -> Result<(String, bool), String> {
             let mut browser = waypoint_browser::CdpDriver::launch(vec![])
@@ -189,13 +191,14 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
     *task = Some(Task {
         id,
         job_id,
+        url: inspected_url,
         receiver,
         result: None,
     });
     Ok(())
 }
 
-pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
+pub fn poll(id: &str) -> Result<Option<(String, String, String, bool)>, String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
     let Some(current) = task.as_mut().filter(|task| task.id == id) else {
         let completed = COMPLETED
@@ -203,8 +206,10 @@ pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
             .map_err(|_| "Application check unavailable")?;
         return completed
             .as_ref()
-            .filter(|(task_id, _, _)| task_id == id)
-            .map(|(_, job_id, result)| Some((job_id.clone(), result.clone(), false)))
+            .filter(|(task_id, _, _, _)| task_id == id)
+            .map(|(_, job_id, url, result)| {
+                Some((job_id.clone(), url.clone(), result.clone(), false))
+            })
             .ok_or_else(|| "Application check not found".into());
     };
     if current.result.is_none() {
@@ -217,10 +222,14 @@ pub fn poll(id: &str) -> Result<Option<(String, String, bool)>, String> {
             )),
         };
     }
-    Ok(current
-        .result
-        .as_ref()
-        .map(|(result, review)| (current.job_id.clone(), result.clone(), *review)))
+    Ok(current.result.as_ref().map(|(result, review)| {
+        (
+            current.job_id.clone(),
+            current.url.clone(),
+            result.clone(),
+            *review,
+        )
+    }))
 }
 
 /// Release a completed result only after its review entry has been saved.
@@ -232,7 +241,7 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
             .map_err(|_| "Application check unavailable")?;
         return if completed
             .as_ref()
-            .is_some_and(|(task_id, _, _)| task_id == id)
+            .is_some_and(|(task_id, _, _, _)| task_id == id)
         {
             Ok(())
         } else {
@@ -245,8 +254,12 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
         .ok_or("Application check is still running")?;
     *COMPLETED
         .lock()
-        .map_err(|_| "Application check unavailable")? =
-        Some((current.id.clone(), current.job_id.clone(), result.clone()));
+        .map_err(|_| "Application check unavailable")? = Some((
+        current.id.clone(),
+        current.job_id.clone(),
+        current.url.clone(),
+        result.clone(),
+    ));
     *task = None;
     Ok(())
 }
@@ -254,13 +267,16 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{acknowledge, application_destination, classify_fields, poll, Task, TASK};
+    static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn interrupted_check_returns_a_reviewable_result() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         drop(sender);
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-interrupted-check".into(),
             job_id: "fictional-job".into(),
+            url: "https://example.org/job".into(),
             receiver,
             result: None,
         });
@@ -268,23 +284,61 @@ mod tests {
             super::pending().unwrap(),
             Some(("fictional-interrupted-check".into(), "fictional-job".into()))
         );
-        let (job, result, review) = poll("fictional-interrupted-check").unwrap().unwrap();
+        let (job, url, result, review) = poll("fictional-interrupted-check").unwrap().unwrap();
         assert_eq!(job, "fictional-job");
         assert!(review);
         assert!(result.contains("stopped unexpectedly"));
         assert_eq!(
             poll("fictional-interrupted-check").unwrap().unwrap(),
-            (job, result, review)
+            (job, url, result, review)
         );
         assert!(acknowledge("wrong-task").is_err());
         acknowledge("fictional-interrupted-check").unwrap();
         assert!(TASK.lock().unwrap().is_none());
-        let (saved_job, saved_result, needs_save) =
+        let (saved_job, saved_url, saved_result, needs_save) =
             poll("fictional-interrupted-check").unwrap().unwrap();
         assert_eq!(saved_job, "fictional-job");
+        assert_eq!(saved_url, "https://example.org/job");
         assert!(saved_result.contains("stopped unexpectedly"));
         assert!(!needs_save);
         acknowledge("fictional-interrupted-check").unwrap();
+    }
+    #[test]
+    fn changed_listing_is_reported_stale_on_status_and_replay() {
+        use std::io::{Read, Write};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job = crate::manual_job::add(&mut ws, &serde_json::json!({"url":"https://example.org/new","title":"Role","employer":"Fixture"}), 1).unwrap();
+        let job_id = job["id"].as_str().unwrap().to_owned();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "stale-check".into(),
+            job_id,
+            url: "https://example.org/old".into(),
+            receiver,
+            result: Some(("3 fields detected on old page".into(), true)),
+        });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for _ in 0..2 {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = serde_json::json!({"task_id":"stale-check"}).to_string();
+            write!(client,"POST /api/application-check/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let result: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(result["current"], false);
+            assert!(result["result"]
+                .as_str()
+                .unwrap()
+                .contains("listing changed"));
+            assert!(!result["result"].as_str().unwrap().contains("3 fields"));
+        }
     }
     #[test]
     fn detected_fields_report_signals_without_confirming_an_application() {

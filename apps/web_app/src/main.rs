@@ -1444,17 +1444,26 @@ fn serve(
         "/api/application-check/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             match application_check::poll(id)? {
-                Some((job_id, result, review)) => {
-                    if review {
-                        let job_id = JobIdentityId::new(&job_id).map_err(|e| e.to_string())?;
-                        ws.mark_manual_review(&job_id, &result, now())
+                Some((job_id, checked_url, result, review)) => {
+                    let job_id = JobIdentityId::new(&job_id).map_err(|e| e.to_string())?;
+                    let job = ws.job(&job_id).map_err(|e| e.to_string())?;
+                    let current = job.as_ref().is_some_and(|job| {
+                        job.canonical_url.as_deref() == Some(checked_url.as_str())
+                    });
+                    let message = if current {
+                        result
+                    } else {
+                        "The listing changed during the application check; inspect its current URL again.".into()
+                    };
+                    if review && job.is_some() {
+                        ws.mark_manual_review(&job_id, &message, now())
                             .map_err(|e| e.to_string())?;
                     }
                     application_check::acknowledge(id)?;
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","result":result}),
+                        json!({"status":"complete","result":message,"checked_url":checked_url,"current":current}),
                     );
                 }
                 None => json_reply(stream, "200 OK", json!({"status":"running"})),
