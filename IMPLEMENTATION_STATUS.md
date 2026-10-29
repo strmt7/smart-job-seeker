@@ -1,5 +1,12 @@
 # Implementation checkpoint
 
+## Disputed fit qualification tie-breaker — 2026-10-29
+
+- When an initial contradiction cites a fact without an English negation and the independent qualification comparison instead finds support, a bounded additional blind comparison may resolve it as supported only if that comparison also finds support. At most six disputed items and 6,000 payload bytes are considered; malformed, unavailable or non-supporting results remain unknown. The UI reports the reconciled count and still says model agreement is not proof. The assessment digest version was changed to mark older assessments stale.
+- In one fictional qwen3.5:9b case, the initial model output incorrectly labelled a six-year Python fact contradicted while its explanation described it as supporting a five-year requirement. Both subsequent comparisons returned supported; the final result kept partial SQL experience unknown and scored 75% with a 50–100% range. This one example does not establish general accuracy or repeatability; the same model can agree with itself incorrectly. The extra request occurs only for this bounded disagreement and peak resources were not measured.
+- The web suite passed (198 passed, 64 ignored), web Clippy, formatting and fit-badge UI checks passed; the focused tie-breaker test was rerun after a lint-only edit. The live test used one already GPU-resident local model after a free-memory preflight. No application was sent.
+- Automatic acquisition of LibreOffice when absent remains unimplemented. The required isolated Crawl4AI provider was unavailable in the current tool inventory, PATH and default Python environment; no unverified download source was selected and no dependent page research was performed.
+
 ## Converter discovery for packaging — 2026-10-29
 
 - The Windows package builder can now discover a complete local LibreOffice distribution from `WAYPOINT_SOFFICE` or a `program` directory on `PATH`, before checking standard installation locations. It still requires the converter executable and a distribution license, and bundling retains the existing file, size and hash checks. Missing or invalid configured candidates fall through to other locations.
