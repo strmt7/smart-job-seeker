@@ -14,6 +14,20 @@ struct Task {
     result: Option<Result<EditedFiles, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+pub fn pending() -> Result<Option<String>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Template editing unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone()))
+}
+fn terminal(id: &str, value: Value) -> Result<Value, String> {
+    *COMPLETED
+        .lock()
+        .map_err(|_| "Template editing unavailable")? = Some((id.to_owned(), value.clone()));
+    Ok(value)
+}
 pub(crate) fn job_context_digest(
     ws: &waypoint_workspace::Workspace,
     job: &str,
@@ -119,26 +133,34 @@ pub fn start_batch(
 }
 pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Template editing unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Template edit not found")?;
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Template editing unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, value)| value.clone())
+            .ok_or("Template edit not found".into());
+    };
     let Some(result) = task.result.take() else {
         return Ok(json!({"status":"running"}));
     };
     match result {
         Err(error) => {
+            let output = terminal(id, json!({"status":"failed","error":error}))?;
             *tasks = None;
-            Ok(json!({"status":"failed","error":error}))
+            Ok(output)
         }
         Ok((docx, pdf)) => {
             let current = match ws.document_content(&task.document_id) {
                 Ok(Some(value)) => value,
                 Ok(None) => {
-                    *tasks = None;
-                    return Ok(
+                    let output = terminal(
+                        id,
                         json!({"status":"failed","error":"Original template no longer exists"}),
-                    );
+                    )?;
+                    *tasks = None;
+                    return Ok(output);
                 }
                 Err(error) => {
                     task.result = Some(Ok((docx, pdf)));
@@ -146,10 +168,12 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                 }
             };
             if sha256_hex(&current) != task.digest {
-                *tasks = None;
-                return Ok(
+                let output = terminal(
+                    id,
                     json!({"status":"failed","error":"The template changed; review it again"}),
-                );
+                )?;
+                *tasks = None;
+                return Ok(output);
             }
             if let Some(job) = task.job_id.as_deref() {
                 let current_context = match job_context_digest(ws, job) {
@@ -162,10 +186,12 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                     }
                 };
                 if task.context_digest.as_deref() != Some(current_context.as_str()) {
-                    *tasks = None;
-                    return Ok(
+                    let output = terminal(
+                        id,
                         json!({"status":"failed","error":"The job, qualifications or instructions changed during template editing; review again"}),
-                    );
+                    )?;
+                    *tasks = None;
+                    return Ok(output);
                 }
             }
             let stem = task
@@ -207,10 +233,12 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                     });
                     let record_saved = record.as_ref().map(|result| result.is_ok());
                     let record_error = record.and_then(Result::err);
-                    *tasks = None;
-                    Ok(
+                    let output = terminal(
+                        id,
                         json!({"status":"complete","docx_id":docx_id,"docx_name":docx_id.as_ref().map(|_| docx_name),"pdf_id":pdf_id,"pdf_name":pdf_name,"record_saved":record_saved,"record_error":record_error}),
-                    )
+                    )?;
+                    *tasks = None;
+                    Ok(output)
                 }
                 Err(error) => {
                     task.result = Some(Ok((docx, pdf)));
@@ -250,6 +278,32 @@ fn record_edit(
 mod tests {
     use super::*;
     static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn completed_edit_can_be_replayed_without_duplicate_files() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        ws.add_document("original", "fixture.docx", b"fictional original", 1)
+            .unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "replay-edit".into(),
+            document_id: "original".into(),
+            digest: sha256_hex(b"fictional original"),
+            name: "fixture.docx".into(),
+            job_id: None,
+            context_digest: None,
+            edits: vec![("before".into(), "after".into())],
+            result: Some(Ok((
+                Some(b"fictional docx".to_vec()),
+                b"%PDF-fictional".to_vec(),
+            ))),
+        });
+        assert_eq!(pending().unwrap().as_deref(), Some("replay-edit"));
+        let first = poll("replay-edit", &ws).unwrap();
+        assert_eq!(first["status"], "complete");
+        assert_eq!(poll("replay-edit", &ws).unwrap(), first);
+        assert_eq!(ws.documents().unwrap().len(), 3);
+        assert!(poll("other", &ws).is_err());
+    }
     #[test]
     fn changed_job_context_prevents_saving_converted_edit() {
         use waypoint_domain::{ApplicationState, JobIdentityId};

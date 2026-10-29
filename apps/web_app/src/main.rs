@@ -2234,6 +2234,13 @@ fn serve(
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/documents/edit-template-pending" => {
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":docx_edit_task::pending()?}),
+            );
+        }
         "/api/documents/edit-template-status" => {
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", docx_edit_task::poll(task_id, ws)?);
