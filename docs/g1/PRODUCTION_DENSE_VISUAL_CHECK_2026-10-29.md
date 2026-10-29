@@ -1,0 +1,7 @@
+# Dense production visual-model check — 2026-10-29
+
+The ignored test `live_visual_review_dense_form_checks_late_mismatches` used the application's visual transcription and comparison path on a fictional 16-field screenshot. Expected values for fields 7 and 16 were deliberately different from the screenshot. The test checks every comparison rather than just the number of observations.
+
+The [recorded run](production-dense-visual-2026-10-29.txt) with local `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, transcribed all 16 labels and values. Fourteen comparisons matched and the two deliberately different values were flagged. This synthetic form uses repetitive labels and values; the result does not measure performance on diverse real sites, occluded fields, visual controls, or multistep forms.
+
+The pre-test resource snapshot was 24.01 GiB free system memory and 11.04 GiB dedicated GPU use; after the test it was 23.80 GiB and 11.15 GiB. Ollama reported a single fully GPU-resident model with a 4,096-token context before the test. These are snapshots, not continuous peaks. No browser, employer website, or application submission was involved. As with the prior visual check, this ignored test requires an external memory preflight, explicitly requests the preloaded context, and uses the no-default-features build; it does not establish SQLCipher integration.

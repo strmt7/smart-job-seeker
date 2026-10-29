@@ -369,6 +369,52 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_visual_review_dense_form_checks_late_mismatches() {
+        use base64::Engine;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let image = base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("../tests/fictional-dense-form.png"));
+        let expected: Vec<_> = (1..=16)
+            .map(|i| {
+                let value = if i == 7 || i == 16 {
+                    format!("Wrong {i:02}")
+                } else {
+                    format!("Value {i:02}")
+                };
+                (format!("Question {i:02}"), value)
+            })
+            .collect();
+        let result =
+            analyze_with_context(addr, "qwen3.5:9b", &image, &expected, Some(4096)).unwrap();
+        println!("fictional dense visual result: {result}");
+        let comparisons = result["comparisons"].as_array().unwrap();
+        assert_eq!(comparisons.len(), 16);
+        for i in 1..=16 {
+            let status = if i == 7 || i == 16 {
+                "differs_from_transcription"
+            } else {
+                "matches_transcription"
+            };
+            assert!(
+                comparisons
+                    .iter()
+                    .any(|v| v["label"] == format!("Question {i:02}") && v["status"] == status),
+                "unexpected comparison for Question {i:02}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_visual_review_detects_a_fictional_mismatch() {
         use base64::Engine;
         let addr = "127.0.0.1:11434".parse().unwrap();
