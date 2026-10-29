@@ -427,16 +427,22 @@ mod tests {
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_prefills_and_visually_checks_fictional_form() {
-        exercise_local_model_form_pipeline(false);
+        exercise_local_model_form_pipeline(false, false);
     }
 
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_detects_a_changed_fictional_field() {
-        exercise_local_model_form_pipeline(true);
+        exercise_local_model_form_pipeline(true, false);
     }
 
-    fn exercise_local_model_form_pipeline(altered: bool) {
+    #[test]
+    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    fn live_local_model_prefills_and_visually_checks_multilingual_form() {
+        exercise_local_model_form_pipeline(false, true);
+    }
+
+    fn exercise_local_model_form_pipeline(altered: bool, multilingual: bool) {
         use base64::Engine;
         use waypoint_domain::GrantId;
         let addr = "127.0.0.1:11434".parse().unwrap();
@@ -444,12 +450,16 @@ mod tests {
             waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
             4096
         );
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if altered {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if multilingual {
+            "../../crates/waypoint_browser/tests/fixtures/form_multilingual_review.html"
+        } else if altered {
             "tests/form-local-model-partial.html"
         } else {
             "tests/form-local-model-pipeline.html"
         });
-        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
@@ -460,6 +470,17 @@ mod tests {
             crate::resident_model,
         );
         let preview = inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery", "email":"avery@example.invalid", "work_authorization":"unknown"})).unwrap();
+        let given_selector = if multilingual { "#first" } else { "#given" };
+        let given_label = if multilingual {
+            "Vorname"
+        } else {
+            "Your given name"
+        };
+        let email_label = if multilingual {
+            "E-Mail-Adresse"
+        } else {
+            "Email address"
+        };
         println!(
             "fictional preview: mappings={:?}; review={:?}",
             preview.suggestions, preview.manual_review
@@ -467,7 +488,7 @@ mod tests {
         assert!(preview
             .suggestions
             .iter()
-            .any(|item| item.field_selector == "#given"
+            .any(|item| item.field_selector == given_selector
                 && item.value == PacketValue::Text("Avery".into())));
         assert!(preview
             .suggestions
@@ -537,20 +558,27 @@ mod tests {
                 "a field altered by the page must stop the fill"
             );
             assert_eq!(completed.len(), 2);
-            assert!(driver.verify_text_value("#given", "Avery").is_err());
+            assert!(driver.verify_text_value(given_selector, "Avery").is_err());
         } else {
             assert_eq!(filled.unwrap(), 2);
-            driver.verify_text_value("#given", "Avery").unwrap();
+            driver.verify_text_value(given_selector, "Avery").unwrap();
         }
         driver
             .verify_text_value("#email", "avery@example.invalid")
             .unwrap();
+        if multilingual {
+            for selector in ["#permit", "#gender", "#salary", "#sponsor", "#birth"] {
+                driver.verify_text_value(selector, "").unwrap();
+            }
+        }
         let image = driver.screenshot_base64().unwrap();
         let output_dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/model-eval");
         std::fs::create_dir_all(&output_dir).unwrap();
         std::fs::write(
-            output_dir.join(if altered {
+            output_dir.join(if multilingual {
+                "local-model-multilingual-filled-form.png"
+            } else if altered {
                 "local-model-altered-form.png"
             } else {
                 "local-model-filled-form.png"
@@ -565,8 +593,8 @@ mod tests {
             "qwen3.5:9b",
             &image,
             &[
-                ("Your given name".into(), "Avery".into()),
-                ("Email address".into(), "avery@example.invalid".into()),
+                (given_label.into(), "Avery".into()),
+                (email_label.into(), "avery@example.invalid".into()),
             ],
         )
         .unwrap();
@@ -574,7 +602,7 @@ mod tests {
         let comparisons = visual["comparisons"].as_array().unwrap();
         let name = comparisons
             .iter()
-            .find(|item| item["label"] == "Your given name")
+            .find(|item| item["label"] == given_label)
             .unwrap();
         if altered {
             assert_ne!(
@@ -586,8 +614,24 @@ mod tests {
         }
         assert!(comparisons
             .iter()
-            .any(|item| item["label"] == "Email address"
-                && item["status"] == "matches_transcription"));
+            .any(|item| item["label"] == email_label && item["status"] == "matches_transcription"));
+        if multilingual {
+            let observations = visual["observations"].as_array().unwrap();
+            for label in [
+                "Besitzen Sie eine Arbeitserlaubnis?",
+                "Geschlecht",
+                "Gehaltsvorstellung",
+                "¿Necesita patrocinio laboral?",
+                "Date de naissance",
+            ] {
+                let matching: Vec<_> = observations
+                    .iter()
+                    .filter(|item| item["label"] == label)
+                    .collect();
+                assert_eq!(matching.len(), 1, "visual label {label}");
+                assert_eq!(matching[0]["visible_value"], "", "visual value for {label}");
+            }
+        }
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
         assert_eq!(
             driver.read_attribute("body", "data-submitted").unwrap(),

@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Multilingual prefill and visual fixture — 2026-10-29
+
+- A fictional local-browser fixture now exercises the existing local-model mapping, a simulated reviewed prefill grant, DOM verification and screenshot-based model observation together. With resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), the browser filled the German first-name and email fields, while five German, Spanish and French sensitive fields stayed empty. The vision response separately transcribed the two values and reported each of those five fields blank. No submit action was taken.
+- The dedicated live fixture passed after a RAM/residency preflight; the non-live form-preview suite passed four tests with seven live/browser tests ignored. Web Clippy and formatting passed with one build job. This is one synthetic static layout and a simulated grant, not a measurement of accuracy on real sites, difficult controls, other languages or peak resource use.
+
 ## Multilingual sensitive-form review — 2026-10-29
 
 - The shared browser sensitivity check now includes common German, Spanish and French labels for work permission, compensation, protected characteristics, birth dates and consent. Common short English markers are matched as whole words so a name such as Grace is not marked sensitive solely because it contains `race`. These triggers do not cover every wording or language; sensitive and uncertain answers still require candidate review.
