@@ -3418,7 +3418,9 @@ fn serve(
                     if let Some(record) = &mut current.record {
                         let _ = record.event(json!({"type":"fill_incomplete","time":now(),"error":error,"completed_commands":completed,"note":"The failing field may have changed and earlier values may have been changed by the site; verify all fields."}));
                         if let Ok(image) = current.driver.screenshot_base64() {
-                            let _ = record.screenshot(&image);
+                            if let Ok(name) = record.screenshot_with_name(&image) {
+                                let _ = record.event(json!({"type":"fill_failure_viewport","time":now(),"screenshot":format!("screenshots/{name}")}));
+                            }
                         }
                         if let Err(capture_error) =
                             attempt_record::capture_page(&mut current.driver, record, now())
@@ -3470,9 +3472,9 @@ fn serve(
             };
             if let Some(record) = &mut current.record {
                 if let Err(error) = record
-                    .screenshot(&screenshot)
-                    .and_then(|_| {
-                        record.event(json!({"type":"fields_filled","time":now(),"count":filled}))
+                    .screenshot_with_name(&screenshot)
+                    .and_then(|name| {
+                        record.event(json!({"type":"fields_filled","time":now(),"count":filled,"screenshot":format!("screenshots/{name}")}))
                     })
                     .and_then(|_| attempt_record::capture_page(&mut current.driver, record, now()))
                 {
@@ -3692,7 +3694,8 @@ fn serve(
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name}))?;
                 if let Ok(image) = current.driver.screenshot_base64() {
-                    record.screenshot(&image)?;
+                    let name = record.screenshot_with_name(&image)?;
+                    record.event(json!({"type":"attachment_viewport","time":now(),"selector":selector,"screenshot":format!("screenshots/{name}")}))?;
                 }
                 if let Err(error) = attempt_record::capture_page(&mut current.driver, record, now())
                 {
@@ -5420,7 +5423,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let worker = std::thread::spawn(move || {
-            let workspace_dir = tempfile::tempdir().unwrap();
+            let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+            let workspace_dir = tempfile::tempdir_in(base).unwrap();
             let mut ws = Workspace::open(workspace_dir.path()).unwrap();
             let fixture =
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
@@ -5887,6 +5891,29 @@ mod tests {
                 .iter()
                 .skip(incomplete + 1)
                 .any(|event| event["type"] == "page_capture" && event["segments"] == 2));
+            let failure_viewport = event_values
+                .iter()
+                .skip(incomplete + 1)
+                .find(|event| event["type"] == "fill_failure_viewport")
+                .unwrap();
+            assert!(record
+                .join(failure_viewport["screenshot"].as_str().unwrap())
+                .is_file());
+            let capture_end = event_values
+                .iter()
+                .enumerate()
+                .skip(incomplete + 1)
+                .find(|(_, event)| event["type"] == "page_capture")
+                .unwrap()
+                .0;
+            let captured: Vec<_> = event_values[incomplete + 1..capture_end]
+                .iter()
+                .filter(|event| event["type"] == "page_capture_segment")
+                .collect();
+            assert_eq!(captured.len(), 2);
+            for event in captured {
+                assert!(record.join(event["screenshot"].as_str().unwrap()).is_file());
+            }
             assert!(
                 std::fs::read_dir(record.join("screenshots"))
                     .unwrap()

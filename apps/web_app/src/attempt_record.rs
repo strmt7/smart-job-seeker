@@ -506,6 +506,14 @@ impl AttemptRecord {
         attempt_id: &str,
         timestamp: i64,
     ) -> Result<Option<Self>, String> {
+        if attempt_id.is_empty()
+            || attempt_id.len() > 64
+            || !attempt_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err("Invalid attempt identity".into());
+        }
         let Some(root) = ws.db_path.as_ref().and_then(|p| p.parent()) else {
             return Ok(None);
         };
@@ -526,11 +534,12 @@ impl AttemptRecord {
             .zip(job.canonical_url.as_deref())
             .map(|(captured_url, current_url)| captured_url == current_url);
         let hash = Sha256Digest::of(id.as_str());
-        let dir = root
-            .join("application-records")
-            .join(format!("{}-{attempt_id}", &hash.as_str()[..16]));
-        fs::create_dir_all(dir.join("screenshots")).map_err(|e| e.to_string())?;
-        fs::create_dir_all(dir.join("materials")).map_err(|e| e.to_string())?;
+        let records = root.join("application-records");
+        fs::create_dir_all(&records).map_err(|e| e.to_string())?;
+        let dir = records.join(format!("{}-{attempt_id}", &hash.as_str()[..16]));
+        fs::create_dir(&dir).map_err(|e| format!("Could not create a new attempt folder: {e}"))?;
+        fs::create_dir(dir.join("screenshots")).map_err(|e| e.to_string())?;
+        fs::create_dir(dir.join("materials")).map_err(|e| e.to_string())?;
         let posting = json!({
             "job_id": id.as_str(),
             "title": job.title,
@@ -657,10 +666,10 @@ impl AttemptRecord {
         screenshot: Option<&str>,
         timestamp: i64,
     ) -> Result<(), String> {
-        if let Some(image) = screenshot {
-            self.screenshot(image)?;
-        }
-        self.event(json!({"type":"page_inspected","time":timestamp,"origin":origin,"manual_review":reasons,"screenshot_available":screenshot.is_some()}))?;
+        let name = screenshot
+            .map(|image| self.screenshot_with_name(image))
+            .transpose()?;
+        self.event(json!({"type":"page_inspected","time":timestamp,"origin":origin,"manual_review":reasons,"screenshot_available":name.is_some(),"screenshot":name.map(|name| format!("screenshots/{name}"))}))?;
         self.status(
             if reasons.is_empty() {
                 "preparation_in_progress"
@@ -721,17 +730,23 @@ impl AttemptRecord {
         }
         Ok(self.dir.join(format!("visual-result-{task_id}.json")))
     }
-    pub fn screenshot(&mut self, data: &str) -> Result<(), String> {
-        self.screenshot_with_name(data).map(|_| ())
-    }
     pub fn screenshot_with_name(&mut self, data: &str) -> Result<String, String> {
         let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
         if bytes.len() > 6 * 1024 * 1024 {
             return Err("Screenshot exceeds limit".into());
         }
-        self.sequence += 1;
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Screenshot sequence exhausted")?;
         let name = format!("{:04}.png", self.sequence);
-        fs::write(self.dir.join("screenshots").join(&name), bytes).map_err(|e| e.to_string())?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.dir.join("screenshots").join(&name))
+            .map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())?;
         Ok(name)
     }
     pub fn material(&mut self, name: &str, bytes: &[u8]) -> Result<String, String> {
@@ -816,7 +831,8 @@ pub fn capture_page(
         let image = driver
             .screenshot_segment(width_limited, y, segment_height)
             .map_err(|e| e.to_string())?;
-        record.screenshot(&image)?;
+        let name = record.screenshot_with_name(&image)?;
+        record.event(json!({"type":"page_capture_segment","time":timestamp,"index":count,"x":0,"y":y,"width":width_limited,"height":segment_height,"screenshot":format!("screenshots/{name}")}))?;
         y += segment_height;
         count += 1;
     }
@@ -858,7 +874,8 @@ mod tests {
     }
     #[test]
     fn visual_capture_filename_identifies_saved_bytes_and_event() {
-        let dir = tempfile::tempdir().unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
         std::fs::create_dir(dir.path().join("screenshots")).unwrap();
         let mut record = AttemptRecord {
             dir: dir.path().to_path_buf(),
@@ -875,10 +892,17 @@ mod tests {
                 .unwrap();
         assert_eq!(event["task_id"], "test-task");
         assert_eq!(event["screenshot"], format!("screenshots/{name}"));
+        fs::write(dir.path().join("screenshots/0002.png"), b"existing").unwrap();
+        assert!(record.screenshot_with_name("bmV3").is_err());
+        assert_eq!(
+            fs::read(dir.path().join("screenshots/0002.png")).unwrap(),
+            b"existing"
+        );
     }
     #[test]
     fn saved_document_review_binds_job_and_pdf_snapshot() {
-        let root = tempfile::tempdir().unwrap();
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
         let mut ws = Workspace::open(root.path()).unwrap();
         let id = JobIdentityId::new("fictional-document-review").unwrap();
         ws.import_manual_job(
@@ -959,7 +983,8 @@ mod tests {
     #[ignore = "starts one headless browser against a local fixture"]
     fn inspection_archives_bounded_offscreen_segments() {
         use waypoint_applications::driver::BrowserDriver;
-        let root = tempfile::tempdir().unwrap();
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
         let mut ws = Workspace::open(root.path()).unwrap();
         let id = JobIdentityId::new("inspection-fixture").unwrap();
         ws.import_manual_job(
@@ -1005,6 +1030,25 @@ mod tests {
         assert!(entries.iter().any(|event| event["type"] == "page_capture"
             && event["segments"] == 2
             && event["full_dimensions_captured"] == true));
+        let segments: Vec<_> = entries
+            .iter()
+            .filter(|event| event["type"] == "page_capture_segment")
+            .collect();
+        assert_eq!(segments.len(), 2);
+        for (index, event) in segments.iter().enumerate() {
+            assert_eq!(event["index"], index);
+            assert_eq!(event["y"].as_f64().unwrap(), index as f64 * 2000.0);
+            let name = event["screenshot"].as_str().unwrap();
+            assert!(record.dir.join(name).is_file());
+        }
+        let viewport = entries
+            .iter()
+            .find(|event| event["type"] == "page_inspected")
+            .unwrap();
+        assert!(record
+            .dir
+            .join(viewport["screenshot"].as_str().unwrap())
+            .is_file());
         assert_eq!(
             fs::read_dir(record.dir.join("screenshots"))
                 .unwrap()
@@ -1053,6 +1097,8 @@ mod tests {
         let mut record = AttemptRecord::start(&ws, &id, "attempt-fixture", 123)
             .unwrap()
             .unwrap();
+        assert!(AttemptRecord::start(&ws, &id, "attempt-fixture", 124).is_err());
+        assert!(AttemptRecord::start(&ws, &id, "../invalid", 124).is_err());
         let listing: Value =
             serde_json::from_slice(&fs::read(record.dir.join("original-job.json")).unwrap())
                 .unwrap();
