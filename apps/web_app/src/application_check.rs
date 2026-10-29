@@ -15,6 +15,33 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Retain only the most recently saved result for a lost response retry.
 static COMPLETED: Mutex<Option<(String, String, String, String)>> = Mutex::new(None);
 
+/// Only display a destination that is a public HTTPS URL on the original
+/// origin and has no query, fragment or credentials. Query strings can contain
+/// private or one-use tokens and removing them would misrepresent the URL.
+fn displayable_inspected_url(original: &str, current: &str) -> Option<String> {
+    let source = Url::parse(original).ok()?;
+    let observed = Url::parse(current).ok()?;
+    if observed.scheme() != "https"
+        || observed.origin() != source.origin()
+        || observed.query().is_some()
+        || observed.fragment().is_some()
+        || !observed.username().is_empty()
+        || observed.password().is_some()
+        || observed.as_str().len() > 2048
+        || !waypoint_connectors::is_public_host_url(observed.as_str())
+    {
+        return None;
+    }
+    Some(observed.to_string())
+}
+
+fn report_inspected_page(mut message: String, inspected_url: Option<String>) -> String {
+    if let Some(inspected_url) = inspected_url {
+        message.push_str(&format!(" Inspected page: {inspected_url}"));
+    }
+    message
+}
+
 // Follow only one unambiguous same-origin link. In particular, never navigate
 // a URL that looks like a final submit action or contains query parameters.
 pub(crate) fn application_destination(current: &str, links: &[String]) -> Option<String> {
@@ -136,6 +163,10 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 .open(&url)
                 .map_err(|_| "The listing page could not be opened or inspected.")?;
             let mut followed = false;
+            let mut inspected_url = browser
+                .current_url()
+                .ok()
+                .and_then(|current| displayable_inspected_url(&url, &current));
             if page.walls.is_empty() {
                 let current = browser
                     .current_url()
@@ -168,6 +199,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                     if final_origin != original.origin() {
                         return Ok(("The application link redirected to another site; review the destination manually.".into(), true));
                     }
+                    inspected_url = displayable_inspected_url(&url, &final_url);
                 } else if !links.is_empty() {
                     return Ok((
                         "Application links need manual review before opening.".into(),
@@ -175,14 +207,15 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                     ));
                 }
             }
-            if !page.walls.is_empty() {
-                Ok((
+            let (message, review) = if !page.walls.is_empty() {
+                (
                     "Sign-in, CAPTCHA or another obstacle detected; manual review needed.".into(),
                     true,
-                ))
+                )
             } else {
-                Ok(classify_fields(&page.schema.fields, followed))
-            }
+                classify_fields(&page.schema.fields, followed)
+            };
+            Ok((report_inspected_page(message, inspected_url), review))
         })();
         let message =
             result.unwrap_or_else(|error| (format!("{error} Manual review needed."), true));
@@ -266,8 +299,45 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge, application_destination, classify_fields, poll, Task, TASK};
+    use super::{
+        acknowledge, application_destination, classify_fields, displayable_inspected_url, poll,
+        report_inspected_page, Task, TASK,
+    };
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[test]
+    fn inspected_page_is_only_reported_when_it_is_safe_and_unambiguous() {
+        let original = "https://jobs.example.org/listing";
+        assert_eq!(
+            displayable_inspected_url(original, "https://jobs.example.org/listing/apply")
+                .as_deref(),
+            Some("https://jobs.example.org/listing/apply")
+        );
+        let message = report_inspected_page(
+            "Manual review needed.".into(),
+            displayable_inspected_url(original, "https://jobs.example.org/listing/apply"),
+        );
+        assert!(message.contains("Inspected page: https://jobs.example.org/listing/apply"));
+        for destination in [
+            "https://jobs.example.org/apply?token=fictional",
+            "https://jobs.example.org/apply#section",
+            "https://person@jobs.example.org/apply",
+            "https://other.example.org/apply",
+            "http://jobs.example.org/apply",
+            "https://127.0.0.1/apply",
+        ] {
+            assert!(
+                displayable_inspected_url(original, destination).is_none(),
+                "{destination}"
+            );
+            assert_eq!(
+                report_inspected_page(
+                    "Manual review needed.".into(),
+                    displayable_inspected_url(original, destination)
+                ),
+                "Manual review needed."
+            );
+        }
+    }
     #[test]
     fn interrupted_check_returns_a_reviewable_result() {
         let _guard = TASK_TEST_LOCK.lock().unwrap();

@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Application-check destination evidence — 2026-10-29
+
+- A completed application-page check now includes the actual inspected page URL in its result when it is public HTTPS, remains on the original origin, and has no credentials, query or fragment. URLs with those components or cross-origin redirects are not displayed. The result still explicitly requires manual review and does not establish that an application can be submitted. The existing source URL remains the freshness key.
+- Five focused application-check tests passed with one browser fixture ignored, covering URL eligibility, query and redirect exclusion, stale results and result replay. Web Clippy and formatting passed with one Cargo job. No real employer site, live browser or submission was exercised for this change; peak resource use was not measured.
+
 ## Automatic discovery of a local converter for packaging — 2026-10-29
 
 - Windows prototype packaging now automatically selects a LibreOffice distribution in standard machine or per-user locations when its executable and license are present. `--libreoffice-dir` selects a different source; `--no-libreoffice` opts out. Bundling still inventories and checks copied files and may substantially increase package size and packaging time. If LibreOffice is absent, packaging reports that separate setup is needed; automatic download and clean-host installation are not implemented.
