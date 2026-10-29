@@ -43,6 +43,33 @@ fn file_url(name: &str) -> String {
 }
 
 #[test]
+#[ignore = "launches one local browser against a fictional form without submitting"]
+fn multilingual_sensitive_labels_are_marked_for_review() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_multilingual_review.html"))
+        .unwrap();
+    for (label, sensitive) in [
+        ("Vorname", false),
+        ("E-Mail-Adresse", false),
+        ("Besitzen Sie eine Arbeitserlaubnis?", true),
+        ("Geschlecht", true),
+        ("Gehaltsvorstellung", true),
+        ("¿Necesita patrocinio laboral?", true),
+        ("Date de naissance", true),
+    ] {
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .expect(label);
+        assert_eq!(field.sensitive, sensitive, "{label}");
+    }
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one browser against a local fixture without navigating or submitting"]
 fn flags_a_possible_next_step_without_clicking_it() {
     let mut driver = CdpDriver::launch(vec![]).expect("launch browser");

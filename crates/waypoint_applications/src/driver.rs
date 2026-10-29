@@ -95,15 +95,15 @@ pub fn is_sensitive_label(label: &str) -> bool {
         "sponsor",
         "visa",
         "work permit",
+        "legally eligible to work",
+        "legally allowed to work",
+        "legally permitted to work",
         "gender",
-        "race",
         "ethnic",
         "veteran",
         "disability",
         "date of birth",
-        "dob",
         "social security",
-        "ssn",
         "national id",
         "consent",
         "i agree",
@@ -111,8 +111,46 @@ pub fn is_sensitive_label(label: &str) -> bool {
         "privacy",
         "gdpr",
         "declaration",
+        // These are review triggers, not a form-field mapping or a complete
+        // multilingual classifier. Unknown languages still need user review.
+        "arbeitserlaubnis",
+        "arbeitsgenehmigung",
+        "aufenthaltserlaubnis",
+        "gehalt",
+        "geschlecht",
+        "behinderung",
+        "geburtsdatum",
+        "einwilligung",
+        "datenschutz",
+        "staatsangehörigkeit",
+        "permiso de trabajo",
+        "autorización de trabajo",
+        "autorizacion de trabajo",
+        "patrocinio",
+        "salario",
+        "sueldo",
+        "género",
+        "genero",
+        "discapacidad",
+        "fecha de nacimiento",
+        "consentimiento",
+        "privacidad",
+        "nacionalidad",
+        "autorisation de travail",
+        "permis de travail",
+        "salaire",
+        "rémunération",
+        "remuneration",
+        "handicap",
+        "sexe",
+        "date de naissance",
+        "consentement",
+        "confidentialité",
+        "nationalité",
     ];
     MARKERS.iter().any(|m| l.contains(m))
+        || l.split(|c: char| !c.is_alphanumeric())
+            .any(|word| matches!(word, "race" | "dob" | "ssn"))
 }
 
 /// How many bytes of a page's visible text were searched for a confirmation.
@@ -226,10 +264,33 @@ mod tests {
             "Veteran status",
             "I agree to the privacy policy",
             "Consent to process my data",
+            "Are you legally eligible to work here?",
+            "Besitzen Sie eine Arbeitserlaubnis?",
+            "Geschlecht",
+            "Gehaltsvorstellung",
+            "¿Necesita patrocinio laboral?",
+            "Fecha de nacimiento",
+            "Autorisation de travail",
+            "Rémunération souhaitée",
+            "Datenschutzerklärung",
+            "Política de privacidad",
+            "Nationalité",
+            "Race / ethnicity",
         ] {
             assert!(is_sensitive_label(label), "{label} must be sensitive");
         }
-        for label in ["Cover letter", "Resume", "First name", "Email address"] {
+        for label in [
+            "Cover letter",
+            "Resume",
+            "First name",
+            "Email address",
+            "Grace",
+            "Vorname",
+            "E-Mail-Adresse",
+            "Nombre",
+            "Correo electrónico",
+            "Prénom",
+        ] {
             assert!(!is_sensitive_label(label), "{label} must not be sensitive");
         }
     }

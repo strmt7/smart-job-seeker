@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Multilingual sensitive-form review — 2026-10-29
+
+- The shared browser sensitivity check now includes common German, Spanish and French labels for work permission, compensation, protected characteristics, birth dates and consent. Common short English markers are matched as whole words so a name such as Grace is not marked sensitive solely because it contains `race`. These triggers do not cover every wording or language; sensitive and uncertain answers still require candidate review.
+- A real local-browser fixture marked five fictional sensitive fields in German, Spanish and French while leaving German name and email fields available. A separate browser-plus-local-model test with `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context) confirmed that the raw model output mapped the two contact fields and the sensitive selectors were absent from the mapping prompt. The fixture did not fill or submit the form and does not prove accuracy on real employer sites or other languages.
+- Application tests passed 30/30 before the final marker additions; the sensitive-marker test passed again afterwards. The focused suggestion suite passed 13 tests with two live tests ignored, and the browser and model fixtures were then run separately. Application, browser and web Clippy and formatting passed with one Cargo build job. Model/browser preflight checked available RAM and residency; peak resources were not measured. No application was submitted.
+
 ## Numeric quote context — 2026-10-29
 
 - Preference comparison now also checks a bounded same-line context around a uniquely occurring citation when the citation contains a complete numeric bound. This catches a model citing only the upper or lower endpoint of a crossing interval; the outcome is unknown and requires review. The fallback does not inspect repeated citations, split-line ranges or citations without a whole bound, and the existing limits on number formats and semantic interpretation remain. Unrelated nearby numeric text may also require review. Saved assessments from the preceding scoring version become stale.

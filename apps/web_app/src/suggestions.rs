@@ -621,6 +621,105 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires local browser, preloaded qwen3.5:9b and resource preflight"]
+    fn live_multilingual_browser_form_uses_local_model_without_sensitive_fields() {
+        use waypoint_applications::driver::BrowserDriver;
+        struct Recording<I> {
+            inner: I,
+            responses: Vec<Value>,
+            prompts: Vec<String>,
+        }
+        impl<I: Inference> Inference for Recording<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.prompts.push(prompt.to_owned());
+                let response = self.inner.generate_structured(schema, prompt, max)?;
+                self.responses.push(response.0.clone());
+                Ok(response)
+            }
+        }
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_multilingual_review.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let first = live
+            .schema
+            .fields
+            .iter()
+            .find(|f| f.label == "Vorname")
+            .unwrap();
+        let email = live
+            .schema
+            .fields
+            .iter()
+            .find(|f| f.label == "E-Mail-Adresse")
+            .unwrap();
+        let model =
+            waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+        let guarded = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let mut model = Recording {
+            inner: guarded,
+            responses: Vec::new(),
+            prompts: Vec::new(),
+        };
+        let (mappings, warnings) = suggest_with_diagnostics(
+            &mut model,
+            &live.schema,
+            &json!({"first_name":"Avery","email":"avery@example.test"}),
+        )
+        .unwrap();
+        println!(
+            "fictional raw model responses: {:?}; mappings: {mappings:?}; warnings: {warnings:?}",
+            model.responses
+        );
+        assert_eq!(model.responses.len(), 1);
+        let raw = model.responses[0]["mappings"].as_array().unwrap();
+        for (field, key) in [(first, "first_name"), (email, "email")] {
+            assert!(
+                raw.iter()
+                    .any(|m| m["selector"] == field.selector && m["profile_key"] == key),
+                "model omitted {key}"
+            );
+            assert!(mappings.iter().any(|m| m.field_selector == field.selector));
+        }
+        assert!(live
+            .schema
+            .fields
+            .iter()
+            .filter(|f| f.sensitive)
+            .all(|f| !model.prompts[0].contains(&f.selector)
+                && !mappings.iter().any(|m| m.field_selector == f.selector)));
+        assert!(!model.prompts[0].contains("avery@example.test"));
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
     /// Run only after externally checking memory and loading the selected model
     /// with a 4096-token context. The fixture contains no real candidate data.
     #[test]
