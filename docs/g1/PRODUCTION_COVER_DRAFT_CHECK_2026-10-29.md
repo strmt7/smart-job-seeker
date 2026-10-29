@@ -1,0 +1,9 @@
+# Production cover-letter drafting check — 2026-10-29
+
+The ignored `live_cover_letter_records_both_fictional_drafting_passes` test exercises the actual draft generator, its local-model guard and the Ollama adapter. The fictional candidate facts were past use of Python to clean laboratory data and measurement of polymer samples. The fictional job also requested SQL and six years of experience, which were not supplied as candidate facts. The test records both the initial draft and style revision.
+
+In the [initial run](production-cover-draft-before-2026-10-29.txt), the model did not copy SQL or six years, but the revision changed past Python use to present-tense use and claimed it matched the employer's technical needs. Neither is established by the supplied facts. The test was then extended with checks for those exact observed phrases, and both production prompts were amended to preserve tense and avoid unsupported claims of meeting requirements.
+
+In the [repeat](production-cover-draft-after-2026-10-29.txt), the model preserved past tense and omitted the observed broad match claim. The resulting output was only two factual sentences and did not constitute a polished complete cover letter. Checks for particular phrases cannot establish full semantic support or detect every possible unsupported claim. Citations remain review aids, not proof. The focused deterministic draft tests passed.
+
+Both runs used local `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, with a 4,096-token context. The repeat pre-test snapshot was 24.94 GiB free system memory and 10.97 GiB dedicated GPU use; the post-test snapshot was 24.60 GiB and 10.97 GiB. These are point-in-time samples, not continuous peaks. The ignored test requires external resource preflight, explicitly requests the preloaded context and uses the no-default-features build. No real candidate data or employer website was used; no application was submitted.
