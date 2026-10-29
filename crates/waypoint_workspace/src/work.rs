@@ -104,6 +104,10 @@ impl Workspace {
         Ok(self.store.reviewed_active_claims(limit, max_text_bytes)?)
     }
 
+    pub fn active_facts_digest(&self) -> Result<String, WorkspaceError> {
+        Ok(self.store.active_claims_digest()?)
+    }
+
     pub fn fact_history(&self) -> Result<Vec<StoredClaim>, WorkspaceError> {
         Ok(self.store.all_claims()?)
     }

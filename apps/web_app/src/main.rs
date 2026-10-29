@@ -336,12 +336,7 @@ fn draft_context_digest(
         .map_err(|e| e.to_string())?
         .ok_or("Job not found")?;
     let description = ws.job_description(job_id).map_err(|e| e.to_string())?;
-    let facts: Vec<Value> = ws
-        .facts()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|fact| json!({"text":fact.text,"requires_review":fact.requires_review}))
-        .collect();
+    let facts_digest = ws.active_facts_digest().map_err(|e| e.to_string())?;
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(value) => serde_json::from_str(&value).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
@@ -362,7 +357,7 @@ fn draft_context_digest(
     } else {
         None
     };
-    Ok(Sha256Digest::of(&json!({"job":job,"description":description,"facts":facts,"profile":profile,"template_hash":template_hash,"kind":kind}).to_string()).as_str().to_owned())
+    Ok(Sha256Digest::of(&json!({"job":job,"description":description,"facts_digest":facts_digest,"profile":profile,"template_hash":template_hash,"kind":kind}).to_string()).as_str().to_owned())
 }
 
 fn read_fit(ws: &Workspace, job_id: &JobIdentityId) -> Result<Value, String> {
@@ -4611,6 +4606,20 @@ mod tests {
         assert_eq!(planning.len(), 20);
         assert_eq!(planning, expected[..20]);
         assert!(ws.reviewed_facts_bounded(0, 1000).unwrap().is_empty());
+        let before = ws.active_facts_digest().unwrap();
+        assert_eq!(before, ws.active_facts_digest().unwrap());
+        ws.add_fact("New unreviewed fact", FactOrigin::ModelInferred)
+            .unwrap();
+        let unreviewed = ws.active_facts_digest().unwrap();
+        assert_ne!(before, unreviewed);
+        let new_fact = ws
+            .add_fact("New reviewed fact", FactOrigin::UserAttested)
+            .unwrap();
+        let added = ws.active_facts_digest().unwrap();
+        assert_ne!(unreviewed, added);
+        ws.correct_fact(&new_fact, "Corrected reviewed fact", 2)
+            .unwrap();
+        assert_ne!(added, ws.active_facts_digest().unwrap());
     }
 
     #[cfg(windows)]

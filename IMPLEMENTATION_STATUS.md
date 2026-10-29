@@ -232,6 +232,11 @@
 - Drafting selects up to 18 reviewed qualifications for a CV or 20 for a cover letter from the first 500 eligible facts using word overlap with the listing. This can miss relevant facts without shared terms or beyond the limit; the interface states the limitation. The draft context digest still uses the full active fact read and is not a bounded-memory guarantee.
 - With one build job and one test thread, the relevant-fact selection fixture, two draft tests, web-app Clippy and JavaScript syntax passed. A synthetic Playwright/Edge fixture with the application stylesheet displayed the notice at 1200 px and 375 px without page errors; Browser plugin not available. No live model, employer site or peak resources were measured. No application was sent.
 
+## Incremental draft freshness digest — 2026-10-29
+
+- Draft freshness now hashes active claims one row at a time through the shared sealed-text read path, rather than building a full active-fact vector. The digest includes reviewed and unreviewed claims and changes after additions or corrections. SQLite may still perform internal sorting, and other data such as the document and job description is read separately; peak memory has not been measured.
+- With one build job and one test thread, 46 store tests, the encrypted-workspace fact/digest fixture, draft-context and draft tests, and web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

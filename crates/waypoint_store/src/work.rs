@@ -129,13 +129,34 @@ impl Store {
         limit: Option<usize>,
         max_text_bytes: usize,
     ) -> Result<Vec<StoredClaim>, StoreError> {
+        let mut out = Vec::new();
+        self.visit_claims(
+            reviewed_active,
+            reviewed_active,
+            limit,
+            max_text_bytes,
+            |claim| out.push(claim),
+        )?;
+        Ok(out)
+    }
+
+    /// Shared sealed-text read path for collecting or streaming claims.
+    fn visit_claims(
+        &self,
+        active_only: bool,
+        reviewed_only: bool,
+        limit: Option<usize>,
+        max_text_bytes: usize,
+        mut visit: impl FnMut(StoredClaim),
+    ) -> Result<(), StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id,profile_revision,text,text_sealed,status,source_kind,requires_review,supersedes
-             FROM claims WHERE (?1=0 OR (requires_review=0 AND id NOT IN
-               (SELECT supersedes FROM claims WHERE supersedes IS NOT NULL)))
+             FROM claims WHERE (?1=0 OR id NOT IN
+               (SELECT supersedes FROM claims WHERE supersedes IS NOT NULL))
+               AND (?2=0 OR requires_review=0)
              ORDER BY profile_revision DESC, id ASC",
         )?;
-        let rows = stmt.query_map([reviewed_active as i64], |r| {
+        let rows = stmt.query_map([active_only as i64, reviewed_only as i64], |r| {
             let plain: String = r.get(2)?;
             let sealed: Option<Vec<u8>> = r.get(3)?;
             Ok((
@@ -149,9 +170,9 @@ impl Store {
                 r.get::<_, Option<String>>(7)?,
             ))
         })?;
-        let mut out = Vec::new();
+        let mut accepted = 0usize;
         for row in rows {
-            if limit.is_some_and(|limit| out.len() >= limit) {
+            if limit.is_some_and(|limit| accepted >= limit) {
                 break;
             }
             let (id, revision, plain, sealed, status, source, review, supersedes) = row?;
@@ -162,7 +183,7 @@ impl Store {
             if text.len() > max_text_bytes {
                 continue;
             }
-            out.push(StoredClaim {
+            visit(StoredClaim {
                 id,
                 profile_revision: revision,
                 text,
@@ -171,8 +192,19 @@ impl Store {
                 requires_review: review,
                 supersedes,
             });
+            accepted += 1;
         }
-        Ok(out)
+        Ok(())
+    }
+
+    /// Hash active claim content one row at a time, including unreviewed claims.
+    pub fn active_claims_digest(&self) -> Result<String, StoreError> {
+        let mut digest = waypoint_domain::sha256_hex(b"waypoint-active-claims-v1");
+        self.visit_claims(true, false, None, usize::MAX, |claim| {
+            let item = serde_json::json!({"previous":digest,"id":claim.id,"text":claim.text,"requires_review":claim.requires_review}).to_string();
+            digest = waypoint_domain::sha256_hex(item.as_bytes());
+        })?;
+        Ok(digest)
     }
 
     /// Claims that are still in force (not superseded) at the current revision.
