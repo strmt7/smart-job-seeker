@@ -96,6 +96,21 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
         return Err("Job description is too large; review manually".into());
     }
     let description = bounded(&waypoint_connectors::description_text(raw), 30_000);
+    let identifier = &job["identifier"];
+    let identifier_value = identifier.get("value").unwrap_or(identifier);
+    let requisition_id = if let Some(value) = identifier_value.as_str() {
+        let value = value.trim();
+        if value.len() <= 200 && !value.chars().any(char::is_control) {
+            value.to_owned()
+        } else {
+            String::new()
+        }
+    } else {
+        identifier_value
+            .as_u64()
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    };
     let locations = match job["jobLocation"].as_array() {
         Some(list) => list.iter().take(20).collect::<Vec<_>>(),
         None => vec![&job["jobLocation"]],
@@ -153,7 +168,7 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
     }
     let location = bounded(&extracted.join("; "), 200);
     Ok(Some(
-        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"extraction":"structured"}),
+        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"requisition_id":requisition_id,"extraction":"structured"}),
     ))
 }
 
@@ -410,6 +425,38 @@ mod tests {
             .unwrap();
         assert_eq!(job["location"], "Berlin, Germany; Paris, France");
         assert_eq!(job["url"], "https://example.org/jobs/123");
+    }
+
+    #[test]
+    fn structured_requisition_numbers_reach_duplicate_review() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        for (title, url) in [
+            ("Research Engineer", "https://example.org/one"),
+            ("Data Scientist", "https://other.example/two"),
+        ] {
+            let posting = json!({"@type":"JobPosting","title":title,"hiringOrganization":{"name":"Example Labs"},"identifier":{"value":"REQ-123"}}).to_string();
+            let job = parse(&[posting], url).unwrap().unwrap();
+            assert_eq!(job["requisition_id"], "REQ-123");
+            crate::manual_job::add(&mut ws, &job, 1).unwrap();
+        }
+        let matches = ws.possible_duplicates().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].reason.contains("requisition"));
+    }
+
+    #[test]
+    fn structured_identifiers_preserve_strings_and_accept_integer_values() {
+        for (value, expected) in [
+            (json!(12345), "12345"),
+            (json!("0012345"), "0012345"),
+            (json!(1.5), ""),
+        ] {
+            let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"identifier":{"value":value}}).to_string();
+            let job = parse(&[posting], "https://example.org/job")
+                .unwrap()
+                .unwrap();
+            assert_eq!(job["requisition_id"], expected);
+        }
     }
 
     #[test]

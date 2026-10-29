@@ -71,6 +71,20 @@ fn employer_words(s: &str) -> BTreeSet<String> {
 }
 
 impl Store {
+    /// Add a previously missing identifier and refresh its review candidates atomically.
+    pub fn add_requisition_and_refresh(&self, job: &StoredJob) -> rusqlite::Result<bool> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let changed = transaction.execute(
+            "UPDATE jobs SET requisition_id=?2 WHERE id=?1 AND (requisition_id IS NULL OR trim(requisition_id)='')",
+            params![job.id.as_str(), job.requisition_id],
+        )?;
+        if changed != 0 {
+            self.find_possible_duplicates(job)?;
+        }
+        transaction.commit()?;
+        Ok(changed != 0)
+    }
+
     pub fn find_possible_duplicates(
         &self,
         job: &StoredJob,
@@ -354,6 +368,54 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn requisition_update_rolls_back_when_duplicate_indexing_fails() {
+        let mut store = Store::in_memory().unwrap();
+        let original = job("rollback", "Engineer", "Example", None);
+        store.upsert_job(&original).unwrap();
+        store.find_possible_duplicates(&original).unwrap();
+        store.conn.execute_batch("CREATE TRIGGER fail_duplicate_refresh BEFORE INSERT ON job_employer_tokens BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        let mut changed = original.clone();
+        changed.requisition_id = Some("REQ-123".into());
+        assert!(store.add_requisition_and_refresh(&changed).is_err());
+        let stored: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT requisition_id FROM jobs WHERE id='rollback'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, None);
+        assert_eq!(store.duplicate_coverage_counts().unwrap().1, 0);
+    }
+
+    #[test]
+    fn manual_job_insert_rolls_back_when_duplicate_indexing_fails() {
+        let mut store = Store::in_memory().unwrap();
+        store.conn.execute_batch("CREATE TRIGGER fail_new_job_index BEFORE INSERT ON job_employer_tokens BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        let candidate = job("new-job", "Engineer", "Example", Some("REQ-123"));
+        assert!(store
+            .insert_manual_job(&candidate, Some("Fictional description"))
+            .is_err());
+        let count: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM jobs WHERE id='new-job'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        let descriptions: i64 = store
+            .conn
+            .query_row(
+                "SELECT count(*) FROM job_descriptions WHERE job_id='new-job'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(descriptions, 0);
     }
 
     #[test]

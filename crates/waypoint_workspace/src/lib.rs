@@ -591,7 +591,6 @@ impl Workspace {
         description: Option<&str>,
     ) -> Result<(), WorkspaceError> {
         self.store.insert_manual_job(&job, description)?;
-        self.store.find_possible_duplicates(&job)?;
         Ok(())
     }
 
@@ -599,6 +598,11 @@ impl Workspace {
         &self,
     ) -> Result<Vec<waypoint_store::duplicates::PossibleDuplicate>, WorkspaceError> {
         Ok(self.store.possible_duplicates()?)
+    }
+
+    /// Add a missing source identifier together with its duplicate evidence.
+    pub fn add_requisition_and_refresh(&self, job: &StoredJob) -> Result<bool, WorkspaceError> {
+        Ok(self.store.add_requisition_and_refresh(job)?)
     }
 
     pub fn index_next_duplicate_job(&self, after: &str) -> Result<Option<String>, WorkspaceError> {

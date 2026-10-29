@@ -669,18 +669,19 @@ impl Store {
         Ok(true)
     }
 
-    /// Insert a manually entered job and its description together without replacing existing state.
+    /// Insert a manually entered job, description and duplicate evidence together.
     pub fn insert_manual_job(
         &mut self,
         job: &StoredJob,
         description: Option<&str>,
     ) -> Result<(), rusqlite::Error> {
-        let transaction = self.conn.transaction()?;
+        let transaction = self.conn.unchecked_transaction()?;
         transaction.execute("INSERT INTO jobs(id,title,employer,location,state,canonical_url,content_hash,first_seen,last_seen,remote,source,requisition_id,posted_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",params![job.id.as_str(),job.title,job.employer,job.location,serde_json::to_string(&job.state).unwrap(),job.canonical_url,job.content_hash,job.first_seen,job.last_seen,job.remote as i64,job.source,job.requisition_id,job.posted_at])?;
         transaction.execute(
             "INSERT INTO job_descriptions(job_id,content) VALUES(?1,?2)",
             params![job.id.as_str(), description],
         )?;
+        self.find_possible_duplicates(job)?;
         transaction.commit()
     }
 

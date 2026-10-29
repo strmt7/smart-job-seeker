@@ -55,11 +55,36 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
     let employer = input(body, "employer", 200, true)?;
     let location = input(body, "location", 200, false)?;
     let description = input(body, "description", 30000, false)?;
+    let requisition_id = input(body, "requisition_id", 200, false)?;
+    if requisition_id.chars().any(char::is_control) {
+        return Err("Invalid requisition_id".into());
+    }
     if let Some(id) = ws
         .job_id_by_canonical_url(&url)
         .map_err(|e| e.to_string())?
     {
-        return Ok(json!({"id":id,"existing":true}));
+        let key = JobIdentityId::new(&id).map_err(|e| e.to_string())?;
+        let mut existing = ws
+            .job(&key)
+            .map_err(|e| e.to_string())?
+            .ok_or("Saved job not found")?;
+        let mut identifier_added = false;
+        if !requisition_id.is_empty()
+            && existing
+                .requisition_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && existing
+                .employer
+                .trim()
+                .eq_ignore_ascii_case(employer.trim())
+        {
+            existing.requisition_id = Some(requisition_id.to_owned());
+            identifier_added = ws
+                .add_requisition_and_refresh(&existing)
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(json!({"id":id,"existing":true,"requisition_added":identifier_added}));
     }
     if let Some(id) = ws.resolve_alias(&url).map_err(|e| e.to_string())? {
         return Ok(json!({"id":id,"existing":true}));
@@ -79,7 +104,7 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
         last_seen: Some(now),
         remote: body["remote"].as_bool().unwrap_or(false),
         source: source(&host).into(),
-        requisition_id: None,
+        requisition_id: (!requisition_id.is_empty()).then(|| requisition_id.to_owned()),
         posted_at: None,
     };
     ws.import_manual_job(job, (!description.is_empty()).then_some(description))
@@ -130,6 +155,33 @@ mod tests {
         assert_eq!(
             ws.job(&id).unwrap().unwrap().state,
             ApplicationState::Shortlisted
+        );
+    }
+
+    #[test]
+    fn reinspection_adds_missing_identifier_without_replacing_existing_data() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let first = json!({"url":"https://example.com/one","title":"Engineer","employer":"Example Labs","description":"Original description"});
+        let added = add(&mut ws, &first, 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.set_state(&id, ApplicationState::Shortlisted).unwrap();
+        add(&mut ws, &json!({"url":"https://other.example/two","title":"Research Analyst","employer":"Example Labs","requisition_id":"REQ-123"}), 1).unwrap();
+        let result = add(&mut ws, &json!({"url":"https://example.com/one","title":"Changed title","employer":"Example Labs","requisition_id":"REQ-123"}), 2).unwrap();
+        assert_eq!(result["requisition_added"], true);
+        let job = ws.job(&id).unwrap().unwrap();
+        assert_eq!(job.requisition_id.as_deref(), Some("REQ-123"));
+        assert_eq!(job.title, "Engineer");
+        assert_eq!(job.state, ApplicationState::Shortlisted);
+        assert_eq!(
+            ws.job_description(&id).unwrap().unwrap(),
+            "Original description"
+        );
+        assert!(ws.has_duplicate_hold(&id).unwrap());
+        let conflict = add(&mut ws, &json!({"url":"https://example.com/one","title":"Engineer","employer":"Example Labs","requisition_id":"REQ-999"}), 3).unwrap();
+        assert_eq!(conflict["requisition_added"], false);
+        assert_eq!(
+            ws.job(&id).unwrap().unwrap().requisition_id.as_deref(),
+            Some("REQ-123")
         );
     }
     #[test]
