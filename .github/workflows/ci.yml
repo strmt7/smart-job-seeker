@@ -24,6 +24,7 @@ jobs:
           node apps/web_app/tests/visual-review-ui.test.js
           node apps/web_app/tests/letter-export-recovery-ui.test.js
           node apps/web_app/tests/template-edit-recovery-ui.test.js
+          node apps/web_app/tests/application-check-recovery-ui.test.js
           node apps/web_app/tests/visual-dense-retry-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/search-coverage-ui.test.js

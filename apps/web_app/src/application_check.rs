@@ -76,6 +76,14 @@ pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
 }
 
+pub fn pending() -> Result<Option<(String, String)>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Application check unavailable")?
+        .as_ref()
+        .map(|task| (task.id.clone(), task.job_id.clone())))
+}
+
 pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
     if task.is_some() {
@@ -220,6 +228,10 @@ mod tests {
             receiver,
             result: None,
         });
+        assert_eq!(
+            super::pending().unwrap(),
+            Some(("fictional-interrupted-check".into(), "fictional-job".into()))
+        );
         let (job, result, review) = poll("fictional-interrupted-check").unwrap().unwrap();
         assert_eq!(job, "fictional-job");
         assert!(review);

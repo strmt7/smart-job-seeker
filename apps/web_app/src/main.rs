@@ -1430,6 +1430,17 @@ fn serve(
             application_check::start(id.clone(), job_id.as_str().to_owned(), url)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
+        "/api/application-check/pending" => {
+            let pending = application_check::pending()?;
+            json_reply(
+                stream,
+                "200 OK",
+                match pending {
+                    Some((task_id, job_id)) => json!({"task_id":task_id,"job_id":job_id}),
+                    None => json!({"task_id":null}),
+                },
+            );
+        }
         "/api/application-check/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             match application_check::poll(id)? {

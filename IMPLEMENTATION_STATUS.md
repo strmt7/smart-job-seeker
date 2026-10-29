@@ -182,6 +182,11 @@
 - An active template edit can be discovered after a lost start response, and its latest terminal result can be replayed without saving another DOCX/PDF pair. Recovery is in-memory and limited to the current process and most recent terminal result.
 - With one build job and one test thread, four template-edit tests passed (four conversion fixtures ignored), the recovery UI fixture passed, and web-app Clippy and JavaScript syntax checks passed. No live model, employer site, installed-app startup or resource peaks were measured. No application was sent.
 
+## Application page check recovery — 2026-10-29
+
+- The interface discovers a running application-page check after a lost start response and resumes the correct job's check. A previously saved tab task remains usable when no active task exists. Checking still reports uncertain pages for manual review and never submits.
+- With one build job and one test thread, three application-check tests passed (one browser fixture ignored), the recovery UI fixture passed, and web-app Clippy and JavaScript syntax checks passed. No live employer page or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
