@@ -83,6 +83,34 @@ fn coverage(total: usize, history: &[Value]) -> Value {
     }
     json!({"requested_pages":total,"attempted_pages":history.len(),"succeeded_pages":succeeded,"failed_pages":failed,"unattempted_pages":total.saturating_sub(history.len()),"limited_pages":limited,"pages_with_unresponsive_engines":engines_unavailable,"pages_with_unknown_engine_availability":availability_unknown})
 }
+
+/// Keep the global result cap visible when the final provider page has more
+/// valid links than the remaining budget. Previously the page could appear
+/// complete even though some of its parsed links were discarded here.
+fn retain_batch_budget(data: &mut Value, seen: &mut HashSet<String>) -> bool {
+    let mut omitted = 0usize;
+    if let Some(items) = data["results"].as_array_mut() {
+        items.retain(|item| {
+            let Some(url) = item["url"].as_str() else {
+                return false;
+            };
+            if seen.contains(url) {
+                return false;
+            }
+            if seen.len() >= 600 {
+                omitted += 1;
+                return false;
+            }
+            seen.insert(url.to_owned())
+        });
+    }
+    if omitted > 0 {
+        data["limited"] = json!(true);
+        data["batch_limit_omitted"] = json!(omitted);
+    }
+    seen.len() >= 600
+}
+
 pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> Result<(), String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
@@ -148,24 +176,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             })
             .unwrap_or_else(|_| Err("Search stopped unexpectedly".into()))
             .map(|mut data| {
-                if let Some(items) = data["results"].as_array_mut() {
-                    items.retain(|item| {
-                        item["url"].as_str().is_some_and(|url| {
-                            if seen.contains(url) {
-                                return false;
-                            }
-                            if seen.len() >= 600 {
-                                limit_reached = true;
-                                return false;
-                            }
-                            let inserted = seen.insert(url.to_owned());
-                            if seen.len() >= 600 {
-                                limit_reached = true;
-                            }
-                            inserted
-                        })
-                    });
-                }
+                limit_reached = retain_batch_budget(&mut data, &mut seen);
                 data
             });
             if !send(&tx, Message::Query(query, page, result), &stop) {
@@ -271,6 +282,19 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::time::Instant;
+    #[test]
+    fn batch_cap_reports_links_dropped_from_a_provider_page() {
+        let mut seen: HashSet<String> = (0..598)
+            .map(|i| format!("https://example.org/{i}"))
+            .collect();
+        let mut page = json!({"results":(598..602).map(|i| json!({"url":format!("https://example.org/{i}")})).collect::<Vec<_>>(),"limited":false});
+        assert!(retain_batch_budget(&mut page, &mut seen));
+        assert_eq!(seen.len(), 600);
+        assert_eq!(page["results"].as_array().unwrap().len(), 2);
+        assert_eq!(page["batch_limit_omitted"], 2);
+        assert_eq!(page["limited"], true);
+        assert_eq!(coverage(1, &[json!({"data":page})])["limited_pages"], 1);
+    }
     #[test]
     fn coverage_distinguishes_failed_limited_and_unattempted_pages() {
         let history = vec![
@@ -488,7 +512,7 @@ mod tests {
                 let len = stream.read(&mut request).unwrap();
                 let request = std::str::from_utf8(&request[..len]).unwrap();
                 assert!(request.contains(if n == 0 { "first" } else { "second" }));
-                let mut results: Vec<Value> = (0..30)
+                let mut results: Vec<Value> = (0..70)
                     .map(|i| json!({"title":"Repeated", "url":format!("https://example.org/{i}")}))
                     .collect();
                 if n == 1 {
@@ -526,11 +550,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 30);
+        assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 70);
         assert_eq!(batches[1]["data"]["results"].as_array().unwrap().len(), 1);
         assert_eq!(batches[1]["data"]["results"][0]["title"], "New result");
-        assert_eq!(batches[1]["data"]["previously_seen"], 30);
-        assert_eq!(batches[1]["data"]["results_examined"], 31);
+        assert_eq!(batches[1]["data"]["previously_seen"], 70);
+        assert_eq!(batches[1]["data"]["results_examined"], 71);
         provider.join().unwrap();
     }
 

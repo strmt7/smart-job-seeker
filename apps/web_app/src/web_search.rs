@@ -157,7 +157,7 @@ pub(crate) fn parse_excluding(
             .take(80)
             .collect();
         links.push(json!({"url":url.as_str(),"title":title,"snippet":snippet,"engines":engines,"published_date":published_date.trim()}));
-        if links.len() == 30 {
+        if links.len() == 100 {
             break;
         }
     }
@@ -302,9 +302,17 @@ mod tests {
         let valid: Vec<Value> = (0..100)
             .map(|i| json!({"title":"Role","url":format!("https://example.org/{i}")}))
             .collect();
+        let complete_page = parse(&json!({"results":valid}).to_string()).unwrap();
+        assert_eq!(complete_page["results"].as_array().unwrap().len(), 100);
+        assert_eq!(complete_page["results_examined"], 100);
+        assert_eq!(complete_page["limited"], false);
+
+        let valid: Vec<Value> = (0..101)
+            .map(|i| json!({"title":"Role","url":format!("https://example.org/{i}")}))
+            .collect();
         let limited = parse(&json!({"results":valid}).to_string()).unwrap();
-        assert_eq!(limited["results"].as_array().unwrap().len(), 30);
-        assert_eq!(limited["results_examined"], 30);
+        assert_eq!(limited["results"].as_array().unwrap().len(), 100);
+        assert_eq!(limited["results_examined"], 100);
         assert_eq!(limited["limited"], true);
 
         let invalid = vec![json!({"title":"No URL"}); 35];
