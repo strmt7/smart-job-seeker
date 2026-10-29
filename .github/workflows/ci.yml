@@ -36,6 +36,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/attachment-name-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/document-review-coverage-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/single-search-recovery-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/search-plan-recovery-ui.test.js

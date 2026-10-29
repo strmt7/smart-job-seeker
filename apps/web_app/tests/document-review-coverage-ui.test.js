@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function renderDocumentSuggestions('));
+assert.ok(line, 'document review renderer must exist');
+const node = (tag,text='',className='') => ({tag,textContent:text,className,children:[],append(...items){this.children.push(...items);},addEventListener(){}});
+const render = vm.runInNewContext(`(${line})`,{element:node,document:{createElement:tag=>node(tag)}});
+const panel=node('div');
+render(panel,{total_bytes:60000,presented_bytes:44416,attempted_sections:8,failed_sections:1,limited_sections:1,omitted_excerpts:2,truncated:true,stopped:null,excerpts:[]});
+const text=panel.children.map(item=>item.textContent).join('\n');
+assert.match(text,/Attempted through byte 44416 of 60000/);
+assert.match(text,/Some document text was not attempted/);
+assert.match(text,/One or more sections could not be reviewed/);
+assert.match(text,/per-section limit in 1 section; 2 additional distinct excerpts/);
+console.log('Document review coverage checks passed.');
