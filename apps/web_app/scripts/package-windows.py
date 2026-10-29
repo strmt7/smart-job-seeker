@@ -22,6 +22,11 @@ PDF_WHEELS = (
     ('pypdfium2-5.14.0-py3-none-win_amd64.whl', 'https://files.pythonhosted.org/packages/00/dc/ca7874924c9cfd701ad53f89529968523790e70473e0b71e834668316148/pypdfium2-5.14.0-py3-none-win_amd64.whl', '149fd5c6397b8df8bf7911a93506eff0be874f877afe7ac936cf5d37d21a6a06'),
     ('pillow-12.3.0-cp312-cp312-win_amd64.whl', 'https://files.pythonhosted.org/packages/45/89/da2f7971a317f83d807fdd4065c0af40208e59e692cc43d315a71a0e96d1/pillow-12.3.0-cp312-cp312-win_amd64.whl', 'a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09'),
 )
+# TheDocumentFoundation's published checksum and the winget x64 installer
+# manifest for 26.8.2.2 agree on this exact 26.8.2 MSI.
+OFFICE_MSI_URL = 'https://download.documentfoundation.org/libreoffice/stable/26.8.2/win/x86_64/LibreOffice_26.8.2_Win_x86-64.msi'
+OFFICE_MSI_SHA256 = 'ff4b911403b67ee9e6249f820f9782c44bb32c94fdaa45b0da53a8e419e5307a'
+OFFICE_MSI_MAX_BYTES = 512 * 1024 * 1024
 
 def discover_libreoffice(environment):
     """Find a local candidate; bundling still validates and inventories it."""
@@ -48,13 +53,62 @@ def discover_libreoffice(environment):
     return None
 
 def select_libreoffice(no_libreoffice, configured_root, environment):
-    """Require a converter for the default package; permit an explicit opt-out."""
+    """Select an existing converter; None also means provisioning is needed."""
     if no_libreoffice:
         return None
     root = Path(configured_root) if configured_root else discover_libreoffice(environment)
-    if root is None:
-        raise ValueError('LibreOffice was not found; install it or pass --libreoffice-dir. Use --no-libreoffice only for an intentionally incomplete bundle.')
     return root
+
+def copy_verified_office_msi(source, destination, expected_hash=OFFICE_MSI_SHA256):
+    """Stream a bounded installer and refuse it before execution if it differs."""
+    digest = hashlib.sha256()
+    size = 0
+    with destination.open('xb') as out:
+        while chunk := source.read(1024 * 1024):
+            size += len(chunk)
+            if size > OFFICE_MSI_MAX_BYTES:
+                raise ValueError('LibreOffice installer exceeds the size limit')
+            digest.update(chunk)
+            out.write(chunk)
+    if not size or digest.hexdigest() != expected_hash:
+        raise ValueError('LibreOffice installer does not match the pinned SHA-256')
+
+def provision_libreoffice(stage, local_msi=None):
+    """Extract a verified official MSI to a private build directory, not the host."""
+    if sys.platform != 'win32':
+        raise ValueError('Automatic LibreOffice provisioning requires Windows')
+    if shutil.disk_usage(stage).free < 4 * 1024 * 1024 * 1024:
+        raise ValueError('At least 4 GiB of free disk space is required for converter provisioning')
+    msi = stage / 'waypoint-libreoffice.msi'
+    try:
+        source = open(local_msi, 'rb') if local_msi else urllib.request.urlopen(OFFICE_MSI_URL, timeout=60)
+        with source:
+            copy_verified_office_msi(source, msi)
+    except BaseException:
+        # The installer has not started yet, so only our partial download can
+        # exist here. Avoid retaining hundreds of MiB after a failed transfer.
+        msi.unlink(missing_ok=True)
+        raise
+    office = stage / 'office'
+    office.mkdir()
+    try:
+        result = subprocess.run(
+            [str(Path(os.environ['SystemRoot']) / 'System32' / 'msiexec.exe'), '/a', str(msi), '/qn', '/norestart', f'TARGETDIR={office}'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW, timeout=300, check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        # The Windows Installer service may still be active. Do not remove the
+        # stage after a timeout; the caller reports its location for inspection.
+        raise ValueError('LibreOffice extraction timed out; Windows Installer may still be active') from error
+    if result.returncode != 0:
+        raise ValueError(f'LibreOffice extraction failed with exit code {result.returncode}')
+    if not (office / 'program' / 'soffice.com').is_file() or not (office / 'LICENSE.html').is_file():
+        raise ValueError('Extracted LibreOffice distribution is incomplete')
+    # Administrative extraction also produces a transformed MSI. It is not
+    # needed by the converter, and this is a file in our private stage only.
+    (office / msi.name).unlink(missing_ok=True)
+    return office
 
 def add_libreoffice(archive, root):
     """Bundle an existing complete distribution without modifying the host."""
@@ -160,14 +214,11 @@ def main():
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
     office = parser.add_mutually_exclusive_group()
     office.add_argument('--libreoffice-dir', help='Bundle this complete LibreOffice distribution for PDF conversion')
+    office.add_argument('--libreoffice-msi', help='Use a local copy of the pinned LibreOffice MSI for offline provisioning')
     office.add_argument('--no-libreoffice', action='store_true', help='Do not automatically bundle an installed LibreOffice distribution')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
     office_root = select_libreoffice(args.no_libreoffice, args.libreoffice_dir, os.environ)
-    if office_root is not None:
-        print(f'Bundling LibreOffice from {office_root}; this can substantially increase package size.')
-    else:
-        print('LibreOffice bundling was explicitly disabled; document conversion will require separate setup.')
     output = Path(args.output).resolve()
     if not output.is_relative_to(REPO) or output.suffix.lower() != '.zip' or output.exists():
         raise ValueError('Output must be a new .zip path inside the repository')
@@ -228,6 +279,23 @@ def main():
         if not files: raise ValueError(f'No local license text for {name} {version}')
         packages[(name,version)] = (package.get('license'), sorted(files))
     output.parent.mkdir(parents=True,exist_ok=True)
+    office_stage = None
+    if not args.no_libreoffice and (args.libreoffice_msi or office_root is None):
+        target_dir = (REPO / 'target').resolve()
+        office_stage = Path(tempfile.mkdtemp(prefix='waypoint-office-', dir=target_dir)).resolve()
+        if office_stage.parent != target_dir:
+            raise ValueError('Invalid converter staging directory')
+        print('Provisioning the pinned LibreOffice converter into an isolated build directory.')
+        try:
+            office_root = provision_libreoffice(office_stage, args.libreoffice_msi)
+        except (OSError, ValueError) as error:
+            # Preserve the directory on failure, especially if the installer
+            # service may still be running after a timeout.
+            raise ValueError(f'{error}; converter staging retained at {office_stage}') from error
+    if office_root is not None:
+        print(f'Bundling LibreOffice from {office_root}; this can substantially increase package size.')
+    else:
+        print('LibreOffice bundling was explicitly disabled; document conversion will require separate setup.')
     # Exclusive creation avoids replacing an existing artifact; remove a partial ZIP on failure.
     created = False
     try:
@@ -265,6 +333,14 @@ def main():
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise
+    finally:
+        if office_stage is not None:
+            target_dir = (REPO / 'target').resolve()
+            resolved_stage = office_stage.resolve(strict=True)
+            if (resolved_stage != office_stage or resolved_stage.parent != target_dir
+                or not resolved_stage.name.startswith('waypoint-office-')):
+                raise ValueError('Refusing to remove an unexpected converter staging directory')
+            shutil.rmtree(resolved_stage)
     print(f'Created {output} with {len(packages)} dependency license inventories.')
 
 if __name__ == '__main__':

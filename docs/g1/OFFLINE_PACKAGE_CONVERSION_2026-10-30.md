@@ -1,5 +1,7 @@
 # Offline package conversion check — 2026-10-30
 
+The packager has since gained pinned MSI provisioning; the description below records the earlier build. See `LIBREOFFICE_PROVISIONING_2026-10-30.md` for the later check.
+
 The default Windows packager now requires a discovered or explicitly specified LibreOffice distribution. It fails when none is present instead of silently creating a bundle without the document converter. `--no-libreoffice` remains an explicit opt-out for an incomplete bundle. This does not automatically download or install LibreOffice on the build host. The small packaging fixture checks missing, discovered, specified and opt-out cases.
 
 On this Windows host, a debug build was packaged offline with the pinned cached Python 3.12 archive and PDF wheels and the locally installed LibreOffice 26.8.0.3 distribution. The resulting approximately 355 MiB ZIP had SHA-256 `edcf7e3c4920a1f0e45866c868aa8e5b3bc5355c11ce0215cbf9bd36a44a746a` and included 1,574 inventoried Python files and 13,930 inventoried LibreOffice files. Its installer verified the package and copied it into a new isolated directory under `target`, without creating a shortcut. This hash identifies the local unsigned artifact; it is not a signature or a release claim.

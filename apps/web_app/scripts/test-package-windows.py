@@ -1,7 +1,9 @@
 """Exercise optional converter bundling with fictional, small local files."""
 import hashlib
 import importlib.util
+import io
 import os
+import sys
 from pathlib import Path
 import tempfile
 import zipfile
@@ -32,15 +34,41 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
     (program_files / 'LibreOffice' / 'LICENSE.html').write_text('fictional license', encoding='utf-8')
     assert packager.discover_libreoffice(env) == program_files / 'LibreOffice'
     assert packager.discover_libreoffice({}) is None
-    try:
-        packager.select_libreoffice(False, None, {})
-    except ValueError as error:
-        assert 'LibreOffice was not found' in str(error)
-    else:
-        raise AssertionError('Default package must not silently omit the converter')
+    assert packager.select_libreoffice(False, None, {}) is None  # requires provisioning
     assert packager.select_libreoffice(True, None, {}) is None
     assert packager.select_libreoffice(False, str(root), {}) == root
     assert packager.select_libreoffice(False, None, env) == program_files / 'LibreOffice'
+    msi = Path(temp) / 'fixture.msi'
+    packager.copy_verified_office_msi(io.BytesIO(b'fixture'), msi, hashlib.sha256(b'fixture').hexdigest())
+    assert msi.read_bytes() == b'fixture'
+    try:
+        packager.copy_verified_office_msi(io.BytesIO(b'wrong'), Path(temp) / 'bad.msi', hashlib.sha256(b'fixture').hexdigest())
+    except ValueError as error:
+        assert 'pinned SHA-256' in str(error)
+    else:
+        raise AssertionError('A mismatched installer was accepted')
+    old_limit = packager.OFFICE_MSI_MAX_BYTES
+    packager.OFFICE_MSI_MAX_BYTES = 2
+    try:
+        try:
+            packager.copy_verified_office_msi(io.BytesIO(b'large'), Path(temp) / 'large.msi', hashlib.sha256(b'large').hexdigest())
+        except ValueError as error:
+            assert 'size limit' in str(error)
+        else:
+            raise AssertionError('An oversized installer was accepted')
+    finally:
+        packager.OFFICE_MSI_MAX_BYTES = old_limit
+    if sys.platform == 'win32':
+        stage = Path(temp) / 'bad-installer-stage'
+        stage.mkdir()
+        try:
+            packager.provision_libreoffice(stage, msi)
+        except ValueError as error:
+            assert 'pinned SHA-256' in str(error)
+        else:
+            raise AssertionError('Provisioning accepted a mismatched installer')
+        assert not (stage / 'waypoint-libreoffice.msi').exists()
+        assert not (stage / 'office').exists()
     configured = {'WAYPOINT_SOFFICE': str(root / 'program' / 'soffice.com'), **env}
     assert packager.discover_libreoffice(configured) == root
     path_env = {'PATH': os.pathsep.join([str(program_files / 'LibreOffice' / 'missing'), str(root / 'program')]), **env}
