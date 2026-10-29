@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Fit evidence and repeatability checkpoint — 2026-10-29
+
+- A preference is no longer credited or contradicted solely from a candidate fact: absent a valid exact listing citation, it becomes unknown. The current prompt does not request that citation, so preferences normally remain unknown and need manual review. The headline is derived from rubric counts instead of model-generated prose. Saved assessments with the prior input version are stale.
+- A fictional repeatability fixture ran three times against locally resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context). Before the change all three runs scored 87%, but each incorrectly claimed in its summary that an unverified SQL requirement was met and used the candidate's own remote preference as evidence of the job. After the change all three scored 73%, with a 47–100% range and both unverified preferences marked unknown. This is one fictional case on one model, not a general repeatability or accuracy benchmark; criteria selection, weighting, duplicate concepts, model judgments, omitted evidence and unsupported explanations can still affect the score. A prompt requesting listing citations failed validation in a preliminary local run and is not enabled.
+- Nine focused fit tests passed (three live tests ignored in that run), followed by the separately run three-repeat live fixture. Web Clippy, JavaScript syntax and fit badge checks passed with one Cargo build job. Preflight showed one model fully resident with approximately 5.13 GiB reported VRAM and at least 12 GiB free system memory before loading; peak memory was not measured. No application was submitted.
+
 ## Search-plan identifier check — 2026-10-29
 
 - Locally generated search phrases are checked against normalized known profile identifiers, including the full name, email, address, links and phone number. Unsafe phrases are omitted with a visible count; if none remain, planning fails. The identifier list is not added separately to the model prompt, although user-provided qualifications or instructions may contain identifying text. This is not an exhaustive PII detector, and users are still asked to review phrases before searching.

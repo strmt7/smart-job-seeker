@@ -258,7 +258,7 @@ fn assess(
         } else {
             format!("{prompt} The previous response was invalid: {last_error}. Return the required JSON shape, distinct criteria, valid fact indices or null for unknown, and exact excerpts from the specified source.")
         };
-        match model.generate_structured("job_fit", &request, 1000) {
+        match model.generate_structured("job_fit", &request, 1600) {
             Ok((value, _)) => match validate(value, facts, instructions, listing) {
                 Ok(assessment) => return Ok(assessment),
                 Err(error) => last_error = error,
@@ -284,7 +284,9 @@ fn validate(
             .map(str::to_owned)
             .ok_or("Invalid assessment text")
     };
-    let summary = bounded(&value["summary"])?;
+    // The model's summary can contradict its own rubric. The displayed summary
+    // is computed from the validated rubric instead of trusting that prose.
+    let _model_summary = bounded(&value["summary"])?;
     let criteria = value["criteria"]
         .as_array()
         .filter(|items| !items.is_empty() && items.len() <= 12)
@@ -295,6 +297,7 @@ fn validate(
     let mut concerns = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
     let (mut total, mut supported, mut unknown) = (0u32, 0u32, 0u32);
+    let (mut supported_count, mut unknown_count, mut contradicted_count) = (0u32, 0u32, 0u32);
     for item in criteria {
         let source = item["source"].as_str().ok_or("Missing criterion source")?;
         // Some models explicitly emit an empty-preference placeholder despite
@@ -332,12 +335,42 @@ fn validate(
             "preferred" => 1u32,
             _ => return Err("Invalid criterion importance".into()),
         };
-        let status = item["status"].as_str().ok_or("Missing criterion status")?;
-        let explanation = bounded(&item["explanation"])?;
+        let mut status = item["status"].as_str().ok_or("Missing criterion status")?;
+        let mut explanation = bounded(&item["explanation"])?;
+        // A candidate saying they want remote work does not establish that the
+        // job offers it. Until there is cited listing evidence, keep the
+        // preference unknown rather than treating a candidate fact as a match.
+        if source == "preference"
+            && matches!(status, "supported" | "contradicted")
+            && (!item["fact_index"].is_null()
+                || item["listing_evidence"].as_str().is_none_or(|quote| {
+                    quote.trim().is_empty() || quote.len() > 800 || !listing.contains(quote)
+                }))
+        {
+            status = "unknown";
+            explanation = "The model did not provide verified job-listing evidence for this preference; review it manually.".into();
+        }
         let fact = match status {
-            "unknown" if item["fact_index"].is_null() => {
+            "unknown" if item["fact_index"].is_null() || source == "preference" => {
                 unknown += weight;
+                unknown_count += 1;
                 None
+            }
+            "supported" | "contradicted" if source == "preference" => {
+                if !item["fact_index"].is_null() {
+                    return Err("Preference evidence must come from the listing".into());
+                }
+                let quote = bounded(&item["listing_evidence"])?;
+                if !listing.contains(&quote) {
+                    return Err("Preference evidence is absent from the listing".into());
+                }
+                if status == "supported" {
+                    supported += weight;
+                    supported_count += 1;
+                } else {
+                    contradicted_count += 1;
+                }
+                Some(quote)
             }
             "supported" | "contradicted" => {
                 let index = item["fact_index"]
@@ -346,6 +379,9 @@ fn validate(
                     .ok_or("Invalid qualification reference")? as usize;
                 if status == "supported" {
                     supported += weight;
+                    supported_count += 1;
+                } else {
+                    contradicted_count += 1;
                 }
                 Some(facts[index - 1].clone())
             }
@@ -369,6 +405,7 @@ fn validate(
     let lower = round(supported, total);
     let upper = round(supported + unknown, total);
     let score = round(supported * 2 + unknown, total * 2);
+    let summary = format!("{supported_count} supported, {unknown_count} unknown, {contradicted_count} contradicted criteria in the model's rubric.");
     Ok(
         json!({"score":score,"score_range":{"lower":lower,"upper":upper},"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v1","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
     )
@@ -526,6 +563,47 @@ mod tests {
             assessment.is_ok(),
             "semantic selection did not produce a valid assessment"
         );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_job_fit_repeatability_on_fictional_candidate() {
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let facts = vec![
+            "Built accessible web interfaces for screen-reader users".into(),
+            "Maintained backend services in Python for three years".into(),
+            "Lives in Berlin and prefers remote work".into(),
+        ];
+        let listing = "Example Labs seeks a software engineer. Required: Python, SQL and experience with web accessibility. Preferred: cloud deployment. The role is remote within Germany.";
+        let preferences = "Remote work is required; I prefer accessible product development.";
+        let mut scores = Vec::new();
+        for run in 1..=3 {
+            let result = assess(&mut model, &facts, preferences, listing);
+            println!("repeatability run {run}: {result:?}");
+            if let Ok(assessment) = result {
+                scores.push(assessment["score"].as_u64().unwrap());
+            }
+        }
+        println!("valid runs: {}; scores: {scores:?}", scores.len());
+        assert_eq!(scores.len(), 3, "all assessments must validate");
     }
 
     #[test]
@@ -823,6 +901,35 @@ mod tests {
         let mut bad = valid;
         bad["criteria"][0]["fact_index"] = json!(2);
         assert!(validate(bad, &facts, "", "Python research role").is_err());
+    }
+
+    #[test]
+    fn preference_needs_listing_evidence_and_summary_follows_rubric() {
+        let facts = vec!["Prefers remote work".to_owned()];
+        let listing = "This is a remote role in Germany.";
+        let preference = "Remote work is required";
+        let mut value = json!({"summary":"Every requirement is met", "criteria":[
+            {"source":"preference","excerpt":"Remote work is required","importance":"required","status":"supported","fact_index":1,"explanation":"The candidate prefers remote work"},
+            {"source":"listing","excerpt":"Germany","importance":"preferred","status":"unknown","fact_index":null,"explanation":"Location needs review"}
+        ]});
+        let uncertain = validate(value.clone(), &facts, preference, listing).unwrap();
+        assert_eq!(uncertain["rubric"][0]["status"], "unknown");
+        assert_eq!(uncertain["score"], 50);
+        value["criteria"][0]["fact_index"] = Value::Null;
+        value["criteria"][0]["listing_evidence"] = json!("onsite role");
+        let uncertain = validate(value.clone(), &facts, preference, listing).unwrap();
+        assert_eq!(uncertain["rubric"][0]["status"], "unknown");
+        value["criteria"][0]["listing_evidence"] = json!("remote role in Germany");
+        let assessment = validate(value, &facts, preference, listing).unwrap();
+        assert_eq!(assessment["score"], 88);
+        assert_eq!(
+            assessment["summary"],
+            "1 supported, 1 unknown, 0 contradicted criteria in the model's rubric."
+        );
+        assert_eq!(
+            assessment["evidence"][0]["qualification"],
+            "remote role in Germany"
+        );
     }
 
     #[test]
