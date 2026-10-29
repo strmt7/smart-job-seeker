@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Unclassified model batches — 2026-10-29
+
+- If an active model's sensitivity review cannot be obtained for a batch, its fields now remain manual-only for that review session, including fields with exact autocomplete hints. Other successfully reviewed batches remain usable. Missing or invalid review lists still get one bounded repair; runtime failures are not retried. The session reports that classification is unavailable, rather than asserting that each field is sensitive. This change does not alter the separately available offline exact-hint mode when no model is selected.
+- Tests cover an invalid repair alongside a valid second batch, an unreachable model, and propagation into the form preview. The web suite passed 185 tests with 57 live/browser tests ignored. The local-model repair and fictional Portuguese browser/prefill/vision fixtures passed separately with resident `qwen3.5:9b` after RAM/residency preflight. Web Clippy and formatting passed with one Cargo job.
+- A valid model review can still miss sensitive fields or flag ordinary ones; offline hints are not a sensitivity classifier. No real employer page or submission was exercised, and peak resource use was not measured.
+
 ## Bounded form-sensitivity repair — 2026-10-29
 
 - When a mapping response is received but its sensitivity-review list is missing or malformed, the app now makes one bounded local repair request using field descriptions without candidate profile values. Valid known flags from either response are retained. If repair fails or is invalid, the existing warning remains and exact fallback may still be offered; model inference failure itself is not retried by this mechanism.

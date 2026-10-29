@@ -1211,6 +1211,56 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("Model flagged a field")));
     }
+
+    #[test]
+    fn unavailable_model_marks_unreviewed_fields_manual_in_preview() {
+        struct Unavailable;
+        impl Inference for Unavailable {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Err(InferenceError::RuntimeUnreachable("fictional".into()))
+            }
+        }
+        let schema = FormSchema {
+            origin: "https://example.test".into(),
+            fields: vec![waypoint_applications::form_mapping::FormField {
+                selector: "#question".into(),
+                label: "A question".into(),
+                field_type: FormFieldType::Text,
+                required: true,
+                sensitive: false,
+                autocomplete: Some("email".into()),
+            }],
+            multi_step: false,
+            steps: 1,
+        };
+        let live = LiveForm {
+            origin: schema.origin.clone(),
+            schema: schema.clone(),
+            walls: vec![],
+        };
+        let preview = suggest_for_live_form(
+            live,
+            &mut Unavailable,
+            &json!({"email":"avery@example.invalid"}),
+        )
+        .unwrap();
+        assert_eq!(preview.schema, schema);
+        assert!(preview.suggestions.is_empty());
+        assert!(preview.model_review_selectors.contains("#question"));
+        assert!(preview.fields_for_review()[0].sensitive);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|warning| warning.contains("Sensitivity review unavailable")));
+    }
     #[test]
     fn wall_stops_before_suggestions() {
         let preview = inspect_and_suggest(
