@@ -237,6 +237,11 @@
 - Draft freshness now hashes active claims one row at a time through the shared sealed-text read path, rather than building a full active-fact vector. The digest includes reviewed and unreviewed claims and changes after additions or corrections. SQLite may still perform internal sorting, and other data such as the document and job description is read separately; peak memory has not been measured.
 - With one build job and one test thread, 46 store tests, the encrypted-workspace fact/digest fixture, draft-context and draft tests, and web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Active qualification reads — 2026-10-29
+
+- Active-fact reads filter superseded rows in SQLite before unsealing, and single-claim lookups use an ID predicate, both through the shared sealed-text reader. This removes the previous full-history vector and repeated linear supersession scans from these paths. Active results still occupy memory and SQLite can use temporary storage; performance and peak memory were not measured.
+- With one build job and one test thread, all 47 store tests passed before the final targeted-query adjustment; afterward six store work tests, the encrypted-workspace fixture and web-app Clippy passed. No live employer site or model was tested. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

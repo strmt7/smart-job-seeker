@@ -133,6 +133,7 @@ impl Store {
         self.visit_claims(
             reviewed_active,
             reviewed_active,
+            None,
             limit,
             max_text_bytes,
             |claim| out.push(claim),
@@ -145,31 +146,42 @@ impl Store {
         &self,
         active_only: bool,
         reviewed_only: bool,
+        target_id: Option<&str>,
         limit: Option<usize>,
         max_text_bytes: usize,
         mut visit: impl FnMut(StoredClaim),
     ) -> Result<(), StoreError> {
-        let mut stmt = self.conn.prepare(
+        let target_clause = if target_id.is_some() {
+            "id=?3"
+        } else {
+            "?3 IS NULL"
+        };
+        let query = format!(
             "SELECT id,profile_revision,text,text_sealed,status,source_kind,requires_review,supersedes
              FROM claims WHERE (?1=0 OR id NOT IN
                (SELECT supersedes FROM claims WHERE supersedes IS NOT NULL))
                AND (?2=0 OR requires_review=0)
-             ORDER BY profile_revision DESC, id ASC",
+               AND {target_clause}
+             ORDER BY profile_revision DESC, id ASC"
+        );
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt.query_map(
+            params![active_only as i64, reviewed_only as i64, target_id],
+            |r| {
+                let plain: String = r.get(2)?;
+                let sealed: Option<Vec<u8>> = r.get(3)?;
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)? as u64,
+                    plain,
+                    sealed,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)? != 0,
+                    r.get::<_, Option<String>>(7)?,
+                ))
+            },
         )?;
-        let rows = stmt.query_map([active_only as i64, reviewed_only as i64], |r| {
-            let plain: String = r.get(2)?;
-            let sealed: Option<Vec<u8>> = r.get(3)?;
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)? as u64,
-                plain,
-                sealed,
-                r.get::<_, String>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, i64>(6)? != 0,
-                r.get::<_, Option<String>>(7)?,
-            ))
-        })?;
         let mut accepted = 0usize;
         for row in rows {
             if limit.is_some_and(|limit| accepted >= limit) {
@@ -200,7 +212,7 @@ impl Store {
     /// Hash active claim content one row at a time, including unreviewed claims.
     pub fn active_claims_digest(&self) -> Result<String, StoreError> {
         let mut digest = waypoint_domain::sha256_hex(b"waypoint-active-claims-v1");
-        self.visit_claims(true, false, None, usize::MAX, |claim| {
+        self.visit_claims(true, false, None, None, usize::MAX, |claim| {
             let item = serde_json::json!({"previous":digest,"id":claim.id,"text":claim.text,"requires_review":claim.requires_review}).to_string();
             digest = waypoint_domain::sha256_hex(item.as_bytes());
         })?;
@@ -209,17 +221,20 @@ impl Store {
 
     /// Claims that are still in force (not superseded) at the current revision.
     pub fn active_claims(&self) -> Result<Vec<StoredClaim>, StoreError> {
-        let all = self.all_claims()?;
-        // Owned copies: the supersession set must outlive the borrow of `all`.
-        let superseded: Vec<String> = all.iter().filter_map(|c| c.supersedes.clone()).collect();
-        Ok(all
-            .into_iter()
-            .filter(|c| !superseded.contains(&c.id))
-            .collect())
+        let mut active = Vec::new();
+        self.visit_claims(true, false, None, None, usize::MAX, |claim| {
+            active.push(claim)
+        })?;
+        Ok(active)
     }
 
+    /// Lookup includes superseded claims so corrections retain their history.
     pub fn claim(&self, id: &str) -> Result<Option<StoredClaim>, StoreError> {
-        Ok(self.all_claims()?.into_iter().find(|c| c.id == id))
+        let mut found = None;
+        self.visit_claims(false, false, Some(id), Some(1), usize::MAX, |claim| {
+            found = Some(claim)
+        })?;
+        Ok(found)
     }
 
     /* ---------------------------- profile revision -------------------------- */
@@ -496,6 +511,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn active_and_targeted_reads_match_full_history_across_corrections() {
+        let mut store = Store::in_memory().unwrap();
+        for index in 0..120 {
+            let mut item = claim(&format!("c{index}"), index + 1, &format!("Fact {index}"));
+            if index > 0 && index % 3 == 0 {
+                item.supersedes = Some(format!("c{}", index - 1));
+            }
+            if index % 7 == 0 {
+                item.requires_review = true;
+            }
+            store.insert_claim(&item).unwrap();
+        }
+        let history = store.all_claims().unwrap();
+        let superseded: std::collections::HashSet<_> = history
+            .iter()
+            .filter_map(|item| item.supersedes.as_deref())
+            .collect();
+        let expected: Vec<_> = history
+            .iter()
+            .filter(|item| !superseded.contains(item.id.as_str()))
+            .cloned()
+            .collect();
+        assert_eq!(store.active_claims().unwrap(), expected);
+        for id in ["c0", "c2", "c119", "missing"] {
+            assert_eq!(
+                store.claim(id).unwrap(),
+                history.iter().find(|item| item.id == id).cloned()
+            );
+        }
+    }
     #[test]
     fn claims_roundtrip_and_supersession_hides_the_old_fact() {
         let mut s = Store::in_memory().unwrap();
