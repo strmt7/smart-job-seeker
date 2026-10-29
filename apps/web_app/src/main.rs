@@ -281,6 +281,24 @@ fn select_fit_facts(facts: &[String], listing: &str) -> Vec<String> {
         .collect()
 }
 
+/// Select reviewed evidence relevant to the listing without loading the full fact history.
+fn draft_qualifications(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    kind: &str,
+) -> Result<Vec<String>, String> {
+    let (mut facts, _, _, _) = fit_inputs(ws, job)?;
+    match kind {
+        "cv" => facts.truncate(18),
+        "cover_letter" => {}
+        _ => return Err("Unknown draft type".into()),
+    }
+    if facts.is_empty() {
+        return Err("Add verified qualifications before drafting".into());
+    }
+    Ok(facts)
+}
+
 fn document_visual_context(ws: &Workspace, job: &JobIdentityId) -> Result<String, String> {
     let (facts, _, listing, _) = fit_inputs(ws, job)?;
     Ok(format!(
@@ -3769,16 +3787,7 @@ fn serve(
             ) {
                 return Err("Shortlist the job before drafting".into());
             }
-            let claims = ws.facts().map_err(|e| e.to_string())?;
-            let mut facts: Vec<String> = claims
-                .into_iter()
-                .filter(|f| !f.requires_review && f.text.len() <= 1000)
-                .take(if kind == "cv" { 18 } else { 25 })
-                .map(|f| f.text)
-                .collect();
-            if facts.is_empty() {
-                return Err("Add verified qualifications before drafting".into());
-            }
+            let mut facts = draft_qualifications(ws, &id, kind)?;
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(text) => {
                     serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?
@@ -4487,6 +4496,35 @@ mod tests {
             &[json!({"before":"Original", "after":"Manual"})]
         )
         .is_ok());
+    }
+    #[test]
+    fn draft_qualifications_prioritize_reviewed_relevant_facts() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Quantum researcher","employer":"Fixture","description":"Quantum optics research"}), 1).unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        for index in 0..25 {
+            ws.add_fact(
+                &format!("Unrelated experience {index}"),
+                waypoint_workspace::FactOrigin::UserAttested,
+            )
+            .unwrap();
+        }
+        ws.add_fact(
+            "Quantum optics laboratory research",
+            waypoint_workspace::FactOrigin::UserAttested,
+        )
+        .unwrap();
+        ws.add_fact(
+            "Quantum optics unreviewed claim",
+            waypoint_workspace::FactOrigin::ModelInferred,
+        )
+        .unwrap();
+        for kind in ["cv", "cover_letter"] {
+            let facts = draft_qualifications(&ws, &job, kind).unwrap();
+            assert!(facts.contains(&"Quantum optics laboratory research".to_owned()));
+            assert!(!facts.iter().any(|fact| fact.contains("unreviewed claim")));
+            assert!(facts.len() <= if kind == "cv" { 18 } else { 20 });
+        }
     }
     #[test]
     fn fit_input_digest_changes_when_preferences_change() {

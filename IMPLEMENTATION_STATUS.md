@@ -227,6 +227,11 @@
 - An active draft can be discovered after a lost start response; the latest completed result can be replayed for ten minutes in the running process, with context rechecked on status reads. Expiration is applied on the next poll or a new draft, not by a background timer. Draft content is not persisted by this recovery cache.
 - With one build job and one test thread, two draft tests, the recovery UI fixture and JavaScript syntax checks passed. Web-app Clippy passed before the final cache-clear and test additions. No live model, installed-app startup, employer site or peak resources were measured. No application was sent.
 
+## Job-relevant drafting qualifications — 2026-10-29
+
+- Drafting selects up to 18 reviewed qualifications for a CV or 20 for a cover letter from the first 500 eligible facts using word overlap with the listing. This can miss relevant facts without shared terms or beyond the limit; the interface states the limitation. The draft context digest still uses the full active fact read and is not a bounded-memory guarantee.
+- With one build job and one test thread, the relevant-fact selection fixture, two draft tests, web-app Clippy and JavaScript syntax passed. A synthetic Playwright/Edge fixture with the application stylesheet displayed the notice at 1200 px and 375 px without page errors; Browser plugin not available. No live model, employer site or peak resources were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
