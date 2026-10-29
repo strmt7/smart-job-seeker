@@ -8,6 +8,15 @@ struct Task {
     result: Option<Result<Vec<String>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+pub fn pending() -> Result<Option<String>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Search planning unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone()))
+}
 
 pub fn start(
     id: String,
@@ -45,18 +54,28 @@ pub fn start(
 
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Search planning unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|task| task.id == id)
-        .ok_or("Search plan not found")?;
-    match task.result.take() {
+    let Some(task) = tasks.as_ref().filter(|task| task.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Search planning unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or("Search plan not found".into());
+    };
+    match task.result.clone() {
         None => Ok(json!({"status":"running"})),
         Some(result) => {
+            let terminal = match result {
+                Ok(queries) => json!({"status":"complete","queries":queries}),
+                Err(error) => json!({"status":"failed","error":error}),
+            };
+            *COMPLETED
+                .lock()
+                .map_err(|_| "Search planning unavailable")? =
+                Some((id.to_owned(), terminal.clone()));
             *tasks = None;
-            match result {
-                Ok(queries) => Ok(json!({"status":"complete","queries":queries})),
-                Err(error) => Ok(json!({"status":"failed","error":error})),
-            }
+            Ok(terminal)
         }
     }
 }
@@ -147,5 +166,48 @@ mod tests {
         )
         .is_err());
         assert!(generate(&mut Fake(json!({"queries":[]})), &facts, "").is_err());
+    }
+
+    #[test]
+    fn completed_plans_can_be_replayed_after_a_lost_response() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-plan".into(),
+            result: Some(Ok(vec!["Rust engineer".into()])),
+        });
+        assert_eq!(pending().unwrap().as_deref(), Some("fictional-plan"));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/search-plan/pending HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
+        crate::serve(
+            &mut server,
+            &mut workspace,
+            &mut None,
+            "fixture-token",
+            port,
+        )
+        .unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let response: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(response["task_id"], "fictional-plan");
+        let first = poll("fictional-plan").unwrap();
+        assert_eq!(first["queries"], json!(["Rust engineer"]));
+        assert_eq!(poll("fictional-plan").unwrap(), first);
+        assert!(pending().unwrap().is_none());
+        *TASK.lock().unwrap() = Some(Task {
+            id: "failed-plan".into(),
+            result: Some(Err("fixture failure".into())),
+        });
+        let failed = poll("failed-plan").unwrap();
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(poll("failed-plan").unwrap(), failed);
+        assert!(poll("fictional-plan").is_err());
     }
 }

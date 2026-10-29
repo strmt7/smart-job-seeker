@@ -1,10 +1,16 @@
 # Implementation checkpoint
 
+## Search planner input checkpoint — 2026-10-29
+
+- Local search planning now reads at most 20 eligible reviewed facts through the existing bounded sealed-data path instead of loading the entire fact history. Proposed phrases still require user review before a search.
+- A pending-plan endpoint and a one-result in-memory replay let the UI recover an active or completed plan after a lost response or tab refresh. They do not survive an application restart and do not launch web searches automatically.
+- The encrypted-workspace test passed with more than 20 fictional facts, a corrected fact, an unreviewed fact and an oversized fact; the selected 20 matched the prior full-read ordering. Two planner tests and the planner-recovery UI test passed. A synthetic headless Edge fixture displayed fictional recovered phrases at 1200 and 375 pixels without issuing a new planning request. No real local model or public provider was exercised for these changes. Peak memory was not measured, and other paths may still load larger data sets.
+
 ## Search coverage reporting checkpoint — 2026-10-29
 
 - Search results now distinguish an omitted engine-availability report from an explicit zero and show examined versus provider-returned result counts. The denominator is one provider response, not global market coverage.
-- The latest completed single-search result or failure remains available for repeat status reads, so a lost response need not discard its candidates. A pending-task endpoint lets the web UI resume a search whose start response was lost while its task remains active or unread. Only one terminal result is retained in memory; recovery does not survive an app restart.
-- Four web-search tests, the search coverage UI formatter test and web Clippy passed; the existing visual-comparison UI test also passed. A local HTTP handler test recovered a fictional pending task, and a synthetic headless Edge page with mocked responses resumed it without another start request. A separate synthetic fixture displayed the unavailable-status wording at 1200 and 375 pixels. These checks did not test a running app or a public search provider. Hosted CI and peak resource use were not measured.
+- The latest completed single-search result or failure remains available for repeat status reads, so a lost response need not discard its candidates. A pending-task endpoint lets the web UI resume a search whose start response was lost while its task remains active or unread. The tab retains its task ID across refreshes and prioritizes a newer active task. Only one terminal result is retained in memory; recovery does not survive an app restart.
+- Four web-search tests, the search coverage and single-search recovery UI tests, and web Clippy passed; the existing visual-comparison UI test also passed. A local HTTP handler test recovered a fictional pending task, and a synthetic headless Edge page with mocked responses prioritized a newer task and restored its result across two reloads without another start request. A separate synthetic fixture displayed the unavailable-status wording at 1200 and 375 pixels. These checks did not test a running app or a public search provider. Hosted CI and peak resource use were not measured.
 
 ## Source-only listing capture checkpoint — 2026-10-29
 

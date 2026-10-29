@@ -1682,11 +1682,9 @@ fn serve(
         }
         "/api/search-plan/start" => {
             let facts: Vec<String> = ws
-                .facts()
+                .reviewed_facts_bounded(20, 1000)
                 .map_err(|e| e.to_string())?
                 .into_iter()
-                .filter(|fact| !fact.requires_review && fact.text.len() <= 1000)
-                .take(20)
                 .map(|fact| fact.text)
                 .collect();
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
@@ -1710,6 +1708,13 @@ fn serve(
             let id = random_id()?;
             search_planner::start(id.clone(), model, facts, instructions)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/search-plan/pending" => {
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":search_planner::pending()?}),
+            );
         }
         "/api/search-plan/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
@@ -4264,6 +4269,13 @@ mod tests {
             .unwrap();
         ws.add_fact("Fictional reviewed skill", FactOrigin::UserAttested)
             .unwrap();
+        for index in 0..25 {
+            ws.add_fact(
+                &format!("Fictional skill {index}"),
+                FactOrigin::UserAttested,
+            )
+            .unwrap();
+        }
         let expected: Vec<_> = ws
             .facts()
             .unwrap()
@@ -4282,6 +4294,14 @@ mod tests {
         assert!(actual.contains(&"Fictional correction".to_string()));
         assert!(!actual.contains(&"Fictional original".to_string()));
         assert!(!actual.contains(&"Unreviewed model text".to_string()));
+        let planning: Vec<_> = ws
+            .reviewed_facts_bounded(20, 1000)
+            .unwrap()
+            .into_iter()
+            .map(|fact| fact.text)
+            .collect();
+        assert_eq!(planning.len(), 20);
+        assert_eq!(planning, expected[..20]);
         assert!(ws.reviewed_facts_bounded(0, 1000).unwrap().is_empty());
     }
 
