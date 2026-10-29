@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Review selection for repeated labels — 2026-10-29
+
+- Form inspection responses now identify selectors with identical labels. Suggestions for these controls remain available, but the interface leaves them unchecked by default and asks the user to select or edit each after reviewing it. This is a presentation safeguard, not proof that a selected mapping is correct; exact-label comparison can miss differently worded or differently cased ambiguities.
+- A fictional local browser form confirmed that two same-label email controls can both receive suggestions and are identified as repeated. A focused UI test confirmed that those selectors are not preselected. The web suite passed (199 passed, 65 ignored), as did web Clippy and formatting. The browser fixture did not submit an application; peak resources were not measured.
+
 ## Repeated form labels — 2026-10-29
 
 - Form review now distinguishes repeated identical labels by their order in the inspected schema, both in the field list and in required-field coverage messages. The site's original label and schema remain unchanged for mapping, approval and browser verification. Numbering is a review aid, not proof that visually similar fields have the same meaning.

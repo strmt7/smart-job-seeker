@@ -1,0 +1,13 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function preselectFormSuggestion(');
+const end = source.indexOf('\nfunction formRequiresVisibleBrowser(', start);
+assert.ok(start >= 0 && end > start);
+const preselect = vm.runInNewContext(`(${source.slice(start, end)})`);
+assert.equal(preselect('#first', ['#first', '#second']), false);
+assert.equal(preselect('#other', ['#first', '#second']), true);
+assert.equal(preselect('#other', null), true);
+assert.ok(source.includes('box.checked=preselectFormSuggestion(field.selector,result.repeated_label_selectors)'));
+console.log('Repeated form selection checks passed.');

@@ -21,6 +21,22 @@ pub struct FormPreview {
 }
 
 impl FormPreview {
+    pub fn repeated_label_selectors(&self) -> Vec<String> {
+        self.schema
+            .fields
+            .iter()
+            .filter(|field| {
+                self.schema
+                    .fields
+                    .iter()
+                    .filter(|other| other.label == field.label)
+                    .count()
+                    > 1
+            })
+            .map(|field| field.selector.clone())
+            .collect()
+    }
+
     /// Preserve the original schema for change detection and approval hashes;
     /// only the UI copy carries conservative model review flags.
     pub fn fields_for_review(&self) -> Vec<waypoint_applications::form_mapping::FormField> {
@@ -1109,6 +1125,10 @@ mod tests {
             model_review_selectors: Default::default(),
         };
         let shown = preview.fields_for_review();
+        assert_eq!(
+            preview.repeated_label_selectors(),
+            ["#personal-email", "#work-email"]
+        );
         assert_eq!(shown[0].label, "Email (field 1 of 2)");
         assert_eq!(shown[1].label, "Email (field 2 of 2)");
         let (filled, missing) = fill_coverage(&preview);
@@ -1160,6 +1180,14 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason == "Required field needs review: Email (field 2 of 2)"));
+        let mapped = suggest_without_model(
+            driver.inspect_current().unwrap(),
+            &serde_json::json!({"email":"avery@example.invalid"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        assert_eq!(mapped.suggestions.len(), 2);
+        assert_eq!(mapped.repeated_label_selectors().len(), 2);
         assert!(driver
             .trace
             .iter()
