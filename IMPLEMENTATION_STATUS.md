@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## DOCX inline boundaries — 2026-10-29
+
+- Exact DOCX replacement now treats inline images, hyperlinks, Word fields, references and several other non-text structures as boundaries. It still supports text split across ordinary Word runs and edits wholly inside a hyperlink. A selected passage that crosses one of these boundaries now requires manual editing rather than matching text that was only concatenated by the parser.
+- Fictional XML fixtures verified the boundary behavior and preservation of the hyperlink and drawing elements. The web suite passed (200 passed, 65 ignored), as did web Clippy and formatting. This checkpoint did not render or visually inspect a real résumé and does not establish layout fidelity across DOCX files.
+
 ## Review selection for repeated labels — 2026-10-29
 
 - Form inspection responses now identify selectors with identical labels. Suggestions for these controls remain available, but the interface leaves them unchecked by default and asks the user to select or edit each after reviewing it. This is a presentation safeguard, not proof that a selected mapping is correct; exact-label comparison can miss differently worded or differently cased ambiguities.

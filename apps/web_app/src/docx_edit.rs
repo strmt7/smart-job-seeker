@@ -10,6 +10,25 @@ struct Node {
     tag_end: usize,
     text: String,
 }
+fn is_inline_boundary(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"tab"
+            | b"br"
+            | b"cr"
+            | b"drawing"
+            | b"pict"
+            | b"object"
+            | b"hyperlink"
+            | b"fldSimple"
+            | b"fldChar"
+            | b"instrText"
+            | b"footnoteReference"
+            | b"endnoteReference"
+            | b"commentReference"
+            | b"sym"
+    )
+}
 fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
     let mut reader = NsReader::from_reader(xml);
     let mut stack: Vec<Vec<Node>> = Vec::new();
@@ -70,10 +89,16 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                         text,
                     });
             }
-            Event::Empty(ref e)
-                if word
-                    && matches!(e.local_name().as_ref(), b"tab" | b"br" | b"cr")
-                    && !stack.is_empty() =>
+            Event::Start(ref e) | Event::Empty(ref e)
+                if word && is_inline_boundary(e.local_name().as_ref()) && !stack.is_empty() =>
+            {
+                let current = stack.last_mut().unwrap();
+                if !current.is_empty() {
+                    blocks.push(std::mem::take(current));
+                }
+            }
+            Event::End(ref e)
+                if word && is_inline_boundary(e.local_name().as_ref()) && !stack.is_empty() =>
             {
                 let current = stack.last_mut().unwrap();
                 if !current.is_empty() {
@@ -297,6 +322,34 @@ mod tests {
         let doc = writer.finish().unwrap().into_inner();
         assert!(replace(&doc, "Repeated", "Changed").is_err());
         assert!(replace(&doc, "RepeatedRepeated", "Changed").is_err());
+    }
+
+    #[test]
+    fn replacement_does_not_cross_inline_images_or_hyperlinks() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Research</w:t><w:drawing/></w:r><w:r><w:t>Engineer</w:t></w:r></w:p><w:p><w:r><w:t>Visit </w:t></w:r><w:hyperlink><w:r><w:t>Example</w:t></w:r><w:r><w:t> Site</w:t></w:r></w:hyperlink><w:r><w:t> today</w:t></w:r></w:p></w:body></w:document>"#;
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(xml.as_bytes()).unwrap();
+        let doc = writer.finish().unwrap().into_inner();
+        assert!(replace(&doc, "ResearchEngineer", "Changed").is_err());
+        assert!(replace(&doc, "Visit Example", "Changed").is_err());
+        assert!(replace(&doc, "Site today", "Changed").is_err());
+        let edited = replace(&doc, "Example Site", "Portfolio").unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(edited)).unwrap();
+        let mut body = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.contains("<w:hyperlink>"));
+        assert!(body.contains("Portfolio"));
+        assert!(body.contains("<w:drawing/>"));
     }
 
     #[test]
