@@ -68,7 +68,7 @@ nav a.active{padding:22px 0}
 
 .match-details{margin:10px 0;font-size:13px;color:#475a68}.match-details summary{cursor:pointer;color:#116b70;font-weight:700}.match-details ul{padding-left:20px}.match-details li{overflow-wrap:anywhere}.match-details button{background:#e8f3f1;color:#115c60;padding:7px 10px}.fit-output{overflow-wrap:anywhere}
 
-.ai-score{background:#eaeafa;color:#4b4685}.ai-score[hidden]{display:none}
+.ai-score{background:#eaeafa;color:#4b4685;white-space:normal;overflow-wrap:anywhere;text-align:right;max-width:14rem}.ai-score[hidden]{display:none}
 
 .manual-answer{display:block;margin:10px 0;color:#344b58;font-size:13px}.manual-answer input,.manual-answer textarea,.manual-answer select{display:block;width:100%;margin-top:5px}
 .multi-answer .multi-choice input{display:inline-block;flex:none;width:auto;margin:0}

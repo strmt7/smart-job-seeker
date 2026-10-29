@@ -1,0 +1,15 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function fitBadgeLabel('));
+assert.ok(line, 'fit badge formatter must exist');
+const label = vm.runInNewContext(`(${line})`);
+assert.equal(label(55, {lower: 10, upper: 100}), '55% AI estimate · 10–100% range');
+assert.equal(label(75, {lower: 75, upper: 75}), '75% AI estimate · 75–75% range');
+assert.equal(label(55, null), '55% AI estimate · range unavailable');
+assert.equal(label(55, {lower: 60, upper: 100}), '55% AI estimate · range unavailable');
+assert.equal(label(-1, {lower: 0, upper: 100}), 'Estimate unavailable');
+assert.ok(source.includes('fitBadgeLabel(item.score,item.score_range)'), 'batch badges must use their stored range');
+assert.ok(source.includes('fitBadgeLabel(score,result.assessment?.score_range)'), 'new assessments must use their range');
+console.log('Fit badge UI checks passed.');

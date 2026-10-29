@@ -288,6 +288,7 @@ fn validate(
         .as_array()
         .filter(|items| !items.is_empty() && items.len() <= 12)
         .ok_or("Assessment must contain 1 to 12 criteria")?;
+    let criteria_limit_reached = criteria.len() == 12;
     let mut rubric = Vec::new();
     let mut evidence = Vec::new();
     let mut concerns = Vec::new();
@@ -368,7 +369,7 @@ fn validate(
     let upper = round(supported + unknown, total);
     let score = round(supported * 2 + unknown, total * 2);
     Ok(
-        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"scoring_version":"criteria-v1","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
+        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v1","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
     )
 }
 
@@ -860,5 +861,20 @@ mod tests {
         let mut empty = criteria;
         empty["criteria"] = json!([]);
         assert!(validate(empty, &facts, "", listing).is_err());
+    }
+
+    #[test]
+    fn full_rubric_reports_that_the_criterion_limit_was_reached() {
+        let labels: Vec<_> = (0..12).map(|i| format!("Requirement {i:02}")).collect();
+        let items: Vec<_> = labels.iter().map(|label| json!({"source":"listing","excerpt":label,"importance":"required","status":"unknown","fact_index":null,"explanation":"Needs review"})).collect();
+        let result = validate(
+            json!({"summary":"Review","criteria":items}),
+            &[],
+            "",
+            &labels.join("; "),
+        )
+        .unwrap();
+        assert_eq!(result["criteria_limit_reached"], true);
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
     }
 }

@@ -1833,7 +1833,7 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
-                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"]})
+                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"]})
                     }
                     Ok(value) => json!({"id":id.as_str(),"status":value["status"]}),
                     Err(_) => json!({"id":id.as_str(),"status":"unavailable"}),
