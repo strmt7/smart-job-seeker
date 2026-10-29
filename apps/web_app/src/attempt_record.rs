@@ -824,6 +824,8 @@ pub fn capture_page(
     let (width, height) = driver.page_dimensions().map_err(|e| e.to_string())?;
     let width_limited = width.min(2048.0);
     let capped_height = height.min(12000.0);
+    let capture_id = crate::random_id()?;
+    record.event(json!({"type":"page_capture_started","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height}))?;
     let mut y = 0.0;
     let mut count = 0;
     while y < capped_height {
@@ -832,12 +834,12 @@ pub fn capture_page(
             .screenshot_segment(width_limited, y, segment_height)
             .map_err(|e| e.to_string())?;
         let name = record.screenshot_with_name(&image)?;
-        record.event(json!({"type":"page_capture_segment","time":timestamp,"index":count,"x":0,"y":y,"width":width_limited,"height":segment_height,"screenshot":format!("screenshots/{name}")}))?;
+        record.event(json!({"type":"page_capture_segment","time":timestamp,"capture_id":capture_id,"index":count,"x":0,"y":y,"width":width_limited,"height":segment_height,"screenshot":format!("screenshots/{name}")}))?;
         y += segment_height;
         count += 1;
     }
     let within_limits = width <= 2048.0 && height <= 12000.0;
-    record.event(json!({"type":"page_capture","time":timestamp,"page_width":width,"page_height":height,"segments":count,"full_dimensions_captured":within_limits,"note":"Page dimensions alone do not guarantee capture of hidden content or nested scrollers."}))?;
+    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":count,"full_dimensions_captured":within_limits,"note":"Page dimensions alone do not guarantee capture of hidden content or nested scrollers."}))?;
     if !within_limits {
         return Err("Page exceeded screenshot capture limits".into());
     }
@@ -1035,7 +1037,17 @@ mod tests {
             .filter(|event| event["type"] == "page_capture_segment")
             .collect();
         assert_eq!(segments.len(), 2);
+        let started = entries
+            .iter()
+            .find(|event| event["type"] == "page_capture_started")
+            .unwrap();
+        let finished = entries
+            .iter()
+            .find(|event| event["type"] == "page_capture")
+            .unwrap();
+        assert_eq!(started["capture_id"], finished["capture_id"]);
         for (index, event) in segments.iter().enumerate() {
+            assert_eq!(event["capture_id"], started["capture_id"]);
             assert_eq!(event["index"], index);
             assert_eq!(event["y"].as_f64().unwrap(), index as f64 * 2000.0);
             let name = event["screenshot"].as_str().unwrap();
@@ -1055,6 +1067,40 @@ mod tests {
                 .count(),
             3
         );
+        // Force a collision on the second segment. The first segment and its
+        // capture ID must remain attributable even without a completion event.
+        fs::write(record.dir.join("screenshots/0005.png"), b"existing").unwrap();
+        assert!(capture_page(&mut driver, &mut record, 3).is_err());
+        assert_eq!(
+            fs::read(record.dir.join("screenshots/0005.png")).unwrap(),
+            b"existing"
+        );
+        assert!(capture_page(&mut driver, &mut record, 4).is_ok());
+        let entries: Vec<Value> = fs::read_to_string(record.dir.join("events.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let starts: Vec<_> = entries
+            .iter()
+            .filter(|event| event["type"] == "page_capture_started")
+            .collect();
+        assert_eq!(starts.len(), 3);
+        assert_ne!(starts[1]["capture_id"], starts[2]["capture_id"]);
+        let failed_id = &starts[1]["capture_id"];
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|event| event["type"] == "page_capture_segment"
+                    && &event["capture_id"] == failed_id)
+                .count(),
+            1
+        );
+        assert!(!entries
+            .iter()
+            .any(|event| event["type"] == "page_capture" && &event["capture_id"] == failed_id));
+        assert!(entries.iter().any(|event| event["type"] == "page_capture"
+            && event["capture_id"] == starts[2]["capture_id"]));
     }
 
     #[test]

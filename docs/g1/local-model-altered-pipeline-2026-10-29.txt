@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.41s
+     Running unittests src\main.rs (target\debug\deps\waypoint_web-7a4042ab05987d90.exe)
+
+running 1 test
+test form_preview::tests::live_local_model_detects_a_changed_fictional_field ... fictional preview: mappings=[ProposedMapping { field_selector: "#given", value: Text("Avery") }, ProposedMapping { field_selector: "#email", value: Text("avery@example.invalid") }]; review=[]
+fictional fill result: Err("After filling, Your given name needs review: A previously filled field changed or became invalid"); completed: [Object {"label": String("Your given name"), "selector": String("#given")}, Object {"label": String("Email address"), "selector": String("#email")}]
+fictional post-fill visual review: {"comparisons":[{"expected":"Avery","label":"Your given name","status":"differs_from_transcription"},{"expected":"avery@example.invalid","label":"Email address","status":"matches_transcription"}],"observation_limit_reached":false,"observations":[{"label":"Your given name","visible_value":"Altered"},{"label":"Email address","visible_value":"avery@example.invalid"},{"label":"Work authorization","visible_value":""}]}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 221 filtered out; finished in 2.82s

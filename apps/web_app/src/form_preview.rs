@@ -427,6 +427,16 @@ mod tests {
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_prefills_and_visually_checks_fictional_form() {
+        exercise_local_model_form_pipeline(false);
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    fn live_local_model_detects_a_changed_fictional_field() {
+        exercise_local_model_form_pipeline(true);
+    }
+
+    fn exercise_local_model_form_pipeline(altered: bool) {
         use base64::Engine;
         use waypoint_domain::GrantId;
         let addr = "127.0.0.1:11434".parse().unwrap();
@@ -434,8 +444,11 @@ mod tests {
             waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
             4096
         );
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/form-local-model-pipeline.html");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if altered {
+            "tests/form-local-model-partial.html"
+        } else {
+            "tests/form-local-model-pipeline.html"
+        });
         let url = url::Url::from_file_path(fixture).unwrap().to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
@@ -516,10 +529,19 @@ mod tests {
                 timestamp: 1,
                 completed: &mut completed,
             },
-        )
-        .unwrap();
-        assert_eq!(filled, 2);
-        driver.verify_text_value("#given", "Avery").unwrap();
+        );
+        println!("fictional fill result: {filled:?}; completed: {completed:?}");
+        if altered {
+            assert!(
+                filled.is_err(),
+                "a field altered by the page must stop the fill"
+            );
+            assert_eq!(completed.len(), 2);
+            assert!(driver.verify_text_value("#given", "Avery").is_err());
+        } else {
+            assert_eq!(filled.unwrap(), 2);
+            driver.verify_text_value("#given", "Avery").unwrap();
+        }
         driver
             .verify_text_value("#email", "avery@example.invalid")
             .unwrap();
@@ -528,7 +550,11 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/model-eval");
         std::fs::create_dir_all(&output_dir).unwrap();
         std::fs::write(
-            output_dir.join("local-model-filled-form.png"),
+            output_dir.join(if altered {
+                "local-model-altered-form.png"
+            } else {
+                "local-model-filled-form.png"
+            }),
             base64::engine::general_purpose::STANDARD
                 .decode(&image)
                 .unwrap(),
@@ -545,9 +571,23 @@ mod tests {
         )
         .unwrap();
         println!("fictional post-fill visual review: {visual}");
-        for label in ["Your given name", "Email address"] {
-            assert!(visual["comparisons"].as_array().unwrap().iter().any(|item| item["label"] == label && item["status"] == "matches_transcription"), "visual review did not confirm {label}");
+        let comparisons = visual["comparisons"].as_array().unwrap();
+        let name = comparisons
+            .iter()
+            .find(|item| item["label"] == "Your given name")
+            .unwrap();
+        if altered {
+            assert_ne!(
+                name["status"], "matches_transcription",
+                "visual review falsely matched the altered field"
+            );
+        } else {
+            assert_eq!(name["status"], "matches_transcription");
         }
+        assert!(comparisons
+            .iter()
+            .any(|item| item["label"] == "Email address"
+                && item["status"] == "matches_transcription"));
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
         assert_eq!(
             driver.read_attribute("body", "data-submitted").unwrap(),

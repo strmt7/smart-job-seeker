@@ -1,0 +1,9 @@
+# Local model and changed-field check — 2026-10-29
+
+The ignored `live_local_model_detects_a_changed_fictional_field` test uses a local HTML fixture whose email input changes a previously filled name. It exercises model-assisted mapping, a simulated prefill grant, the production browser driver's post-fill DOM verification, screenshot capture, and local-model visual transcription. The fixture does not submit an application.
+
+In the [recorded run](local-model-altered-pipeline-2026-10-29.txt), the model mapped the fictional name and email. After both fill commands, the fixture changed the name from `Avery` to `Altered`. DOM verification returned an error requiring review. The vision model transcribed `Altered` and marked it different from the reviewed value, while the email matched. The sensitive authorization field stayed empty. The test checked the browser trace and fixture submit marker; neither indicated submission. The [screenshot](local-model-altered-form-2026-10-29.png) contains only fictional data.
+
+The attempt-record capture path now writes a capture-start event and a shared identifier on each segment and completion event. A separate local-browser fixture forced a collision on the second screenshot, verified that the first segment remained associated with an incomplete capture, and confirmed that a retry used a different identifier without overwriting the pre-existing file.
+
+The model test used local `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, with one fully GPU-resident model and a 4,096-token context. The pre-test snapshot was 23.67 GiB free system memory and 10.88 GiB dedicated GPU use; a later snapshot was 24.03 GiB and 11.05 GiB. These are snapshots, not continuous peaks. The ignored model test requires external resource preflight and uses a no-default-features build. This is one synthetic changed-field case, not proof of accuracy on real employer sites or multistep workflows.

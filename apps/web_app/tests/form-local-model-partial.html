@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fictional changing application fixture</title>
+  <style>
+    body { font: 20px Arial, sans-serif; color: #182334; background: #f3f6fa; margin: 40px; }
+    form { width: 620px; padding: 28px; background: white; border: 1px solid #c7d1df; }
+    label { display: block; margin-top: 18px; margin-bottom: 6px; }
+    input { box-sizing: border-box; width: 100%; padding: 10px; font: inherit; }
+    button { margin-top: 24px; padding: 10px 20px; font: inherit; }
+  </style>
+</head>
+<body>
+  <h1>Fictional changing application</h1>
+  <form onsubmit="event.preventDefault(); document.body.dataset.submitted = 'yes'">
+    <label for="given">Your given name</label>
+    <input id="given" type="text" required>
+    <label for="email">Email address</label>
+    <input id="email" type="email" required oninput="document.getElementById('given').value='Altered'">
+    <label for="permit">Work authorization</label>
+    <input id="permit" type="text">
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>
