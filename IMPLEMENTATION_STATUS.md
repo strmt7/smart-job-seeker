@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Numeric preference interval guard — 2026-10-29
+
+- A model-supported preference is downgraded to unknown when its single plain integer lies above the lower bound and at or below the upper bound of a plainly written two-integer interval in its cited listing excerpt. The review explanation identifies the numeric overlap. This generic conservative guard does not interpret units, signs, decimal/grouping formats, all interval expressions or semantic meaning; it cannot verify a model judgment and may require manual review even for unrelated quantities. Earlier saved fit assessments become stale.
+- In the four-case fictional live-model ambiguity benchmark using resident `qwen3.5:9b` (digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, 4096 context), the previously false 100% salary result became unknown; three cases matched expected outcomes, while the accessibility auditing case still incorrectly scored as supported. The benchmark therefore still failed at 3/4 and does not measure general accuracy. An additional counterexample prompting experiment also failed to reliably reason about the cases and was not integrated.
+- Eleven focused fit tests passed with five live tests ignored, including interval boundaries and a fictional model-response integration test. Web Clippy and formatting passed with one Cargo build job. The live benchmark was run separately after checking available RAM and model residency; peak resources, other models, real listings and application submission were not measured.
+
 ## Salary minimum range boundary — 2026-10-29
 
 - The deterministic salary constraint now reports a range that crosses the user's minimum as unknown, including when the range maximum equals the minimum. A comparable range passes only when its stated lower bound reaches the minimum; a stated maximum below the minimum fails. Missing or invalid bounds remain unknown where they do not establish the outcome. Even a stated matching range is not a guarantee of an eventual offer.

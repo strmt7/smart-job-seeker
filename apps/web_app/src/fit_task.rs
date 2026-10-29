@@ -370,11 +370,22 @@ fn compare_preferences(
         if !valid {
             return fallback;
         }
+        let preference = original["criteria"][id - 1]["excerpt"]
+            .as_str()
+            .unwrap_or("");
+        let numerical_review = status == "supported"
+            && quote
+                .as_str()
+                .is_some_and(|text| interval_straddles_number(preference, text));
         updates.push((
             id - 1,
-            status.to_owned(),
-            quote.clone(),
-            explanation.to_owned(),
+            if numerical_review { "unknown" } else { status }.to_owned(),
+            if numerical_review { Value::Null } else { quote.clone() },
+            if numerical_review {
+                "The cited numeric interval crosses the preference's stated number; check the bounds and units manually.".to_owned()
+            } else {
+                explanation.to_owned()
+            },
         ));
     }
     for (index, status, quote, explanation) in updates {
@@ -390,6 +401,41 @@ fn compare_preferences(
         }
         Err(_) => fallback,
     }
+}
+
+/// Conservatively flag an interval crossing a single stated number. This only
+/// downgrades a model judgment; it does not infer units or establish a match.
+/// Formatted or ambiguous numbers are deliberately not interpreted.
+fn interval_straddles_number(preference: &str, quote: &str) -> bool {
+    fn integers(text: &str) -> Vec<(usize, usize, u64)> {
+        let bytes = text.as_bytes();
+        let mut result = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if let Ok(number) = text[start..i].parse::<u64>() {
+                result.push((start, i, number));
+            } else {
+                return Vec::new();
+            }
+        }
+        result
+    }
+    let target = integers(preference);
+    let bounds = integers(quote);
+    if target.len() != 1 || bounds.len() != 2 {
+        return false;
+    }
+    let between = quote[bounds[0].1..bounds[1].0].to_ascii_lowercase();
+    let is_range = between.contains('-') || between.contains('–') || between.contains(" to ");
+    is_range && bounds[0].2 < target[0].2 && target[0].2 <= bounds[1].2
 }
 
 fn validate(
@@ -1140,6 +1186,43 @@ mod tests {
         assert_eq!(result["score"], 50);
         assert_eq!(result["preference_comparison"]["status"], "unavailable");
         assert_eq!(result["preference_comparison"]["listing_truncated"], true);
+
+        let preference = "At least EUR 80000 gross annually";
+        let listing = "Salary range EUR 60000 to EUR 80000 gross per year.";
+        let original = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let fallback = validate(original.clone(), &[], preference, listing).unwrap();
+        let result = compare_preferences(
+            &mut Fixture(
+                json!({"items":[{"id":1,"status":"supported","quote":listing,"explanation":"The maximum meets the minimum"}]}),
+            ),
+            original,
+            fallback,
+            &[],
+            preference,
+            listing,
+        );
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["score"], 50);
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+    }
+
+    #[test]
+    fn numeric_interval_guard_only_downgrades_clear_straddles() {
+        assert!(interval_straddles_number(
+            "At least EUR 80000 gross annually",
+            "EUR 60000 to EUR 80000 gross per year"
+        ));
+        assert!(interval_straddles_number("at least 80", "60–100"));
+        assert!(!interval_straddles_number("at least 80", "80 to 100"));
+        assert!(!interval_straddles_number("at least 80", "60 to 79"));
+        assert!(!interval_straddles_number(
+            "at least 80,000",
+            "60,000 to 80,000"
+        ));
+        assert!(!interval_straddles_number(
+            "at least 80",
+            "80 positions in 2026"
+        ));
     }
 
     #[test]
