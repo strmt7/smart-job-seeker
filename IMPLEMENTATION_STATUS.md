@@ -1,5 +1,12 @@
 # Implementation checkpoint
 
+## Preserve unchanged DOCX run formatting — 2026-10-29
+
+- For a unique exact DOCX replacement with a nonempty changed span, unchanged Unicode prefix and suffix text remain in their existing runs, so their styles are preserved. The changed span uses the first changed run's style. Pure insertions retain the earlier first-run behavior because the intended insertion style is ambiguous; a no-op returns the original bytes after uniqueness validation.
+- A fictional three-run DOCX (bold prefix, italic changed word, underlined suffix) was edited by the application, converted using the installed LibreOffice and rendered. The resulting single page was visually inspected and showed the intended text and styles. This does not establish fidelity for complex real résumés, pagination or arbitrary templates.
+- On the 100-DPI render, resident qwen3.5:9b transcribed the accented text and identified bold and underline but missed italics. On the 200-DPI render it identified all three styles but dropped the accent. These are two observations of one fictional page, not a benchmark; model visual inspection remains advisory. Peak resources were not measured.
+- The web suite passed (201 passed, 66 ignored), the styled conversion fixture was run separately, and web Clippy and formatting passed. No application was sent. The CocoIndex shared runtime remains unusable for this checkout without an isolated binding; no shared settings or registration were changed.
+
 ## DOCX inline boundaries — 2026-10-29
 
 - Exact DOCX replacement now treats inline images, hyperlinks, Word fields, references and several other non-text structures as boundaries. It still supports text split across ordinary Word runs and edits wholly inside a hyperlink. A selected passage that crosses one of these boundaries now requires manual editing rather than matching text that was only concatenated by the parser.

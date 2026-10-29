@@ -1,5 +1,6 @@
 //! Apply one exact, reviewed text replacement within a DOCX body, header or footer paragraph.
-//! Text spanning Word runs is supported; the replacement uses the first run's style.
+//! Text spanning Word runs is supported. Unchanged prefix and suffix runs are
+//! retained where possible; changed text uses the first changed run's style.
 use quick_xml::{events::Event, name::ResolveResult, NsReader};
 use std::io::{Cursor, Write};
 
@@ -116,6 +117,9 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
 }
 
 pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String> {
+    if docx.len() > 10 * 1024 * 1024 {
+        return Err("DOCX exceeds 10 MiB".into());
+    }
     if before.is_empty()
         || before.len() > 1000
         || after.len() > 4000
@@ -152,10 +156,39 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
             }
         }
     }
-    let (part_name, xml, block_index, start) =
+    let (part_name, xml, block_index, match_start) =
         found.ok_or("Original text was not found within one paragraph")?;
+    if before == after {
+        return Ok(docx.to_vec());
+    }
+    // Preserve unchanged run fragments at both ends. This is based on Unicode
+    // characters, not byte offsets, so the resulting slices remain valid UTF-8.
+    let prefix: usize = before
+        .chars()
+        .zip(after.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum();
+    let suffix: usize = before[prefix..]
+        .chars()
+        .rev()
+        .zip(after[prefix..].chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum();
+    let changed_before = &before[prefix..before.len() - suffix];
+    let (start, end, inserted_text) = if changed_before.is_empty() {
+        // Pure insertion at a run boundary has ambiguous styling. Retain the
+        // existing first-run behavior rather than guessing an adjacent style.
+        (match_start, match_start + before.len(), after)
+    } else {
+        (
+            match_start + prefix,
+            match_start + before.len() - suffix,
+            &after[prefix..after.len() - suffix],
+        )
+    };
     let blocks = parse_blocks(&xml)?;
-    let end = start + before.len();
     let mut patches: Vec<(usize, usize, Vec<u8>)> = Vec::new();
     let mut position = 0;
     let mut inserted = false;
@@ -167,7 +200,7 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
             let mut replacement = String::new();
             replacement.push_str(&node.text[..local_start]);
             if !inserted {
-                replacement.push_str(after);
+                replacement.push_str(inserted_text);
                 inserted = true;
             }
             replacement.push_str(&node.text[local_end..]);
@@ -270,6 +303,61 @@ mod tests {
         assert_eq!(style, "styles unchanged");
         assert!(replace(&doc, "missing", "new").is_err());
         assert!(replace(&doc, "engineer", "a\nb").is_err());
+    }
+
+    #[test]
+    fn unchanged_prefix_and_suffix_keep_their_run_styles() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Sénior </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>Software</w:t></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t xml:space="preserve"> Engineer</w:t></w:r></w:p></w:body></w:document>"#;
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(xml.as_bytes()).unwrap();
+        let doc = writer.finish().unwrap().into_inner();
+        let edited = replace(&doc, "Sénior Software Engineer", "Sénior Systems Engineer").unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(edited)).unwrap();
+        let mut body = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.contains(
+            r#"<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Sénior </w:t></w:r>"#
+        ));
+        assert!(body.contains(r#"<w:r><w:rPr><w:i/></w:rPr><w:t>Systems</w:t></w:r>"#));
+        assert!(body.contains(r#"<w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t xml:space="preserve"> Engineer</w:t></w:r>"#));
+        assert_eq!(
+            replace(&doc, "Sénior Software Engineer", "Sénior Software Engineer").unwrap(),
+            doc
+        );
+    }
+
+    #[test]
+    #[ignore = "converts a fictional styled DOCX using local LibreOffice"]
+    fn styled_run_edit_converts_to_pdf() {
+        let input = std::env::var("WAYPOINT_STYLED_FIXTURE").expect("fixture path");
+        let output = std::env::var("WAYPOINT_STYLED_PDF").expect("new PDF output path");
+        let original = std::fs::read(input).unwrap();
+        let edited = replace(
+            &original,
+            "Sénior Software Engineer",
+            "Sénior Systems Engineer",
+        )
+        .unwrap();
+        assert!(crate::document_extract::extract("fixture.docx", &edited)
+            .unwrap()
+            .contains("Sénior Systems Engineer"));
+        let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)
+            .unwrap();
+        file.write_all(&pdf).unwrap();
     }
 
     #[test]
