@@ -34,8 +34,17 @@ if ($dlls.Count -ne 1) { throw 'Expected exactly one libcrypto DLL in OpenSSL bi
 $env:OPENSSL_DIR = $root
 $env:OPENSSL_INCLUDE_DIR = $include
 $env:OPENSSL_LIB_DIR = $lib
-$env:LIB = $lib + [IO.Path]::PathSeparator + $env:LIB
-$env:PATH = (Join-Path $root 'bin') + [IO.Path]::PathSeparator + $env:PATH
+function Set-PreferredSearchPath([string]$Current, [string]$Preferred) {
+    $separator = [IO.Path]::PathSeparator
+    $key = $Preferred.TrimEnd([char[]]'\/')
+    $remaining = @($Current -split [regex]::Escape([string]$separator) | Where-Object {
+        -not [string]::Equals($_.TrimEnd([char[]]'\/'), $key, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if (-not $Current) { return $Preferred }
+    return (@($Preferred) + $remaining) -join $separator
+}
+$env:LIB = Set-PreferredSearchPath $env:LIB $lib
+$env:PATH = Set-PreferredSearchPath $env:PATH (Join-Path $root 'bin')
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '1' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
 Push-Location $repo

@@ -284,13 +284,12 @@ fn capture_listing(
     let full = dimensions.is_some_and(|(w, h)| w <= 1600.0 && h <= 8000.0) && error.is_none();
     let mut metadata = json!({"source_url":url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
     let raw_size: usize = scripts.iter().map(String::len).sum();
-    let encoded = serde_json::to_vec(scripts).ok();
     if scripts.is_empty() {
         metadata["structured_source_status"] = json!("unavailable");
     } else if scripts.len() > 8
         || raw_size > 256 * 1024
-        || encoded
-            .as_ref()
+        || serde_json::to_vec(scripts)
+            .ok()
             .is_none_or(|bytes| bytes.len() > 500 * 1024)
     {
         metadata["structured_source_status"] = json!("omitted_size_limit");

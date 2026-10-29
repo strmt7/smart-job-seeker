@@ -152,17 +152,15 @@ fn fit_inputs(
     job_id: &JobIdentityId,
 ) -> Result<(Vec<String>, String, String, String), String> {
     let (facts, instructions) = fit_candidate_context(ws)?;
-    let (listing, digest) = fit_listing_digest(ws, job_id, &facts, &instructions)?;
+    let (facts, listing, digest) = fit_listing_digest(ws, job_id, &facts, &instructions)?;
     Ok((facts, instructions, listing, digest))
 }
 
 fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String> {
     let facts: Vec<String> = ws
-        .facts()
+        .reviewed_facts_bounded(500, 1000)
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|fact| !fact.requires_review && fact.text.len() <= 1000)
-        .take(20)
         .map(|fact| fact.text)
         .collect();
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
@@ -183,7 +181,7 @@ fn fit_listing_digest(
     job_id: &JobIdentityId,
     facts: &[String],
     instructions: &str,
-) -> Result<(String, String), String> {
+) -> Result<(Vec<String>, String, String), String> {
     let job = ws
         .job(job_id)
         .map_err(|e| e.to_string())?
@@ -199,12 +197,49 @@ fn fit_listing_digest(
     .chars()
     .take(8000)
     .collect();
+    let selected = select_fit_facts(facts, &listing);
     let digest = Sha256Digest::of(
-        &json!({"facts":facts,"instructions":instructions,"listing":listing}).to_string(),
+        &json!({"facts":selected,"instructions":instructions,"listing":listing}).to_string(),
     )
     .as_str()
     .to_owned();
-    Ok((listing, digest))
+    Ok((selected, listing, digest))
+}
+
+fn select_fit_facts(facts: &[String], listing: &str) -> Vec<String> {
+    use std::collections::HashSet;
+    fn words(text: &str) -> HashSet<String> {
+        text.split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
+            .map(str::to_lowercase)
+            .filter(|word| {
+                word.chars().count() >= 3 || ["c", "c#", "f#", "go", "r"].contains(&word.as_str())
+            })
+            .filter(|word| {
+                ![
+                    "the", "and", "for", "with", "from", "that", "this", "have", "was", "are",
+                    "our", "your",
+                ]
+                .contains(&word.as_str())
+            })
+            .collect()
+    }
+    let terms = words(listing);
+    let mut selected: Vec<(usize, usize)> = Vec::new();
+    for (index, fact) in facts.iter().enumerate() {
+        let score = words(fact).intersection(&terms).count();
+        let at = selected
+            .iter()
+            .position(|(other, _)| score > *other)
+            .unwrap_or(selected.len());
+        if at < 20 {
+            selected.insert(at, (score, index));
+            selected.truncate(20);
+        }
+    }
+    selected
+        .into_iter()
+        .map(|(_, index)| facts[index].clone())
+        .collect()
 }
 
 fn document_visual_context(ws: &Workspace, job: &JobIdentityId) -> Result<String, String> {
@@ -290,7 +325,7 @@ fn read_fit_with_context(
                 *context = Some(fit_candidate_context(ws)?);
             }
             let (facts, instructions) = context.as_ref().ok_or("Candidate context unavailable")?;
-            let (_, digest) = fit_listing_digest(ws, job_id, facts, instructions)?;
+            let (_, _, digest) = fit_listing_digest(ws, job_id, facts, instructions)?;
             if value["input_digest"].as_str() == Some(digest.as_str()) {
                 Ok(
                     json!({"status":"current","assessment":value["assessment"],"model":value["model"]}),
@@ -3749,6 +3784,36 @@ fn serve_loop(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn fit_fact_selection_prefers_listing_terms_and_keeps_a_bounded_set() {
+        let mut facts: Vec<String> = (0..25)
+            .map(|index| format!("Experience number {index}"))
+            .collect();
+        facts.push("Built Rust compilers for embedded devices".into());
+        let selected = super::select_fit_facts(&facts, "Embedded Rust compiler engineer");
+        assert_eq!(selected.len(), 20);
+        assert_eq!(selected[0], "Built Rust compilers for embedded devices");
+        assert_eq!(super::select_fit_facts(&facts, "unmatched")[0], facts[0]);
+    }
+
+    #[test]
+    fn fit_fact_selection_preserves_short_programming_languages() {
+        for language in ["C++", "C#", "Go", "R"] {
+            let mut facts: Vec<String> = (0..21)
+                .map(|index| format!("Unrelated history {index}"))
+                .collect();
+            facts.push(format!("Experience with {language}"));
+            let selected =
+                super::select_fit_facts(&facts, &format!("Seeking {language} expertise"));
+            assert_eq!(selected[0], format!("Experience with {language}"));
+        }
+        let mut facts: Vec<String> = (0..21)
+            .map(|index| format!("Unrelated history {index}"))
+            .collect();
+        facts.push("Experience with C#".into());
+        assert!(!super::select_fit_facts(&facts, "Seeking C++ expertise")
+            .contains(&"Experience with C#".into()));
+    }
+    #[test]
     fn inspection_failure_reason_is_readable_and_bounded() {
         assert_eq!(
             super::inspection_failure_reason("  \n"),
@@ -3994,6 +4059,66 @@ mod tests {
             .unwrap();
         let (_, _, _, after) = fit_inputs(&ws, &id).unwrap();
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn later_relevant_fact_changes_assessment_inputs() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Rust Engineer","employer":"Example","description":"Embedded Rust systems"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        for index in 0..25 {
+            ws.add_fact(
+                &format!("Fictional management experience {index}"),
+                FactOrigin::UserAttested,
+            )
+            .unwrap();
+        }
+        let (_, _, _, before) = fit_inputs(&ws, &id).unwrap();
+        ws.add_fact("Built embedded Rust systems", FactOrigin::UserAttested)
+            .unwrap();
+        let (selected, _, _, after) = fit_inputs(&ws, &id).unwrap();
+        assert_ne!(before, after);
+        assert!(selected
+            .iter()
+            .any(|fact| fact == "Built embedded Rust systems"));
+    }
+
+    #[cfg(all(windows, feature = "sqlcipher"))]
+    #[test]
+    fn bounded_reviewed_facts_match_the_sealed_full_read() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open_encrypted(dir.path()).unwrap();
+        let original = ws
+            .add_fact("Fictional original", FactOrigin::UserAttested)
+            .unwrap();
+        ws.correct_fact(&original, "Fictional correction", 1)
+            .unwrap();
+        ws.add_fact("Unreviewed model text", FactOrigin::ModelInferred)
+            .unwrap();
+        ws.add_fact(&"x".repeat(1001), FactOrigin::UserAttested)
+            .unwrap();
+        ws.add_fact("Fictional reviewed skill", FactOrigin::UserAttested)
+            .unwrap();
+        let expected: Vec<_> = ws
+            .facts()
+            .unwrap()
+            .into_iter()
+            .filter(|fact| !fact.requires_review && fact.text.len() <= 1000)
+            .take(500)
+            .map(|fact| fact.text)
+            .collect();
+        let actual: Vec<_> = ws
+            .reviewed_facts_bounded(500, 1000)
+            .unwrap()
+            .into_iter()
+            .map(|fact| fact.text)
+            .collect();
+        assert_eq!(actual, expected);
+        assert!(actual.contains(&"Fictional correction".to_string()));
+        assert!(!actual.contains(&"Fictional original".to_string()));
+        assert!(!actual.contains(&"Unreviewed model text".to_string()));
+        assert!(ws.reviewed_facts_bounded(0, 1000).unwrap().is_empty());
     }
 
     #[cfg(windows)]

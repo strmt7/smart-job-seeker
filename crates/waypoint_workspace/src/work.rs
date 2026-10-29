@@ -96,6 +96,14 @@ impl Workspace {
         Ok(self.store.active_claims()?)
     }
 
+    pub fn reviewed_facts_bounded(
+        &self,
+        limit: usize,
+        max_text_bytes: usize,
+    ) -> Result<Vec<StoredClaim>, WorkspaceError> {
+        Ok(self.store.reviewed_active_claims(limit, max_text_bytes)?)
+    }
+
     pub fn fact_history(&self) -> Result<Vec<StoredClaim>, WorkspaceError> {
         Ok(self.store.all_claims()?)
     }

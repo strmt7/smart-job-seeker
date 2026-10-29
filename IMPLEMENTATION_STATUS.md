@@ -1,5 +1,16 @@
 # Implementation checkpoint
 
+## Local web prototype checkpoint — 2026-10-29
+
+- Current revision: see `git log -1`; this checkpoint describes the changes in the same revision.
+- The local fit assessment chooses up to 20 reviewed qualifications from the first 500 eligible facts using listing text overlap. The bounded fact read shares the full-history unsealing implementation. A fictional encrypted-workspace test checks corrected, unreviewed and oversized facts.
+- `build-windows.ps1` keeps its OpenSSL search paths stable across repeated invocations. Automatic development dependency provisioning remains incomplete; the packaged runtime includes OpenSSL and Python but other tools still need setup.
+- Validation on Windows with `CARGO_BUILD_JOBS=1` and `RUST_TEST_THREADS=1`: `build-windows.ps1 -Test` passed 140 tests with 36 ignored; `cargo test -p waypoint_store` passed 45; `cargo test -p waypoint_workspace` passed with one live journey ignored; `test-build-paths.ps1` and `node --check apps/web_app/web/app.js` passed.
+- The full workspace suite, live model, third-party employer workflows, fresh-host installation and resource peaks were not measured for this checkpoint. No applications were sent.
+- Next: complete automatic, verifiable Windows dependency provisioning and validate it on a clean host; continue end-to-end local-fixture application preparation and visual review.
+
+The table below records a historical checkpoint, not current release evidence.
+
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
 
 | Field | Value |

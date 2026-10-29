@@ -111,11 +111,31 @@ impl Store {
     /// All claims, newest revision first, superseded ones included (history is
     /// what lets a correction explain itself).
     pub fn all_claims(&self) -> Result<Vec<StoredClaim>, StoreError> {
+        self.all_claims_inner(false, None, usize::MAX)
+    }
+
+    /// Bounded active reviewed claims, using the same sealed-text read path.
+    pub fn reviewed_active_claims(
+        &self,
+        limit: usize,
+        max_text_bytes: usize,
+    ) -> Result<Vec<StoredClaim>, StoreError> {
+        self.all_claims_inner(true, Some(limit), max_text_bytes)
+    }
+
+    fn all_claims_inner(
+        &self,
+        reviewed_active: bool,
+        limit: Option<usize>,
+        max_text_bytes: usize,
+    ) -> Result<Vec<StoredClaim>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id,profile_revision,text,text_sealed,status,source_kind,requires_review,supersedes
-             FROM claims ORDER BY profile_revision DESC, id ASC",
+             FROM claims WHERE (?1=0 OR (requires_review=0 AND id NOT IN
+               (SELECT supersedes FROM claims WHERE supersedes IS NOT NULL)))
+             ORDER BY profile_revision DESC, id ASC",
         )?;
-        let rows = stmt.query_map([], |r| {
+        let rows = stmt.query_map([reviewed_active as i64], |r| {
             let plain: String = r.get(2)?;
             let sealed: Option<Vec<u8>> = r.get(3)?;
             Ok((
@@ -131,11 +151,17 @@ impl Store {
         })?;
         let mut out = Vec::new();
         for row in rows {
+            if limit.is_some_and(|limit| out.len() >= limit) {
+                break;
+            }
             let (id, revision, plain, sealed, status, source, review, supersedes) = row?;
             let text = match sealed {
                 Some(bytes) => self.unseal_str(&bytes).map_err(seal_err)?,
                 None => plain,
             };
+            if text.len() > max_text_bytes {
+                continue;
+            }
             out.push(StoredClaim {
                 id,
                 profile_revision: revision,
