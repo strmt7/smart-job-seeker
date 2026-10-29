@@ -61,6 +61,7 @@ const GENERATE_TIMEOUT_MS: u64 = 300_000;
 pub struct OllamaInference {
     addr: SocketAddr,
     model: String,
+    context_window: Option<u32>,
     pub think: bool,
     cancel_flag: Arc<AtomicBool>,
 }
@@ -72,9 +73,20 @@ impl OllamaInference {
         Ok(Self {
             addr,
             model: model.into(),
+            context_window: None,
             think: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Request an explicit context size. The caller is responsible for checking
+    /// that the resident model and machine have sufficient resources.
+    pub fn with_context_window(mut self, tokens: u32) -> Result<Self, InferenceError> {
+        if !(1024..=131_072).contains(&tokens) {
+            return Err(InferenceError::BudgetExceeded);
+        }
+        self.context_window = Some(tokens);
+        Ok(self)
     }
 
     pub fn cancel_handle(&self) -> Arc<AtomicBool> {
@@ -257,7 +269,7 @@ impl Inference for OllamaInference {
         // plain prompts where the thinking field is expected. Callers who
         // want reasoning before a structured result run two steps and pass
         // their own synthesized context.
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "prompt": prompt,
             "stream": false,
@@ -265,6 +277,9 @@ impl Inference for OllamaInference {
             "think": false,
             "options": {"num_predict": max_output_tokens, "temperature": 0.0},
         });
+        if let Some(tokens) = self.context_window {
+            body["options"]["num_ctx"] = tokens.into();
+        }
         let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
         if self.cancelled() {
             return Err(InferenceError::Cancelled);
@@ -469,6 +484,17 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_context_window_is_bounded() {
+        let model = || OllamaInference::new("http://127.0.0.1:11434", "test").unwrap();
+        assert!(model().with_context_window(1023).is_err());
+        assert_eq!(
+            model().with_context_window(4096).unwrap().context_window,
+            Some(4096)
+        );
+        assert!(model().with_context_window(131_073).is_err());
+    }
 
     #[test]
     fn residency_reports_actual_gpu_and_unknown_incomplete_data() {

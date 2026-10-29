@@ -590,6 +590,76 @@ mod tests {
             ],
         }
     }
+
+    /// Run only after externally checking memory and loading the selected model
+    /// with a 4096-token context. The fixture contains no real candidate data.
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_production_form_suggestion_records_model_output() {
+        struct Recording<I> {
+            inner: I,
+            responses: Vec<Value>,
+        }
+        impl<I: Inference> Inference for Recording<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let response = self.inner.generate_structured(schema, prompt, max)?;
+                println!("fictional model response: {}", response.0);
+                self.responses.push(response.0.clone());
+                Ok(response)
+            }
+        }
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model =
+            waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_context_window(4096)
+                .unwrap();
+        let guarded = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let mut recording = Recording {
+            inner: guarded,
+            responses: Vec::new(),
+        };
+        let (mappings, warnings) = suggest_with_diagnostics(
+            &mut recording,
+            &form(),
+            &json!({"first_name":"Avery", "work_authorization":"unknown"}),
+        )
+        .unwrap();
+        println!("fictional final mappings: {mappings:?}; warnings: {warnings:?}");
+        assert_eq!(
+            recording.responses.len(),
+            1,
+            "a fallback must not hide a failed model call"
+        );
+        let raw = &recording.responses[0]["mappings"];
+        assert_eq!(raw.as_array().map(Vec::len), Some(1));
+        assert_eq!(raw[0]["selector"], "#candidate");
+        assert_eq!(raw[0]["profile_key"], "first_name");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].field_selector, "#candidate");
+        assert!(warnings.is_empty());
+    }
     #[test]
     fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
         let mut schema = form();

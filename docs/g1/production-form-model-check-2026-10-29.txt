@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running unittests src\main.rs (target\debug\deps\waypoint_web-7a4042ab05987d90.exe)
+
+running 1 test
+fictional model response: {"mappings":[{"profile_key":"first_name","selector":"#candidate"}]}
+fictional final mappings: [ProposedMapping { field_selector: "#candidate", value: Text("Avery") }]; warnings: []
+test suggestions::tests::live_production_form_suggestion_records_model_output ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 206 filtered out; finished in 0.29s
