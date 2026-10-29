@@ -9,11 +9,32 @@ struct Task {
     digest: String,
     name: String,
     job_id: Option<String>,
+    context_digest: Option<String>,
     edits: Vec<(String, String)>,
     result: Option<Result<EditedFiles, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+fn job_context_digest(ws: &waypoint_workspace::Workspace, job: &str) -> Result<String, String> {
+    let job = waypoint_domain::JobIdentityId::new(job).map_err(|e| e.to_string())?;
+    let (_, _, _, fit_digest) = crate::fit_inputs(ws, &job)?;
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(profile) => serde_json::from_str(&profile).map_err(|_| "Stored profile is invalid")?,
+        None => json!({}),
+    };
+    let instructions: String = profile["document_instructions"]
+        .as_str()
+        .unwrap_or("")
+        .chars()
+        .take(2000)
+        .collect();
+    Ok(sha256_hex(
+        json!({"job":job.as_str(), "fit":fit_digest, "document_instructions":instructions})
+            .to_string()
+            .as_bytes(),
+    ))
+}
 pub fn start_batch(
+    ws: &waypoint_workspace::Workspace,
     id: String,
     document_id: String,
     name: String,
@@ -37,6 +58,10 @@ pub fn start_batch(
     if !is_pdf && !name.to_ascii_lowercase().ends_with(".docx") {
         return Err("Choose a PDF or DOCX template".into());
     }
+    let context_digest = job_id
+        .as_deref()
+        .map(|job| job_context_digest(ws, job))
+        .transpose()?;
     let mut task = TASK.lock().map_err(|_| "Template editing unavailable")?;
     if task.is_some() {
         return Err("Finish or recover the previous template edit first".into());
@@ -47,6 +72,7 @@ pub fn start_batch(
         digest: sha256_hex(&source),
         name,
         job_id,
+        context_digest,
         edits: edits.clone(),
         result: None,
     });
@@ -115,6 +141,23 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                 return Ok(
                     json!({"status":"failed","error":"The template changed; review it again"}),
                 );
+            }
+            if let Some(job) = task.job_id.as_deref() {
+                let current_context = match job_context_digest(ws, job) {
+                    Ok(context) => context,
+                    Err(error) => {
+                        task.result = Some(Ok((docx, pdf)));
+                        return Err(format!(
+                            "Could not verify job context; retry status: {error}"
+                        ));
+                    }
+                };
+                if task.context_digest.as_deref() != Some(current_context.as_str()) {
+                    *tasks = None;
+                    return Ok(
+                        json!({"status":"failed","error":"The job, qualifications or instructions changed during template editing; review again"}),
+                    );
+                }
             }
             let stem = task
                 .name
@@ -197,6 +240,58 @@ fn record_edit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn changed_job_context_prevents_saving_converted_edit() {
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job = JobIdentityId::new("fictional-edit-context").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: job.clone(),
+                title: "Role".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional role"),
+        )
+        .unwrap();
+        ws.add_document("source", "fixture.pdf", b"fictional original", 1)
+            .unwrap();
+        let digest = job_context_digest(&ws, job.as_str()).unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "context-test".into(),
+            document_id: "source".into(),
+            digest: sha256_hex(b"fictional original"),
+            name: "fixture.pdf".into(),
+            job_id: Some(job.as_str().into()),
+            context_digest: Some(digest),
+            edits: vec![("before".into(), "after".into())],
+            result: Some(Ok((None, b"%PDF-fictional".to_vec()))),
+        });
+        ws.save_candidate_profile(
+            &json!({"document_instructions":"Use a different style"}).to_string(),
+        )
+        .unwrap();
+        let outcome = poll("context-test", &ws).unwrap();
+        assert_eq!(outcome["status"], "failed");
+        assert!(outcome["error"]
+            .as_str()
+            .unwrap()
+            .contains("instructions changed"));
+        assert_eq!(ws.documents().unwrap().len(), 1);
+    }
     #[test]
     fn job_record_preserves_original_edits_and_output() {
         use waypoint_domain::{ApplicationState, JobIdentityId};
@@ -263,6 +358,7 @@ mod tests {
     #[test]
     #[ignore = "edits a fictional DOCX using local LibreOffice"]
     fn job_linked_edit_saves_record_after_conversion() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         use waypoint_domain::{ApplicationState, JobIdentityId};
         use waypoint_store::StoredJob;
         let root = tempfile::tempdir().unwrap();
@@ -291,6 +387,7 @@ mod tests {
         ws.add_document("source", "fixture.docx", &source, 1)
             .unwrap();
         start_batch(
+            &ws,
             "linked-edit".into(),
             "source".into(),
             "fixture.docx".into(),
@@ -324,11 +421,13 @@ mod tests {
     #[test]
     #[ignore = "uses a fictional DOCX fixture"]
     fn failed_batch_saves_nothing() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         let original = std::fs::read(std::env::var("WAYPOINT_EDIT_FIXTURE").unwrap()).unwrap();
         let ws = waypoint_workspace::Workspace::in_memory().unwrap();
         ws.add_document("source", "fictional.docx", &original, 1)
             .unwrap();
         start_batch(
+            &ws,
             "failed".into(),
             "source".into(),
             "fictional.docx".into(),
@@ -357,6 +456,7 @@ mod tests {
     #[test]
     #[ignore = "edits a fictional PDF using local PDFium"]
     fn saves_reviewed_pdf_edit_and_preserves_original() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         let path = std::env::var("WAYPOINT_EDIT_PDF_FIXTURE").unwrap();
         let original = std::fs::read(path).unwrap();
         let ws = waypoint_workspace::Workspace::in_memory().unwrap();
@@ -370,6 +470,7 @@ mod tests {
         );
         assert!(crate::pdf_extract::edit(&original, "not present", "anything").is_err());
         start_batch(
+            &ws,
             "pdf-edit".into(),
             "pdf-source".into(),
             "fictional.pdf".into(),
@@ -410,12 +511,14 @@ mod tests {
     #[test]
     #[ignore = "converts a fictional DOCX with local LibreOffice"]
     fn edited_docx_and_pdf_are_saved_together() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
         let path = std::env::var("WAYPOINT_EDIT_FIXTURE").expect("fixture path");
         let original = std::fs::read(path).unwrap();
         let ws = waypoint_workspace::Workspace::in_memory().unwrap();
         ws.add_document("source", "fictional.docx", &original, 1)
             .unwrap();
         start_batch(
+            &ws,
             "fixture-edit".into(),
             "source".into(),
             "fictional.docx".into(),

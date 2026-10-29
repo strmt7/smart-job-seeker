@@ -2190,6 +2190,7 @@ fn serve(
             };
             let task_id = random_id()?;
             docx_edit_task::start_batch(
+                ws,
                 task_id.clone(),
                 id.to_owned(),
                 info.name,
