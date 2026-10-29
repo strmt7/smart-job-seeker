@@ -1,5 +1,13 @@
 # Implementation checkpoint
 
+## Local fit repeatability and page-vision checks — 2026-10-29
+
+- The fit rubric now warns when a preference cites job text that also contains a listing criterion. This is a possible overlap, not proof of semantic duplication; the existing score is unchanged. The fixed weighted arithmetic is repeatable for a fixed rubric, but model-selected criteria and judgments remain subjective.
+- Three successive runs of the resident qwen3.5:9b model on one fictional fit case each produced 87% with a 73–100% range. The model counted remote location in both a listing criterion and a preference, illustrating possible double counting. This single case does not establish general repeatability, accuracy, or calibration.
+- Application checks may request a local vision assessment of the current viewport, with a bounded exact DOM text excerpt, current URL and screenshot freshness checks, and a single-model lease. They stay advisory and require manual review. A conservative limited-language cue check downgrades unsupported application-form claims; it is not a comprehensive classifier. The model initially labeled a fictional support-contact form as an application form; the guard downgraded that same unsupported claim in a subsequent live run. One fictional application form and one contact form are not evidence of general performance, and DOM text does not prove visible evidence.
+- The web suite passed (190 passed, 61 ignored); web Clippy and formatting passed. Live checks used one already GPU-resident local model with a 4096-token context after a free-memory preflight. Peak resource consumption was not measured. No employer application was submitted.
+- The configured CocoIndex MCP points to another repository and its daemon failed on non-UTF-8 settings. No shared registration was changed; semantic navigation of this repository remains unavailable until an isolated current-root index is established.
+
 ## Application-check destination evidence — 2026-10-29
 
 - A completed application-page check now includes the actual inspected page URL in its result when it is public HTTPS, remains on the original origin, and has no credentials, query or fragment. URLs with those components or cross-origin redirects are not displayed. The result still explicitly requires manual review and does not establish that an application can be submitted. The existing source URL remains the freshness key.

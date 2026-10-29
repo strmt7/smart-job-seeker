@@ -633,6 +633,28 @@ fn validate(
     if total == 0 {
         return Err("Assessment contains no usable criteria".into());
     }
+    // A job criterion and a preference may draw on the same job text. This
+    // can double-count one consideration, but matching text alone cannot prove
+    // they mean the same thing. Flag it for review without changing the score.
+    let overlapping_job_evidence = rubric.iter().any(|preference| {
+        if preference["source"] != "preference" {
+            return false;
+        }
+        let Some(quote) = preference["qualification"].as_str() else {
+            return false;
+        };
+        let quote = quote.to_lowercase();
+        rubric.iter().any(|criterion| {
+            criterion["source"] == "listing"
+                && criterion["excerpt"].as_str().is_some_and(|excerpt| {
+                    let excerpt = excerpt.to_lowercase();
+                    excerpt.chars().count() >= 4 && quote.contains(&excerpt)
+                })
+        })
+    });
+    if overlapping_job_evidence {
+        concerns.push("Possible overlap: a preference and a job criterion use the same listing text. Review whether the rubric counts the same consideration twice.".into());
+    }
     let round =
         |numerator: u32, denominator: u32| (numerator * 100 + denominator / 2) / denominator;
     let lower = round(supported, total);
@@ -1495,6 +1517,24 @@ mod tests {
             cases.len(),
             "local model failed the ambiguity benchmark"
         );
+    }
+
+    #[test]
+    fn overlapping_preference_evidence_is_flagged_without_changing_score() {
+        let listing = "The role is remote within Germany.";
+        let preferences = "Remote work is required";
+        let facts = vec!["Lives in Berlin".to_owned()];
+        let value = json!({"summary":"fixture","criteria":[
+            {"source":"listing","excerpt":"remote within Germany","importance":"preferred","status":"supported","fact_index":1,"explanation":"Candidate lives in Germany"},
+            {"source":"preference","excerpt":preferences,"importance":"required","status":"supported","fact_index":null,"listing_evidence":listing,"explanation":"Remote is offered"}
+        ]});
+        let result = validate(value, &facts, preferences, listing).unwrap();
+        assert_eq!(result["score"], 100);
+        assert!(result["concerns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str().unwrap().contains("Possible overlap")));
     }
 
     #[test]
