@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Plain-text PDF conversion — 2026-10-29
+
+- Saved UTF-8 `.txt` and `.md` files can now be converted to PDF through the existing local background conversion workflow. Markdown is converted as plain source text, not rendered markup; the UI says so. Input is bounded to 10 MiB, invalid UTF-8, NUL and empty text are rejected, and the original saved document is retained. Conversion uses the existing isolated LibreOffice profile, 30-second limit and 768 MiB Windows worker limit.
+- A fictional Unicode text fixture converted with the installed Windows LibreOffice. Text extraction preserved `München · São Paulo`, and a rendered first page was visually inspected; the resulting layout was a plain monospace page, not a professionally typeset CV. Separate background-task and local HTTP endpoint fixtures saved a PDF and retained the original Markdown. This does not verify every language, long document, clean host or missing-dependency setup; other file formats and automatic conversion remain incomplete.
+- The web suite passed 186 tests with 60 live/browser tests ignored; three LibreOffice fixtures ran separately. Web Clippy, JavaScript syntax and formatting passed with one Cargo job. No model, employer site or submission was exercised; peak resources were not measured.
+
 ## Unclassified model batches — 2026-10-29
 
 - If an active model's sensitivity review cannot be obtained for a batch, its fields now remain manual-only for that review session, including fields with exact autocomplete hints. Other successfully reviewed batches remain usable. Missing or invalid review lists still get one bounded repair; runtime failures are not retried. The session reports that classification is unavailable, rather than asserting that each field is sensitive. This change does not alter the separately available offline exact-hint mode when no model is selected.

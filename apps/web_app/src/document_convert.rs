@@ -44,6 +44,24 @@ impl Drop for ConvertLease {
     }
 }
 pub fn docx_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    office_to_pdf(bytes, false)
+}
+
+/// Convert UTF-8 text as plain text, including Markdown source rather than
+/// interpreting markup. A BOM makes the import encoding explicit to the office
+/// converter; the saved original document is not modified.
+pub fn text_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.is_empty() || bytes.len() > 10 * 1024 * 1024 {
+        return Err("Document size is outside the permitted range".into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "Text must be UTF-8")?;
+    if text.contains('\0') || text.trim_start_matches('\u{feff}').trim().is_empty() {
+        return Err("Text is empty or contains binary data".into());
+    }
+    office_to_pdf(bytes, true)
+}
+
+fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
     CONVERT_BUSY
         .compare_exchange(
             false,
@@ -64,8 +82,17 @@ pub fn docx_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
         .prefix("waypoint-convert-")
         .tempdir()
         .map_err(|e| e.to_string())?;
-    let source = temp.path().join("source.docx");
-    std::fs::write(&source, bytes).map_err(|e| e.to_string())?;
+    let source = temp
+        .path()
+        .join(if text { "source.txt" } else { "source.docx" });
+    if text && !bytes.starts_with(b"\xef\xbb\xbf") {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&source).map_err(|e| e.to_string())?;
+        file.write_all(b"\xef\xbb\xbf").map_err(|e| e.to_string())?;
+        file.write_all(bytes).map_err(|e| e.to_string())?;
+    } else {
+        std::fs::write(&source, bytes).map_err(|e| e.to_string())?;
+    }
     let output = temp.path().join("output");
     std::fs::create_dir(&output).map_err(|e| e.to_string())?;
     let profile = temp.path().join("profile");
@@ -131,6 +158,29 @@ fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn text_conversion_rejects_invalid_or_empty_input_before_starting_office() {
+        assert!(super::text_to_pdf(b"\xff").unwrap_err().contains("UTF-8"));
+        assert!(super::text_to_pdf(b"text\0binary")
+            .unwrap_err()
+            .contains("binary"));
+        assert!(super::text_to_pdf(b" \n\t").unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    #[ignore = "uses installed LibreOffice to convert fictional UTF-8 text"]
+    fn converts_fictional_unicode_text() {
+        let bytes =
+            "Fictional CV\nAvery Example\nMünchen · São Paulo\nExperience: accessible interfaces\n"
+                .as_bytes();
+        let pdf = super::text_to_pdf(bytes).unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/model-eval/fictional-text-conversion.pdf");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, pdf).unwrap();
+    }
+
     #[test]
     fn conversion_does_not_overlap_another_pdf_operation() {
         let lease = crate::pdf_extract::acquire().unwrap();

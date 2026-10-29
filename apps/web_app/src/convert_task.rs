@@ -12,7 +12,13 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // A lost response can be retried without saving the same PDF a second time.
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 
-pub fn start(id: String, name: String, bytes: Vec<u8>, image: bool) -> Result<(), String> {
+pub enum ConversionKind {
+    Docx,
+    Image,
+    PlainText,
+}
+
+pub fn start(id: String, name: String, bytes: Vec<u8>, kind: ConversionKind) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Conversion state unavailable")?;
     if tasks.is_some() {
         return Err("A conversion is running or awaiting its result".into());
@@ -24,12 +30,10 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, image: bool) -> Result<()
     });
     drop(tasks);
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| {
-            if image {
-                crate::pdf_extract::image_to_pdf(&bytes)
-            } else {
-                crate::document_convert::docx_to_pdf(&bytes)
-            }
+        let result = std::panic::catch_unwind(|| match kind {
+            ConversionKind::Image => crate::pdf_extract::image_to_pdf(&bytes),
+            ConversionKind::Docx => crate::document_convert::docx_to_pdf(&bytes),
+            ConversionKind::PlainText => crate::document_convert::text_to_pdf(&bytes),
         })
         .unwrap_or_else(|_| Err("Conversion stopped unexpectedly".into()));
         if let Ok(mut tasks) = TASK.lock() {
@@ -118,6 +122,39 @@ mod tests {
         assert_eq!(first, retry);
         assert_eq!(ws.documents().unwrap().len(), 1);
     }
+
+    #[test]
+    #[ignore = "uses installed LibreOffice to convert fictional UTF-8 text"]
+    fn background_text_conversion_saves_one_pdf() {
+        let ws = Workspace::in_memory().unwrap();
+        let source = "Fictional CV\nAvery Example\nMünchen · São Paulo\n"
+            .as_bytes()
+            .to_vec();
+        start(
+            "text-task".into(),
+            "fictional.pdf".into(),
+            source,
+            ConversionKind::PlainText,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        loop {
+            let result = poll("text-task", &ws).unwrap();
+            if result["status"] == "complete" {
+                let pdf = ws
+                    .document_content(result["id"].as_str().unwrap())
+                    .unwrap()
+                    .unwrap();
+                assert!(pdf.starts_with(b"%PDF-"));
+                assert_eq!(poll("text-task", &ws).unwrap(), result);
+                assert_eq!(ws.documents().unwrap().len(), 1);
+                break;
+            }
+            assert_eq!(result["status"], "running", "{result}");
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
     #[test]
     fn oversized_conversion_reports_a_terminal_result_on_retry() {
         let ws = Workspace::in_memory().unwrap();
@@ -138,7 +175,13 @@ mod tests {
         let bytes = std::fs::read(fixture).unwrap();
         assert!(crate::pdf_extract::image_to_pdf(b"invalid image").is_err());
         let ws = Workspace::in_memory().unwrap();
-        start("image-task".into(), "certificate.pdf".into(), bytes, true).unwrap();
+        start(
+            "image-task".into(),
+            "certificate.pdf".into(),
+            bytes,
+            ConversionKind::Image,
+        )
+        .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
         loop {
             let result = poll("image-task", &ws).unwrap();
@@ -169,7 +212,7 @@ mod tests {
             "fixture-task".into(),
             "fictional.pdf".into(),
             std::fs::read(fixture).unwrap(),
-            false,
+            ConversionKind::Docx,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);

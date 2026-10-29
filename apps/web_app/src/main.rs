@@ -2181,11 +2181,18 @@ fn serve(
                 .find(|d| d.id == id)
                 .ok_or("document not found")?;
             let lower = doc.name.to_ascii_lowercase();
-            let image =
-                lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg");
-            if !lower.ends_with(".docx") && !image {
-                return Err("Only DOCX, PNG and JPEG conversion is supported".into());
-            }
+            let kind = if lower.ends_with(".docx") {
+                convert_task::ConversionKind::Docx
+            } else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+            {
+                convert_task::ConversionKind::Image
+            } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+                convert_task::ConversionKind::PlainText
+            } else {
+                return Err(
+                    "Only DOCX, UTF-8 text, Markdown, PNG and JPEG conversion is supported".into(),
+                );
+            };
             let bytes = ws
                 .document_content(id)
                 .map_err(|e| e.to_string())?
@@ -2198,7 +2205,7 @@ fn serve(
                     .unwrap_or("document")
             );
             let task_id = random_id()?;
-            convert_task::start(task_id.clone(), name, bytes, image)?;
+            convert_task::start(task_id.clone(), name, bytes, kind)?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/documents/convert-pdf-status" => {
@@ -4077,6 +4084,51 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "uses installed LibreOffice to convert a fictional saved Markdown file"]
+    fn markdown_conversion_endpoint_saves_plain_text_pdf() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = Workspace::in_memory().unwrap();
+        ws.add_document(
+            "fictional-text",
+            "fictional.md",
+            "# Fictional CV\nMünchen\n".as_bytes(),
+            1,
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"id":"fictional-text"}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/documents/convert-pdf-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let start: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let id = start["task_id"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        loop {
+            let result = convert_task::poll(id, &ws).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["name"], "fictional.pdf");
+                assert!(ws
+                    .document_content(result["id"].as_str().unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .starts_with(b"%PDF-"));
+                assert_eq!(ws.documents().unwrap().len(), 2);
+                break;
+            }
+            assert_eq!(result["status"], "running", "{result}");
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
     #[test]
     fn search_plan_digest_tracks_reviewed_facts_and_instructions() {
         let mut ws = Workspace::in_memory().unwrap();
