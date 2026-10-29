@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Qualification judgment cross-check — 2026-10-29
+
+- Local fit assessment now asks the resident model to independently compare cited candidate facts with listing requirements and nearby job context. It does not show the initial judgment to the second pass. Agreement is not verification of truth; disagreement, malformed or unavailable responses, and requests over the 6,000-byte payload budget downgrade affected judgments to unknown. The interface reports the check and its limitations. Existing assessments become stale through the input-digest version change.
+- A fictional live test of qwen3.5:9b with a 4,096-token context retained a six-year Python fact against a five-year requirement and downgraded a one-year SQL fact against a five-year requirement. In a separate end-to-end case the model incorrectly marked Python unknown even though the candidate fact explicitly stated Python use; this cross-check only revisits positive and negative judgments and does not fix that false negative. These two cases do not establish general accuracy or repeatability.
+- The web suite passed (191 passed, 62 ignored), web Clippy, formatting, and the fit-badge UI test passed. Live tests used one already GPU-resident local model after a free-memory preflight; peak resources were not measured. No applications were sent.
+
 ## Local fit repeatability and page-vision checks — 2026-10-29
 
 - The fit rubric now warns when a preference cites job text that also contains a listing criterion. This is a possible overlap, not proof of semantic duplication; the existing score is unchanged. The fixed weighted arithmetic is repeatable for a fixed rubric, but model-selected criteria and judgments remain subjective.
