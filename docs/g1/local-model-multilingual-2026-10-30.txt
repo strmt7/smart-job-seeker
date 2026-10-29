@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running unittests src\main.rs (target\debug\deps\waypoint_web-5be585d27274d02c.exe)
+
+running 1 test
+test form_preview::tests::live_local_model_prefills_and_visually_checks_multilingual_form ... fictional preview: mappings=[ProposedMapping { field_selector: "#first", value: Text("Avery") }, ProposedMapping { field_selector: "#email", value: Text("avery@example.invalid") }]; review=[]
+fictional fill result: Ok(2); completed: [Object {"label": String("Vorname"), "selector": String("#first")}, Object {"label": String("E-Mail-Adresse"), "selector": String("#email")}]
+fictional post-fill visual review: {"comparisons":[{"expected":"Avery","label":"Vorname","status":"matches_transcription"},{"expected":"avery@example.invalid","label":"E-Mail-Adresse","status":"matches_transcription"}],"observation_limit_reached":false,"observations":[{"label":"Vorname","visible_value":"Avery"},{"label":"E-Mail-Adresse","visible_value":"avery@example.invalid"},{"label":"Besitzen Sie eine Arbeitserlaubnis?","visible_value":""},{"label":"Geschlecht","visible_value":""},{"label":"Gehaltsvorstellung","visible_value":""},{"label":"¿Necesita patrocinio laboral?","visible_value":""},{"label":"Date de naissance","visible_value":""}]}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 4.61s
+

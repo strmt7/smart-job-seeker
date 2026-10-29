@@ -114,11 +114,10 @@ fn validate(output: &Value) -> Result<Value, String> {
 fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
     fn normalized_label(label: &str) -> String {
         label
-            .split([' ', '\t', '\n', '\r', '\x0c', '\x0b'])
-            .filter(|part| !part.is_empty())
+            .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
-            .to_ascii_lowercase()
+            .to_lowercase()
     }
     let items = observed["observations"]
         .as_array()
@@ -700,6 +699,31 @@ mod tests {
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
         let duplicate = validate(&json!({"observations":[{"label":"First name","visible_value":"Example"},{"label":"FIRST\nNAME","visible_value":"Example"}]})).unwrap();
         let result = compare(&duplicate, &[("First name".into(), "Example".into())]);
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        let international = validate(
+            &json!({"observations":[{"label":" PRÉNOM\u{a0}COMPLET ","visible_value":"Élodie"}]}),
+        )
+        .unwrap();
+        let result = compare(
+            &international,
+            &[("Prénom complet".into(), "Élodie".into())],
+        );
+        assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
+        let result = compare(
+            &international,
+            &[("Prénom complet".into(), "élodie".into())],
+        );
+        assert_eq!(
+            result["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let result = compare(
+            &international,
+            &[
+                ("Prénom complet".into(), "Élodie".into()),
+                ("PRÉNOM\u{a0}COMPLET".into(), "Élodie".into()),
+            ],
+        );
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
         let different = validate(
             &json!({"observations":[{"label":"\u{feff}First name","visible_value":"Example"}]}),
