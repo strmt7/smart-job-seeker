@@ -963,9 +963,17 @@ fn validate(
     let lower = round(supported, total);
     let upper = round(supported + unknown, total);
     let score = round(supported * 2 + unknown, total * 2);
+    let largest_weight = rubric
+        .iter()
+        .filter_map(|criterion| criterion["weight"].as_u64())
+        .max()
+        .unwrap_or(0) as u32;
+    // The percentage-point effect of moving one criterion from contradicted
+    // to supported, before rounding the two resulting scores separately.
+    let largest_criterion_share = round(largest_weight, total);
     let summary = format!("{supported_count} supported, {unknown_count} unknown, {contradicted_count} contradicted criteria in the model's rubric.");
     Ok(
-        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v1","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
+        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"scoring_basis":{"supported_weight":supported,"unknown_weight":unknown,"contradicted_weight":total-supported-unknown,"total_weight":total,"largest_criterion_share_percent":largest_criterion_share},"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v1","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
     )
 }
 
@@ -2235,6 +2243,11 @@ mod tests {
         assert_eq!(a["score_range"], reversed["score_range"]);
         assert_eq!(a["score"], 64);
         assert_eq!(a["score_range"], json!({"lower":43,"upper":86}));
+        assert_eq!(
+            a["scoring_basis"],
+            json!({"supported_weight":3,"unknown_weight":3,"contradicted_weight":1,"total_weight":7,"largest_criterion_share_percent":43})
+        );
+        assert_eq!(a["scoring_basis"], reversed["scoring_basis"]);
         let mut with_placeholder = criteria.clone();
         with_placeholder["criteria"]
             .as_array_mut()
