@@ -167,6 +167,11 @@
 - Job-linked template conversion freshness now includes the workspace correction revision and the full stored job record and description, in addition to its bounded fit context and document instructions. A correction outside the selected fit facts changes the context. Adding a new fact does not itself advance the correction revision; the fit selection remains bounded.
 - With one build job and one test thread, three template-edit tests passed (four conversion fixtures ignored), and web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Queued template suggestion freshness — 2026-10-29
+
+- AI-suggested replacements carry their source, job and supporting-context digest into the edit queue. Before conversion, the server rejects a queued suggestion if that context or the selected job changed. Manual replacements remain available without a model binding. The digest tracks the workspace correction revision; newly added facts remain subject to bounded fit selection.
+- With one build job and one test thread, the queued-context fixture and web-app Clippy passed, and JavaScript syntax was checked. No live model, rendered UI, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

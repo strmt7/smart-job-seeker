@@ -751,7 +751,8 @@ fn template_suggestion_inputs(
         .chars()
         .take(2000)
         .collect();
-    let digest=Sha256Digest::of(&json!({"source":waypoint_domain::sha256_hex(&source),"before":before,"job":job_id.as_str(),"listing":listing,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
+    let job_context = docx_edit_task::job_context_digest(ws, job_id.as_str())?;
+    let digest=Sha256Digest::of(&json!({"source":waypoint_domain::sha256_hex(&source),"before":before,"job":job_id.as_str(),"listing":listing,"facts":facts,"instructions":instructions,"job_context":job_context}).to_string()).as_str().to_owned();
     Ok(template_suggest::Inputs {
         document_id: document_id.to_owned(),
         document_name: document.name,
@@ -763,6 +764,36 @@ fn template_suggestion_inputs(
         facts,
         instructions,
     })
+}
+
+fn validate_template_edit_bindings(
+    ws: &Workspace,
+    document_id: &str,
+    job_id: Option<&str>,
+    edits: &[Value],
+) -> Result<(), String> {
+    for edit in edits {
+        let Some(digest) = edit.get("suggestion_digest") else {
+            continue;
+        };
+        let digest = digest
+            .as_str()
+            .filter(|value| value.len() == 64)
+            .ok_or("Invalid suggestion context")?;
+        let job = job_id.ok_or("Select the job used for the suggestion")?;
+        if edit["suggestion_job_id"].as_str() != Some(job) {
+            return Err("The job for a queued suggestion changed; suggest again".into());
+        }
+        let before = edit["before"].as_str().ok_or("Missing original text")?;
+        let job = JobIdentityId::new(job).map_err(|e| e.to_string())?;
+        let current = template_suggestion_inputs(ws, document_id, &job, before)?;
+        if current.digest != digest {
+            return Err(
+                "The template, job or supporting information changed; suggest again".into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn rehearse_saved_gmail(ws: &mut Workspace, body: &Value) -> Result<Value, String> {
@@ -2188,6 +2219,9 @@ fn serve(
                 }
                 None => None,
             };
+            if let Some(items) = body.get("edits").and_then(Value::as_array) {
+                validate_template_edit_bindings(ws, id, job_id.as_deref(), items)?;
+            }
             let task_id = random_id()?;
             docx_edit_task::start_batch(
                 ws,
@@ -4370,6 +4404,44 @@ mod tests {
             .map(|index| json!({"selector":format!("#field-{index}"),"value":"Example"}))
             .collect();
         assert!(prepare_reviewed_fill(&preview, &json!({"answers":too_many})).is_err());
+    }
+    #[test]
+    fn queued_template_suggestion_requires_its_original_context() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.add_fact(
+            "Fictional software experience",
+            waypoint_workspace::FactOrigin::UserAttested,
+        )
+        .unwrap();
+        ws.add_document("template", "fixture.docx", b"fictional document", 1)
+            .unwrap();
+        let digest = template_suggestion_inputs(&ws, "template", &job, "Original passage")
+            .unwrap()
+            .digest;
+        let edits = vec![
+            json!({"before":"Original passage","after":"Revised passage","suggestion_digest":digest,"suggestion_job_id":job.as_str()}),
+        ];
+        assert!(
+            validate_template_edit_bindings(&ws, "template", Some(job.as_str()), &edits).is_ok()
+        );
+        assert!(validate_template_edit_bindings(&ws, "template", None, &edits).is_err());
+        assert!(
+            validate_template_edit_bindings(&ws, "template", Some("other-job"), &edits).is_err()
+        );
+        ws.save_candidate_profile(&json!({"document_instructions":"Different tone"}).to_string())
+            .unwrap();
+        assert!(
+            validate_template_edit_bindings(&ws, "template", Some(job.as_str()), &edits).is_err()
+        );
+        assert!(validate_template_edit_bindings(
+            &ws,
+            "template",
+            None,
+            &[json!({"before":"Original", "after":"Manual"})]
+        )
+        .is_ok());
     }
     #[test]
     fn fit_input_digest_changes_when_preferences_change() {

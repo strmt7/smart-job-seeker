@@ -14,7 +14,10 @@ struct Task {
     result: Option<Result<EditedFiles, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
-fn job_context_digest(ws: &waypoint_workspace::Workspace, job: &str) -> Result<String, String> {
+pub(crate) fn job_context_digest(
+    ws: &waypoint_workspace::Workspace,
+    job: &str,
+) -> Result<String, String> {
     let job = waypoint_domain::JobIdentityId::new(job).map_err(|e| e.to_string())?;
     let (_, _, _, fit_digest) = crate::fit_inputs(ws, &job)?;
     let revision = ws.profile_revision().map_err(|e| e.to_string())?;
