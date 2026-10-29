@@ -103,9 +103,13 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                         true,
                     ));
                 }
-                let links = browser
-                    .application_links()
-                    .map_err(|_| "Application links could not be inspected.")?;
+                let links = if crate::form_task::has_upload_control(&page.schema.fields) {
+                    Vec::new()
+                } else {
+                    browser
+                        .application_links()
+                        .map_err(|_| "Application links could not be inspected.")?
+                };
                 if let Some(destination) = application_destination(&current, &links) {
                     page = browser
                         .open(&destination)

@@ -5,6 +5,17 @@ use waypoint_applications::driver::BrowserDriver;
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_inference::OllamaInference;
 
+pub(crate) fn has_upload_control(
+    fields: &[waypoint_applications::form_mapping::FormField],
+) -> bool {
+    fields.iter().any(|field| {
+        matches!(
+            field.field_type,
+            waypoint_applications::form_mapping::FormFieldType::File
+        )
+    })
+}
+
 /// Open the listing, then at most one unambiguous same-origin application link.
 /// No field action or submit action is issued here.
 fn open_application_page(
@@ -21,6 +32,12 @@ fn open_application_page(
     if original.scheme() == "https" && original.origin() != reached.origin() {
         live.walls
             .push("The listing redirected to another site; continue manually".into());
+        return Ok(live);
+    }
+    // A file upload is evidence that this may already be an application form.
+    // Keep the current page for user review rather than navigating away from it;
+    // this is not proof that the page accepts applications.
+    if has_upload_control(&live.schema.fields) {
         return Ok(live);
     }
     let links = driver.application_links().map_err(|e| e.to_string())?;
@@ -406,12 +423,22 @@ mod tests {
         links: Vec<String>,
         opened: Vec<String>,
         redirect: Option<String>,
+        direct_upload: bool,
     }
     impl BrowserDriver for FakeDriver {
         fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
             self.opened.push(url.into());
             self.current = self.redirect.take().unwrap_or_else(|| url.into());
-            let fields = if url.ends_with("/apply") {
+            let fields = if self.direct_upload && !url.ends_with("/apply") {
+                vec![FormField {
+                    selector: "#resume".into(),
+                    label: "Resume".into(),
+                    field_type: FormFieldType::File,
+                    required: false,
+                    sensitive: false,
+                    autocomplete: None,
+                }]
+            } else if url.ends_with("/apply") {
                 vec![FormField {
                     selector: "#name".into(),
                     label: "Name".into(),
@@ -455,6 +482,7 @@ mod tests {
             links: vec!["/role/apply".into()],
             opened: vec![],
             redirect: None,
+            direct_upload: false,
         };
         let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert_eq!(
@@ -470,6 +498,7 @@ mod tests {
             links: vec!["https://another.example/apply".into()],
             opened: vec![],
             redirect: None,
+            direct_upload: false,
         };
         let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert_eq!(driver.opened.len(), 1);
@@ -479,9 +508,44 @@ mod tests {
             links: vec![],
             opened: vec![],
             redirect: Some("https://another.example/job".into()),
+            direct_upload: false,
         };
         let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert!(!form.walls.is_empty());
+    }
+
+    #[test]
+    fn keeps_existing_upload_form_instead_of_following_another_link() {
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec!["/other/apply".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: true,
+        };
+        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert_eq!(driver.opened, ["https://jobs.example.org/role"]);
+        assert_eq!(form.schema.fields[0].field_type, FormFieldType::File);
+    }
+
+    #[test]
+    #[ignore = "starts one headless browser against a fictional local form"]
+    fn retains_a_live_upload_form_for_review() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let form = open_application_page(&mut driver, &url).unwrap();
+        assert!(form
+            .schema
+            .fields
+            .iter()
+            .any(|field| matches!(field.field_type, FormFieldType::File)));
+        assert_eq!(driver.current_url().unwrap(), url);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
     #[test]
     #[ignore = "starts one headless browser against a fictional local fixture"]

@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Direct upload-form inspection checkpoint — 2026-10-29
+
+- Form inspection and application-page checking retain a page that already has a visible file-upload control instead of following another application link. This is a hint to review the current page, not proof that it accepts applications; pages without an upload continue through the existing link-selection path.
+- Four focused form-task tests and three application-check tests passed, with their other local-browser tests ignored. A separate headless browser test passed against a fictional local upload form without submitting. Web Clippy passed with one build job; real employer layouts and peak resource use were not measured.
+
 ## Search planner input checkpoint — 2026-10-29
 
 - Local search planning now reads at most 20 eligible reviewed facts through the existing bounded sealed-data path instead of loading the entire fact history. Proposed phrases still require user review before a search.
