@@ -168,6 +168,17 @@ fn search_plan_context(ws: &Workspace) -> Result<(Vec<String>, String, String), 
     Ok((facts, instructions, digest.as_str().to_owned()))
 }
 
+fn check_search_plan_binding(ws: &Workspace, body: &Value) -> Result<(), String> {
+    let Some(value) = body.get("plan_digest").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    let digest = value.as_str().ok_or("Invalid search plan binding")?;
+    if digest != search_plan_context(ws)?.2 {
+        return Err("Qualifications or search instructions changed; generate new phrases or edit the search manually.".into());
+    }
+    Ok(())
+}
+
 fn fit_inputs(
     ws: &Workspace,
     job_id: &JobIdentityId,
@@ -1394,6 +1405,7 @@ fn serve(
             }
         }
         "/api/discover/start" => {
+            check_search_plan_binding(ws, &body)?;
             let targets = body["targets"]
                 .as_array()
                 .ok_or("missing boards")?
@@ -1448,6 +1460,7 @@ fn serve(
             json_reply(stream, "200 OK", json!({"ok":true}));
         }
         "/api/web-search/start" => {
+            check_search_plan_binding(ws, &body)?;
             let provider = body["provider"].as_str().ok_or("missing provider")?;
             let query = body["query"].as_str().ok_or("missing query")?;
             let id = random_id()?;
@@ -3909,6 +3922,7 @@ mod tests {
         ws.save_candidate_profile(&json!({"instructions":"Remote"}).to_string())
             .unwrap();
         let digest = search_plan_context(&ws).unwrap().2;
+        assert!(check_search_plan_binding(&ws, &json!({"plan_digest":digest})).is_ok());
         ws.save_candidate_profile(&json!({"instructions":"Hybrid"}).to_string())
             .unwrap();
         assert_ne!(search_plan_context(&ws).unwrap().2, digest);
@@ -3917,6 +3931,29 @@ mod tests {
         assert_eq!(search_plan_context(&ws).unwrap().2, digest);
         ws.correct_fact(&id, "Fictional analyst", 1).unwrap();
         assert_ne!(search_plan_context(&ws).unwrap().2, digest);
+        assert!(check_search_plan_binding(&ws, &json!({"plan_digest":digest})).is_err());
+        assert!(check_search_plan_binding(&ws, &json!({})).is_ok());
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+        for (path, body) in [
+            (
+                "/api/web-search/start",
+                json!({"provider":"http://127.0.0.1:9/","query":"fictional engineer","plan_digest":digest}),
+            ),
+            (
+                "/api/discover/start",
+                json!({"targets":[{"source":"jobicy","board":"fictional engineer"}],"plan_digest":digest}),
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let body = body.to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let error = serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap_err();
+            assert!(error.contains("changed"));
+        }
     }
     #[cfg(windows)]
     #[test]

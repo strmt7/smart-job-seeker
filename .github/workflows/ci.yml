@@ -29,6 +29,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/search-plan-recovery-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/search-plan-binding-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./apps/web_app/scripts/test-build-paths.ps1
           ./apps/web_app/scripts/test-install-package.ps1
           python ./apps/web_app/scripts/test-package-windows.py

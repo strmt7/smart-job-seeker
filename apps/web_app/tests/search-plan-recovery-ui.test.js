@@ -10,13 +10,14 @@ async function fixture(saved, active, current = true) {
     const storage = new Map(saved ? [['waypoint-search-plan', saved]] : []);
     const calls = [];
     const button = { disabled: false, addEventListener() {} };
-    const field = { value: '', closest() { return null; }, focus() {} };
+    const field = { value: '', dataset: {}, closest() { return null; }, focus() {}, addEventListener() {} };
     const panel = { rows: [], replaceChildren(...rows) { this.rows = rows; }, append(row) { this.rows.push(row); } };
     const context = {
         document: { querySelector(selector) {
             if (selector === '#plan-search') return button;
             if (selector === '#search-phrases') return panel;
             if (selector === '#web-search input[name=query]') return field;
+            if (selector === '#jobicy-search input[name=keyword]') return field;
             throw Error(`Unexpected selector ${selector}`);
         } },
         sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
@@ -44,6 +45,15 @@ async function fixture(saved, active, current = true) {
     const currentPhrase = newer.panel.rows.find(row => row.children?.some(child => child.text === 'Fictional engineer'));
     await currentPhrase.children.find(child => child.text === 'Use on web').events.click();
     assert.equal(newer.field.value, 'Fictional engineer');
+    assert.equal(newer.field.dataset.planDigest, 'fixture-digest');
+    const bindingStart = source.indexOf('function searchPlanBinding(');
+    const bindingEnd = source.indexOf('\nfor(const selector', bindingStart);
+    assert.ok(bindingStart >= 0 && bindingEnd > bindingStart);
+    const binding = vm.runInNewContext(`(${source.slice(bindingStart, bindingEnd)})`);
+    assert.equal(binding(newer.field), 'fixture-digest');
+    newer.field.value = 'Manually revised search';
+    assert.equal(binding(newer.field), null);
+    assert.equal(newer.field.dataset.planDigest, undefined);
     const replay = await fixture('new-plan', null);
     assert.equal(replay.calls[1][1].task_id, 'new-plan');
     assert.ok(!replay.calls.some(([path]) => path === '/api/search-plan/start'));
