@@ -195,6 +195,47 @@ fn fit_inputs(
     Ok((facts, instructions, listing, digest))
 }
 
+/// Bind the full bounded fact inventory, not just the pool selected for the
+/// model, so edits outside the pool invalidate a saved assessment too.
+fn fit_assessment_inputs(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+) -> Result<(Vec<String>, usize, String, String, String), String> {
+    let (facts, instructions) = fit_candidate_context(ws)?;
+    let (pool, listing, digest) = fit_assessment_digest(ws, job_id, &facts, &instructions)?;
+    Ok((pool, facts.len(), instructions, listing, digest))
+}
+
+fn fit_assessment_digest(
+    ws: &Workspace,
+    job_id: &JobIdentityId,
+    facts: &[String],
+    instructions: &str,
+) -> Result<(Vec<String>, String, String), String> {
+    let (_, listing, _) = fit_listing_digest(ws, job_id, facts, instructions)?;
+    let pool = fit_semantic_pool(facts, &listing);
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v1-semantic-pool-v1","facts":facts,"pool":pool,"instructions":instructions,"listing":listing}).to_string()).as_str().to_owned();
+    Ok((pool, listing, digest))
+}
+
+/// Keep strong lexical candidates, then sample across the bounded inventory
+/// so the model can identify semantic relationships without a word match.
+fn fit_semantic_pool(facts: &[String], listing: &str) -> Vec<String> {
+    let mut pool = select_fit_facts(facts, listing);
+    if facts.len() <= 20 {
+        return pool;
+    }
+    for i in 0..40 {
+        let index = i * facts.len() / 40;
+        if let Some(fact) = facts.get(index) {
+            if !pool.contains(fact) {
+                pool.push(fact.clone());
+            }
+        }
+    }
+    pool
+}
+
 fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String> {
     let facts: Vec<String> = ws
         .reviewed_facts_bounded(500, 1000)
@@ -377,7 +418,7 @@ fn read_fit_with_context(
                 *context = Some(fit_candidate_context(ws)?);
             }
             let (facts, instructions) = context.as_ref().ok_or("Candidate context unavailable")?;
-            let (_, _, digest) = fit_listing_digest(ws, job_id, facts, instructions)?;
+            let (_, _, digest) = fit_assessment_digest(ws, job_id, facts, instructions)?;
             if value["input_digest"].as_str() == Some(digest.as_str()) {
                 Ok(
                     json!({"status":"current","assessment":value["assessment"],"model":value["model"]}),
@@ -1727,7 +1768,8 @@ fn serve(
         "/api/fit/start" => {
             let job_id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
                 .map_err(|e| e.to_string())?;
-            let (facts, instructions, listing, digest) = fit_inputs(ws, &job_id)?;
+            let (facts, available, instructions, listing, digest) =
+                fit_assessment_inputs(ws, &job_id)?;
             if facts.is_empty() && instructions.trim().is_empty() {
                 return Err("Add reviewed qualifications or search instructions first".into());
             }
@@ -1740,7 +1782,7 @@ fn serve(
                 model,
                 job_id.as_str().to_owned(),
                 digest,
-                facts,
+                fit_task::FactPool { facts, available },
                 instructions,
                 listing,
             )?;
@@ -1752,7 +1794,7 @@ fn serve(
             if result["status"] == "complete" {
                 let job_id = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job")?)
                     .map_err(|e| e.to_string())?;
-                let (_, _, _, digest) = fit_inputs(ws, &job_id)?;
+                let (_, _, _, _, digest) = fit_assessment_inputs(ws, &job_id)?;
                 if result["input_digest"].as_str() != Some(digest.as_str()) {
                     result = json!({"status":"failed","error":"Job or candidate inputs changed during assessment; assess again"});
                 } else if result["saved"].is_null() {
@@ -4168,6 +4210,27 @@ mod tests {
     }
 
     #[test]
+    fn assessment_digest_binds_facts_outside_semantic_pool() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/role","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut facts: Vec<_> = (0..120)
+            .map(|i| format!("Fictional qualification {i}"))
+            .collect();
+        let (pool, _, before) = fit_assessment_digest(&ws, &id, &facts, "").unwrap();
+        assert!(pool.len() <= 60);
+        let omitted = facts.iter().position(|fact| !pool.contains(fact)).unwrap();
+        facts[omitted].push_str(" corrected");
+        let (_, _, after) = fit_assessment_digest(&ws, &id, &facts, "").unwrap();
+        assert_ne!(before, after);
+    }
+
+    #[test]
     fn fit_fact_selection_preserves_short_programming_languages() {
         for language in ["C++", "C#", "Go", "R"] {
             let mut facts: Vec<String> = (0..21)
@@ -4629,7 +4692,7 @@ mod tests {
         let mut ws = Workspace::open(dir.path()).unwrap();
         let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
         let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
-        let (_, _, _, digest) = fit_inputs(&ws, &id).unwrap();
+        let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
         let saved = json!({"input_digest":digest,"assessment":{"score":73},"model":"fixture"});
         ws.save_fit_assessment(&id, saved.to_string().as_bytes())
             .unwrap();
@@ -4652,7 +4715,7 @@ mod tests {
         ] {
             let added = manual_job::add(&mut ws, &json!({"url":url,"title":title,"employer":"Fixture","description":"Fictional role"}), 1).unwrap();
             let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
-            let (_, _, _, digest) = fit_inputs(&ws, &id).unwrap();
+            let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
             ws.save_fit_assessment(
                 &id,
                 json!({"input_digest":digest,"assessment":{"score":73},"model":"fixture"})
