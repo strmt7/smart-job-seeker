@@ -375,6 +375,11 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
         .map(|field| format!("Required field needs review: {}", field.label))
         .collect();
     preview.manual_review.retain(|reason| {
+        // The aggregate suggestion diagnostic is replaced by the field-specific
+        // coverage below, which can be refreshed after a user edits a mapping.
+        if reason.ends_with(" required field(s) have no suggestion and need manual review") {
+            return false;
+        }
         if field_warnings.contains(reason) {
             return false;
         }
