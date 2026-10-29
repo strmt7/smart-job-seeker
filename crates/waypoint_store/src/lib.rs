@@ -263,6 +263,13 @@ const MIGRATIONS: &[&str] = &[
     // v26 — rebuild bounded employer tokens to include acronym candidates.
     "DELETE FROM job_employer_indexed;
      UPDATE meta SET value='26' WHERE key='schema_version';",
+    // v27 — reconsider only capped jobs that have a usable requisition.
+    "CREATE INDEX jobs_requisition_lookup ON jobs(lower(trim(requisition_id)),id);
+     DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT j.id FROM jobs j JOIN job_duplicate_coverage c ON c.job_id=j.id
+       WHERE c.status='bounded' AND length(CAST(trim(j.requisition_id) AS BLOB))>=3
+     );
+     UPDATE meta SET value='27' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1036,6 +1043,58 @@ mod tests {
     }
 
     #[test]
+    fn requisition_priority_migration_reindexes_without_discarding_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &MIGRATIONS[..26] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute_batch("INSERT INTO jobs(id,title,employer,location,state,requisition_id) VALUES('a','Role','Example','','\"discovered\"','REQ-42'),('b','Role','Example','','\"discovered\"',NULL);
+            INSERT INTO job_employer_tokens(job_id,token) VALUES('a','example'),('b','example');
+            INSERT INTO job_employer_indexed(job_id) VALUES('a'),('b');
+            INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES('a','bounded',200),('b','complete',1);
+            INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES('a','b',90,'Fictional','different');").unwrap();
+        let before: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='duplicate_coverage_revision'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        assert_eq!(store.duplicate_coverage_counts().unwrap().1, 1);
+        assert!(store.duplicate_coverage_revision().unwrap() > before);
+        let status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM possible_duplicates WHERE job_a='a' AND job_b='b'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "different");
+        let index: i64 = store.conn.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='jobs_requisition_lookup'", [], |r| r.get(0)).unwrap();
+        assert_eq!(index, 1);
+        let mut plan = store.conn.prepare("EXPLAIN QUERY PLAN SELECT j.id FROM jobs j INDEXED BY jobs_requisition_lookup JOIN job_employer_tokens t ON t.job_id=j.id WHERE lower(trim(j.requisition_id))=?1 AND t.token=?2 AND j.id<>?3 ORDER BY j.id LIMIT 200").unwrap();
+        let steps = plan
+            .query_map(rusqlite::params!["req-42", "example", "a"], |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(
+            steps
+                .iter()
+                .any(|step| step.contains("SEARCH j USING INDEX jobs_requisition_lookup")),
+            "requisition lookup must use the indexed key: {steps:?}"
+        );
+    }
+
+    #[test]
     fn source_only_metadata_migrates_from_v24() {
         let conn = Connection::open_in_memory().unwrap();
         #[cfg(feature = "sqlcipher")]
@@ -1059,7 +1118,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "26");
+        assert_eq!(version, "27");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

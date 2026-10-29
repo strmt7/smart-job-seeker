@@ -205,8 +205,41 @@ impl Store {
         let description_words = words(&description.chars().take(30000).collect::<String>());
         let mut candidates = Vec::new();
         let mut seen = BTreeSet::new();
+        // An exact requisition is a stronger review signal than arbitrary ID
+        // order. Reserve candidate slots for it across all employer tokens
+        // before spending the shared 200-candidate budget on general matches.
+        if let Some(requisition) = job
+            .requisition_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| id.len() >= 3)
+        {
+            let normalized = requisition.to_ascii_lowercase();
+            let mut exact = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j INDEXED BY jobs_requisition_lookup JOIN job_employer_tokens t ON t.job_id=j.id WHERE lower(trim(j.requisition_id))=?1 AND t.token=?2 AND j.id<>?3 ORDER BY j.id LIMIT 200")?;
+            for token in &tokens {
+                for row in exact.query_map(
+                    params![normalized, token, job.id.as_str()],
+                    Self::row_to_job,
+                )? {
+                    let other = row?;
+                    if seen.insert(other.id.as_str().to_owned()) {
+                        candidates.push(other);
+                    }
+                    if candidates.len() >= 200 {
+                        bounded = true;
+                        break;
+                    }
+                }
+                if candidates.len() >= 200 {
+                    break;
+                }
+            }
+        }
         let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM job_employer_tokens t JOIN jobs j ON j.id=t.job_id WHERE t.token=?1 AND j.id<>?2 ORDER BY j.id LIMIT 200")?;
         for token in &tokens {
+            if candidates.len() >= 200 {
+                break;
+            }
             let rows = stmt.query_map(params![token, job.id.as_str()], Self::row_to_job)?;
             let mut token_count = 0usize;
             for row in rows {
@@ -589,6 +622,69 @@ mod tests {
         changed.title = "Changed role".into();
         store.upsert_job(&changed).unwrap();
         assert_eq!(store.duplicate_coverage_counts().unwrap(), (202, 201, 0, 1));
+    }
+
+    #[test]
+    fn matching_requisition_is_considered_before_a_crowded_employer_cap() {
+        let mut store = Store::in_memory().unwrap();
+        for index in 0..205 {
+            let candidate = job(&format!("a-{index:03}"), "Engineer", "Example", None);
+            store.upsert_job(&candidate).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example')",
+                    [candidate.id.as_str()],
+                )
+                .unwrap();
+        }
+        let matching = job(
+            "z-matching",
+            "Different role wording",
+            "Example",
+            Some(" req-42 "),
+        );
+        store.upsert_job(&matching).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example')",
+                [matching.id.as_str()],
+            )
+            .unwrap();
+        let unrelated = job(
+            "unrelated",
+            "Research specialist",
+            "Other Company",
+            Some("REQ-42"),
+        );
+        store.upsert_job(&unrelated).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'other')",
+                [unrelated.id.as_str()],
+            )
+            .unwrap();
+        let target = job("target", "Research specialist", "Example", Some("REQ-42"));
+        store.upsert_job(&target).unwrap();
+        let pairs = store.find_possible_duplicates(&target).unwrap();
+        assert!(pairs.iter().any(|pair| pair.job_a == "target"
+            && pair.job_b == "z-matching"
+            && pair.status == "pending"));
+        assert!(!pairs
+            .iter()
+            .any(|pair| pair.job_a == "unrelated" || pair.job_b == "unrelated"));
+        assert!(store.has_duplicate_hold("target").unwrap());
+        let coverage: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM job_duplicate_coverage WHERE job_id='target'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(coverage, "bounded");
     }
 
     #[test]
