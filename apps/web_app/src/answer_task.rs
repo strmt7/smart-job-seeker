@@ -90,8 +90,13 @@ pub fn poll(id: &str) -> Result<Value, String> {
 fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     let text = value["text"]
         .as_str()
-        .filter(|s| !s.trim().is_empty() && s.len() <= 4000)
-        .ok_or("Model could not provide a bounded answer")?;
+        .ok_or("Model did not return an answer")?;
+    if text.trim().is_empty() {
+        return Err("The model returned no answer; review this question manually".into());
+    }
+    if text.len() > 4000 {
+        return Err("Model answer exceeds the length limit".into());
+    }
     let citations = value["facts"]
         .as_array()
         .filter(|v| !v.is_empty() && v.len() <= facts.len().min(10))
@@ -143,6 +148,76 @@ pub(crate) fn generate(llm: &mut dyn Inference, input: &Inputs) -> Result<Value,
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, UsageReport};
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_answer_drafting_checks_unsupported_fictional_experience() {
+        struct Recording<I> {
+            inner: I,
+            responses: Vec<Value>,
+        }
+        impl<I: Inference> Inference for Recording<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                println!("fictional request ({schema}): {prompt}");
+                let output = self.inner.generate_structured(schema, prompt, max)?;
+                println!("fictional response: {}", output.0);
+                self.responses.push(output.0.clone());
+                Ok(output)
+            }
+        }
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let guarded = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let mut recording = Recording {
+            inner: guarded,
+            responses: Vec::new(),
+        };
+        let input = Inputs {
+            session_id: "fictional".into(),
+            selector: "#experience".into(),
+            digest: "fixture".into(),
+            question: "How many years have you managed a team?".into(),
+            listing: "Research scientist role".into(),
+            facts: vec!["Worked as a research scientist".into()],
+            instructions: String::new(),
+        };
+        let result = generate(&mut recording, &input);
+        println!("fictional unsupported-answer result: {result:?}");
+        assert_eq!(recording.responses.len(), 1);
+        assert!(
+            result.is_err(),
+            "unsupported years must not be accepted as a draft"
+        );
+        assert_eq!(
+            recording.responses[0]["text"].as_str(),
+            Some(""),
+            "model did not abstain from unsupported years"
+        );
+    }
     struct Fake {
         calls: usize,
     }
@@ -295,6 +370,8 @@ mod tests {
         assert_eq!(model.calls, 2);
         assert_eq!(answer["sources"][0], "Research experience");
         assert!(validate(&json!({"text":"A","facts":[2]}), &input.facts).is_err());
-        assert!(validate(&json!({"text":"","facts":[1]}), &input.facts).is_err());
+        assert!(validate(&json!({"text":"","facts":[1]}), &input.facts)
+            .unwrap_err()
+            .contains("review this question manually"));
     }
 }
