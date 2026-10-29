@@ -5,6 +5,17 @@ const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
 const start = source.indexOf('let letterExportRecovering=false;');
 const end = source.indexOf('\nvoid recoverPendingLetterExport(',start);
 assert.ok(start >= 0 && end > start);
+function checkDraftFraming(){
+ const line=source.split('\n').find(item=>item.startsWith('function showLetter('));
+ assert.ok(line);
+ const children=[], panel={replaceChildren(...items){children.push(...items);},append(...items){children.push(...items);}};
+ const make=(tag,text='')=>({tag,text,value:'',setAttribute(){},addEventListener(){}});
+ const show=vm.runInNewContext(`${line}; showLetter`,{setWorkspaceView(){},document:{querySelector:()=>panel,createElement:make},element:make});
+ const body={paragraphs:[{text:'I used Python.',facts:[1]}],facts:['Used Python'],notice:'Review',kind:'cover_letter',template_used:false,framing:{opening:'I am applying for the Scientist position at Example Lab.',closing:'Thank you for considering my application.'}};
+ show({id:'fixture',title:'Scientist',employer:'Example Lab'},body,'fixture');
+ assert.equal(children.find(item=>item.tag==='textarea').value,'I am applying for the Scientist position at Example Lab.\n\nI used Python.\n\nThank you for considering my application.');
+ assert.equal(children.filter(item=>String(item.text).startsWith('Cited qualifications:')).length,1);
+}
 async function fixture(active, saved){
  const storage=new Map(saved ? [['waypoint-letter-export',JSON.stringify(saved)]] : []), calls=[], shown=[];
  const panel={replaceChildren(){},append(){}};
@@ -15,6 +26,7 @@ async function fixture(active, saved){
  return {recovered:await recover(panel),calls,shown,storage};
 }
 (async()=>{
+ checkDraftFraming();
  const running=await fixture({task_id:'new-task',job_id:'fictional-job'}, {task:'old-task',job:'old-job'});
  assert.equal(running.recovered,true);assert.deepEqual(running.calls,['/api/letter/export-pending','new-task']);assert.equal(running.shown.length,1);assert.equal(running.storage.size,0);
  const replay=await fixture({task_id:null},{task:'saved-task',job:'fictional-job'});

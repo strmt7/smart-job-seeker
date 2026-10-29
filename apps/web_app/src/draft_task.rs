@@ -154,7 +154,7 @@ fn generate(
     }
     let (label, structure) = match kind {
         "cv" => ("CV", "Organize as a concise CV with clear section headings and bullet points where useful. Include contact details only when provided in candidate facts. Do not invent dates, employers, education, or qualifications."),
-        "cover_letter" => ("cover letter", "Write a concise cover letter."),
+        "cover_letter" => ("cover letter", "Write only the evidence-based body of a concise cover letter. Do not include an opening or closing; these are added separately."),
         _ => return Err("Unknown draft type".into()),
     };
     let data = json!({"job":job,"facts":facts,"instructions":instructions,"template":template});
@@ -168,9 +168,26 @@ fn generate(
         .generate_structured("cover_letter_style", &prompt, 1800)
         .map_err(|e| e.to_string())?;
     let revised = validate(&revised, facts)?;
+    let framing = (kind == "cover_letter").then(|| letter_framing(job));
     Ok(
-        json!({"paragraphs":revised["paragraphs"],"facts":facts,"notice":"Model-generated draft; citations do not prove factual support. Review every sentence.","template_used":!template.is_empty(),"kind":kind}),
+        json!({"paragraphs":revised["paragraphs"],"framing":framing,"facts":facts,"notice":"Model-generated draft; citations do not prove factual support. Review every sentence and the job details.","template_used":!template.is_empty(),"kind":kind}),
     )
+}
+
+fn letter_framing(job: &Value) -> Value {
+    let usable = |key: &str| {
+        job[key].as_str().map(str::trim).filter(|value| {
+            !value.is_empty() && value.len() <= 200 && !value.chars().any(char::is_control)
+        })
+    };
+    let opening = match (usable("title"), usable("employer")) {
+        (Some(title), Some(employer)) => {
+            format!("I am applying for the {title} position at {employer}.")
+        }
+        (Some(title), None) => format!("I am applying for the {title} position."),
+        _ => "I am applying for this position.".to_string(),
+    };
+    json!({"opening":opening,"closing":"Thank you for considering my application."})
 }
 #[cfg(test)]
 mod tests {
@@ -238,6 +255,15 @@ mod tests {
         );
         println!("fictional cover-letter result: {result:?}");
         assert!(result.is_ok(), "draft could not be produced: {result:?}");
+        let draft = result.unwrap();
+        assert_eq!(
+            draft["framing"]["opening"],
+            "I am applying for the Laboratory Data Scientist position at Example Lab."
+        );
+        assert_eq!(
+            draft["framing"]["closing"],
+            "Thank you for considering my application."
+        );
         assert_eq!(recording.responses.len(), 2);
         for response in &recording.responses {
             let text = response["paragraphs"]
@@ -326,6 +352,14 @@ mod tests {
         .unwrap();
         assert_eq!(llm.calls, 2);
         assert_eq!(v["paragraphs"][0]["facts"][0], 1);
+        assert_eq!(
+            v["framing"]["opening"],
+            "I am applying for the Engineer position."
+        );
+        assert_eq!(
+            v["framing"]["closing"],
+            "Thank you for considering my application."
+        );
         let mut cv_llm = Fake { calls: 0 };
         let cv = generate(
             &mut cv_llm,
@@ -338,6 +372,23 @@ mod tests {
         .unwrap();
         assert_eq!(cv_llm.calls, 2);
         assert_eq!(cv["kind"], "cv");
+        assert!(cv["framing"].is_null());
         assert!(validate(&json!({"paragraphs":[{"text":"x","facts":[2]}]}), &facts).is_err());
+    }
+    #[test]
+    fn letter_framing_uses_bounded_single_line_job_details() {
+        assert_eq!(
+            letter_framing(&json!({"title":"Scientist","employer":"Example Lab"}))["opening"],
+            "I am applying for the Scientist position at Example Lab."
+        );
+        assert_eq!(
+            letter_framing(&json!({"title":"Scientist\nInjected","employer":"Example Lab"}))
+                ["opening"],
+            "I am applying for this position."
+        );
+        assert_eq!(
+            letter_framing(&json!({"title":"Scientist","employer":"bad\nvalue"}))["opening"],
+            "I am applying for the Scientist position."
+        );
     }
 }
