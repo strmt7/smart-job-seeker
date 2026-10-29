@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn oversized_form_remains_open_for_manual_review() {
         use waypoint_applications::form_mapping::FormField;
-        let fields = (0..81)
+        let fields = (0..201)
             .map(|index| FormField {
                 selector: format!("#field-{index}"),
                 label: format!("Field {index}"),
@@ -632,12 +632,12 @@ mod tests {
             walls: vec![],
         };
         let preview = suggest_without_model(live, &json!({}), "No model").unwrap();
-        assert_eq!(preview.schema.fields.len(), 81);
+        assert_eq!(preview.schema.fields.len(), 201);
         assert!(preview.suggestions.is_empty());
         assert!(preview
             .manual_review
             .iter()
-            .any(|reason| reason.contains("too many fields")));
+            .any(|reason| reason.contains("200-field mapping limit")));
     }
 
     #[test]

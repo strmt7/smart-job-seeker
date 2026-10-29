@@ -127,6 +127,11 @@
 - The form preview explains which fields had conflicting, invalid or duplicate model suggestions and flags unidentifiable entries without exposing profile values. Field-specific warnings clear when all fields sharing the label receive reviewed mappings.
 - With one build job and one test thread, eight suggestion tests and four non-browser form-preview tests passed (four browser tests ignored); web-app Clippy passed. No live model, employer site or resource peaks were measured. No application was sent.
 
+## Bounded mapping for longer forms — 2026-10-29
+
+- Forms up to 200 fields can be mapped in sequential batches of at most 40 eligible fields with a 24,000-byte prompt limit. Batch results are validated against their own fields; failed batches are reported and retain exact-hint fallback. Larger forms remain available for manual review. Option interpretation is separately bounded.
+- With one build job and one test thread, nine suggestion tests, four non-browser preview tests and the added failed-batch fixture passed; four browser tests were ignored. Web-app Clippy passed before the final test-only addition. No live model, employer site or resource peaks were measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
