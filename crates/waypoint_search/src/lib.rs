@@ -111,22 +111,18 @@ pub fn check_constraints(
                         "salary".into(),
                         ConstraintOutcome::Unknown("employer salary range is invalid".into()),
                     ));
-                } else if let Some(max_minor) = a.max_minor_units {
-                    if max_minor >= min {
-                        out.push(("salary".into(), ConstraintOutcome::Pass));
-                    } else {
-                        out.push((
-                            "salary".into(),
-                            ConstraintOutcome::Fail("stated max below required minimum".into()),
-                        ));
-                    }
+                } else if a.max_minor_units.is_some_and(|maximum| maximum < min) {
+                    out.push((
+                        "salary".into(),
+                        ConstraintOutcome::Fail("stated max below required minimum".into()),
+                    ));
                 } else if a.min_minor_units.is_some_and(|minimum| minimum >= min) {
                     out.push(("salary".into(), ConstraintOutcome::Pass));
                 } else {
                     out.push((
                         "salary".into(),
                         ConstraintOutcome::Unknown(
-                            "employer did not state a comparable maximum".into(),
+                            "stated salary does not establish the required minimum".into(),
                         ),
                     ));
                 }
@@ -462,6 +458,22 @@ mod tests {
         assert!(r
             .iter()
             .any(|(_, o)| matches!(o, ConstraintOutcome::Fail(_))));
+        let overlaps = job_salary_chf(7_000_000, 9_000_000);
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&overlaps), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        let mut upper_only = overlaps.clone();
+        upper_only.min_minor_units = None;
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&upper_only), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        let equal = job_salary_chf(9_000_000, 9_000_000);
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&equal), None, false, "")[0].1,
+            ConstraintOutcome::Pass
+        ));
         let mut incomparable = ok.clone();
         incomparable.period = PayPeriod::Monthly;
         assert!(matches!(
@@ -528,5 +540,39 @@ mod tests {
             "",
         );
         assert!(matches!(result[0].1, ConstraintOutcome::Unknown(_)));
+    }
+
+    #[test]
+    fn salary_range_requires_a_sufficient_lower_bound_to_pass() {
+        let c = CampaignConstraints {
+            salary: Some((9_000_000, 0)),
+            salary_currency: Some("CHF".into()),
+            salary_basis: Some(AmountBasis::Gross),
+            salary_period: Some(PayPeriod::Annual),
+            salary_category: Some(CompensationCategory::Base),
+            ..Default::default()
+        };
+        for (lower, upper, expected) in [
+            (Some(8_000_000), Some(8_999_999), "fail"),
+            (Some(8_000_000), Some(9_000_000), "unknown"),
+            (Some(8_000_000), Some(10_000_000), "unknown"),
+            (None, Some(10_000_000), "unknown"),
+            (Some(8_000_000), None, "unknown"),
+            (None, None, "unknown"),
+            (Some(9_000_000), Some(10_000_000), "pass"),
+            (Some(9_000_000), None, "pass"),
+            (Some(10_000_000), Some(9_000_000), "unknown"),
+        ] {
+            let mut salary = job_salary_chf(9_000_000, 10_000_000);
+            salary.min_minor_units = lower;
+            salary.max_minor_units = upper;
+            let result = check_constraints(&c, &[], Some(&salary), None, false, "");
+            let actual = match &result[0].1 {
+                ConstraintOutcome::Pass => "pass",
+                ConstraintOutcome::Fail(_) => "fail",
+                ConstraintOutcome::Unknown(_) => "unknown",
+            };
+            assert_eq!(actual, expected, "lower={lower:?}, upper={upper:?}");
+        }
     }
 }

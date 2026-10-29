@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Salary minimum range boundary — 2026-10-29
+
+- The deterministic salary constraint now reports a range that crosses the user's minimum as unknown, including when the range maximum equals the minimum. A comparable range passes only when its stated lower bound reaches the minimum; a stated maximum below the minimum fails. Missing or invalid bounds remain unknown where they do not establish the outcome. Even a stated matching range is not a guarantee of an eventual offer.
+- Eleven search tests and 40 workspace tests passed, with two live network tests ignored; search Clippy and formatting checks passed with one Cargo build job. The current workspace ranking path still supplies no employer salary to this checker, and the separately generated model fit score is not corrected by this change. No live employer listing or application was exercised.
+
 ## Preference ambiguity and temporary score review — 2026-10-29
 
 - The match detail now lets users explore changes to individual rubric judgments and recalculates the same fixed-weight midpoint and range. These changes are temporary: they do not save corrections, update the job badge, alter the stored assessment, or establish that other criteria were checked. The model output and its cited evidence remain visible.
