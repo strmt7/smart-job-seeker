@@ -2966,29 +2966,27 @@ fn serve(
                 .screenshot_segment(clip_width, y, clip_height)
                 .map_err(|e| e.to_string())?;
             let task_id = random_id()?;
-            let mut expected: Vec<_> = current
-                .preview
-                .suggestions
-                .iter()
-                .filter(|mapping| {
-                    current
-                        .completed_selectors
-                        .contains(&mapping.field_selector)
-                })
-                .filter_map(|mapping| {
-                    let field = current
-                        .preview
-                        .schema
-                        .fields
-                        .iter()
-                        .find(|field| field.selector == mapping.field_selector)?;
-                    visual_review::expected_value(&mapping.value)
-                        .map(|value| (field.label.clone(), value))
-                })
-                .take(21)
-                .collect();
-            let comparisons_truncated = expected.len() > 20;
-            expected.truncate(20);
+            let (expected, comparisons_truncated) = visual_review::bounded_expected(
+                current
+                    .preview
+                    .suggestions
+                    .iter()
+                    .filter(|mapping| {
+                        current
+                            .completed_selectors
+                            .contains(&mapping.field_selector)
+                    })
+                    .filter_map(|mapping| {
+                        let field = current
+                            .preview
+                            .schema
+                            .fields
+                            .iter()
+                            .find(|field| field.selector == mapping.field_selector)?;
+                        visual_review::expected_value(&mapping.value)
+                            .map(|value| (field.label.clone(), value))
+                    }),
+            );
             let result_path = current
                 .record
                 .as_ref()

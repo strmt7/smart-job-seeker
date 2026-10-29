@@ -97,6 +97,11 @@
 - A generated plan retains usable phrases when individual suggestions are invalid or contain known personal identifiers. The interface reports omitted counts and still requires review; the identifier check is not exhaustive. Plans remain bounded to ten suggestions.
 - With one build job and one test thread, three search-plan tests, eight visual-review tests and web-app Clippy passed. The search-plan recovery, binding and visual-review JavaScript checks passed. No model was loaded or application sent. A real model, installed-app startup, third-party applications and peak resource use were not measured for this checkpoint.
 
+## Longer form visual comparisons — 2026-10-29
+
+- Visual review compares up to 200 supported filled fields across captured segments, increased from 20. Further fields are explicitly reported as omitted. Each model response remains limited to 20 observations per segment, and review remains advisory; hidden content may be missed.
+- With one build job and one test thread, nine visual-review tests passed (one unrelated PDF test ignored), web-app Clippy passed, and the visual comparison UI check passed. No live vision model or employer site was tested; peak resource use was not measured. No application was sent.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

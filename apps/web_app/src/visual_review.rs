@@ -48,6 +48,18 @@ pub fn image_freshness(original_hash: Option<&str>, fresh_image: Option<&str>) -
     }
 }
 
+/// Limit reviewed answers independently of the number of observations per image.
+pub const MAX_EXPECTED_FIELDS: usize = 200;
+
+pub fn bounded_expected(
+    values: impl IntoIterator<Item = (String, String)>,
+) -> (Vec<(String, String)>, bool) {
+    let mut values: Vec<_> = values.into_iter().take(MAX_EXPECTED_FIELDS + 1).collect();
+    let truncated = values.len() > MAX_EXPECTED_FIELDS;
+    values.truncate(MAX_EXPECTED_FIELDS);
+    (values, truncated)
+}
+
 /// Values used for advisory screenshot comparison, not proof of a valid fill.
 pub fn expected_value(value: &waypoint_applications::form_mapping::PacketValue) -> Option<String> {
     use waypoint_applications::form_mapping::PacketValue;
@@ -339,6 +351,24 @@ mod tests {
         let first = poll("fixture-review").unwrap();
         assert_eq!(first, poll("fixture-review").unwrap());
         assert!(poll("different-review").is_err());
+    }
+    #[test]
+    fn visual_comparisons_cover_later_filled_fields_with_a_bounded_limit() {
+        let values = (0..201).map(|i| (format!("Field {i}"), format!("Answer {i}")));
+        let (expected, truncated) = bounded_expected(values);
+        assert_eq!(expected.len(), 200);
+        assert!(truncated);
+        let observed =
+            validate(&json!({"observations":[{"label":"Field 125","visible_value":"Answer 125"}]}))
+                .unwrap();
+        let result = compare(&observed, &expected);
+        assert_eq!(
+            result["comparisons"][125]["status"],
+            "matches_transcription"
+        );
+        let (smaller, truncated) = bounded_expected(expected);
+        assert_eq!(smaller.len(), 200);
+        assert!(!truncated);
     }
     #[test]
     fn visual_expected_values_include_dates_and_choices() {
