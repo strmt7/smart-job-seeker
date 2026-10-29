@@ -1,0 +1,9 @@
+# Production job-fit unknowns check — 2026-10-29
+
+The ignored `live_job_fit_reports_fictional_missing_qualifications` test exercises the production job-fit assessment and local Ollama adapter. The fictional candidate fact described Python laboratory-data work; the job required Python, SQL and a PhD in chemistry. The model should distinguish an unmentioned qualification from evidence that the candidate lacks it.
+
+In the [initial run](production-fit-before-2026-10-29.txt), the model listed SQL and the PhD as concerns but claimed the candidate lacked them, despite having no such negative facts. It returned a subjective score of 85. The prompt was amended to mark unmentioned qualifications as unknown and requiring verification. In the [repeat](production-fit-after-2026-10-29.txt), the model described them as unverified and returned 50. The test checks specific terms and concerns, not every possible expression of a false negative. The interface now reminds users that absent selected facts are unknown and that model explanations need review.
+
+The score change with the prompt demonstrates that this percentage is not calibrated or objectively repeatable. A fixed, evidence-aware scoring mechanism and broader model evaluation remain necessary. Citation indices and exact job excerpts do not prove that the model's explanations or score are correct.
+
+The repeat used local `qwen3.5:9b` Q4_K_M, digest `c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a`, with the model fully GPU-resident and a 4,096-token context. Its pre-test snapshot was 21.61 GiB free system memory and 11.05 GiB dedicated GPU use; the post-test snapshot was 21.55 GiB and 11.05 GiB. These are point-in-time samples, not continuous peaks. The ignored test requires external preflight, explicitly requests the preloaded context, and uses the no-default-features build. No real candidate data, employer site, or application was used.

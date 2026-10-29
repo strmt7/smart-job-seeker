@@ -238,7 +238,7 @@ fn fit_listing_digest(
     .collect();
     let selected = select_fit_facts(facts, &listing);
     let digest = Sha256Digest::of(
-        &json!({"facts":selected,"instructions":instructions,"listing":listing}).to_string(),
+        &json!({"scoring_version":"criteria-v1","facts":selected,"instructions":instructions,"listing":listing}).to_string(),
     )
     .as_str()
     .to_owned();
