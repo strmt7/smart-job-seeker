@@ -19,6 +19,7 @@ fn fixture_rows(n: usize) -> Vec<JobRow> {
             source: "greenhouse".into(),
             score: 0.0,
             matched: String::new(),
+            unknown_constraints: vec![],
         })
         .collect()
 }

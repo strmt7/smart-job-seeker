@@ -1,8 +1,19 @@
 # Implementation checkpoint
 
+## Salary comparability checkpoint — 2026-10-29
+
+- Salary thresholds now carry optional currency, gross/net basis, period and compensation category. If these are absent or disagree with a stated job amount, the comparison is explicitly unknown; a lower bound below the threshold no longer acts as an upper bound. Invalid inverted ranges are also unknown. Older settings without the new optional fields remain readable.
+- `cargo test -p waypoint_search` passed 9 tests, including a legacy-settings compatibility check, and `cargo clippy -p waypoint_search --all-targets -- -D warnings` passed with one build job. The current workspace ranking path does not yet supply parsed employer salaries, and the UI does not yet collect these new comparison attributes; this change alone does not make salary filtering fully functional. Peak resource use was not measured.
+- Ranking now carries unknown constraint reasons to each included result; the web detail and desktop row expose them instead of presenting them as confirmed passes. Workspace tests passed 40 with two ignored across unit and integration suites; desktop tests passed 13, the web suite passed 142 with 37 ignored, and the web lint check passed. The web interface still requests default constraints, so the new warning path was not exercised through its settings UI.
+
+## Windows lint helper checkpoint — 2026-10-29
+
+- `build-windows.ps1 -Clippy` uses the same OpenSSL discovery and one-job default as build and test. Conflicting `-Test`/`-Clippy` options and a filter without `-Test` are rejected before discovery.
+- On this host, with OpenSSL environment variables cleared, the helper detected the existing OpenSSL installation and linted web-app targets successfully. `test-build-paths.ps1` passed. This does not install missing dependencies or verify a clean host; resource peaks were not measured.
+
 ## Required-field review checkpoint — 2026-10-29
 
-- Required fields mapped to empty text or an unchecked checkbox remain in the review list after autofill. This list is not browser validation; separate attachments and subsequent page changes still require inspection.
+- Required fields mapped to empty text or an unchecked checkbox remain in the review list both when preparing a preview and after autofill. When a user changes answers, generated required-field warnings are recalculated without removing unrelated review notes. This list is not browser validation; separate attachments and subsequent page changes still require inspection. The focused form-preview suite passed 3 tests with 4 local-browser tests ignored for the preview change. The required-field test passed again after warning refresh was added. A headless browser test passed against a fictional local form, checking offline suggestions and an unmapped required field. A separate local browser endpoint test passed after checking that filled fields lose stale warnings and unrelated warnings remain. These tests did not exercise the empty-value case in the browser or submit.
 - With one Cargo build job and one test thread, the web-app suite passed 142 tests with 37 ignored. `cargo fmt --all -- --check`, the UI syntax and visual comparison checks, and the local build and package fixture checks passed. Direct `cargo clippy` without the helper's OpenSSL environment failed to find `OPENSSL_DIR`; the retry with the existing OpenSSL installation configured passed. This checkpoint did not exercise a live employer form or submit an application.
 
 ## Optional document conversion bundle — 2026-10-29

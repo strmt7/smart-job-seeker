@@ -24,6 +24,7 @@ pub struct JobRow {
     pub score: f32,
     /// Comma-joined matched skills, e.g. "Rust, SQLite" — always explainable.
     pub matched: String,
+    pub unknown_constraints: Vec<String>,
 }
 
 /// A job excluded by the candidate's own strict filters, with the reasons.
@@ -154,6 +155,7 @@ fn row_from_ranked(r: &RankedJob) -> JobRow {
         source: r.job.source.clone(),
         score: r.score,
         matched: r.matched_skills.join(", "),
+        unknown_constraints: r.unknown_constraints.clone(),
     }
 }
 
@@ -243,6 +245,7 @@ mod tests {
             strict: vec![RankedJob {
                 job: job("Rust Engineer", "ashby"),
                 description_available: true,
+                unknown_constraints: vec!["salary: not stated".into()],
                 score: 0.5,
                 matched_skills: vec!["Rust".into()],
                 freshness: waypoint_search::Freshness::Fresh { age_seconds: 5 },
@@ -255,6 +258,7 @@ mod tests {
         let (rows, excluded) = rows_from_ranked(&results);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].matched, "Rust");
+        assert_eq!(rows[0].unknown_constraints, vec!["salary: not stated"]);
         assert_eq!(rows[0].source, "ashby");
         assert_eq!(rows[0].state_label, "discovered");
         assert_eq!(excluded.len(), 1);

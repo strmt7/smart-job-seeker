@@ -1026,7 +1026,7 @@ fn serve(
             .map_err(|e| e.to_string())?;
         let jobs: Vec<Value> = ranked.strict.iter().map(|row| {
             let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
-            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis})
+            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"unknown_constraints":row.unknown_constraints})
         }).collect();
         let facts: Vec<Value> = facts
             .iter()
@@ -3104,6 +3104,7 @@ fn serve(
                     .push("Some suggested fields were left for manual review".into());
             }
             current.preview.suggestions = prepared.suggestions;
+            form_preview::refresh_required_review(&mut current.preview);
             if current.record.is_none() {
                 match random_id().and_then(|id| {
                     attempt_record::AttemptRecord::start(ws, &current.job_id, &id, now())
@@ -5008,7 +5009,10 @@ mod tests {
                         value: PacketValue::Text("fictional@example.invalid".into()),
                     },
                 ],
-                manual_review: vec![],
+                manual_review: vec![
+                    "Required field needs review: Given name".into(),
+                    "A separate issue needs review".into(),
+                ],
             };
             let mut session = Some(ReviewSession {
                 id: "test-session".into(),
@@ -5446,6 +5450,16 @@ mod tests {
             .unwrap()
             .iter()
             .any(|field| field == "Work authorization"));
+        let warnings = payload["manual_review"].as_array().unwrap();
+        assert!(warnings
+            .iter()
+            .any(|warning| warning == "Required field needs review: Work authorization"));
+        assert!(!warnings
+            .iter()
+            .any(|warning| warning == "Required field needs review: Given name"));
+        assert!(warnings
+            .iter()
+            .any(|warning| warning == "A separate issue needs review"));
         assert!(payload["screenshot"].as_str().unwrap().starts_with("iVBOR"));
         let body = r##"{"session_id":"test-session","reviewed":true,"selector":"#resume","document_id":"fictional-doc","visual_review_attempt":"0123456789abcdef0123456789abcdef"}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();

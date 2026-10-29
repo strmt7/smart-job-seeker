@@ -595,16 +595,28 @@ impl WaypointShell {
                     } else {
                         format!(" · matched: {}", row.matched)
                     };
+                    let unknown = if row.unknown_constraints.is_empty() {
+                        ""
+                    } else {
+                        " · constraints need review"
+                    };
                     let text = format!(
-                        "{} — {} ({}) [{}] · {}{}",
-                        row.title, row.employer, row.location, row.state_label, row.source, matched
+                        "{} — {} ({}) [{}] · {}{}{}",
+                        row.title,
+                        row.employer,
+                        row.location,
+                        row.state_label,
+                        row.source,
+                        matched,
+                        unknown
                     );
                     let response = ui
                         .selectable_label(self.selected == Some(i), text)
                         .on_hover_text(format!(
-                            "identity {}\nlast observed {}",
+                            "identity {}\nlast observed {}\n{}",
                             row.identity,
-                            row.last_checked.as_deref().unwrap_or("never")
+                            row.last_checked.as_deref().unwrap_or("never"),
+                            row.unknown_constraints.join("\n")
                         ));
                     if response.clicked() {
                         clicked = Some(i);

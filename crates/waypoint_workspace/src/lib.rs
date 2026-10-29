@@ -160,7 +160,8 @@ impl DiscoveryOutcome {
 /// Strict results and the excluded bucket, returned separately (D3).
 #[derive(Debug, Clone, Default)]
 pub struct RankedResults {
-    /// Jobs passing every hard constraint, best first.
+    /// Jobs with no failed hard constraint, best first. Unknown outcomes are
+    /// explicitly recorded on each row and are not confirmed passes.
     pub strict: Vec<RankedJob>,
     /// Jobs failing at least one hard constraint, with the reasons, so the
     /// candidate can choose to relax a filter without rewriting it.
@@ -171,6 +172,8 @@ pub struct RankedResults {
 pub struct RankedJob {
     pub job: StoredJob,
     pub description_available: bool,
+    /// Hard constraints that could not be verified from the posting.
+    pub unknown_constraints: Vec<String>,
     /// Fraction of the candidate's skills evidenced in the posting text.
     pub score: f32,
     pub matched_skills: Vec<String>,
@@ -953,6 +956,13 @@ impl Workspace {
                         _ => None,
                     })
                     .collect();
+                let unknown_constraints: Vec<String> = outcomes
+                    .iter()
+                    .filter_map(|(name, outcome)| match outcome {
+                        ConstraintOutcome::Unknown(message) => Some(format!("{name}: {message}")),
+                        _ => None,
+                    })
+                    .collect();
                 let description = description.unwrap_or_default();
                 let text = format!(
                     "{} {} {} {}",
@@ -968,6 +978,7 @@ impl Workspace {
                 let ranked = RankedJob {
                     job: job.clone(),
                     description_available: !description.trim().is_empty(),
+                    unknown_constraints,
                     score,
                     matched_skills,
                     freshness: fresh,

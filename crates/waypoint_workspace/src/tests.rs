@@ -402,6 +402,18 @@ fn ranked_separates_strict_results_from_the_excluded_bucket() {
         "each exclusion must carry its remote: reason"
     );
 
+    let unknown_salary = CampaignConstraints {
+        salary: Some((10_000_000, 20_000_000)),
+        allow_unknown_salary: true,
+        ..CampaignConstraints::default()
+    };
+    let unknown = ws.ranked(&unknown_salary, &skills, 1_758_900_100).unwrap();
+    assert_eq!(unknown.strict.len(), 4);
+    assert!(unknown.strict.iter().all(|row| row
+        .unknown_constraints
+        .iter()
+        .any(|reason| reason.contains("salary not stated"))));
+
     // Adding a salary floor: no adapter states a salary, so *nothing* may pass.
     // This is the "unknown never silently passes a hard constraint" rule.
     let with_salary = CampaignConstraints {

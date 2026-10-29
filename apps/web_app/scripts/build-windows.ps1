@@ -2,10 +2,15 @@ param(
     [string]$OpenSslRoot = $env:OPENSSL_DIR,
     [switch]$Release,
     [switch]$Test,
+    [switch]$Clippy,
+    [switch]$Ignored,
     [string]$TestFilter
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
+if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
+if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
+if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires -Test and a specific -TestFilter.' }
 if (-not $OpenSslRoot) {
     # The official Windows runner and common developer installers use different
     # directories. Only select a complete x64 development installation.
@@ -49,14 +54,16 @@ if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '1' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
 Push-Location $repo
 try {
-    if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
-    $operation = if ($Test) { 'test' } else { 'build' }
+    $operation = if ($Test) { 'test' } elseif ($Clippy) { 'clippy' } else { 'build' }
     $cargoArgs = @($operation,'-p','waypoint_web')
     if ($Release) { $cargoArgs += '--release' }
     if ($TestFilter) { $cargoArgs += $TestFilter }
+    if ($Clippy) { $cargoArgs += @('--all-targets', '--', '-D', 'warnings') }
+    if ($Ignored) { $cargoArgs += @('--', '--ignored', '--test-threads=1') }
     & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) { throw "Cargo $operation failed ($LASTEXITCODE)." }
     if ($Test) { Write-Host "Waypoint tests completed using the configured SQLCipher runtime."; return }
+    if ($Clippy) { Write-Host "Waypoint lint completed using the configured SQLCipher runtime."; return }
     $profile = if ($Release) { 'release' } else { 'debug' }
     $destination = Join-Path $repo "target/$profile/$($dlls[0].Name)"
     if (Test-Path -LiteralPath $destination) {

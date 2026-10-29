@@ -6,7 +6,7 @@
 
 pub mod coverage;
 
-use waypoint_domain::{Amount, JobIdentityId};
+use waypoint_domain::{Amount, AmountBasis, CompensationCategory, JobIdentityId, PayPeriod};
 
 /// Hard vs soft constraint. Unknown facts never silently pass a hard check.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -22,7 +22,15 @@ pub enum ConstraintValue {
 pub struct CampaignConstraints {
     /// Required languages for the job itself (not ad language).
     pub language_required: Vec<String>,
-    pub salary: Option<(i64, i64)>, // (min,max) in minor units, same currency as compared amount
+    pub salary: Option<(i64, i64)>, // (min,max) in minor units
+    #[serde(default)]
+    pub salary_currency: Option<String>,
+    #[serde(default)]
+    pub salary_basis: Option<AmountBasis>,
+    #[serde(default)]
+    pub salary_period: Option<PayPeriod>,
+    #[serde(default)]
+    pub salary_category: Option<CompensationCategory>,
     pub allow_unknown_salary: bool,
     pub sponsorship_required: Option<bool>,
     pub remote_only: bool,
@@ -80,16 +88,30 @@ pub fn check_constraints(
                 },
             )),
             Some(a) => {
-                // Never compare across basis/period without normalization.
-                if a.currency != "CHF" && a.currency != "USD" && a.currency != "EUR" {
+                if c.salary_currency
+                    .as_ref()
+                    .is_none_or(|currency| currency != &a.currency)
+                    || c.salary_basis != Some(a.basis)
+                    || c.salary_period != Some(a.period)
+                    || c.salary_category != Some(a.category)
+                {
                     out.push((
                         "salary".into(),
-                        ConstraintOutcome::Unknown(format!(
-                            "non-comparable currency {}",
-                            a.currency
-                        )),
+                        ConstraintOutcome::Unknown(
+                            "salary currency, basis, period or category is missing or differs"
+                                .into(),
+                        ),
                     ));
-                } else if let Some(max_minor) = a.max_minor_units.or(a.min_minor_units) {
+                } else if a
+                    .min_minor_units
+                    .zip(a.max_minor_units)
+                    .is_some_and(|(low, high)| low > high)
+                {
+                    out.push((
+                        "salary".into(),
+                        ConstraintOutcome::Unknown("employer salary range is invalid".into()),
+                    ));
+                } else if let Some(max_minor) = a.max_minor_units {
                     if max_minor >= min {
                         out.push(("salary".into(), ConstraintOutcome::Pass));
                     } else {
@@ -98,10 +120,14 @@ pub fn check_constraints(
                             ConstraintOutcome::Fail("stated max below required minimum".into()),
                         ));
                     }
+                } else if a.min_minor_units.is_some_and(|minimum| minimum >= min) {
+                    out.push(("salary".into(), ConstraintOutcome::Pass));
                 } else {
                     out.push((
                         "salary".into(),
-                        ConstraintOutcome::Unknown("employer stated no numeric range".into()),
+                        ConstraintOutcome::Unknown(
+                            "employer did not state a comparable maximum".into(),
+                        ),
                     ));
                 }
             }
@@ -365,6 +391,10 @@ mod tests {
     fn salary_threshold_compares_like_units_only() {
         let c = CampaignConstraints {
             salary: Some((9_000_000, 0)),
+            salary_currency: Some("CHF".into()),
+            salary_basis: Some(AmountBasis::Gross),
+            salary_period: Some(PayPeriod::Annual),
+            salary_category: Some(CompensationCategory::Base),
             allow_unknown_salary: false,
             ..Default::default()
         };
@@ -376,5 +406,71 @@ mod tests {
         assert!(r
             .iter()
             .any(|(_, o)| matches!(o, ConstraintOutcome::Fail(_))));
+        let mut incomparable = ok.clone();
+        incomparable.period = PayPeriod::Monthly;
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&incomparable), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        incomparable = ok.clone();
+        incomparable.currency = "USD".into();
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&incomparable), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        incomparable = ok.clone();
+        incomparable.basis = AmountBasis::Net;
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&incomparable), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        incomparable = ok.clone();
+        incomparable.category = CompensationCategory::Variable;
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&incomparable), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        let mut incomplete = low.clone();
+        incomplete.max_minor_units = None;
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&incomplete), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        let mut minimum_only = ok.clone();
+        minimum_only.max_minor_units = None;
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&minimum_only), None, false, "")[0].1,
+            ConstraintOutcome::Pass
+        ));
+        let unspecified = CampaignConstraints {
+            salary: c.salary,
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints(&unspecified, &[], Some(&ok), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        let mut inverted = ok.clone();
+        inverted.min_minor_units = Some(12_000_000);
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&inverted), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn legacy_constraints_without_salary_units_remain_readable_but_unverified() {
+        let constraints: CampaignConstraints = serde_json::from_str(
+            r#"{"language_required":[],"salary":[9000000,15000000],"allow_unknown_salary":true,"sponsorship_required":null,"remote_only":false,"locations":[]}"#,
+        ).unwrap();
+        let result = check_constraints(
+            &constraints,
+            &[],
+            Some(&job_salary_chf(9_500_000, 11_000_000)),
+            None,
+            false,
+            "",
+        );
+        assert!(matches!(result[0].1, ConstraintOutcome::Unknown(_)));
     }
 }

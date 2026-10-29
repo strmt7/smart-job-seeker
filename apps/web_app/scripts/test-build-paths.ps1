@@ -17,4 +17,18 @@ if ($first -cne 'C:\SSL\bin;C:\Other;C:\More') { throw 'Path precedence or dedup
 $second = Set-PreferredSearchPath $first $preferred
 if ($second -cne $first) { throw 'Repeated path setup changed the result.' }
 if ((Set-PreferredSearchPath '' $preferred) -cne $preferred) { throw 'Empty path setup failed.' }
+$rejected = 0
+try { & $script -Test -Clippy } catch {
+    if ($_.Exception.Message -notmatch 'cannot be used together') { throw }
+    $rejected++
+}
+try { & $script -TestFilter 'fictional-test' } catch {
+    if ($_.Exception.Message -notmatch 'requires -Test') { throw }
+    $rejected++
+}
+try { & $script -Test -Ignored } catch {
+    if ($_.Exception.Message -notmatch 'requires -Test and a specific -TestFilter') { throw }
+    $rejected++
+}
+if ($rejected -ne 3) { throw 'Invalid option combinations were not rejected.' }
 Write-Host 'Build helper path tests passed.'

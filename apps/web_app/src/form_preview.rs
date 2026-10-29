@@ -352,20 +352,32 @@ fn build_preview(
     } else {
         vec![]
     };
-    for field in &live.schema.fields {
-        if field.required
-            && !suggestions
-                .iter()
-                .any(|p| p.field_selector == field.selector)
-        {
-            manual_review.push(format!("Required field needs review: {}", field.label));
-        }
-    }
-    Ok(FormPreview {
+    let mut preview = FormPreview {
         schema: live.schema,
         suggestions,
         manual_review,
-    })
+    };
+    refresh_required_review(&mut preview);
+    Ok(preview)
+}
+
+pub fn refresh_required_review(preview: &mut FormPreview) {
+    let field_warnings: std::collections::HashSet<_> = preview
+        .schema
+        .fields
+        .iter()
+        .filter(|field| field.required)
+        .map(|field| format!("Required field needs review: {}", field.label))
+        .collect();
+    preview
+        .manual_review
+        .retain(|reason| !field_warnings.contains(reason));
+    let (_, required) = fill_coverage(preview);
+    preview.manual_review.extend(
+        required
+            .into_iter()
+            .map(|label| format!("Required field needs review: {label}")),
+    );
 }
 
 #[cfg(test)]
@@ -395,7 +407,7 @@ mod tests {
             autocomplete: None,
         })
         .collect();
-        let preview = FormPreview {
+        let mut preview = FormPreview {
             schema: FormSchema {
                 origin: "https://example.test".into(),
                 fields,
@@ -421,6 +433,28 @@ mod tests {
         let (filled, review) = fill_coverage(&preview);
         assert_eq!(filled, vec!["Name", "Consent", "Email"]);
         assert_eq!(review, vec!["Name", "Consent", "Missing"]);
+        refresh_required_review(&mut preview);
+        assert_eq!(
+            preview.manual_review,
+            vec![
+                "Required field needs review: Name",
+                "Required field needs review: Consent",
+                "Required field needs review: Missing",
+            ]
+        );
+        preview.manual_review.push("Visual review required".into());
+        preview.suggestions[0].value = PacketValue::Text("Ada".into());
+        preview.suggestions[2].value = PacketValue::Text(" ".into());
+        refresh_required_review(&mut preview);
+        assert_eq!(
+            preview.manual_review,
+            vec![
+                "Visual review required",
+                "Required field needs review: Consent",
+                "Required field needs review: Email",
+                "Required field needs review: Missing",
+            ]
+        );
     }
 
     struct Model;

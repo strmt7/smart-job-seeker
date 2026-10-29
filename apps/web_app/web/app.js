@@ -61,6 +61,7 @@ function loadFitBadges(entries,generation){
 function matchDetails(row,fitBadge){
  const box=element('details','','match-details'), summary=element('summary','Why this score?');box.append(summary);
  box.append(element('p','Text overlap is the share of reviewed qualification statements found literally in the saved job text; it does not include search instructions. An AI estimate is a separate, subjective assessment that considers the reviewed qualifications and search preferences. Neither percentage is a probability or a guarantee of suitability.'));
+ for(const reason of row.unknown_constraints || [])box.append(element('p',`Constraint needs review: ${reason}`,'review-label'));
  const matches=Array.isArray(row.matched)?row.matched:[];
  if(row.match_basis==='no_reviewed_qualifications')box.append(element('p','Add reviewed qualifications to calculate text overlap.'));else if(row.match_basis==='no_description')box.append(element('p','The saved listing has no description, so a text-overlap score is unavailable.'));else if(matches.length){box.append(element('p','Qualifications found in the saved job text:'));const list=document.createElement('ul');for(const fact of matches)list.append(element('li',fact));box.append(list);}else box.append(element('p','No saved qualification statements matched literally. Add or review qualifications, and check the job description.'));
  const assess=element('button','Assess with local AI'),output=element('div','','fit-output');
