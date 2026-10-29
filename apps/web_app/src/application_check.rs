@@ -57,19 +57,55 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
     }
 }
 
-fn classify_fields(field_count: usize, followed: bool) -> (String, bool) {
-    if field_count == 0 {
-        (
+fn classify_fields(
+    fields: &[waypoint_applications::form_mapping::FormField],
+    followed: bool,
+) -> (String, bool) {
+    use waypoint_applications::form_mapping::FormFieldType;
+    if fields.is_empty() {
+        return (
             "No form fields detected on this page; find or open the application manually.".into(),
             true,
-        )
-    } else {
-        (format!(
-            "{} form fields detected{}; the page is not confirmed as an application. Manual review needed.",
-            field_count,
-            if followed { " after opening an application link" } else { "" }
-        ), true)
+        );
     }
+    // These are evidence only: contact or upload controls also appear on
+    // unrelated forms and do not establish that an application can be sent.
+    let upload = fields
+        .iter()
+        .any(|field| matches!(field.field_type, FormFieldType::File));
+    let email = fields.iter().any(|field| {
+        matches!(field.field_type, FormFieldType::Email)
+            || field.autocomplete.as_deref().is_some_and(|hint| {
+                hint.split_ascii_whitespace()
+                    .last()
+                    .is_some_and(|part| part.eq_ignore_ascii_case("email"))
+            })
+    });
+    let name = fields.iter().any(|field| {
+        field.autocomplete.as_deref().is_some_and(|hint| {
+            hint.split_ascii_whitespace().last().is_some_and(|part| {
+                ["name", "given-name", "family-name"]
+                    .iter()
+                    .any(|token| part.eq_ignore_ascii_case(token))
+            })
+        })
+    });
+    let mut signals = Vec::new();
+    if upload {
+        signals.push("file upload");
+    }
+    if email {
+        signals.push("email");
+    }
+    if name {
+        signals.push("name autocomplete");
+    }
+    let evidence = if signals.is_empty() {
+        "No application-specific signals identified".to_owned()
+    } else {
+        format!("Visible control signals: {}", signals.join(", "))
+    };
+    (format!("{} form fields detected{}; {}. The page is not confirmed as an application. Manual review needed.", fields.len(), if followed { " after opening an application link" } else { "" }, evidence), true)
 }
 
 pub fn busy() -> bool {
@@ -143,7 +179,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                     true,
                 ))
             } else {
-                Ok(classify_fields(page.schema.fields.len(), followed))
+                Ok(classify_fields(&page.schema.fields, followed))
             }
         })();
         let message =
@@ -251,13 +287,35 @@ mod tests {
         acknowledge("fictional-interrupted-check").unwrap();
     }
     #[test]
-    fn detected_fields_do_not_confirm_an_application_page() {
+    fn detected_fields_report_signals_without_confirming_an_application() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType};
+        let field = |selector: &str, field_type, autocomplete: Option<&str>| FormField {
+            selector: selector.into(),
+            label: "Fictional field".into(),
+            field_type,
+            required: false,
+            sensitive: false,
+            autocomplete: autocomplete.map(str::to_owned),
+        };
+        let fields = vec![
+            field("#email", FormFieldType::Email, None),
+            field("#upload", FormFieldType::File, None),
+            field(
+                "#name",
+                FormFieldType::Text,
+                Some("section-user given-name"),
+            ),
+        ];
         for followed in [false, true] {
-            let (message, manual_review) = classify_fields(1, followed);
+            let (message, manual_review) = classify_fields(&fields, followed);
             assert!(manual_review);
             assert!(message.contains("not confirmed"));
+            assert!(message.contains("file upload, email, name autocomplete"));
         }
-        assert!(classify_fields(0, false).1);
+        assert!(classify_fields(&[], false).1);
+        let (generic, review) =
+            classify_fields(&[field("#search", FormFieldType::Text, None)], false);
+        assert!(review && generic.contains("No application-specific signals"));
     }
     use waypoint_applications::driver::BrowserDriver;
     #[test]
@@ -316,7 +374,9 @@ mod tests {
         assert_eq!(links, ["application-check-form.html"]);
         let target = listing.join(&links[0]).unwrap();
         let page = driver.open(target.as_str()).unwrap();
-        assert_eq!(page.schema.fields.len(), 1);
+        assert_eq!(page.schema.fields.len(), 3);
+        let (message, review) = classify_fields(&page.schema.fields, true);
+        assert!(review && message.contains("file upload, email, name autocomplete"));
         assert!(driver
             .trace
             .iter()

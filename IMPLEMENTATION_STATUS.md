@@ -187,6 +187,11 @@
 - The interface discovers a running application-page check after a lost start response and resumes the correct job's check. A previously saved tab task remains usable when no active task exists. Checking still reports uncertain pages for manual review and never submits.
 - With one build job and one test thread, three application-check tests passed (one browser fixture ignored), the recovery UI fixture passed, and web-app Clippy and JavaScript syntax checks passed. No live employer page or peak resources were measured. No application was sent.
 
+## Application-page control evidence — 2026-10-29
+
+- Application-page checks report detected file-upload, email and standard name-autocomplete controls alongside the field count. These signals can occur on unrelated forms and do not confirm an application or authorize any action; the result remains manual review.
+- With one build job and one test thread, three application-check unit tests passed and the fictional local-browser link/form fixture passed without submitting. Web-app Clippy passed before the final fixture-only addition. No live employer page, model or peak resources were measured.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.
