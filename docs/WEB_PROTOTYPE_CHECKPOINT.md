@@ -858,3 +858,9 @@ Two additional fictional `gemma3:4b` evidence cases used the same number with di
 ## Qualification picker rendered check — 2026-10-30
 
 A fictional local fixture rendered the qualification picker in headless Edge at 1440×900 and 800×900. The checkbox alignment and action-row layout were corrected; the narrow viewport had no horizontal overflow. Selecting the reviewed qualification and starting a CV draft sent its ID in the request to the mocked local API, and the fictional draft review appeared without console errors. This did not exercise the live backend, a model, an employer site, or submission. Playwright Core was installed temporarily under the ignored target directory for the check.
+
+## Preference evidence beyond the model excerpt — 2026-10-30
+
+Preference comparison now checks repeated citations and nearby numeric intervals against the entire assessment listing, rather than only the first 3,000 bytes sent to the preference model. A repeated quote anywhere in that assessment input leaves the preference unknown. The assessment listing itself is capped at 8,000 characters, so repetitions or context beyond that cap may still be missed. The input digest version was updated so earlier assessments become stale.
+
+A focused fictional regression test passed for both supported and contradicted model judgments when the second occurrence lies beyond the model excerpt. This tests deterministic handling, not the model's semantic accuracy or overall match calibration. No local model, employer site or submission was exercised.

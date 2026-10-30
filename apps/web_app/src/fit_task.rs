@@ -1202,11 +1202,11 @@ fn compare_preferences(
         let ambiguous_quote = matches!(status, "supported" | "contradicted")
             && quote
                 .as_str()
-                .is_some_and(|text| unique_requirement_context(listing_excerpt, text).is_none());
+                .is_some_and(|text| unique_requirement_context(listing, text).is_none());
         let numerical_review = matches!(status, "supported" | "contradicted")
             && quote
                 .as_str()
-                .is_some_and(|text| interval_requires_review(preference, text, listing_excerpt));
+                .is_some_and(|text| interval_requires_review(preference, text, listing));
         let needs_review = ambiguous_quote || numerical_review;
         updates.push((
             id - 1,
@@ -3748,6 +3748,23 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("more than once"));
+        }
+        // The second occurrence lies beyond the 3,000-byte model excerpt,
+        // but inside the listing passed to the assessment.
+        let listing = format!("Salary EUR 80,000. {} Bonus EUR 80,000.", "x".repeat(3100));
+        for status in ["supported", "contradicted"] {
+            let fallback = validate(raw.clone(), &[], preference, &listing).unwrap();
+            let result = compare_preferences(
+                &mut Fixture(status),
+                raw.clone(),
+                fallback,
+                &[],
+                preference,
+                &listing,
+            );
+            assert_eq!(result["rubric"][0]["status"], "unknown");
+            assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+            assert_eq!(result["preference_comparison"]["listing_truncated"], true);
         }
     }
 
