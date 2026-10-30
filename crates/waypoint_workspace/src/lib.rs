@@ -984,10 +984,10 @@ impl Workspace {
                     })
                     .collect();
                 let description = description.unwrap_or_default();
-                let text = format!(
-                    "{} {} {} {}",
-                    job.title, job.employer, job.location, description
-                );
+                // Employer and location metadata are not evidence of the
+                // qualifications the role asks for. They remain available to
+                // constraints and model-assisted assessment separately.
+                let text = format!("{} {}", job.title, description);
                 let (score, matched_skills) = matcher.score(&text);
                 let observed_at = job
                     .last_seen

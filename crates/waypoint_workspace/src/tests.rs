@@ -71,6 +71,33 @@ fn description_changes_update_matches_without_losing_shortlist() {
     assert_eq!(result.strict[0].score, 0.0);
 }
 
+#[test]
+fn lexical_ranking_does_not_treat_employer_or_location_as_skills() {
+    let mut ws = Workspace::in_memory().unwrap();
+    ws.test_insert_job("greenhouse::example::1", "Engineer", "Rust Foundation");
+    let id = JobIdentityId::new("greenhouse::example::1").unwrap();
+    ws.store
+        .set_job_description(&id, Some("Build Python services."))
+        .unwrap();
+    let result = ws
+        .ranked(
+            &CampaignConstraints::default(),
+            &["Rust".into(), "Remote".into()],
+            1_758_900_100,
+        )
+        .unwrap();
+    assert_eq!(result.strict[0].score, 0.0);
+    assert!(result.strict[0].matched_skills.is_empty());
+    let result = ws
+        .ranked(
+            &CampaignConstraints::default(),
+            &["Python".into()],
+            1_758_900_100,
+        )
+        .unwrap();
+    assert_eq!(result.strict[0].score, 1.0);
+}
+
 fn targets() -> Vec<DiscoveryTarget> {
     vec![
         DiscoveryTarget::new("greenhouse", "vercel"),
