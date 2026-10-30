@@ -756,3 +756,7 @@ When more than 20 facts require local-model selection, long job listings are now
 ## Serialized fact-selection batch limit — 2026-10-30
 
 Fact-selection batches now count JSON escaping, brackets and commas toward their 3,000-byte fact-array budget. A fact that cannot fit alone is omitted without cutting it and is reported for review; fallback selection also excludes and reports such facts. The fit-input version invalidates earlier saved estimates. This bound applies to the fact array only, not the entire prompt, model memory, or the path that supplies at most 20 pooled facts directly. Fictional tests cover escaped text and oversized facts. Ollama had no resident model; a live run was not started because the observed GPU use plus a prior model-load measurement would exceed the evaluation runner's 12 GiB threshold.
+
+## Incomplete application archives — 2026-10-30
+
+An application-attempt folder now receives an incomplete metadata record before its posting, screenshots directory and materials are initialized. It enters preparation in progress only after initialization finishes. If a later archive step fails, the records panel identifies the incomplete folder and warns that files may be missing. Windows tests covered a normal archive and an invalid captured-page record that fails partway through initialization. Failure to create the initial folder or metadata can still prevent a record from being listed. These records do not establish whether an external submission occurred.

@@ -723,6 +723,15 @@ impl AttemptRecord {
         fs::create_dir_all(&records).map_err(|e| e.to_string())?;
         let dir = records.join(format!("{}-{attempt_id}", &hash.as_str()[..16]));
         fs::create_dir(&dir).map_err(|e| format!("Could not create a new attempt folder: {e}"))?;
+        // Establish a discoverable incomplete record before writing the rest of
+        // the archive. A later failure must not look like a completed snapshot.
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
+        let mut initial = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
+        serde_json::to_writer_pretty(&mut initial, &meta).map_err(|e| e.to_string())?;
+        initial.flush().map_err(|e| e.to_string())?;
+        initial
+            .persist_noclobber(dir.join("attempt.json"))
+            .map_err(|e| e.to_string())?;
         fs::create_dir(dir.join("screenshots")).map_err(|e| e.to_string())?;
         fs::create_dir(dir.join("materials")).map_err(|e| e.to_string())?;
         let posting = json!({
@@ -796,12 +805,6 @@ impl AttemptRecord {
                     .map_err(|e| e.to_string())?;
             }
         }
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"preparation_in_progress","submitted":null,"submitted_by_waypoint":false,"page_capture_available":posting["page_capture_available"],"source_only_metadata_available":posting["source_only_metadata_available"],"page_capture_source_url":posting["page_capture_source_url"],"page_capture_matches_current_url":posting["page_capture_matches_current_url"],"note":"External submission is not monitored; this record does not prove whether an application was submitted."});
-        fs::write(
-            dir.join("attempt.json"),
-            serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
         if let Some(packet) = ws.packet(id).map_err(|e| e.to_string())? {
             fs::write(
                 dir.join("materials").join("prepared-draft.txt"),
@@ -809,7 +812,9 @@ impl AttemptRecord {
             )
             .map_err(|e| e.to_string())?;
         }
-        Ok(Some(Self { dir, sequence: 0 }))
+        let mut record = Self { dir, sequence: 0 };
+        record.status("preparation_in_progress", timestamp)?;
+        Ok(Some(record))
     }
     pub fn event(&mut self, value: Value) -> Result<(), String> {
         let mut f = fs::OpenOptions::new()
@@ -836,6 +841,9 @@ impl AttemptRecord {
         let mut meta: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         if meta["status"] != "manual_review" || status == "manual_review" {
             meta["status"] = json!(status);
+        }
+        if meta["status"] == "preparation_in_progress" {
+            meta["note"] = json!("External submission is not monitored; this record does not prove whether an application was submitted.");
         }
         meta["updated_at"] = json!(timestamp);
         let mut tmp = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
@@ -1574,6 +1582,46 @@ mod tests {
             .all(|entry| !entry.contains("submitted")));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn failed_initial_archive_remains_visible_as_incomplete() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let id = JobIdentityId::new("fictional-incomplete").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: id.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: "Remote".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some("https://example.org/job".into()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: true,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional posting"),
+        )
+        .unwrap();
+        let invalid_capture = json!({"page_text_status":"captured"}).to_string();
+        ws.save_job_capture(
+            &id,
+            invalid_capture.as_bytes(),
+            &[b"\x89PNG\r\n\x1a\nfictional".to_vec()],
+        )
+        .unwrap();
+        assert!(AttemptRecord::start(&ws, &id, "failed-fixture", 123).is_err());
+        let listing = list(&ws, &id).unwrap();
+        assert_eq!(listing["unreadable"], 0);
+        assert_eq!(listing["attempts"][0]["status"], "record_incomplete");
+        assert_eq!(listing["attempts"][0]["submitted_by_waypoint"], false);
+        assert!(listing["attempts"][0]["submitted"].is_null());
+    }
+
     #[test]
     fn attempt_archives_the_saved_listing_and_source() {
         let root = tempfile::tempdir().unwrap();
@@ -1614,6 +1662,9 @@ mod tests {
         let mut record = AttemptRecord::start(&ws, &id, "attempt-fixture", 123)
             .unwrap()
             .unwrap();
+        let initial: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(initial["status"], "preparation_in_progress");
         assert!(AttemptRecord::start(&ws, &id, "attempt-fixture", 124).is_err());
         assert!(AttemptRecord::start(&ws, &id, "../invalid", 124).is_err());
         let listing: Value =
