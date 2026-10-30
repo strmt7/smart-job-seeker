@@ -88,6 +88,8 @@ fn inspection_failure_reason(error: &str) -> String {
 struct ReviewSession {
     id: String,
     job_id: JobIdentityId,
+    inspection_task_id: String,
+    inspection_pending_revision: i64,
     url: String,
     profile_digest: Sha256Digest,
     preview: form_preview::FormPreview,
@@ -128,6 +130,12 @@ fn interrupt_session(
             record.event(json!({"type":"review_interrupted","time":now(),"reason":reason}))?;
             record.status("manual_review", now())?;
         }
+        form_task::finish_pending(
+            ws,
+            &current.job_id,
+            &current.inspection_task_id,
+            current.inspection_pending_revision,
+        )?;
     }
     *session = None;
     Ok(())
@@ -3165,7 +3173,6 @@ fn serve(
                 ws.mark_manual_review(&job_id, "Application needs manual review", now())
                     .map_err(|e| e.to_string())?;
             }
-            form_task::finish_pending(ws, &job_id, task_id, pending_revision)?;
             json_reply(
                 stream,
                 "200 OK",
@@ -3174,6 +3181,8 @@ fn serve(
             *session = Some(ReviewSession {
                 id: session_id,
                 job_id,
+                inspection_task_id: task_id.to_owned(),
+                inspection_pending_revision: pending_revision,
                 url,
                 profile_digest,
                 preview,
@@ -4343,6 +4352,12 @@ fn serve(
                     record.event(json!({"type":"review_session_closed","time":now(),"submitted_by_waypoint":false}))?;
                     record.status("review_session_closed", now())?;
                 }
+                form_task::finish_pending(
+                    ws,
+                    &current.job_id,
+                    &current.inspection_task_id,
+                    current.inspection_pending_revision,
+                )?;
             }
             *session = None;
             json_reply(stream, "200 OK", json!({"ok":true}));
@@ -4761,6 +4776,77 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "starts one browser on a fictional local form"]
+    fn closing_review_session_clears_only_its_pending_marker() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use waypoint_applications::driver::BrowserDriver;
+
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let added = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/fictional","title":"Role","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let revision = form_task::begin_pending(&ws, &job, "fixture-inspection", 2).unwrap();
+        ws.mark_manual_review(&job, "Another review issue", 3)
+            .unwrap();
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let mut session = Some(ReviewSession {
+            id: "fixture-session".into(),
+            job_id: job.clone(),
+            inspection_task_id: "fixture-inspection".into(),
+            inspection_pending_revision: revision,
+            url,
+            profile_digest: Sha256Digest::of("fixture"),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: false,
+            completed_selectors: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"session_id":"fixture-session"}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/form/close HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.contains("200 OK"));
+        assert!(session.is_none());
+        let reasons = ws.manual_review_reasons(&job).unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].reason, "Another review issue");
+        let interrupted = form_task::begin_pending(&ws, &job, "interrupted-fixture", 4).unwrap();
+        drop(ws);
+        let ws = Workspace::open(dir.path()).unwrap();
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|reason| reason.revision == interrupted));
+    }
+
     #[test]
     fn application_record_is_required_for_memory_only_workspace() {
         let ws = Workspace::in_memory().unwrap();
@@ -6664,6 +6750,8 @@ mod tests {
             let mut session = Some(ReviewSession {
                 id: "test-session".into(),
                 job_id: id.clone(),
+                inspection_task_id: "fixture-inspection".into(),
+                inspection_pending_revision: 0,
                 url,
                 profile_digest: Sha256Digest::of(&profile.to_string()),
                 preview,

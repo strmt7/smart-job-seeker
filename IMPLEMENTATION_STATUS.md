@@ -1,8 +1,13 @@
 # Implementation checkpoint
 
+## Review session interruption marker — 2026-10-30
+
+- The inspection review marker now stays in the database while its browser session is open. A normal session close clears its exact revision; expiry or profile changes first save an interruption reason and then clear the marker. If the process or a navigation worker loses the session, the marker remains for manual review rather than implying the browser can be resumed. Old markers with the earlier inspection-only wording are not automatically rewritten.
+- A fictional local-browser test exercised the real close handler and checked that an unrelated review reason remained. It also checked that an unclosed marker survived reopening the workspace; it did not forcibly crash a running process. The web suite passed (288 passed, 118 ignored); web Clippy and formatting passed. No employer application was sent.
+
 ## Interrupted initial form inspection — 2026-10-30
 
-- Starting a form inspection now saves a task-specific pending review reason before launching the worker. It remains visible after a workspace reopen if the process stops during inspection. Once a failure has a durable review reason, or a successful result has been processed, the matching pending reason is cleared by revision; unrelated or newer reasons are preserved. A failed worker start attempts to clear its own marker and reports a cleanup failure if that fails. A crash after inspection completion can still interrupt the separate in-memory browser session; this change does not make that session persistent.
+- Starting a form inspection saves a task-specific pending review reason before launching the worker. It remains visible after a workspace reopen if the process stops during inspection. Once a failure has a durable review reason, the matching pending reason is cleared by revision; unrelated or newer reasons are preserved. A failed worker start attempts to clear its own marker and reports a cleanup failure if that fails. The later session change above keeps the marker through a successful inspection until the session is closed or interrupted; the browser session itself remains in memory.
 - A fictional workspace-reopen test checked persistence and revision-specific clearing; the existing disconnected-worker handler test now also checks replacement of the pending reason with a failure reason. The web suite passed (288 passed, 117 ignored), web Clippy and formatting passed with one Cargo build job. A separate worker test opened a fictional local form in a headless browser without filling it. No live employer form or forced process crash was tested, and no application was sent.
 
 ## Browser fixture and review assertions — 2026-10-30

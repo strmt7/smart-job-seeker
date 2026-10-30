@@ -90,7 +90,7 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED_FAILURE: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 fn pending_reason(task_id: &str) -> String {
-    format!("Application inspection pending: {task_id}")
+    format!("Application review in progress or interrupted: {task_id}")
 }
 
 pub fn begin_pending(
