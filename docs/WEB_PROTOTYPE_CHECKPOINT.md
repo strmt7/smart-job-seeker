@@ -598,3 +598,12 @@ identity; a fictional review test covered an emoji boundary. The page can use
 other validation rules, change limits after inspection, or count text differently
 for custom controls, so this is not a guarantee that an answer will be accepted.
 No external application was used.
+
+Local form-answer drafting now receives the native field limit when present.
+Both drafting passes are asked to fit it, and the final text is checked in UTF-16
+code units. One bounded revision repair is allowed; if the result remains too
+long, no draft is returned as usable. The review panel shows the draft's length,
+and changing the page limit invalidates the session's schema binding. Fictional
+fake-model tests covered a successful repair, a persistent overrun, emoji and a
+zero-length limit. A real model was not resident for this check; its ability to
+produce a suitable concise answer for arbitrary limits remains unverified.

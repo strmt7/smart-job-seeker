@@ -697,6 +697,7 @@ fn answer_inputs(
     let available_facts = all_facts.len();
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","session":session.id,"schema":session.preview.schema.schema_hash_input(),"selector":selector,"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
+        max_length_utf16: field.max_length_utf16,
         session_id: session.id.clone(),
         selector: selector.to_owned(),
         digest,
@@ -823,6 +824,7 @@ fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task
     let available_facts = all_facts.len();
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","job_id":id.as_str(),"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
+        max_length_utf16: None,
         session_id: id.as_str().to_owned(),
         selector: "email_body".into(),
         digest,

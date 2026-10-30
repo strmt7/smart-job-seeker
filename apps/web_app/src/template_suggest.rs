@@ -114,7 +114,7 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
         input.before
     )];
     sources.extend(input.facts);
-    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; do not add qualifications or details. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
+    let request=crate::answer_task::Inputs{max_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; do not add qualifications or details. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
     let suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
     if suggestion["text"]
         .as_str()
