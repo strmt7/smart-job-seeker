@@ -258,20 +258,23 @@ impl CdpDriver {
                     .get("href")
                     .filter(|href| !href.trim().is_empty() && href.len() <= 2048)
                 {
-                    if links.len() < 200
-                        && !links
-                            .iter()
-                            .any(|link: &waypoint_applications::driver::PageLink| link.url == *href)
-                    {
+                    if links.len() < 200 {
                         let label: String = anchor_label(node, &attrs, &referenced)
                             .unwrap_or_else(|| "Label unavailable".into())
                             .chars()
                             .take(200)
                             .collect();
-                        links.push(waypoint_applications::driver::PageLink {
-                            url: href.clone(),
-                            label,
-                        });
+                        if !links
+                            .iter()
+                            .any(|link: &waypoint_applications::driver::PageLink| {
+                                link.url == *href && link.label == label
+                            })
+                        {
+                            links.push(waypoint_applications::driver::PageLink {
+                                url: href.clone(),
+                                label,
+                            });
+                        }
                     }
                 }
             }

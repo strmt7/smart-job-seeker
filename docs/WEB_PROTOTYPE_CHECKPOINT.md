@@ -475,3 +475,11 @@ review. Mocked local UI fixtures checked current and stale outcomes at desktop
 and narrow widths. Results in the jobs panel remain in memory for the current
 page session, and an application check remains advisory rather than proof that
 an application can be completed. No employer page was contacted in this check.
+
+Reviewed application-link lists now also exclude destinations whose observed
+link labels indicate a final action, even when another visible anchor uses the
+same destination with a different label. Link extraction retains distinct
+labels for the same destination; a fictional local browser fixture exercised
+that behavior. The filter only covers certain English labels and URL patterns,
+and link extraction is bounded, so it cannot prove that a destination is safe
+or prevent every external side effect. No application was submitted.

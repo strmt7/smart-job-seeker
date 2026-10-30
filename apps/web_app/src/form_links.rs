@@ -115,19 +115,24 @@ fn filtered_candidates(
     let current = url::Url::parse(&driver.current_url().map_err(|e| e.to_string())?)
         .map_err(|_| "Invalid current URL")?;
     let mut result = Vec::new();
-    let hrefs = if other {
-        driver.page_links().map_err(|e| e.to_string())?
+    let page_links = driver.page_links().map_err(|e| e.to_string())?;
+    let likely = if other {
+        None
     } else {
-        driver
-            .application_links()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|url| waypoint_applications::driver::PageLink {
-                url,
-                label: String::new(),
-            })
-            .collect()
+        Some(driver.application_links().map_err(|e| e.to_string())?)
     };
+    // Multiple visible anchors may share a destination with different labels.
+    // If any label suggests a final action, exclude that destination entirely.
+    let blocked: std::collections::HashSet<String> = page_links
+        .iter()
+        .filter(|link| final_action_label(&link.label))
+        .filter_map(|link| current.join(&link.url).ok().map(|url| url.to_string()))
+        .collect();
+    let hrefs = page_links.into_iter().filter(|link| {
+        likely
+            .as_ref()
+            .is_none_or(|items| items.contains(&link.url))
+    });
     for link in hrefs.into_iter().take(200) {
         let Ok(url) = current.join(&link.url) else {
             continue;
@@ -150,6 +155,9 @@ fn filtered_candidates(
             continue;
         }
         let target = url.to_string();
+        if blocked.contains(&target) {
+            continue;
+        }
         if !result
             .iter()
             .any(|link: &waypoint_applications::driver::PageLink| link.url == target)
@@ -164,6 +172,19 @@ fn filtered_candidates(
         }
     }
     Ok(result)
+}
+
+fn final_action_label(label: &str) -> bool {
+    let text = label.to_lowercase();
+    [
+        "submit",
+        "send application",
+        "finish application",
+        "confirm application",
+        "complete application",
+    ]
+    .iter()
+    .any(|phrase| text.contains(phrase))
 }
 
 fn reviewed_link_matches(
@@ -548,6 +569,79 @@ mod tests {
         assert_eq!(found[0].label, "Example");
         let mut many = Links((0..80).map(|i| format!("/page/{i}")).collect());
         assert_eq!(other_candidates(&mut many).unwrap().len(), 30);
+    }
+
+    #[test]
+    fn final_action_labels_block_shared_destinations_in_both_lists() {
+        struct Labelled;
+        impl BrowserDriver for Labelled {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                panic!("no navigation")
+            }
+            fn current_url(&mut self) -> Result<String, DriverError> {
+                Ok("https://jobs.example.org/role".into())
+            }
+            fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+                Ok(vec!["/next".into(), "/apply".into()])
+            }
+            fn page_links(
+                &mut self,
+            ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+                Ok(vec![
+                    waypoint_applications::driver::PageLink {
+                        url: "/next".into(),
+                        label: "Continue".into(),
+                    },
+                    waypoint_applications::driver::PageLink {
+                        url: "/next".into(),
+                        label: "Submit application".into(),
+                    },
+                    waypoint_applications::driver::PageLink {
+                        url: "/apply".into(),
+                        label: "Apply now".into(),
+                    },
+                ])
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                panic!("no fill")
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                panic!("no submit")
+            }
+        }
+        let mut driver = Labelled;
+        assert_eq!(
+            candidates(&mut driver).unwrap(),
+            vec!["https://jobs.example.org/apply"]
+        );
+        assert_eq!(
+            other_candidates(&mut driver)
+                .unwrap()
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://jobs.example.org/apply"]
+        );
+    }
+
+    #[test]
+    #[ignore = "starts one headless browser against a local fixture"]
+    fn browser_reports_distinct_labels_for_the_same_link() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-shared-link-labels.html");
+        let url = format!(
+            "file:///{}",
+            fixture.display().to_string().replace('\\', "/")
+        );
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(&url).unwrap();
+        let links = driver.page_links().unwrap();
+        assert!(links
+            .iter()
+            .any(|link| link.url == "/next" && link.label == "Continue"));
+        assert!(links
+            .iter()
+            .any(|link| link.url == "/next" && link.label == "Submit application"));
     }
 
     #[test]
