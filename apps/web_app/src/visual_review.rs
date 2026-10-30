@@ -6,6 +6,7 @@ struct Task {
     id: String,
     session: String,
     job_id: String,
+    pending_revision: Option<i64>,
     page_signature: String,
     segment: usize,
     half: Option<usize>,
@@ -26,6 +27,7 @@ pub fn set_completed_fixture(id: &str, session: &str, signature: &str, image: &s
         id: id.into(),
         session: session.into(),
         job_id: "fixture-job".into(),
+        pending_revision: None,
         page_signature: signature.into(),
         segment: 0,
         half: None,
@@ -249,6 +251,37 @@ pub const TRANSCRIPTION_MISMATCH_REASON: &str =
     "A visually transcribed field differs from its reviewed answer";
 pub const VISUAL_FAILURE_REASON: &str = "Visual form review failed; inspect the form manually";
 
+pub fn pending_reason(task_id: &str) -> String {
+    format!("Visual form review pending: {task_id}")
+}
+
+pub fn begin_pending_review(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    task_id: &str,
+    timestamp: i64,
+) -> Result<i64, String> {
+    let reason = pending_reason(task_id);
+    ws.mark_manual_review(job, &reason, timestamp)
+        .map_err(|e| format!("Could not save pending visual review: {e}"))?;
+    ws.manual_review_reasons(job)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|entry| entry.reason == reason)
+        .map(|entry| entry.revision)
+        .ok_or_else(|| "Pending visual review was not found after saving".into())
+}
+
+pub fn finish_pending_review(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    task_id: &str,
+    revision: i64,
+) -> Result<bool, String> {
+    ws.clear_manual_review_reason(job, &pending_reason(task_id), revision)
+        .map_err(|e| format!("Could not clear pending visual review: {e}"))
+}
+
 pub fn flag_visual_failure(
     ws: &waypoint_workspace::Workspace,
     job: &waypoint_domain::JobIdentityId,
@@ -410,7 +443,7 @@ pub fn segment_half_geometry(
 pub fn start(
     id: String,
     session: String,
-    capture: (String, usize, Option<usize>, String),
+    capture: (String, usize, Option<usize>, String, i64),
     model: String,
     image: String,
     expected: ExpectedFields,
@@ -434,6 +467,7 @@ pub fn start(
         id: id.clone(),
         session,
         job_id: capture.3,
+        pending_revision: Some(capture.4),
         page_signature: capture.0,
         segment: capture.1,
         half: capture.2,
@@ -575,6 +609,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     };
     let session = task.session.clone();
     let job_id = task.job_id.clone();
+    let pending_revision = task.pending_revision;
     let page_signature = task.page_signature.clone();
     let segment = task.segment;
     let half = task.half;
@@ -582,10 +617,10 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let record_saved = task.record_saved;
     let output = match result {
         Ok(observed) => {
-            json!({"status":"complete","session_id":session,"page_signature":page_signature,"segment":segment,"half":half,"screenshot_hash":screenshot_hash,"visual_review":observed,"record_saved":record_saved})
+            json!({"status":"complete","session_id":session,"job_id":job_id,"pending_revision":pending_revision,"page_signature":page_signature,"segment":segment,"half":half,"screenshot_hash":screenshot_hash,"visual_review":observed,"record_saved":record_saved})
         }
         Err(error) => {
-            json!({"status":"failed","session_id":session,"job_id":job_id,"error":error,"record_saved":record_saved})
+            json!({"status":"failed","session_id":session,"job_id":job_id,"pending_revision":pending_revision,"error":error,"record_saved":record_saved})
         }
     };
     *COMPLETED.lock().map_err(|_| "Visual review unavailable")? = Some((id.into(), output.clone()));
@@ -892,6 +927,7 @@ mod tests {
             id: "fixture-review".into(),
             session: "fixture-session".into(),
             job_id: "fixture-job".into(),
+            pending_revision: None,
             page_signature: "fixture-page".into(),
             segment: 0,
             half: None,
@@ -907,6 +943,7 @@ mod tests {
             id: "fixture-failure".into(),
             session: "expired-session".into(),
             job_id: "fictional-job".into(),
+            pending_revision: None,
             page_signature: "fixture-page".into(),
             segment: 0,
             half: None,
@@ -1068,6 +1105,51 @@ mod tests {
         assert_eq!(result["comparisons"][2]["status"], "matches_transcription");
         server.join().unwrap();
     }
+    #[test]
+    fn pending_visual_review_survives_workspace_reopen() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let (job, revision) = {
+            let mut ws = waypoint_workspace::Workspace::open(directory.path()).unwrap();
+            let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/reopen-fixture","title":"Engineer","employer":"Fixture"}), 1).unwrap();
+            let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let revision = begin_pending_review(&ws, &job, "fixture-task", 2).unwrap();
+            (job, revision)
+        };
+        let ws = waypoint_workspace::Workspace::open(directory.path()).unwrap();
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == pending_reason("fixture-task")));
+        assert!(finish_pending_review(&ws, &job, "fixture-task", revision).unwrap());
+        assert!(ws.manual_review_reasons(&job).unwrap().is_empty());
+    }
+
+    #[test]
+    fn pending_visual_review_preserves_newer_and_other_reasons() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/pending-fixture","title":"Engineer","employer":"Fixture"}), 1).unwrap();
+        let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let first = begin_pending_review(&ws, &job, "first-task", 2).unwrap();
+        let second = begin_pending_review(&ws, &job, "second-task", 3).unwrap();
+        assert_eq!(ws.manual_review_reasons(&job).unwrap().len(), 2);
+        let newer = begin_pending_review(&ws, &job, "first-task", 4).unwrap();
+        assert_ne!(first, newer);
+        assert!(!finish_pending_review(&ws, &job, "first-task", first).unwrap());
+        assert!(finish_pending_review(&ws, &job, "second-task", second).unwrap());
+        assert_eq!(
+            ws.manual_review_reasons(&job).unwrap()[0].reason,
+            pending_reason("first-task")
+        );
+        // Clearing another reason refreshes the remaining reason's revision in
+        // the store. A stale completion must not clear it automatically.
+        assert!(!finish_pending_review(&ws, &job, "first-task", newer).unwrap());
+        let refreshed = ws.manual_review_reasons(&job).unwrap()[0].revision;
+        assert!(finish_pending_review(&ws, &job, "first-task", refreshed).unwrap());
+        assert!(ws.manual_review_reasons(&job).unwrap().is_empty());
+    }
+
     #[test]
     fn visual_mismatch_marks_manual_review_but_unobserved_does_not() {
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();

@@ -3441,7 +3441,9 @@ fn serve(
                 .record
                 .as_ref()
                 .and_then(|record| record.visual_result_path(&task_id).ok());
-            visual_review::start(
+            let pending_revision =
+                visual_review::begin_pending_review(ws, &current.job_id, &task_id, now())?;
+            if let Err(error) = visual_review::start(
                 task_id.clone(),
                 current.id.clone(),
                 (
@@ -3449,12 +3451,21 @@ fn serve(
                     segment as usize,
                     half,
                     current.job_id.as_str().to_owned(),
+                    pending_revision,
                 ),
                 model,
                 screenshot.clone(),
                 expected,
                 result_path,
-            )?;
+            ) {
+                visual_review::finish_pending_review(
+                    ws,
+                    &current.job_id,
+                    &task_id,
+                    pending_revision,
+                )?;
+                return Err(error);
+            }
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
                     record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"half":half,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
@@ -3477,6 +3488,9 @@ fn serve(
                 )
                 .map_err(|e| e.to_string())?;
                 visual_review::flag_visual_failure(ws, &job, "failed", now())?;
+                if let Some(revision) = result["pending_revision"].as_i64() {
+                    visual_review::finish_pending_review(ws, &job, id, revision)?;
+                }
                 if let Some(current) = session.as_mut().filter(|s| {
                     Some(s.id.as_str()) == result["session_id"].as_str()
                         && s.created.elapsed() <= s.ttl
@@ -3693,6 +3707,9 @@ fn serve(
                     } else {
                         // The same task, status and image were already recorded.
                         result["freshness_record_saved"] = json!(false);
+                    }
+                    if let Some(revision) = result["pending_revision"].as_i64() {
+                        visual_review::finish_pending_review(ws, &current.job_id, id, revision)?;
                     }
                 }
                 current.created = Instant::now();
