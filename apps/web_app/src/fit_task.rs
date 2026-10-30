@@ -287,8 +287,16 @@ fn select_facts_with_focus(
                     .iter()
                     .filter(|&&index| index >= 20)
                     .count();
-                for value in indices.expect("validated indices") {
-                    let index = value.as_u64().expect("validated index") as usize - 1;
+                // The model returns a set of relevant indices, not a ranked list.
+                // Preserve batch order so an arbitrary response ordering cannot
+                // change which facts survive the 20-fact limit.
+                let mut indices: Vec<usize> = indices
+                    .expect("validated indices")
+                    .iter()
+                    .map(|value| value.as_u64().expect("validated index") as usize - 1)
+                    .collect();
+                indices.sort_unstable();
+                for index in indices {
                     if !chosen.contains(batch[index]) {
                         if chosen.len() < 20 {
                             chosen.push(batch[index].clone());
@@ -2025,6 +2033,62 @@ mod tests {
         assert_eq!(report["budget_truncated"], true);
         assert!(report["submitted"].as_u64().unwrap() < 60);
         assert!(report["sampled_examined"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn semantic_selection_ignores_order_of_the_same_model_selected_set() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct Fixture {
+            reverse: bool,
+        }
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let mut indices: Vec<usize> = (1..=10).collect();
+                if self.reverse {
+                    indices.reverse();
+                }
+                Ok((
+                    json!({"indices":indices}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let pool: Vec<_> = (0..30).map(|i| format!("Qualification {i}")).collect();
+        for is_answer in [false, true] {
+            let (forward, forward_report) = select_facts_with_focus(
+                &mut Fixture { reverse: false },
+                &pool,
+                30,
+                "",
+                "Role",
+                is_answer,
+            );
+            let (reverse, reverse_report) = select_facts_with_focus(
+                &mut Fixture { reverse: true },
+                &pool,
+                30,
+                "",
+                "Role",
+                is_answer,
+            );
+            assert_eq!(forward, reverse);
+            assert_eq!(forward_report, reverse_report);
+            assert_eq!(forward.len(), 20);
+            assert_eq!(forward_report["selection_capped"], true);
+            assert_eq!(forward_report["failed_batches"], 0);
+        }
     }
 
     #[test]

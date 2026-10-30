@@ -744,3 +744,7 @@ benchmark or proof of real-world submission behaviour. No application was sent.
 ## Match estimate sensitivity — 2026-10-30
 
 A fit assessment now reports the lowest and highest scores obtained by removing one extracted criterion at a time, and the largest change from the original score. This is deterministic for a fixed validated rubric and helps identify dependence on individual criteria. It is not a confidence interval, calibration, or a check for omitted requirements or incorrect local-model interpretations. A single-criterion rubric has no leave-one-out score. The model still selects and judges criteria, so repeatability and real-world accuracy remain unproven.
+
+## Stable fact-selection order — 2026-10-30
+
+The local model selects relevant facts as a set; the application now processes each valid set in its original deterministic batch order. Previously a permutation of the same response could change which facts survived the 20-fact limit. The fit-input version changes so existing saved assessments are marked stale. A fictional fixture covers both fit and application-answer selection at the cap; this does not establish that the model chooses the same facts across runs or that its judgments are correct. No model was resident during this change, so no new live-model result is claimed.
