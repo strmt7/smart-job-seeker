@@ -255,6 +255,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 .open(&url)
                 .map_err(|_| "The listing page could not be opened or inspected.")?;
             let mut followed = false;
+            let mut link_warning = None;
             let mut inspected_url = browser
                 .current_url()
                 .ok()
@@ -275,9 +276,15 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 let links = if crate::form_task::has_upload_control(&page.schema.fields) {
                     Vec::new()
                 } else {
-                    browser
-                        .application_links()
-                        .map_err(|_| "Application links could not be inspected.")?
+                    match browser.application_links() {
+                        Ok(links) => links,
+                        Err(_) => {
+                            link_warning = Some(
+                                "Application links could not be inspected; review them manually.",
+                            );
+                            Vec::new()
+                        }
+                    }
                 };
                 if let Some(destination) = application_destination(&current, &links) {
                     page = browser
@@ -293,10 +300,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                     }
                     inspected_url = displayable_inspected_url(&url, &final_url);
                 } else if !links.is_empty() {
-                    return Ok((
-                        "Application links need manual review before opening.".into(),
-                        true,
-                    ));
+                    link_warning = Some("Application links need manual review before opening.");
                 }
             }
             let (mut message, review) = if !page.walls.is_empty() {
@@ -307,6 +311,10 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
+            if let Some(warning) = link_warning {
+                message.push(' ');
+                message.push_str(warning);
+            }
             if page.walls.is_empty() {
                 match inspect_page_with_local_vision(&mut browser) {
                     Ok(advice) => {
@@ -500,6 +508,70 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and requires preloaded qwen3.5:9b and resource preflight"]
+    fn ambiguous_links_do_not_hide_the_current_fictional_form() {
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/application-check-ambiguous-links.html")
+            .canonicalize()
+            .unwrap();
+        let html = std::fs::read(path).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+            while !flag.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                        let mut request = [0u8; 2048];
+                        let _ = stream.read(&mut request);
+                        let header = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",html.len());
+                        let _ = stream.write_all(header.as_bytes());
+                        let _ = stream.write_all(&html);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(25))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let url = format!("http://127.0.0.1:{port}/fixture");
+        super::start("ambiguous-fixture".into(), "fictional-job".into(), url).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("ambiguous-fixture").unwrap() {
+                break done;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "application check did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        println!("fictional ambiguous-link check: {result}");
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert!(review);
+        assert!(result.contains("2 form fields detected"), "{result}");
+        assert!(
+            result.contains("Application links need manual review before opening"),
+            "{result}"
+        );
+        assert!(result.contains("Local vision"), "{result}");
+        acknowledge("ambiguous-fixture").unwrap();
     }
     #[test]
     fn inspected_page_is_only_reported_when_it_is_safe_and_unambiguous() {
