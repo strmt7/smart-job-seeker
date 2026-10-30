@@ -78,7 +78,7 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
         input.before
     )];
     sources.extend(input.facts);
-    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:format!("Rewrite this original CV or cover letter passage for the job. Preserve the meaning of the user-selected template passage and supported facts; do not add qualifications or details. Return only the replacement passage: {}",input.before),listing:input.listing,facts:sources,instructions:input.instructions};
+    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:format!("Rewrite this original CV or cover letter passage for the job. Preserve the meaning of the user-selected template passage and supported facts; do not add qualifications or details. Return only the replacement passage: {}",input.before),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
     let suggestion = crate::answer_task::generate(model, &request)?;
     if suggestion["text"]
         .as_str()
@@ -168,7 +168,7 @@ mod tests {
         input_with_passage(before, "Fictional research")
     }
     #[test]
-    fn suggestion_uses_existing_passage_and_two_reviewable_passes() {
+    fn suggestion_uses_existing_passage_and_checks_evidence() {
         let mut model = Fake { calls: 0 };
         let result = suggest(&mut model, input("Fictional research")).unwrap();
         assert_eq!(result["text"], "Applied research");
@@ -176,7 +176,8 @@ mod tests {
             result["sources"][0],
             "User-selected template passage (not independently verified): Fictional research"
         );
-        assert_eq!(model.calls, 2);
+        assert_eq!(model.calls, 3);
+        assert_eq!(result["evidence_check"]["status"], "invalid");
         let mut without_reviewed_facts = input("Fictional research");
         without_reviewed_facts.facts.clear();
         let result = suggest(&mut model, without_reviewed_facts).unwrap();

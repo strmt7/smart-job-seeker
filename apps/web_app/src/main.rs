@@ -641,10 +641,12 @@ fn answer_inputs(
     {
         return Err("Job changed; inspect the form again".into());
     }
-    let (facts, _, listing, _) = fit_inputs(ws, &session.job_id)?;
-    if facts.is_empty() {
+    let (all_facts, search_instructions) = fit_candidate_context(ws)?;
+    if all_facts.is_empty() {
         return Err("Add reviewed qualifications before drafting an answer".into());
     }
+    let (_, listing, _) =
+        fit_listing_digest(ws, &session.job_id, &all_facts, &search_instructions)?;
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
@@ -659,7 +661,9 @@ fn answer_inputs(
         .take(2000)
         .collect();
     let question = field.label.clone();
-    let digest = Sha256Digest::of(&json!({"session":session.id,"schema":session.preview.schema.schema_hash_input(),"selector":selector,"question":question,"listing":listing,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
+    let facts = fit_semantic_pool(&all_facts, &format!("{question}\n{listing}"));
+    let available_facts = all_facts.len();
+    let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","session":session.id,"schema":session.preview.schema.schema_hash_input(),"selector":selector,"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
         session_id: session.id.clone(),
         selector: selector.to_owned(),
@@ -667,6 +671,7 @@ fn answer_inputs(
         question,
         listing,
         facts,
+        available_facts,
         instructions,
     })
 }
@@ -711,7 +716,7 @@ fn attach_answer_provenance(
             .iter_mut()
             .find(|field| field["selector"].as_str() == Some(selector))
             .ok_or("Linked answer field is missing")?;
-        field["source_draft"] = json!({"task_id":id,"sources":draft.answer["sources"],"evidence_check":draft.answer["evidence_check"],"note":"The reviewed answer exactly matched this local draft. Model citations and checks are advisory."});
+        field["source_draft"] = json!({"task_id":id,"sources":draft.answer["sources"],"selection":draft.answer["selection"],"evidence_check":draft.answer["evidence_check"],"note":"The reviewed answer exactly matched this local draft. Model citations and checks are advisory."});
     }
     Ok(())
 }
@@ -733,10 +738,11 @@ fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task
     {
         return Err("Review possible duplicate jobs before drafting an email".into());
     }
-    let (facts, _, listing, _) = fit_inputs(ws, id)?;
-    if facts.is_empty() {
+    let (all_facts, search_instructions) = fit_candidate_context(ws)?;
+    if all_facts.is_empty() {
         return Err("Add reviewed qualifications before drafting an email".into());
     }
+    let (_, listing, _) = fit_listing_digest(ws, id, &all_facts, &search_instructions)?;
     let profile: Value = match ws.candidate_profile().map_err(|error| error.to_string())? {
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
@@ -748,7 +754,9 @@ fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task
         .take(2000)
         .collect();
     let question = format!("Write a concise application email body for the role {} at {}. Use only supported candidate facts, do not invent contact information, and leave the recipient and subject to the candidate.", job.title, job.employer);
-    let digest = Sha256Digest::of(&json!({"job_id":id.as_str(),"question":question,"listing":listing,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
+    let facts = fit_semantic_pool(&all_facts, &format!("{question}\n{listing}"));
+    let available_facts = all_facts.len();
+    let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","job_id":id.as_str(),"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
         session_id: id.as_str().to_owned(),
         selector: "email_body".into(),
@@ -756,6 +764,7 @@ fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task
         question,
         listing,
         facts,
+        available_facts,
         instructions,
     })
 }
@@ -5527,6 +5536,28 @@ mod tests {
         let second = email_answer_inputs(&ws, &id).unwrap();
         assert_ne!(first.digest, second.digest);
         assert_eq!(second.selector, "email_body");
+        ws.add_fact(
+            "Additional unrelated reviewed qualification",
+            FactOrigin::UserAttested,
+        )
+        .unwrap();
+        let third = email_answer_inputs(&ws, &id).unwrap();
+        assert_ne!(second.digest, third.digest);
+        assert_eq!(third.available_facts, 2);
+    }
+
+    #[test]
+    fn answer_pool_prioritizes_question_terms_and_keeps_bounded_sampling() {
+        let mut facts: Vec<String> = (0..60)
+            .map(|i| format!("Maintained unrelated project schedule {i}"))
+            .collect();
+        facts[59] = "Moderated focus groups with customers".into();
+        let question = "Describe your experience moderating focus groups";
+        let listing = "Research engineer role";
+        assert!(!select_fit_facts(&facts, listing).contains(&facts[59]));
+        let pool = fit_semantic_pool(&facts, &format!("{question}\n{listing}"));
+        assert!(pool[..20].contains(&facts[59]));
+        assert!(pool.len() <= 60);
     }
 
     #[test]
