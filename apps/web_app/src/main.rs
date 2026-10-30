@@ -2450,17 +2450,16 @@ fn serve(
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             let mut result = template_suggest::poll(id)?;
             if result["status"] == "complete" {
-                let current = result["document_id"]
+                let ((document, job), before) = result["document_id"]
                     .as_str()
                     .zip(result["job_id"].as_str())
                     .zip(result["before"].as_str())
-                    .and_then(|((doc, job), before)| {
-                        JobIdentityId::new(job)
-                            .ok()
-                            .and_then(|id| template_suggestion_inputs(ws, doc, &id, before).ok())
-                    });
-                if current.as_ref().map(|input| input.digest.as_str()) != result["digest"].as_str()
-                {
+                    .ok_or("Template suggestion context is unavailable")?;
+                let job = JobIdentityId::new(job)
+                    .map_err(|_| "Template suggestion context is invalid")?;
+                let current = template_suggestion_inputs(ws, document, &job, before)
+                    .map_err(|_| "Could not recheck template suggestion context; retry or inspect the document and job")?;
+                if Some(current.digest.as_str()) != result["digest"].as_str() {
                     result = json!({"status":"failed","error":"The document, job or supporting information changed; suggest again"});
                 }
             }

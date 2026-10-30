@@ -22,13 +22,42 @@ struct Task {
     result: Option<Result<Value, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// Retain recent responses for lost HTTP responses or context-check retries.
+// These candidate details stay in memory and expire; they are not persisted.
+static COMPLETED: Mutex<Vec<(String, Value, std::time::Instant)>> = Mutex::new(Vec::new());
+
+fn terminal_result(task: &Task) -> Option<Value> {
+    task.result.as_ref().map(|result| match result {
+        Ok(suggestion) => json!({"status":"complete","suggestion":suggestion,"document_id":task.document_id,"job_id":task.job_id,"before":task.before,"digest":task.digest}),
+        Err(error) => json!({"status":"failed","error":error}),
+    })
+}
+
+fn remember_result(
+    completed: &mut Vec<(String, Value, std::time::Instant)>,
+    id: &str,
+    result: Value,
+) {
+    completed.retain(|(saved_id, _, at)| {
+        saved_id != id && at.elapsed() <= std::time::Duration::from_secs(600)
+    });
+    if completed.len() >= 16 {
+        completed.remove(0);
+    }
+    completed.push((id.to_owned(), result, std::time::Instant::now()));
+}
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK
         .lock()
         .map_err(|_| "Template suggestions unavailable")?;
-    if task.as_ref().is_some_and(|t| t.result.is_none()) {
-        return Err("A template suggestion is already running".into());
+    if let Some(previous) = task.as_ref() {
+        let response =
+            terminal_result(previous).ok_or("A template suggestion is already running")?;
+        let mut completed = COMPLETED
+            .lock()
+            .map_err(|_| "Template suggestions unavailable")?;
+        remember_result(&mut completed, &previous.id, response);
     }
     *task = Some(Task {
         id: id.clone(),
@@ -63,10 +92,17 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
 }
 fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     let text = crate::document_extract::extract(&input.document_name, &input.source)?;
+    let unique = text.find(&input.before).is_some_and(|at| {
+        input
+            .before
+            .chars()
+            .next()
+            .is_some_and(|first| !text[at + first.len_utf8()..].contains(&input.before))
+    });
     if input.before.is_empty()
         || input.before.len() > 1000
         || input.before.chars().any(char::is_control)
-        || text.match_indices(&input.before).count() != 1
+        || !unique
     {
         return Err("Select a unique single-line passage from the template".into());
     }
@@ -92,26 +128,23 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK
         .lock()
         .map_err(|_| "Template suggestions unavailable")?;
+    let mut completed = COMPLETED
+        .lock()
+        .map_err(|_| "Template suggestions unavailable")?;
+    completed.retain(|(_, _, at)| at.elapsed() <= std::time::Duration::from_secs(600));
+    if let Some((_, result, _)) = completed.iter().find(|(task_id, _, _)| task_id == id) {
+        return Ok(result.clone());
+    }
     let task = tasks
-        .as_mut()
+        .as_ref()
         .filter(|t| t.id == id)
         .ok_or("Template suggestion not found")?;
-    let Some(result) = task.result.take() else {
+    let Some(response) = terminal_result(task) else {
         return Ok(json!({"status":"running"}));
     };
-    let (document_id, job_id, before, digest) = (
-        task.document_id.clone(),
-        task.job_id.clone(),
-        task.before.clone(),
-        task.digest.clone(),
-    );
+    remember_result(&mut completed, id, response.clone());
     *tasks = None;
-    Ok(match result {
-        Ok(suggestion) => {
-            json!({"status":"complete","suggestion":suggestion,"document_id":document_id,"job_id":job_id,"before":before,"digest":digest})
-        }
-        Err(error) => json!({"status":"failed","error":error}),
-    })
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -119,6 +152,7 @@ mod tests {
     use super::*;
     use std::io::{Cursor, Write};
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+    static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
     struct Fake {
         calls: usize,
     }
@@ -186,6 +220,79 @@ mod tests {
             .unwrap()
             .contains("not independently verified"));
         assert!(suggest(&mut model, input("Not present")).is_err());
+        assert!(suggest(&mut model, input_with_passage("aaa", "aaaa")).is_err());
+        assert!(suggest(&mut model, input_with_passage("éé", "ééé")).is_err());
+    }
+
+    #[test]
+    fn completed_suggestion_can_be_retried_and_is_revalidated_against_current_inputs() {
+        use std::io::{Read, Write};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/role","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.add_document("fixture-document", "fixture.docx", b"fictional", 1)
+            .unwrap();
+        let input =
+            crate::template_suggestion_inputs(&ws, "fixture-document", &job, "Original").unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "retry-fixture".into(),
+            document_id: input.document_id,
+            job_id: input.job_id,
+            before: input.before,
+            digest: input.digest,
+            result: Some(Ok(json!({"text":"Revised","sources":[]}))),
+        });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let poll_api = |ws: &mut waypoint_workspace::Workspace| {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"task_id":"retry-fixture"}).to_string();
+            write!(client,"POST /api/documents/template-suggest-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, &mut None, "fixture", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let first = poll_api(&mut ws);
+        assert_eq!(first["status"], "complete");
+        assert_eq!(poll_api(&mut ws), first);
+        ws.add_fact(
+            "A changed fictional qualification",
+            waypoint_workspace::FactOrigin::UserAttested,
+        )
+        .unwrap();
+        let changed = poll_api(&mut ws);
+        assert_eq!(changed["status"], "failed");
+        assert!(changed["error"].as_str().unwrap().contains("changed"));
+    }
+
+    #[test]
+    fn retained_suggestions_are_bounded_and_expire() {
+        let mut saved = vec![(
+            "expired".into(),
+            json!({}),
+            std::time::Instant::now() - std::time::Duration::from_secs(601),
+        )];
+        for i in 0..17 {
+            remember_result(
+                &mut saved,
+                &format!("task-{i}"),
+                json!({"status":"complete"}),
+            );
+        }
+        assert_eq!(saved.len(), 16);
+        assert!(!saved
+            .iter()
+            .any(|(id, _, _)| id == "expired" || id == "task-0"));
+        assert!(saved.iter().any(|(id, _, _)| id == "task-16"));
     }
 
     #[test]
