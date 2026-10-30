@@ -7,7 +7,13 @@ if ($env:OS -ne 'Windows_NT') { throw 'Waypoint installation requires Windows.' 
 if ($InstallDirectory -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') { throw 'Choose an absolute installation path.' }
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 if (Test-Path -LiteralPath $InstallDirectory) { throw 'The installation directory already exists. Choose a new directory; existing files will not be overwritten.' }
-$source = Join-Path $PSScriptRoot 'app'
+$source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'app'))
+# Copying the package into its own tree can recursively copy the destination.
+# Compare full path components rather than a raw prefix (app2 is not app).
+$sourcePrefix = $source.TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+if ($InstallDirectory.StartsWith($sourcePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Choose an installation directory outside the extracted package app folder.'
+}
 $manifestPath = Join-Path $source 'package-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Package manifest is missing. Extract the complete package and try again.' }
 try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { throw 'Package manifest is invalid. Extract the complete package and try again.' }

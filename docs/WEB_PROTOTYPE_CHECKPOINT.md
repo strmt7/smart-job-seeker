@@ -780,3 +780,7 @@ Native select inspection now excludes options and option groups marked `aria-dis
 ## Unavailable controls during inspection — 2026-10-30
 
 Rendered native controls and supported editable text fields now have their live disabled and read-only ancestry checked during the existing bounded visibility inspection. Unavailable controls are omitted from the review schema. A required unavailable control retains the blocking review warning; an optional one adds a non-blocking review obligation so other fields can still be prepared. The browser fixture covered a container becoming disabled, preservation of the changed-option schema check, and both warnings; a web-app unit test checked warning classification. Custom controls and live employer pages remain outside this fixture.
+
+## Installer destination containment — 2026-10-30
+
+The prototype installer now rejects a destination lexically inside the extracted `app` source before creating the destination, avoiding a recursive source-to-child copy. Fictional Windows installer tests checked nested paths, case-insensitive comparison and a similarly named sibling. This does not resolve junction or symlink aliases, establish clean-host installation, or provision the still-missing Chromium, Ollama and Visual C++ runtime dependencies.

@@ -25,6 +25,22 @@ try {
         }
     }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
+    $nested = Join-Path $app 'nested-install'
+    $rejected = $false
+    try { & $installer -InstallDirectory $nested -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'outside the extracted package') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected -or (Test-Path -LiteralPath $nested)) { throw 'An installation inside the package was not rejected before copying.' }
+    $rejected = $false
+    try { & $installer -InstallDirectory $nested.ToUpperInvariant() -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'outside the extracted package') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected -or (Test-Path -LiteralPath $nested)) { throw 'Case-insensitive source containment was not enforced.' }
+    $sibling = Join-Path $testRoot 'app2'
+    & $installer -InstallDirectory $sibling -NoShortcut
+    if (-not (Test-Path -LiteralPath (Join-Path $sibling 'waypoint_web.exe') -PathType Leaf)) { throw 'A sibling with a similar prefix was incorrectly rejected.' }
     $installed = Join-Path $testRoot 'installed'
     & $installer -InstallDirectory $installed -NoShortcut
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/soffice.com') -PathType Leaf)) { throw 'Bundled converter was not copied.' }
