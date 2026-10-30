@@ -540,3 +540,12 @@ A fictional driver fixture verified that a shared destination labelled both
 “Apply now” and “Submit application” is not followed. The check remains
 heuristic: labels and paths cannot prove that an arbitrary page has no external
 side effects. No employer site or application submission was used in this test.
+
+A pairwise local-model duplicate comparison can now be retried after a lost
+status response. The latest result is held in memory for up to ten minutes and
+its listing and decision binding is checked again when read; a decided pair
+cannot revive an old result. The interface retains the task ID for the current
+browser session and can resume it after a rerender. A fictional API fixture and
+UI retry test covered response loss and a subsequent duplicate decision. The
+cache is bounded to the latest result, does not survive an app restart, and a
+lost start response before the browser receives a task ID is not recovered.

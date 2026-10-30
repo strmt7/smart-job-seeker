@@ -1518,6 +1518,9 @@ fn serve(
                     result = json!({"status":"failed","error":"The listings or duplicate decision changed; compare again"});
                 }
             }
+            if result["status"] != "running" {
+                result = duplicate_compare::complete(id, result)?;
+            }
             json_reply(stream, "200 OK", result);
         }
         "/api/duplicates/decide" => {
