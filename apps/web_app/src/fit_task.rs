@@ -1022,7 +1022,31 @@ fn check_qualification_judgments_with_source(
         return (original, fallback);
     };
     let mut ambiguous = 0;
+    let mut acronym_review = 0;
     for item in criteria.iter_mut() {
+        let missing_acronym = item["source"] == "listing"
+            && item["status"] == "supported"
+            && item["excerpt"].as_str().is_some_and(|excerpt| {
+                (2..=12).contains(&excerpt.len())
+                    && excerpt.bytes().all(|b| b.is_ascii_uppercase())
+                    && item["fact_index"]
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .and_then(|n| n.checked_sub(1))
+                        .and_then(|i| facts.get(i))
+                        .is_some_and(|fact| {
+                            !fact
+                                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                                .any(|word| word.eq_ignore_ascii_case(excerpt))
+                        })
+            });
+        if missing_acronym {
+            item["status"] = json!("unknown");
+            item["fact_index"] = Value::Null;
+            item["explanation"] = json!("The cited fact does not name the requirement acronym as a separate term; equivalent wording may still qualify, so review it manually.");
+            acronym_review += 1;
+            continue;
+        }
         if item["source"] == "listing"
             && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
             && item["excerpt"].as_str().is_some_and(|excerpt| {
@@ -1036,7 +1060,7 @@ fn check_qualification_judgments_with_source(
             ambiguous += 1;
         }
     }
-    let mut fallback = if ambiguous > 0 {
+    let mut fallback = if ambiguous + acronym_review > 0 {
         match validate(original.clone(), facts, preferences, listing) {
             Ok(value) => value,
             Err(_) => return (original, fallback),
@@ -1056,8 +1080,8 @@ fn check_qualification_judgments_with_source(
         Some(json!({"id": index + 1, "requirement": excerpt, "job_context": context, "fact": fact}))
     }).collect();
     if items.is_empty() {
-        if ambiguous > 0 {
-            fallback["qualification_check"] = json!({"status":"ambiguous_context", "checked":0, "downgraded":ambiguous, "reconciled":0});
+        if ambiguous + acronym_review > 0 {
+            fallback["qualification_check"] = json!({"status":if acronym_review > 0 { "review_required" } else { "ambiguous_context" }, "checked":0, "downgraded":ambiguous + acronym_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "reconciled":0});
         }
         return (original, fallback);
     }
@@ -1164,7 +1188,7 @@ fn check_qualification_judgments_with_source(
     }
     match validate(original.clone(), facts, preferences, listing) {
         Ok(mut assessment) => {
-            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous, "ambiguous_context":ambiguous, "reconciled":confirmed.len()});
+            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous + acronym_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "reconciled":confirmed.len()});
             (original, assessment)
         }
         Err(_) => (original, fallback),
@@ -2216,6 +2240,78 @@ mod tests {
             );
             assert_eq!(result["rubric"][0]["status"], "unknown");
             assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+        }
+    }
+
+    #[test]
+    fn unsupported_acronym_is_left_unknown_before_model_comparison() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct NoCalls;
+        impl Inference for NoCalls {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                panic!("uncited acronym must not be confirmed")
+            }
+        }
+        let facts = vec!["Used PostgreSQL and Python".to_owned()];
+        let listing = "Required: SQL.";
+        let raw = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"}]});
+        let initial = validate(raw.clone(), &facts, "", listing).unwrap();
+        let (_, result) =
+            check_qualification_judgments(&mut NoCalls, raw, initial, &facts, "", listing);
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["qualification_check"]["acronym_review"], 1);
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local model and resource preflight"]
+    fn live_qualification_check_rejects_unrelated_experience() {
+        let model_name = std::env::var("WAYPOINT_FIT_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (_, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some(model_name.as_str())
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            model_name,
+            crate::resident_model,
+        );
+        let facts = vec!["Maintained backend services in Python for three years".to_owned()];
+        let listing = "Required: SQL and Python experience.";
+        let single = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"}]});
+        let mut combined = single.clone();
+        combined["criteria"].as_array_mut().unwrap().push(json!({"source":"listing","excerpt":"Python","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"}));
+        let mut results = Vec::new();
+        for raw in [single, combined] {
+            let initial = validate(raw.clone(), &facts, "", listing).unwrap();
+            let (_, result) =
+                check_qualification_judgments(&mut model, raw, initial, &facts, "", listing);
+            println!("fictional unrelated-fact result: {result}");
+            results.push(result);
+        }
+        for result in results {
+            assert_eq!(
+                result["rubric"][0]["status"], "unknown",
+                "unrelated experience was credited: {result}"
+            );
         }
     }
 
