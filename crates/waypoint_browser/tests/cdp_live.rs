@@ -57,6 +57,111 @@ fn failed_navigation_does_not_return_an_inspected_form() {
 }
 
 #[test]
+#[ignore = "launches one local browser and a fictional local HTTP server"]
+fn http_error_page_is_not_treated_as_an_application_form() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                    let mut request = [0u8; 2048];
+                    let _ = stream.read(&mut request);
+                    let body = "<html><body><h1>Not found</h1><input name='email'></body></html>";
+                    let response = format!("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = stream.write_all(response.as_bytes());
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(25))
+                }
+                Err(_) => return,
+            }
+        }
+    });
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let result = driver.open(&format!("http://127.0.0.1:{port}/fictional"));
+    server.join().unwrap();
+    assert!(result.is_err(), "HTTP error page was accepted: {result:?}");
+    let reinspected = driver.inspect_current().unwrap();
+    assert!(
+        reinspected
+            .walls
+            .iter()
+            .any(|wall| wall.contains("HTTP 404")),
+        "reinspection lost the main document error: {:?}",
+        reinspected.walls
+    );
+}
+
+#[test]
+#[ignore = "launches one local browser and a fictional local HTTP server"]
+fn redirect_and_failed_subresource_do_not_mask_a_successful_main_page() {
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let flag = stopped.clone();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !flag.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                    let mut request = [0u8; 2048];
+                    let size = stream.read(&mut request).unwrap_or(0);
+                    let first = String::from_utf8_lossy(&request[..size]);
+                    let response = if first.starts_with("GET /redirect ") {
+                        "HTTP/1.1 302 Found\r\nLocation: /form\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    } else if first.starts_with("GET /form ") {
+                        let body =
+                            "<html><body><input name='email'><img src='/missing'></body></html>";
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                    } else {
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_owned()
+                    };
+                    let _ = stream.write_all(response.as_bytes());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(25))
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let result = driver.open(&format!("http://127.0.0.1:{port}/redirect"));
+    stopped.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+    let form = result.unwrap();
+    assert!(
+        form.walls.is_empty(),
+        "unexpected warning: {:?}",
+        form.walls
+    );
+    assert_eq!(form.schema.fields.len(), 1);
+    assert!(driver.current_url().unwrap().ends_with("/form"));
+    let same_document = driver
+        .open(&format!("http://127.0.0.1:{port}/form#profile"))
+        .unwrap();
+    assert!(
+        same_document.walls.is_empty(),
+        "same-document navigation lost verified status: {:?}",
+        same_document.walls
+    );
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional form without submitting"]
 fn file_accept_is_checked_before_the_attachment_changes() {
     use std::io::Write;

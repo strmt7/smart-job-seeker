@@ -440,9 +440,6 @@ pub struct Cdp {
 }
 
 fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize) {
-    if raw_len > MAX_EVENT_BYTES {
-        return;
-    }
     let Some(name) = value
         .get("method")
         .and_then(Value::as_str)
@@ -450,13 +447,30 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
     else {
         return;
     };
+    // Keep only bounded metadata for document responses. Network events can
+    // contain headers and URLs; neither is needed to check the HTTP status.
+    let value = if name.starts_with("Network.") {
+        if name != "Network.responseReceived"
+            || value.pointer("/params/type").and_then(Value::as_str) != Some("Document")
+        {
+            return;
+        }
+        json!({"params":{"frameId":value.pointer("/params/frameId"),"loaderId":value.pointer("/params/loaderId"),"status":value.pointer("/params/response/status")}})
+    } else {
+        if raw_len > MAX_EVENT_BYTES {
+            return;
+        }
+        value
+    };
     if name == "Page.loadEventFired" {
         events.retain(|(event, _)| event != "Page.loadEventFired");
     }
     if events.len() >= MAX_EVENTS {
         let oldest_non_load = events
             .iter()
-            .position(|(event, _)| event != "Page.loadEventFired")
+            .position(|(event, _)| {
+                event != "Page.loadEventFired" && event != "Network.responseReceived"
+            })
             .unwrap_or(0);
         events.remove(oldest_non_load);
     }
@@ -719,6 +733,44 @@ mod tests {
         );
         assert_eq!(events.len(), MAX_EVENTS);
         assert!(!events.iter().any(|(name, _)| name == "oversized"));
+    }
+
+    #[test]
+    fn document_status_survives_event_flood_without_storing_headers_or_urls() {
+        let mut events = Vec::new();
+        retain_event(
+            &mut events,
+            json!({"method":"Network.responseReceived","params":{"type":"Document","frameId":"frame","loaderId":"loader","response":{"status":404,"url":"https://example.invalid/private","headers":{"Authorization":"secret"}}}}),
+            MAX_EVENT_BYTES + 1,
+        );
+        for index in 0..MAX_EVENTS * 3 {
+            retain_event(
+                &mut events,
+                json!({"method":"Runtime.event","index":index}),
+                100,
+            );
+        }
+        assert_eq!(events.len(), MAX_EVENTS);
+        let event = events
+            .iter()
+            .find(|(name, _)| name == "Network.responseReceived")
+            .unwrap();
+        assert_eq!(event.1.pointer("/params/status"), Some(&json!(404)));
+        let serialized = event.1.to_string();
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("example.invalid"));
+        retain_event(
+            &mut events,
+            json!({"method":"Network.responseReceived","params":{"type":"Image","response":{"status":404}}}),
+            100,
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(name, _)| name == "Network.responseReceived")
+                .count(),
+            1
+        );
     }
 
     #[test]

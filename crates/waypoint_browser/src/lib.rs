@@ -132,6 +132,8 @@ pub struct CdpDriver {
     /// reports. Never contains field values that were typed.
     pub trace: Vec<String>,
     load_wait: Duration,
+    // Status belongs to one browser frame and loader, never to an origin alone.
+    document_status: Option<(String, String, u64)>,
 }
 
 impl CdpDriver {
@@ -293,9 +295,17 @@ impl CdpDriver {
             root_node: None,
             trace: vec![],
             load_wait: Duration::from_secs(10),
+            document_status: None,
         };
         driver.cdp.call("Page.enable", json!({})).map_err(derr)?;
         driver.cdp.call("DOM.enable", json!({})).map_err(derr)?;
+        driver
+            .cdp
+            .call(
+                "Network.enable",
+                json!({"maxTotalBufferSize":0,"maxResourceBufferSize":0,"maxPostDataSize":0}),
+            )
+            .map_err(derr)?;
         Ok(driver)
     }
 
@@ -1646,7 +1656,43 @@ impl BrowserDriver for CdpDriver {
                 break;
             }
         }
-        let result = self.inspect_current()?;
+        let mut result = self.inspect_current()?;
+        // A same-document route has no new loader or HTTP response. For an
+        // ordinary HTTP navigation, bind the status to the main frame and
+        // loader, never to a subresource or an earlier page.
+        if (url.starts_with("https://") || url.starts_with("http://"))
+            && navigation.get("loaderId").and_then(Value::as_str).is_some()
+        {
+            let loader = navigation["loaderId"].as_str();
+            let status = self
+                .cdp
+                .events
+                .iter()
+                .rev()
+                .find_map(|(name, event)| {
+                    (frame_id.is_some()
+                        && name == "Network.responseReceived"
+                        && event.pointer("/params/frameId").and_then(Value::as_str) == frame_id
+                        && event.pointer("/params/loaderId").and_then(Value::as_str) == loader)
+                        .then(|| event.pointer("/params/status").and_then(Value::as_u64))
+                        .flatten()
+                })
+                .or_else(|| {
+                    self.document_status
+                        .as_ref()
+                        .filter(|(saved_frame, saved_loader, _)| {
+                            Some(saved_frame.as_str()) == frame_id
+                                && Some(saved_loader.as_str()) == loader
+                        })
+                        .map(|(_, _, code)| *code)
+                });
+            match status {
+                Some(code @ 400..=599) => return Err(DriverError(format!("The page returned HTTP {code}; manual review is required"))),
+                Some(200..=299) => (),
+                _ if !result.walls.iter().any(|wall| wall.contains("main page response status")) => result.walls.push("The main page response status could not be verified; manual review is required".into()),
+                _ => (),
+            }
+        }
         self.trace.push(format!(
             "opened {url} ({} fields)",
             result.schema.fields.len()
@@ -1656,7 +1702,44 @@ impl BrowserDriver for CdpDriver {
 
     fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
         let current_url = self.current_url()?;
-        let (schema, walls) = self.read_form(&current_url)?;
+        let (schema, mut walls) = self.read_form(&current_url)?;
+        if current_url.starts_with("https://") || current_url.starts_with("http://") {
+            let frame_tree = self.cdp.call("Page.getFrameTree", json!({})).ok();
+            let frame = frame_tree
+                .as_ref()
+                .and_then(|tree| tree.pointer("/frameTree/frame/id"))
+                .and_then(Value::as_str);
+            let loader = frame_tree
+                .as_ref()
+                .and_then(|tree| tree.pointer("/frameTree/frame/loaderId"))
+                .and_then(Value::as_str);
+            let status = frame.zip(loader).and_then(|(frame, loader)| {
+                let observed = self.cdp.events.iter().rev().find_map(|(name, event)| {
+                    (name == "Network.responseReceived"
+                        && event.pointer("/params/frameId").and_then(Value::as_str) == Some(frame)
+                        && event.pointer("/params/loaderId").and_then(Value::as_str)
+                            == Some(loader))
+                    .then(|| event.pointer("/params/status").and_then(Value::as_u64))
+                    .flatten()
+                });
+                if let Some(code) = observed {
+                    self.document_status = Some((frame.to_owned(), loader.to_owned(), code));
+                    Some(code)
+                } else {
+                    self.document_status
+                        .as_ref()
+                        .filter(|(saved_frame, saved_loader, _)| {
+                            saved_frame == frame && saved_loader == loader
+                        })
+                        .map(|(_, _, code)| *code)
+                }
+            });
+            match status {
+                Some(code @ 400..=599) => walls.push(format!("The page returned HTTP {code}; manual review is required")),
+                Some(200..=299) => (),
+                _ => walls.push("The main page response status could not be verified; manual review is required".into()),
+            }
+        }
         Ok(LiveForm {
             origin: schema.origin.clone(),
             schema,
