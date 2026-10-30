@@ -24,7 +24,7 @@ impl Store {
         reason: &str,
         timestamp: i64,
     ) -> Result<(), StoreError> {
-        self.conn.execute("INSERT INTO manual_reviews(job_id,reason,updated_at) VALUES(?1,?2,?3) ON CONFLICT(job_id) DO UPDATE SET reason=excluded.reason, updated_at=excluded.updated_at", params![job_id, reason, timestamp])?;
+        self.conn.execute("INSERT INTO manual_reviews(job_id,reason,updated_at) VALUES(?1,?2,?3) ON CONFLICT(job_id) DO UPDATE SET reason=excluded.reason, updated_at=excluded.updated_at, report_generation=manual_reviews.report_generation+1", params![job_id, reason, timestamp])?;
         Ok(())
     }
     pub fn manual_reviews(&self) -> Result<Vec<ManualReview>, StoreError> {
@@ -227,6 +227,51 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn summary_refresh_preserves_other_reason_revision_after_v28_migration() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        for migration in &crate::MIGRATIONS[..28] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES('fixture29','Role','Fixture','','\"shortlisted\"')", []).unwrap();
+        conn.execute(
+            "INSERT INTO manual_reviews(job_id,reason,updated_at) VALUES('fixture29','Existing',1)",
+            [],
+        )
+        .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        let old = store.manual_review_reasons("fixture29").unwrap()[0].revision;
+        store
+            .mark_manual_review("fixture29", "Existing", 1)
+            .unwrap();
+        let new = store.manual_review_reasons("fixture29").unwrap()[0].revision;
+        assert_ne!(old, new);
+        assert!(!store
+            .clear_manual_review_reason("fixture29", "Existing", old)
+            .unwrap());
+        store.mark_manual_review("fixture29", "Other", 2).unwrap();
+        let other = store
+            .manual_review_reasons("fixture29")
+            .unwrap()
+            .into_iter()
+            .find(|r| r.reason == "Other")
+            .unwrap();
+        assert!(store
+            .clear_manual_review_reason("fixture29", "Other", other.revision)
+            .unwrap());
+        let remaining = store.manual_review_reasons("fixture29").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].revision, new);
+        assert!(store
+            .clear_manual_review_reason("fixture29", "Existing", new)
+            .unwrap());
+        assert!(store.manual_reviews().unwrap().is_empty());
     }
 
     #[test]

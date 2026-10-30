@@ -1142,11 +1142,8 @@ mod tests {
             ws.manual_review_reasons(&job).unwrap()[0].reason,
             pending_reason("first-task")
         );
-        // Clearing another reason refreshes the remaining reason's revision in
-        // the store. A stale completion must not clear it automatically.
-        assert!(!finish_pending_review(&ws, &job, "first-task", newer).unwrap());
-        let refreshed = ws.manual_review_reasons(&job).unwrap()[0].revision;
-        assert!(finish_pending_review(&ws, &job, "first-task", refreshed).unwrap());
+        // Resolving another reason does not change this reason's revision.
+        assert!(finish_pending_review(&ws, &job, "first-task", newer).unwrap());
         assert!(ws.manual_review_reasons(&job).unwrap().is_empty());
     }
 

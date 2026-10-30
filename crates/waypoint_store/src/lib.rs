@@ -273,6 +273,16 @@ const MIGRATIONS: &[&str] = &[
     // v28 — keep per-application history lookup bounded as other jobs accumulate.
     "CREATE INDEX submission_journal_application_seq ON submission_journal(application_id,seq);
      UPDATE meta SET value='28' WHERE key='schema_version';",
+    // v29 — distinguish reporting a review from refreshing its queue summary.
+    "ALTER TABLE manual_reviews ADD COLUMN report_generation INTEGER NOT NULL DEFAULT 0;
+     DROP TRIGGER manual_review_reason_update;
+     CREATE TRIGGER manual_review_reason_update AFTER UPDATE ON manual_reviews
+       WHEN NEW.report_generation != OLD.report_generation
+       BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='manual_review_revision';
+         INSERT INTO manual_review_reasons(job_id,reason,updated_at,revision)
+           VALUES(NEW.job_id,NEW.reason,NEW.updated_at,(SELECT CAST(value AS INTEGER) FROM meta WHERE key='manual_review_revision'))
+           ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at,revision=excluded.revision; END;
+     UPDATE meta SET value='29' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1121,7 +1131,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "27");
+        assert_eq!(version, "29");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
