@@ -1,0 +1,17 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function selectedFactsDetails(');
+const end = source.indexOf('function factCrossCheckMessage(', start);
+assert.ok(start >= 0 && end > start);
+const element = (tag, text, cls) => ({tag, text, cls, children: [], append(...nodes){this.children.push(...nodes);}});
+const render = vm.runInNewContext(`(function(element){${source.slice(start,end)};return selectedFactsDetails;})`)(element);
+assert.equal(render(null), null);
+const details = render({selected_facts:['Built accessible interfaces', '<fictional>']});
+assert.equal(details.children[0].text, 'Review 2 selected qualifications');
+assert.match(details.children[1].text, /Later context limits can omit some/);
+assert.equal(details.children[2].text, 'Built accessible interfaces');
+assert.equal(details.children[3].text, '<fictional>');
+for (const call of ['selectedFactsDetails(selection)', 'selectedFactsDetails(a.selection)', 'selectedFactsDetails(draft.selection)']) assert.ok(source.includes(call));
+console.log('Selected facts review checks passed.');

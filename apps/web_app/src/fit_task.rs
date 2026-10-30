@@ -293,7 +293,7 @@ fn select_facts_with_focus(
     if pool.len() <= 20 {
         return (
             pool.to_vec(),
-            json!({"method":"all_pool_facts","available_bounded":available,"pool":pool.len(),"examined":pool.len(),"selected":pool.len(),"failed_batches":0,"budget_truncated":false}),
+            json!({"method":"all_pool_facts","available_bounded":available,"pool":pool.len(),"examined":pool.len(),"selected":pool.len(),"selected_facts":pool,"failed_batches":0,"budget_truncated":false}),
         );
     }
     let listing_excerpts = selection_listing_excerpts(listing);
@@ -530,10 +530,8 @@ fn select_facts_with_focus(
                 .is_some_and(|fact| chosen.iter().any(|selected| selected == fact)))
             .count());
     }
-    (
-        chosen,
-        json!({"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":pool.len(),"submitted":submitted-skipped_submissions,"examined":examined,"sampled_examined":sampled_examined,"selected":selected,"semantic_selected":semantic_selected,"fallback_selected":selected-semantic_selected,"selection_capped":selection_capped,"oversized_facts":oversized_indices.len(),"cross_check":cross_check,"failed_batches":failed,"budget_truncated":submitted < pool.len(),"listing_truncated":listing.len()>listing_used_bytes,"preferences_truncated":preferences.len()>prefix(preferences,1200).len(),"listing_excerpt_bytes":listing_used_bytes,"listing_excerpt_count":listing_excerpts.len(),"preferences_prefix_bytes":prefix(preferences,1200).len()}),
-    )
+    let report = json!({"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":pool.len(),"submitted":submitted-skipped_submissions,"examined":examined,"sampled_examined":sampled_examined,"selected":selected,"selected_facts":chosen.clone(),"semantic_selected":semantic_selected,"fallback_selected":selected-semantic_selected,"selection_capped":selection_capped,"oversized_facts":oversized_indices.len(),"cross_check":cross_check,"failed_batches":failed,"budget_truncated":submitted < pool.len(),"listing_truncated":listing.len()>listing_used_bytes,"preferences_truncated":preferences.len()>prefix(preferences,1200).len(),"listing_excerpt_bytes":listing_used_bytes,"listing_excerpt_count":listing_excerpts.len(),"preferences_prefix_bytes":prefix(preferences,1200).len()});
+    (chosen, report)
 }
 
 pub fn poll(id: &str) -> Result<Value, String> {
@@ -2213,6 +2211,9 @@ mod tests {
         let (selected, report) =
             select_semantic_facts(&mut fixture, &pool, 100, "", "Frontend accessibility role");
         assert!(selected.contains(&pool[20]));
+        assert_eq!(report["selected_facts"], json!(selected));
+        let (all, all_report) = select_semantic_facts(&mut fixture, &pool[..2], 2, "", "Role");
+        assert_eq!(all_report["selected_facts"], json!(all));
         assert_eq!(report["examined"], 21);
         assert_eq!(report["available_bounded"], 100);
         assert_eq!(report["semantic_selected"], 1);
@@ -2606,6 +2607,62 @@ mod tests {
             vec![pool[20].clone()],
             "model missed relevant evidence or selected irrelevant facts"
         );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local gemma3:4b model and resource preflight"]
+    fn live_small_model_selects_paraphrases_and_question_evidence() {
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("gemma3:4b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", "gemma3:4b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "gemma3:4b".into(),
+            crate::resident_model,
+        );
+        let cases=[
+            (false,"Seeking a product engineer to make digital services usable by people with visual disabilities.","","Partnered with blind users to test navigation with VoiceOver."),
+            (true,"Seeking a software engineer for a commerce platform.","Describe a time you recovered from a production incident.","Restored a failed checkout release by rolling back and coordinating the on-call team."),
+        ];
+        let mut failures = Vec::new();
+        for (answer, listing, question, relevant) in cases {
+            let mut pool: Vec<_> = (0..20)
+                .map(|i| format!("Unrelated warehouse inventory record {i}"))
+                .collect();
+            pool.push(relevant.to_owned());
+            let (selected, report) = if answer {
+                select_answer_facts(&mut model, &pool, 21, question, listing)
+            } else {
+                select_semantic_facts(&mut model, &pool, 21, question, listing)
+            };
+            println!("fictional paraphrase case answer={answer}: {selected:?}; report: {report}");
+            if !selected.iter().any(|fact| fact == relevant) {
+                failures.push(if answer {
+                    "question evidence"
+                } else {
+                    "accessibility paraphrase"
+                });
+            }
+            if report["failed_batches"] != 0 || report["cross_check"]["status"] != "completed" {
+                failures.push(if answer {
+                    "question evaluation incomplete"
+                } else {
+                    "paraphrase evaluation incomplete"
+                });
+            }
+        }
+        assert!(failures.is_empty(), "failed fictional cases: {failures:?}");
     }
 
     #[test]
