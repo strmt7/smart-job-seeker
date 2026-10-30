@@ -476,6 +476,35 @@ fn selects_accessibly_labelled_native_radio_groups() {
             .as_deref(),
         Some("true")
     );
+    for (group_label, option, selector) in [
+        ("Travel preference", "Yes", "#travel-yes"),
+        ("Shift preference", "Night", "#shift-night"),
+    ] {
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == group_label)
+            .unwrap();
+        let choice = BrowserCommand::SelectRadio {
+            selector: field.selector.clone(),
+            label: option.into(),
+        };
+        driver.execute(&choice).unwrap();
+        driver.verify_choice(&choice).unwrap();
+        assert_eq!(
+            driver
+                .read_attribute(selector, "data-seen")
+                .unwrap()
+                .as_deref(),
+            Some("true")
+        );
+    }
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Outdated legend"));
     let duplicate = live
         .schema
         .fields
@@ -496,6 +525,23 @@ fn selects_accessibly_labelled_native_radio_groups() {
             label: "Same".into()
         })
         .is_err());
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser against a local fixture without submitting"]
+fn ambiguous_fieldset_accessible_name_requires_review() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver
+        .open(&file_url("form_radio_unresolved.html"))
+        .unwrap();
+    assert!(
+        live.walls.iter().any(
+            |wall| wall.contains("radio group has an unresolved or ambiguous accessible label")
+        ),
+        "{:?}",
+        live.walls
+    );
     assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
 }
 

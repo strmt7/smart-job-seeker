@@ -760,3 +760,7 @@ Fact-selection batches now count JSON escaping, brackets and commas toward their
 ## Incomplete application archives — 2026-10-30
 
 An application-attempt folder now receives an incomplete metadata record before its posting, screenshots directory and materials are initialized. It enters preparation in progress only after initialization finishes. If a later archive step fails, the records panel identifies the incomplete folder and warns that files may be missing. Windows tests covered a normal archive and an invalid captured-page record that fails partway through initialization. Failure to create the initial folder or metadata can still prevent a record from being listed. These records do not establish whether an external submission occurred.
+
+## Fieldset accessible names — 2026-10-30
+
+Native radio groups inside a fieldset can now use `aria-label` or `aria-labelledby` as their group question, with a referenced name taking precedence over a legend. A real local browser selected and verified options in two fictional groups; a separate fixture with duplicate referenced IDs raised a manual-review wall. This does not add automatic navigation or support every custom radio widget, and no employer site, local model or application submission was involved.

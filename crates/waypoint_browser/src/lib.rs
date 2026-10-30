@@ -786,30 +786,32 @@ impl CdpDriver {
                     .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"))
             {
                 let legend = if tag == "fieldset" {
-                    node.get("children")
-                        .and_then(Value::as_array)
-                        .and_then(|children| {
-                            children.iter().find(|child| {
-                                child
-                                    .get("nodeName")
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|name| name.eq_ignore_ascii_case("legend"))
-                            })
-                        })
-                        .map(|node| {
-                            let mut value = String::new();
-                            collect_text(node, false, &mut value);
-                            value.split_whitespace().collect::<Vec<_>>().join(" ")
+                    attrs
+                        .get("aria-label")
+                        .filter(|label| !label.trim().is_empty())
+                        .cloned()
+                        .or_else(|| {
+                            node.get("children")
+                                .and_then(Value::as_array)
+                                .and_then(|children| {
+                                    children.iter().find(|child| {
+                                        child
+                                            .get("nodeName")
+                                            .and_then(Value::as_str)
+                                            .is_some_and(|name| name.eq_ignore_ascii_case("legend"))
+                                    })
+                                })
+                                .map(|node| {
+                                    let mut value = String::new();
+                                    collect_text(node, false, &mut value);
+                                    value.split_whitespace().collect::<Vec<_>>().join(" ")
+                                })
                         })
                         .unwrap_or_default()
                 } else {
                     attrs.get("aria-label").cloned().unwrap_or_default()
                 };
-                let group_ref = if tag == "fieldset" {
-                    None
-                } else {
-                    attrs.get("aria-labelledby").cloned()
-                };
+                let group_ref = attrs.get("aria-labelledby").cloned();
                 if let Some(fieldset_id) = node
                     .get("nodeId")
                     .and_then(Value::as_u64)

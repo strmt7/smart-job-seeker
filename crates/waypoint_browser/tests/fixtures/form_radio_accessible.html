@@ -9,6 +9,15 @@
   <span id="schedule-one">Day</span><input id="day" type="radio" name="schedule" aria-labelledby="schedule-one" checked>
   <span id="schedule-two">Evening</span><input id="evening" type="radio" name="schedule" aria-labelledby="schedule-two" onchange="this.setAttribute('data-seen',String(this.checked))">
 </fieldset>
+<fieldset aria-label="Travel preference">
+  <input id="travel-no" type="radio" name="travel" aria-label="No" checked>
+  <input id="travel-yes" type="radio" name="travel" aria-label="Yes" onchange="this.setAttribute('data-seen',String(this.checked))">
+</fieldset>
+<span id="shift-heading">Shift preference</span>
+<fieldset aria-labelledby="shift-heading"><legend>Outdated legend</legend>
+  <input id="shift-day" type="radio" name="shift" aria-label="Day" checked>
+  <input id="shift-night" type="radio" name="shift" aria-label="Night" onchange="this.setAttribute('data-seen',String(this.checked))">
+</fieldset>
 <div role="radiogroup" aria-label="Ambiguous option">
   <input id="duplicate-one" type="radio" name="duplicate" aria-label="Same">
   <input id="duplicate-two" type="radio" name="duplicate" aria-label="Same">
