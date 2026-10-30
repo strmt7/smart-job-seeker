@@ -1190,6 +1190,7 @@ impl CdpDriver {
                             },
                             required,
                             sensitive: sensitive || is_sensitive_label(&group_label),
+                            editing_mode: None,
                             max_length_utf16: None,
                             autocomplete: None,
                         });
@@ -1223,6 +1224,21 @@ impl CdpDriver {
                 field_type,
                 required,
                 sensitive,
+                editing_mode: if supported_editing_host(&control.tag, &control.attrs) {
+                    Some(
+                        if control
+                            .attrs
+                            .get("contenteditable")
+                            .is_some_and(|value| value.eq_ignore_ascii_case("plaintext-only"))
+                        {
+                            waypoint_applications::form_mapping::EditingMode::PlainText
+                        } else {
+                            waypoint_applications::form_mapping::EditingMode::RichText
+                        },
+                    )
+                } else {
+                    None
+                },
                 max_length_utf16: if control.tag == "textarea"
                     || (control.tag == "input"
                         && matches!(

@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(line=>line.startsWith('function formEditorNotice('));assert.ok(line);
+const notice=vm.runInNewContext(`(${line})`);
+assert.match(notice({editing_mode:'rich_text',label:'Motivation'}),/Motivation: rich text editor.*may remove formatting/);
+assert.equal(notice({editing_mode:'plain_text',label:'Motivation'}),'');
+assert.equal(notice({label:'Legacy field'}),'');
+console.log('Rich editor notice UI checks passed.');

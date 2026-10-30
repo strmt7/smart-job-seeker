@@ -119,7 +119,7 @@ pub fn requested_field_records(preview: &FormPreview) -> Result<Vec<Value>, Stri
     preview.suggestions.iter().map(|mapping| {
         let field = preview.schema.fields.iter().find(|field| field.selector == mapping.field_selector)
             .ok_or("Requested field is missing from the inspected form")?;
-        Ok(serde_json::json!({"selector":field.selector,"question":field.label,"review_label":field_review_label(&preview.schema, field),"value":mapping.value}))
+        Ok(serde_json::json!({"selector":field.selector,"question":field.label,"review_label":field_review_label(&preview.schema, field),"editing_mode":field.editing_mode,"value":mapping.value}))
     }).collect()
 }
 
@@ -540,6 +540,10 @@ mod tests {
             inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery"}))
                 .unwrap();
         assert_eq!(preview.suggestions.len(), 1);
+        assert_eq!(
+            requested_field_records(&preview).unwrap()[0]["editing_mode"],
+            "rich_text"
+        );
         let selector = preview.suggestions[0].field_selector.clone();
         let mut ws = Workspace::in_memory().unwrap();
         let job_id = JobIdentityId::new("rich-fixture").unwrap();
@@ -1162,6 +1166,7 @@ mod tests {
             field_type,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         })
@@ -1228,6 +1233,7 @@ mod tests {
                 field_type: FormFieldType::Email,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1288,6 +1294,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         })
@@ -1340,6 +1347,7 @@ mod tests {
             field_type: FormFieldType::Text,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         })
@@ -1528,6 +1536,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    editing_mode: None,
                     max_length_utf16: None,
                     autocomplete: Some("given-name".into()),
                 }],
@@ -1590,6 +1599,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: Some("email".into()),
             }],
@@ -1641,6 +1651,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: Some("email".into()),
             }],
@@ -1693,6 +1704,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })

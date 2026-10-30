@@ -709,3 +709,13 @@ grant and visually transcribed it. The first vision attempt failed when the
 label was not visible; after adding a visible label, it passed. This is not
 proof of accuracy on real rich editors, hidden labels or changing pages; failed
 or mismatched entry still needs manual review. No application was submitted.
+
+Form schemas now distinguish native text controls, plain-text editing hosts and
+labelled rich editing hosts. The editor mode is included in the review binding
+and requested-field record, and rich editors receive a field-specific warning
+that formatting may be replaced. A fictional local browser fixture changed one
+editor from rich to plain-text-only and verified that the schema identity
+changed; the local qwen3.5:9b rich-text fill and visual fixture also passed
+again. Older serialized form fields without the new property deserialize with
+no editing mode. This does not prove compatibility with arbitrary dynamic
+editors, and a changed form still requires a new review.

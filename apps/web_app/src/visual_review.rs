@@ -605,6 +605,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1078,6 +1079,7 @@ mod tests {
             field_type: FormFieldType::Text,
             required: false,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         })

@@ -760,6 +760,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    editing_mode: None,
                     max_length_utf16: None,
                     autocomplete: None,
                 },
@@ -769,6 +770,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: true,
+                    editing_mode: None,
                     max_length_utf16: None,
                     autocomplete: None,
                 },
@@ -956,6 +958,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });
@@ -1023,6 +1026,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });
@@ -1084,6 +1088,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: Some("email".into()),
         });
@@ -1122,6 +1127,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });
@@ -1211,6 +1217,7 @@ mod tests {
             field_type: FormFieldType::Checkbox,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });
@@ -1277,6 +1284,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1358,6 +1366,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: Some("email".into()),
         });
@@ -1367,6 +1376,7 @@ mod tests {
             field_type: FormFieldType::Checkbox,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });
@@ -1491,6 +1501,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: Some("email".into()),
         });
@@ -1531,6 +1542,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1589,6 +1601,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1635,6 +1648,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1691,6 +1705,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: index == 0 || index == 20,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1740,6 +1755,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: index == 0 || index == 5 || index == 6,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: (index == 5 || index == 6).then(|| "email".into()),
             })
@@ -1782,6 +1798,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1813,6 +1830,7 @@ mod tests {
                 },
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1846,6 +1864,7 @@ mod tests {
                 },
                 required: true,
                 sensitive: false,
+                editing_mode: None,
                 max_length_utf16: None,
                 autocomplete: None,
             })
@@ -1876,6 +1895,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });
@@ -1906,6 +1926,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: None,
         });

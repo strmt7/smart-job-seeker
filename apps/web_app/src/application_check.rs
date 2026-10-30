@@ -1139,6 +1139,7 @@ mod tests {
             field_type,
             required: false,
             sensitive: false,
+            editing_mode: None,
             max_length_utf16: None,
             autocomplete: autocomplete.map(str::to_owned),
         };

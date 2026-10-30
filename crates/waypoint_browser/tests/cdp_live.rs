@@ -591,6 +591,10 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
         .find(|field| field.label == "Motivation")
         .unwrap();
     assert_eq!(field.field_type, FormFieldType::TextArea);
+    assert_eq!(
+        field.editing_mode,
+        Some(waypoint_applications::form_mapping::EditingMode::RichText)
+    );
     assert!(field.required);
     let selector = field.selector.clone();
     driver
@@ -644,6 +648,27 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
             })
             .is_err());
     }
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#mode".into(),
+        })
+        .unwrap();
+    let changed = driver.inspect_current().unwrap();
+    let changed_field = changed
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Motivation")
+        .unwrap();
+    assert_eq!(changed_field.selector, selector);
+    assert_eq!(
+        changed_field.editing_mode,
+        Some(waypoint_applications::form_mapping::EditingMode::PlainText)
+    );
+    assert_ne!(
+        page.schema.schema_hash_input(),
+        changed.schema.schema_hash_input()
+    );
     assert!(driver
         .trace
         .iter()

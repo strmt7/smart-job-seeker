@@ -22,6 +22,14 @@ pub enum FormFieldType {
     Radio { options: Vec<String> },
 }
 
+/// Distinguish editing hosts from native text controls for review and binding.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditingMode {
+    PlainText,
+    RichText,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormField {
     pub selector: String, // stable CSS selector from the form schema
@@ -29,6 +37,8 @@ pub struct FormField {
     pub field_type: FormFieldType,
     pub required: bool,
     pub sensitive: bool, // salary/authorization/demographic/attestation
+    #[serde(default)]
+    pub editing_mode: Option<EditingMode>,
     /// HTML maxlength for native text controls, measured in UTF-16 code units.
     #[serde(default)]
     pub max_length_utf16: Option<u32>,
@@ -54,14 +64,15 @@ impl FormSchema {
         ];
         for f in &self.fields {
             parts.push(format!(
-                "{}|{}|{:?}|{}|{}|{:?}|{:?}",
+                "{}|{}|{:?}|{}|{}|{:?}|{:?}|{:?}",
                 f.selector,
                 f.label,
                 f.field_type,
                 f.required,
                 f.sensitive,
                 f.autocomplete,
-                f.max_length_utf16
+                f.max_length_utf16,
+                f.editing_mode
             ));
         }
         parts.join("\n")
@@ -285,6 +296,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    editing_mode: None,
                     max_length_utf16: None,
                     autocomplete: None,
                 },
@@ -294,6 +306,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: true,
+                    editing_mode: None,
                     max_length_utf16: None,
                     autocomplete: None,
                 },
@@ -305,6 +318,7 @@ mod tests {
                     },
                     required: true,
                     sensitive: false,
+                    editing_mode: None,
                     max_length_utf16: None,
                     autocomplete: None,
                 },
@@ -393,5 +407,11 @@ mod tests {
         let mut changed = b;
         changed.fields[0].autocomplete = Some("family-name".into());
         assert_ne!(a.schema_hash_input(), changed.schema_hash_input());
+        let mut changed_mode = a.clone();
+        changed_mode.fields[0].editing_mode = Some(EditingMode::RichText);
+        assert_ne!(a.schema_hash_input(), changed_mode.schema_hash_input());
+        let old = serde_json::json!({"selector":"#answer","label":"Answer","field_type":"text_area","required":false,"sensitive":false});
+        let restored: FormField = serde_json::from_value(old).unwrap();
+        assert_eq!(restored.editing_mode, None);
     }
 }
