@@ -9,6 +9,7 @@ use waypoint_policy::Operation;
 struct Task {
     id: String,
     job_id: waypoint_domain::JobIdentityId,
+    inspection_task_id: String,
     pending_revision: i64,
     rx: mpsc::Receiver<Result<ReviewSession, NavigationFailure>>,
     failure: Option<NavigationFailure>,
@@ -56,6 +57,21 @@ pub fn finish_pending(
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
+}
+
+pub(crate) fn protected_reasons(
+    job: &waypoint_domain::JobIdentityId,
+) -> Result<Vec<String>, String> {
+    let task = TASK.lock().map_err(|_| "Navigation unavailable")?;
+    Ok(task
+        .as_ref()
+        .filter(|task| &task.job_id == job)
+        .map_or_else(Vec::new, |task| {
+            vec![
+                pending_reason(&task.id),
+                crate::form_task::pending_reason(&task.inspection_task_id),
+            ]
+        }))
 }
 
 fn permitted(url: &url::Url, operation: Operation) -> Result<(), String> {
@@ -284,6 +300,7 @@ pub fn start(
     *tasks = Some(Task {
         id,
         job_id,
+        inspection_task_id: session.inspection_task_id.clone(),
         pending_revision,
         rx,
         failure: None,
@@ -498,10 +515,18 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-navigation".into(),
             job_id: job_id.clone(),
+            inspection_task_id: "fictional-inspection".into(),
             pending_revision: revision,
             rx,
             failure: None,
         });
+        assert_eq!(
+            protected_reasons(&job_id).unwrap(),
+            vec![
+                pending_reason("fictional-navigation"),
+                crate::form_task::pending_reason("fictional-inspection"),
+            ]
+        );
         let first = poll("fictional-navigation")
             .unwrap()
             .unwrap()

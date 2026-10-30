@@ -114,6 +114,22 @@ struct SavedFormAnswer {
     answer: Value,
 }
 
+fn active_form_review_reasons(
+    job: &JobIdentityId,
+    session: &Option<ReviewSession>,
+) -> Result<Vec<String>, String> {
+    let mut reasons = form_links::protected_reasons(job)?;
+    if let Some(current) = session.as_ref().filter(|current| &current.job_id == job) {
+        reasons.push(form_task::pending_reason(&current.inspection_task_id));
+    }
+    if let Some((task, task_job)) = form_task::pending()? {
+        if task_job == job.as_str() {
+            reasons.push(form_task::pending_reason(&task));
+        }
+    }
+    Ok(reasons)
+}
+
 fn interrupt_session(
     ws: &mut Workspace,
     session: &mut Option<ReviewSession>,
@@ -2975,6 +2991,9 @@ fn serve(
                     .as_i64()
                     .filter(|value| *value >= 0)
                     .ok_or("missing or invalid review revision")?;
+                if !active_form_review_reasons(&id, session)?.is_empty() {
+                    return Err("Finish or close the active application review before clearing all review reasons".into());
+                }
                 ws.clear_manual_review_if_current(&id, revision)
                     .map_err(|e| e.to_string())?
             };
@@ -2997,6 +3016,12 @@ fn serve(
                 .as_i64()
                 .filter(|value| *value >= 0)
                 .ok_or("missing or invalid review revision")?;
+            if active_form_review_reasons(&id, session)?
+                .iter()
+                .any(|active| active == reason)
+            {
+                return Err("Finish or close the active application review before clearing its pending reason".into());
+            }
             let removed = ws
                 .clear_manual_review_reason(&id, reason, revision)
                 .map_err(|e| e.to_string())?;
@@ -4824,6 +4849,44 @@ mod tests {
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        for (path, body) in [
+            (
+                "/api/review/resolve",
+                json!({"id":job.as_str(),"reason":form_task::pending_reason("fixture-inspection"),"revision":revision}),
+            ),
+            (
+                "/api/review",
+                json!({"id":job.as_str(),"required":false,"revision":0}),
+            ),
+        ] {
+            let body = body.to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let error =
+                serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap_err();
+            assert!(error.contains("active application review"), "{error}");
+        }
+        ws.mark_manual_review(&job, "Resolved while active", 4)
+            .unwrap();
+        let other_revision = ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.reason == "Resolved while active")
+            .unwrap()
+            .revision;
+        let body =
+            json!({"id":job.as_str(),"reason":"Resolved while active","revision":other_revision})
+                .to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/review/resolve HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.contains("\"removed\":true"));
         let body = json!({"session_id":"fixture-session"}).to_string();
         let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(client, "POST /api/form/close HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
@@ -6747,11 +6810,13 @@ mod tests {
                     "A separate issue needs review".into(),
                 ],
             };
+            let inspection_pending_revision =
+                form_task::begin_pending(&ws, &id, "fixture-inspection", 1).unwrap();
             let mut session = Some(ReviewSession {
                 id: "test-session".into(),
                 job_id: id.clone(),
                 inspection_task_id: "fixture-inspection".into(),
-                inspection_pending_revision: 0,
+                inspection_pending_revision,
                 url,
                 profile_digest: Sha256Digest::of(&profile.to_string()),
                 preview,
@@ -7021,6 +7086,11 @@ mod tests {
                 ws.job(&id).unwrap().unwrap().state,
                 ApplicationState::Shortlisted
             );
+            assert!(ws
+                .manual_review_reasons(&id)
+                .unwrap()
+                .iter()
+                .any(|reason| reason.revision == inspection_pending_revision));
             drop(stream);
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();

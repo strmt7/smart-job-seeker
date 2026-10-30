@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Protect active form-review markers — 2026-10-30
+
+- Review endpoints now reject clearing the pending inspection/session marker while its worker, browser session or navigation worker is active, and reject clearing all review reasons during that active work. Other individual reasons remain independently resolvable. Once the task or session is no longer active, a retained marker can be reviewed and cleared normally. The navigation worker also protects its own pending marker while it holds the browser session.
+- A fictional local-browser handler test verified that active markers and bulk clearing are refused, another reason can be resolved, and normal close clears its marker. The reviewed prefill fixture also passed with a real pending marker present. The web suite passed (288 passed, 118 ignored), web Clippy and formatting passed. This does not test a live employer site or a forced process crash; no application was sent.
+
 ## Review session interruption marker — 2026-10-30
 
 - The inspection review marker now stays in the database while its browser session is open. A normal session close clears its exact revision; expiry or profile changes first save an interruption reason and then clear the marker. If the process or a navigation worker loses the session, the marker remains for manual review rather than implying the browser can be resumed. Old markers with the earlier inspection-only wording are not automatically rewritten.

@@ -89,7 +89,7 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED_FAILURE: Mutex<Option<(String, String)>> = Mutex::new(None);
 
-fn pending_reason(task_id: &str) -> String {
+pub(crate) fn pending_reason(task_id: &str) -> String {
     format!("Application review in progress or interrupted: {task_id}")
 }
 
@@ -399,6 +399,9 @@ mod tests {
             visible: false,
             failure: None,
         });
+        assert!(crate::active_form_review_reasons(&job_id, &None)
+            .unwrap()
+            .contains(&pending_reason("fictional-task")));
         assert!(poll("fictional-task").unwrap().unwrap().result.is_err());
         assert!(poll("fictional-task").unwrap().unwrap().result.is_err());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
