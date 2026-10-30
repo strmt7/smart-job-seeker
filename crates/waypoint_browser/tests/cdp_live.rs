@@ -978,6 +978,77 @@ fn visible_embedded_form_can_be_filled_with_review_and_rejects_stale_scope() {
 }
 
 #[test]
+#[ignore = "launches a real browser against a fictional nested embedded form"]
+fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_iframe_nested.html")).unwrap();
+    assert!(!page
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Isolated secret"));
+    let field = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Nested name")
+        .expect("nested field");
+    let selector = field.selector.clone();
+    assert_eq!(selector.matches("waypoint-frame:").count(), 2);
+    let fill = |value: &str| BrowserCommand::Fill {
+        selector: selector.clone(),
+        value: PacketValue::Text(value.into()),
+    };
+    driver.execute(&fill("Fictional")).unwrap();
+    driver.verify_text_value(&selector, "Fictional").unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#hide".into(),
+        })
+        .unwrap();
+    assert!(driver.execute(&fill("Must not be entered")).is_err());
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#show".into(),
+        })
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#replace-inner".into(),
+        })
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(driver
+        .execute(&fill("Must not reach inner replacement"))
+        .is_err());
+    let page = driver.open(&file_url("form_iframe_nested.html")).unwrap();
+    let fresh = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Nested name")
+        .unwrap()
+        .selector
+        .clone();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#replace".into(),
+        })
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: fresh,
+            value: PacketValue::Text("Must not reach outer replacement".into())
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser against fictional embedded controls"]
 fn embedded_controls_after_hidden_frames_can_be_filled_and_verified() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

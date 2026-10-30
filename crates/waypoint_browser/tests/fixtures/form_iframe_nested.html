@@ -1,0 +1,7 @@
+<!doctype html><html><body>
+<iframe id="outer" title="Fictional nested application" srcdoc="&lt;iframe title=&quot;Fictional inner form&quot; srcdoc=&quot;&amp;lt;label&amp;gt;Nested name &amp;lt;input name=&amp;quot;nested&amp;quot; autocomplete=&amp;quot;given-name&amp;quot;&amp;gt;&amp;lt;/label&amp;gt;&quot;&gt;&lt;/iframe&gt;&lt;iframe sandbox title=&quot;Isolated inner form&quot; srcdoc=&quot;&amp;lt;label&amp;gt;Isolated secret &amp;lt;input name=&amp;quot;secret&amp;quot;&amp;gt;&amp;lt;/label&amp;gt;&quot;&gt;&lt;/iframe&gt;"></iframe>
+<button id="hide" type="button" onclick="document.getElementById('outer').style.display='none'">Hide</button>
+<button id="show" type="button" onclick="document.getElementById('outer').style.display=''">Show</button>
+<button id="replace-inner" type="button" onclick="document.getElementById('outer').contentDocument.querySelector('iframe').srcdoc='inner replacement'">Replace inner</button>
+<button id="replace" type="button" onclick="document.getElementById('outer').srcdoc='replacement'">Replace</button>
+</body></html>

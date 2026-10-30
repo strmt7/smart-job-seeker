@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Nested embedded forms — 2026-10-30
+
+- The form reader can inspect accessible visible frames up to three levels deep, with at most four embedded documents per inspection. Field selectors carry each ancestor frame and document identity; every level is checked again before a field action. Uninspected, inaccessible and deeper frames remain a manual-review concern.
+- Fictional local-browser tests verified a two-level field, refusal when the ancestor is hidden, and rejection after either the inner or outer document is replaced. A reviewed web-app prefill test also filled the nested field. Three-level behavior, live employer sites and visual-model accuracy have not been verified.
+
 ## Embedded controls and reviewed prefill — 2026-10-30
 
 - Hidden or inaccessible frames no longer consume the four-document inspection allowance. Frame discovery stores identifiers instead of copying every embedded tree, and a time budget bounds inspection. Dropdown labels no longer absorb the text of their options when the label wraps the control.

@@ -535,16 +535,28 @@ impl CdpDriver {
             .get("nodeId")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| DriverError("page has no root node".into()))?;
-        let (root_id, selector) = if let Some(scope) = selector.strip_prefix("waypoint-frame:") {
+        let mut document = root;
+        let mut root_id = root_id;
+        let mut inner = selector;
+        let mut depth = 0;
+        while let Some(scope) = inner.strip_prefix("waypoint-frame:") {
+            depth += 1;
+            if depth > 3 {
+                return Err(DriverError(
+                    "Embedded field exceeds the frame depth limit".into(),
+                ));
+            }
             let mut parts = scope.splitn(3, ':');
             let frame = parts.next().and_then(|s| s.parse::<u64>().ok());
-            let document = parts.next().and_then(|s| s.parse::<u64>().ok());
-            let inner = parts.next().filter(|s| !s.is_empty());
-            let (Some(frame), Some(document), Some(inner)) = (frame, document, inner) else {
+            let expected_document = parts.next().and_then(|s| s.parse::<u64>().ok());
+            let next = parts.next().filter(|s| !s.is_empty());
+            let (Some(frame), Some(expected_document), Some(next)) =
+                (frame, expected_document, next)
+            else {
                 return Err(DriverError("Invalid embedded field selector".into()));
             };
             let mut candidate = None;
-            walk(&root, false, &mut |node, _| {
+            walk(&document, false, &mut |node, _| {
                 if node.get("backendNodeId").and_then(Value::as_u64) == Some(frame) {
                     candidate = Some(node.clone());
                 }
@@ -556,7 +568,7 @@ impl CdpDriver {
             let Some(child) = frame_node.get("contentDocument") else {
                 return Ok(None);
             };
-            if child.get("backendNodeId").and_then(Value::as_u64) != Some(document) {
+            if child.get("backendNodeId").and_then(Value::as_u64) != Some(expected_document) {
                 return Ok(None);
             }
             let Some(frame_id) = frame_node.get("nodeId").and_then(Value::as_u64) else {
@@ -568,10 +580,11 @@ impl CdpDriver {
             let Some(child_id) = child.get("nodeId").and_then(Value::as_u64) else {
                 return Ok(None);
             };
-            (child_id, inner)
-        } else {
-            (root_id, selector)
-        };
+            root_id = child_id;
+            document = child.clone();
+            inner = next;
+        }
+        let selector = inner;
         let found = self
             .cdp
             .call(
@@ -706,66 +719,72 @@ impl CdpDriver {
     ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
         let root = self.document_with_frames(true)?;
         let (mut schema, mut walls) = self.read_form_document(url, &root)?;
-        let mut frames = Vec::new();
-        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
-            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
-            if !hidden && (tag.eq_ignore_ascii_case("iframe") || tag.eq_ignore_ascii_case("frame"))
-            {
-                if let (Some(id), Some(backend)) = (
-                    node.get("nodeId").and_then(Value::as_u64),
-                    node.get("backendNodeId").and_then(Value::as_u64),
-                ) {
-                    frames.push((id, backend));
-                }
-            }
-            true
-        });
-        // Hidden and inaccessible frames do not use the document allowance.
-        // Keep only IDs during discovery so uninspected frame trees are not cloned.
+        // The queue owns only the root and the few documents actually inspected.
+        // Each selector binds every frame and document along its path.
         let started = Instant::now();
         let previous_timeout = self.cdp.timeout;
         self.cdp.timeout = Duration::from_secs(1);
         let inspected = (|| -> Result<(), DriverError> {
+            let mut queue = std::collections::VecDeque::from([(root, String::new(), 0usize)]);
             let mut inspected_count = 0;
-            for (frame_id, frame_backend) in frames {
-                if inspected_count >= 4 {
-                    break;
-                }
-                if started.elapsed() > Duration::from_secs(8) {
-                    return Err(DriverError("Embedded form inspection exceeded its time budget; manual review is needed".into()));
-                }
-                if !self.accessible_visible_frame(frame_id)? {
+            while let Some((document, prefix, depth)) = queue.pop_front() {
+                if depth >= 3 || inspected_count >= 4 {
                     continue;
                 }
-                let mut child = None;
-                walk(&root, false, &mut |node, _| {
-                    if node.get("backendNodeId").and_then(Value::as_u64) == Some(frame_backend) {
-                        child = node.get("contentDocument").cloned();
+                let mut frames = Vec::new();
+                walk_with_visibility(&document, false, false, &mut |node, _, hidden| {
+                    let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+                    if !hidden
+                        && (tag.eq_ignore_ascii_case("iframe") || tag.eq_ignore_ascii_case("frame"))
+                    {
+                        if let (Some(id), Some(backend)) = (
+                            node.get("nodeId").and_then(Value::as_u64),
+                            node.get("backendNodeId").and_then(Value::as_u64),
+                        ) {
+                            frames.push((id, backend));
+                        }
                     }
                     true
                 });
-                let Some(child) = child else { continue };
-                let Some(document_backend) = child.get("backendNodeId").and_then(Value::as_u64)
-                else {
-                    continue;
-                };
-                inspected_count += 1;
-                let (mut embedded, mut embedded_walls) = self.read_form_document(url, &child)?;
-                if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
-                    return Err(DriverError(
-                        "Form has too many controls for one inspection; manual review is needed"
-                            .into(),
-                    ));
+                for (frame_id, frame_backend) in frames {
+                    if inspected_count >= 4 {
+                        break;
+                    }
+                    if started.elapsed() > Duration::from_secs(8) {
+                        return Err(DriverError("Embedded form inspection exceeded its time budget; manual review is needed".into()));
+                    }
+                    if !self.accessible_visible_frame(frame_id)? {
+                        continue;
+                    }
+                    let mut child = None;
+                    walk(&document, false, &mut |node, _| {
+                        if node.get("backendNodeId").and_then(Value::as_u64) == Some(frame_backend)
+                        {
+                            child = node.get("contentDocument").cloned();
+                        }
+                        true
+                    });
+                    let Some(child) = child else { continue };
+                    let Some(document_backend) = child.get("backendNodeId").and_then(Value::as_u64)
+                    else {
+                        continue;
+                    };
+                    inspected_count += 1;
+                    let (mut embedded, mut embedded_walls) =
+                        self.read_form_document(url, &child)?;
+                    if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
+                        return Err(DriverError("Form has too many controls for one inspection; manual review is needed".into()));
+                    }
+                    let child_prefix =
+                        format!("{prefix}waypoint-frame:{frame_backend}:{document_backend}:");
+                    for field in &mut embedded.fields {
+                        field.selector = format!("{child_prefix}{}", field.selector);
+                    }
+                    schema.fields.extend(embedded.fields);
+                    schema.multi_step |= embedded.multi_step;
+                    walls.append(&mut embedded_walls);
+                    queue.push_back((child, child_prefix, depth + 1));
                 }
-                for field in &mut embedded.fields {
-                    field.selector = format!(
-                        "waypoint-frame:{frame_backend}:{document_backend}:{}",
-                        field.selector
-                    );
-                }
-                schema.fields.extend(embedded.fields);
-                schema.multi_step |= embedded.multi_step;
-                walls.append(&mut embedded_walls);
             }
             Ok(())
         })();
