@@ -532,13 +532,8 @@ fn find_unknown_qualification_evidence(
                 return None;
             }
             let excerpt = item["excerpt"].as_str()?;
-            let position = listing.find(excerpt)?;
-            let start = listing.ceil_char_boundary(position.saturating_sub(160));
-            let end =
-                listing.floor_char_boundary((position + excerpt.len() + 160).min(listing.len()));
-            Some(
-                json!({"id":index + 1, "requirement":excerpt, "job_context": &listing[start..end]}),
-            )
+            let context = unique_requirement_context(listing, excerpt)?;
+            Some(json!({"id":index + 1, "requirement":excerpt, "job_context": context}))
         })
         .take(6)
         .collect();
@@ -621,6 +616,22 @@ fn has_explicit_negation(fact: &str) -> bool {
         })
 }
 
+/// A short quote can occur in multiple requirements with different levels.
+/// Never attach the first occurrence's context to an ambiguous model quote.
+fn unique_requirement_context<'a>(listing: &'a str, excerpt: &str) -> Option<&'a str> {
+    if excerpt.is_empty() {
+        return None;
+    }
+    let mut matches = listing.match_indices(excerpt);
+    let (position, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let start = listing.ceil_char_boundary(position.saturating_sub(160));
+    let end = listing.floor_char_boundary((position + excerpt.len() + 160).min(listing.len()));
+    Some(&listing[start..end])
+}
+
 /// Reassess cited qualifications without showing the original judgment. A
 /// second model call is not proof of correctness; disagreements and failures
 /// are downgraded to unknown instead of being counted as supported or opposed.
@@ -632,9 +643,32 @@ fn check_qualification_judgments(
     preferences: &str,
     listing: &str,
 ) -> (Value, Value) {
-    let Some(criteria) = original["criteria"].as_array() else {
+    let Some(criteria) = original["criteria"].as_array_mut() else {
         return (original, fallback);
     };
+    let mut ambiguous = 0;
+    for item in criteria.iter_mut() {
+        if item["source"] == "listing"
+            && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
+            && item["excerpt"]
+                .as_str()
+                .is_some_and(|excerpt| unique_requirement_context(listing, excerpt).is_none())
+        {
+            item["status"] = json!("unknown");
+            item["fact_index"] = Value::Null;
+            item["explanation"] = json!("The quoted requirement occurs more than once or cannot be located uniquely; review the original listing.");
+            ambiguous += 1;
+        }
+    }
+    let mut fallback = if ambiguous > 0 {
+        match validate(original.clone(), facts, preferences, listing) {
+            Ok(value) => value,
+            Err(_) => return (original, fallback),
+        }
+    } else {
+        fallback
+    };
+    let criteria = original["criteria"].as_array().expect("validated criteria");
     let items: Vec<Value> = criteria.iter().enumerate().filter_map(|(index, item)| {
         if item["source"] != "listing" || !matches!(item["status"].as_str(), Some("supported" | "contradicted")) {
             return None;
@@ -642,12 +676,13 @@ fn check_qualification_judgments(
         let fact_index = item["fact_index"].as_u64()? as usize;
         let fact = facts.get(fact_index.checked_sub(1)?)?;
         let excerpt = item["excerpt"].as_str()?;
-        let position = listing.find(excerpt)?;
-        let start = listing.ceil_char_boundary(position.saturating_sub(160));
-        let end = listing.floor_char_boundary((position + excerpt.len() + 160).min(listing.len()));
-        Some(json!({"id": index + 1, "requirement": excerpt, "job_context": &listing[start..end], "fact": fact}))
+        let context = unique_requirement_context(listing, excerpt)?;
+        Some(json!({"id": index + 1, "requirement": excerpt, "job_context": context, "fact": fact}))
     }).collect();
     if items.is_empty() {
+        if ambiguous > 0 {
+            fallback["qualification_check"] = json!({"status":"ambiguous_context", "checked":0, "downgraded":ambiguous, "reconciled":0});
+        }
         return (original, fallback);
     }
     let payload = json!(items).to_string();
@@ -753,7 +788,7 @@ fn check_qualification_judgments(
     }
     match validate(original.clone(), facts, preferences, listing) {
         Ok(mut assessment) => {
-            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded, "reconciled":confirmed.len()});
+            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous, "ambiguous_context":ambiguous, "reconciled":confirmed.len()});
             (original, assessment)
         }
         Err(_) => (original, fallback),
@@ -1546,6 +1581,41 @@ mod tests {
             listing,
         );
         assert_eq!(assessment["rubric"][0]["status"], "supported");
+    }
+
+    #[test]
+    fn repeated_requirement_quote_never_uses_first_context_as_evidence() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct NoCalls;
+        impl Inference for NoCalls {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                panic!("an ambiguous quote must not be sent with an arbitrary context")
+            }
+        }
+        let facts = vec!["Used Python for one year".to_owned()];
+        let listing = "Python is useful. This senior position requires five years of Python.";
+        let value = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"Python","importance":"required","status":"supported","fact_index":1,"explanation":"Python experience"}]});
+        let initial = validate(value.clone(), &facts, "", listing).unwrap();
+        let (changed, assessment) =
+            check_qualification_judgments(&mut NoCalls, value, initial, &facts, "", listing);
+        assert_eq!(assessment["rubric"][0]["status"], "unknown");
+        assert_eq!(assessment["score_range"], json!({"lower":0,"upper":100}));
+        assert_eq!(
+            assessment["qualification_check"]["status"],
+            "ambiguous_context"
+        );
+        let (unchanged, report) =
+            find_unknown_qualification_evidence(&mut NoCalls, changed.clone(), &facts, listing);
+        assert_eq!(unchanged, changed);
+        assert!(report.is_none());
     }
 
     #[test]
