@@ -1847,6 +1847,15 @@ fn serve(
                 } else if result["saved"].is_null() {
                     result["assessment"]["source_coverage"] =
                         fit_source_coverage(ws, &job_id, &listing, &instructions)?;
+                    if let Some(previous) = ws.fit_assessment(&job_id).map_err(|e| e.to_string())? {
+                        if let Ok(previous) = serde_json::from_slice::<Value>(&previous) {
+                            if let Some(comparison) =
+                                fit_task::repeatability_comparison(&previous, &result)
+                            {
+                                result["assessment"]["repeatability"] = comparison;
+                            }
+                        }
+                    }
                     ws.save_fit_assessment(&job_id, result.to_string().as_bytes())
                         .map_err(|e| format!("Could not save assessment; retry after resolving the workspace error: {e}"))?;
                     result["saved"] = json!(true);

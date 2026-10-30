@@ -18,6 +18,61 @@ pub struct FactPool {
     pub available: usize,
 }
 
+/// Compare two consecutive assessments only when their saved input digest,
+/// model name and scoring version agree. A model name does not prove that its
+/// weights or runtime are unchanged; this is an observation, not a guarantee.
+pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Value> {
+    let same_nonempty = |key: &str| {
+        previous[key].as_str().filter(|s| !s.is_empty())
+            == current[key].as_str().filter(|s| !s.is_empty())
+            && previous[key].as_str().is_some_and(|s| !s.is_empty())
+    };
+    if !same_nonempty("input_digest") || !same_nonempty("model") {
+        return None;
+    }
+    let before = &previous["assessment"];
+    let after = &current["assessment"];
+    if before["scoring_version"].as_str().filter(|s| !s.is_empty())
+        != after["scoring_version"].as_str().filter(|s| !s.is_empty())
+        || before["scoring_version"].as_str().is_none_or(str::is_empty)
+    {
+        return None;
+    }
+    let score = |value: &Value| value["score"].as_i64().filter(|s| (0..=100).contains(s));
+    let old_score = score(before)?;
+    let new_score = score(after)?;
+    let keys = |value: &Value| -> Option<Vec<String>> {
+        let items = value["rubric"]
+            .as_array()
+            .filter(|x| !x.is_empty() && x.len() <= 12)?;
+        let mut keys = Vec::with_capacity(items.len());
+        for item in items {
+            let source = item["source"].as_str()?;
+            let excerpt = item["excerpt"].as_str()?;
+            let importance = item["importance"].as_str()?;
+            let status = item["status"].as_str()?;
+            if !matches!(source, "listing" | "preference")
+                || excerpt.is_empty()
+                || !matches!(importance, "required" | "preferred")
+                || !matches!(status, "supported" | "unknown" | "contradicted")
+                || !(item["qualification"].is_null() || item["qualification"].is_string())
+            {
+                return None;
+            }
+            keys.push(
+                json!([source, excerpt, importance, status, item["qualification"]]).to_string(),
+            );
+        }
+        keys.sort_unstable();
+        Some(keys)
+    };
+    let old_keys = keys(before)?;
+    let new_keys = keys(after)?;
+    Some(
+        json!({"previous_score":old_score,"score_change":new_score-old_score,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len()}),
+    )
+}
+
 pub fn pending() -> Result<Value, String> {
     let tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
     Ok(match tasks.as_ref() {
@@ -1005,6 +1060,32 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comparison_requires_same_inputs_model_and_scoring_version() {
+        let item = json!({"source":"listing","excerpt":"Python","importance":"required","status":"supported","qualification":"Used Python"});
+        let prior = json!({"input_digest":"abc","model":"local","assessment":{"score":75,"scoring_version":"criteria-v1","rubric":[item]}});
+        let mut current = prior.clone();
+        current["assessment"]["score"] = json!(50);
+        current["assessment"]["rubric"][0]["status"] = json!("unknown");
+        current["assessment"]["rubric"][0]["qualification"] = Value::Null;
+        let comparison = repeatability_comparison(&prior, &current).unwrap();
+        assert_eq!(comparison["score_change"], -25);
+        assert_eq!(comparison["same_rubric"], false);
+        assert!(repeatability_comparison(&prior, &prior).unwrap()["same_rubric"] == true);
+        for key in ["input_digest", "model"] {
+            let mut different = current.clone();
+            different[key] = json!("different");
+            assert!(repeatability_comparison(&prior, &different).is_none());
+            different[key] = Value::Null;
+            assert!(repeatability_comparison(&different, &different).is_none());
+        }
+        current["assessment"]["scoring_version"] = json!("criteria-v2");
+        assert!(repeatability_comparison(&prior, &current).is_none());
+        current["assessment"]["scoring_version"] = json!("criteria-v1");
+        current["assessment"]["rubric"][0]["status"] = json!("invented");
+        assert!(repeatability_comparison(&prior, &current).is_none());
+    }
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
