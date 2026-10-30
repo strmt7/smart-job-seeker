@@ -578,3 +578,13 @@ The groups overlap and do not constitute independent probabilities. The overall
 score formula and its model-generated criteria have not changed, and older
 saved assessments do not acquire breakdowns until reassessed. Fictional tests
 checked group separation, empty groups, unknowns, contradictions and ordering.
+
+On 2026-10-30, local qwen3.5:9b at 4096 context passed the fictional listing
+reordering check and the semantic candidate comparison, recognizing coaching
+as relevant to mentoring. The existing C/C++ fixture exposed an extra generic
+"programming experience" criterion. A proposed extraction prompt removed it in
+one run but a reordered-listing assessment then failed validation. A separate
+redundancy-review prompt flagged an independent five-year requirement as
+redundant. Both prompt changes were rejected. These are single-case results,
+not accuracy estimates; the unmodified system can still count overlapping
+criteria and its review suggestions require human judgment.
