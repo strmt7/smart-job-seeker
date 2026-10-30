@@ -83,6 +83,15 @@ try {
     [IO.File]::WriteAllText((Join-Path $fakeOpenSsl 'lib/libcrypto.lib'), 'fixture')
     [IO.File]::WriteAllText((Join-Path $fakeOpenSsl 'bin/libcrypto-fixture.dll'), 'fixture')
     function cargo {
+        if ($env:WAYPOINT_TEST_FLAG_MODE -eq 'build') {
+            @{ reason='compiler-artifact'; target=@{ name='waypoint_web'; kind=@('bin') }; executable=$env:WAYPOINT_TEST_ARTIFACT } | ConvertTo-Json -Depth 5 -Compress
+            $global:LASTEXITCODE = 0
+            return
+        }
+        if ($env:WAYPOINT_TEST_FLAG_MODE -eq 'no-artifact') {
+            $global:LASTEXITCODE = 0
+            return
+        }
         if ($env:WAYPOINT_TEST_FLAG_MODE -eq 'fail') {
             $global:LASTEXITCODE = 9
             return
@@ -112,6 +121,23 @@ try {
         $failed = $true
     }
     if (-not $failed -or $env:RUSTFLAGS -cne '-C debuginfo=1' -or $env:CARGO_ENCODED_RUSTFLAGS -cne '-Copt-level=1') { throw 'Caller flags were not restored after failure.' }
+    $customBuild = Join-Path $fixture 'custom-target/debug'
+    New-Item -ItemType Directory -Path $customBuild -Force | Out-Null
+    $env:WAYPOINT_TEST_ARTIFACT = Join-Path $customBuild 'waypoint_web.exe'
+    [IO.File]::WriteAllText($env:WAYPOINT_TEST_ARTIFACT, 'fictional executable')
+    $env:WAYPOINT_TEST_FLAG_MODE = 'build'
+    & $script -OpenSslRoot $fakeOpenSsl
+    $customReceipt = Join-Path $customBuild 'waypoint-build.json'
+    $record = Get-Content -LiteralPath $customReceipt -Raw | ConvertFrom-Json
+    if ($record.executable_sha256 -ne (Get-FileHash -LiteralPath $env:WAYPOINT_TEST_ARTIFACT -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Receipt does not identify Cargo executable.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $customBuild 'libcrypto-fixture.dll') -PathType Leaf)) { throw 'Runtime was not copied beside Cargo executable.' }
+    $env:WAYPOINT_TEST_FLAG_MODE = 'no-artifact'
+    $refused = $false
+    try { & $script -OpenSslRoot $fakeOpenSsl } catch {
+        if ($_.Exception.Message -notmatch 'did not identify exactly one') { throw }
+        $refused = $true
+    }
+    if (-not $refused) { throw 'Build without Cargo executable was accepted.' }
 } finally {
     if (Test-Path -LiteralPath $fixture) {
         $resolved = (Resolve-Path -LiteralPath $fixture).Path

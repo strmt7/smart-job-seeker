@@ -210,6 +210,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, help='New ZIP path inside this repository')
     parser.add_argument('--release', action='store_true')
+    parser.add_argument('--build-dir', help='Directory containing the executable and its build receipt (defaults to target/<profile>)')
     parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
     office = parser.add_mutually_exclusive_group()
@@ -223,7 +224,7 @@ def main():
     if not output.is_relative_to(REPO) or output.suffix.lower() != '.zip' or output.exists():
         raise ValueError('Output must be a new .zip path inside the repository')
     profile = 'release' if args.release else 'debug'
-    build = REPO / 'target' / profile
+    build = Path(args.build_dir).resolve() if args.build_dir else REPO / 'target' / profile
     exe = build / 'waypoint_web.exe'
     dlls = list(build.glob('libcrypto*.dll'))
     if not exe.is_file() or len(dlls) != 1:

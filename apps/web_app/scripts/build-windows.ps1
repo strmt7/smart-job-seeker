@@ -114,25 +114,42 @@ try {
     if ($TestFilter) { $cargoArgs += $TestFilter }
     if ($Clippy) { $cargoArgs += @('--all-targets', '--', '-D', 'warnings') }
     if ($Ignored) { $cargoArgs += @('--', '--ignored', '--test-threads=1') }
-    & cargo @cargoArgs
+    $artifactPaths = @()
+    if ($operation -eq 'build') {
+        # Cargo identifies the actual executable even with a custom target
+        # directory or target triple. Never stamp a stale default-path binary.
+        $cargoArgs += '--message-format=json-render-diagnostics'
+        $artifactPaths = @(& cargo @cargoArgs | ForEach-Object {
+            $record = $_ | ConvertFrom-Json -ErrorAction Stop
+            if ($record.reason -eq 'compiler-message' -and $record.message.rendered) { Write-Host $record.message.rendered }
+            if ($record.reason -eq 'compiler-artifact' -and $record.target.name -eq 'waypoint_web' -and $record.target.kind -contains 'bin' -and $record.executable) { $record.executable }
+        })
+    } else {
+        & cargo @cargoArgs
+    }
     if ($LASTEXITCODE -ne 0) { throw "Cargo $operation failed ($LASTEXITCODE)." }
     if ($Test) { Write-Host "Waypoint tests completed using the configured SQLCipher runtime."; return }
     if ($Clippy) { Write-Host "Waypoint lint completed using the configured SQLCipher runtime."; return }
     $profile = if ($Release) { 'release' } else { 'debug' }
-    $destination = Join-Path $repo "target/$profile/$($dlls[0].Name)"
-    Install-OpenSslRuntime $dlls[0].FullName $destination (Join-Path $repo "target/$profile/waypoint-build.json") $profile
+    if ($artifactPaths.Count -ne 1) { throw 'Cargo did not identify exactly one Waypoint executable; no receipt was written.' }
+    $executable = [IO.Path]::GetFullPath([string]$artifactPaths[0])
+    if ((Split-Path -Leaf $executable) -ne 'waypoint_web.exe' -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'Cargo returned an unexpected executable path; no receipt was written.' }
+    $buildDirectory = Split-Path -Parent $executable
+    if ((Split-Path -Leaf $buildDirectory) -ne $profile) { throw 'Cargo returned an unexpected build profile; no receipt was written.' }
+    $destination = Join-Path $buildDirectory $dlls[0].Name
+    Install-OpenSslRuntime $dlls[0].FullName $destination (Join-Path $buildDirectory 'waypoint-build.json') $profile
     $buildReceipt = @{
         profile = $profile
         sqlcipher = $true
         static_crt_requested = [bool]$StaticCrt
         openssl_root = $root
-        executable_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo "target/$profile/waypoint_web.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+        executable_sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
         openssl_dll = $dlls[0].Name
         openssl_sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
         cargo_lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo 'Cargo.lock') -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    $buildReceipt | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $repo "target/$profile/waypoint-build.json")
-    Write-Host "Built target/$profile/waypoint_web.exe with SQLCipher; its OpenSSL runtime is beside it."
+    $buildReceipt | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $buildDirectory 'waypoint-build.json')
+    Write-Host "Built $executable with SQLCipher; its OpenSSL runtime is beside it."
 } finally {
     Pop-Location
     if ($StaticCrt) {
