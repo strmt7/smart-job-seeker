@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Atomic fit criteria probes — 2026-10-30
+
+- Four fictional listing-only probes with resident `gemma3:4b` extracted a nursing license and experience duration independently, but grouped German with English and C with C++. Adding explicit instructions and examples to split independent qualifications produced the same grouped output on those four inputs. A separate four-item review returned IDs 2 and 4 (the individual duration and license) rather than IDs 1 and 3 (the grouped languages and programming languages). These are small, single-run probes; grouped wording can sometimes describe one combined requirement, and this does not establish general model accuracy. No automatic splitting, score change, or model-review feature was added on this evidence. Fictional prompt and response receipts are under `target/model-eval/`.
+- Each request was sequential, used the already GPU-resident model with a 4,096-token context, and passed a fresh system-memory and dedicated-GPU snapshot preflight. Snapshots are not peak measurements. The model was left to expire normally; no application was sent.
+
 ## Split fit extraction probe — 2026-10-30
 
 - Three isolated fictional prompts explored separating criterion extraction from fit judgment using the resident `gemma3:4b` model (digest `c30276f7dffec93a536d283e15088990454b8d21cf180a3d6eea4959e4147291`, 4,096 context). Listing-only extraction returned the four named technical requirements separately; preference-only extraction returned the two explicit preferences. A combined listing-and-preference request grouped three skills into one criterion and omitted the cloud preference. These were single responses on one case, not repeatability or accuracy measurements, and did not exercise evidence matching, scoring, or the production workflow. No fallback was added because incomplete or grouped criteria can distort the score. Raw fictional prompts and responses are retained under `target/model-eval/`.
