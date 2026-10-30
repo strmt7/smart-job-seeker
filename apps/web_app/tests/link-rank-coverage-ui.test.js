@@ -1,0 +1,11 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const line = fs.readFileSync('apps/web_app/web/app.js','utf8').split('\n').find(s=>s.startsWith('function linkRankCoverage('));
+assert.ok(line);
+const format = vm.runInNewContext(`(${line})`);
+const text = format({total:30,examined:10,failed_batches:1,nominated:14,finalists:12,global_ranking:'unavailable',query_redacted:true,details_limited:true});
+for (const expected of ['10 of 30','1 batch failed','2 nominated links','final comparison unavailable','URL queries','shortened']) assert.ok(text.includes(expected),expected);
+assert.ok(format({total:3,examined:4,failed_batches:0,nominated:0,finalists:0}).includes('coverage unavailable'));
+assert.ok(format(null).includes('coverage unavailable'));
+console.log('Link ranking coverage checks passed.');
