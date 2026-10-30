@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Embedded-frame review — 2026-10-30
+
+- Form inspection now flags a rendered, nonzero embedded frame as potentially containing uninspected application content. Hidden and zero-sized frames do not trigger this cue in the tested fixture. The cue is a manual-review obligation; separately visible main-page fields can still be suggested and filled after user review, while a changed set of review walls requires reinspection. Listing inspection can retain a listing with this cue and records an extraction warning. CAPTCHA and other blocking walls remain blocking.
+- A fictional local-browser fixture verified the visible-frame warning, a main-page field fill and the disappearance of the warning after the visible frame was hidden. The full local browser fixture suite passed (35 tests), and the web suite passed (291 passed, 119 ignored); web and browser Clippy and formatting passed. No iframe contents were read or filled, and decorative visible frames can produce a review warning. No live employer site or local model was exercised; no application was sent.
+
 ## Listing redirect provenance — 2026-10-30
 
 - New listing captures retain both the URL requested for inspection and the final captured URL after an allowed same-origin redirect. Application `original-job.json` records the requested URLs from screenshot capture and source-only metadata separately, because those records may come from different captures. Older captures without that field report it as unknown; no historical URL is invented. The saved job still uses the reached URL, and cross-origin redirects still require manual review.

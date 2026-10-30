@@ -899,6 +899,50 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
 }
 
 #[test]
+#[ignore = "launches a real browser against a fictional embedded form"]
+fn visible_embedded_form_is_flagged_without_hiding_main_fields() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_iframe.html")).unwrap();
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+    assert!(page
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#candidate"));
+    assert!(!page
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label.contains("Question")));
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#candidate".into(),
+            value: PacketValue::Text("Fictional candidate".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value("#candidate", "Fictional candidate")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#hide-frame".into(),
+        })
+        .unwrap();
+    let after = driver.inspect_current().unwrap();
+    assert!(
+        !after
+            .walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW),
+        "hidden and zero-sized frames must not add a review warning: {:?}",
+        after.walls
+    );
+}
+
+#[test]
 #[ignore = "launches a real browser with a fictional autocomplete fixture"]
 fn autocomplete_choices_are_not_mistaken_for_selected_text_fields() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><body><form>
+<label for="candidate">Name</label><input id="candidate" name="candidate">
+<iframe id="embedded" title="Additional application questions" srcdoc="<label>Question <input name='embedded-answer'></label>"></iframe>
+<iframe id="hidden" title="Hidden frame" style="display:none" srcdoc="hidden"></iframe>
+<iframe id="zero" title="Zero-sized frame" style="width:0;height:0;border:0" srcdoc="hidden"></iframe>
+<button id="hide-frame" type="button" onclick="document.getElementById('embedded').style.display='none'">Hide frame</button>
+</form></body></html>

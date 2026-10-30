@@ -36,6 +36,10 @@ use waypoint_applications::receipt::ReceiptKind;
 
 use cdp::{BrowserProcess, Cdp, CdpError};
 
+/// Frame contents are outside the current form reader's inspection boundary.
+pub const UNINSPECTED_FRAME_REVIEW: &str =
+    "An embedded frame may contain uninspected application content; review it manually";
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -624,6 +628,7 @@ impl CdpDriver {
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
         let mut next_references = Vec::new();
+        let mut frame_nodes = Vec::new();
         let mut text = String::new();
         let mut possible_next_step = false;
         walk_with_visibility(&root, false, false, &mut |node, in_control, hidden| {
@@ -635,6 +640,13 @@ impl CdpDriver {
             // Captchas hide in ordinary markup (a div, an iframe), not only in
             // form controls, so every node is checked.
             let attrs = attributes(node);
+            if matches!(tag.as_str(), "iframe" | "frame") && !hidden {
+                if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                    frame_nodes.push(id);
+                } else {
+                    wall_flags.push(UNINSPECTED_FRAME_REVIEW.into());
+                }
+            }
             if (tag == "button"
                 || attrs
                     .get("role")
@@ -963,6 +975,7 @@ impl CdpDriver {
             .len()
             .saturating_add(custom_nodes.len())
             .saturating_add(next_nodes.len())
+            .saturating_add(frame_nodes.len())
             > 160
         {
             return Err(DriverError(
@@ -1035,6 +1048,25 @@ impl CdpDriver {
                         Some(label) => format!("{prefix}: {label}"),
                         None => prefix.into(),
                     });
+                }
+            }
+            for node in frame_nodes {
+                if start.elapsed() > Duration::from_secs(8) {
+                    return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
+                }
+                if self.control_visibility_and_path(node)?.0 {
+                    let model = self.cdp.call("DOM.getBoxModel", json!({"nodeId":node}));
+                    let empty = model.as_ref().ok().is_some_and(|value| {
+                        value.pointer("/model/width").and_then(Value::as_f64) == Some(0.0)
+                            || value.pointer("/model/height").and_then(Value::as_f64) == Some(0.0)
+                    });
+                    if !empty
+                        && !wall_flags
+                            .iter()
+                            .any(|reason| reason == UNINSPECTED_FRAME_REVIEW)
+                    {
+                        wall_flags.push(UNINSPECTED_FRAME_REVIEW.into());
+                    }
                 }
             }
             for node in next_nodes {

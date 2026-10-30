@@ -399,9 +399,10 @@ pub fn start(id: String, url: String) -> Result<(), String> {
             let mut browser =
                 waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
             let page = browser.open(&url).map_err(|e| e.to_string())?;
-            if !page.walls.is_empty() {
+            if page.walls.iter().any(|wall| wall != waypoint_browser::UNINSPECTED_FRAME_REVIEW) {
                 return Err("The page needs sign-in, CAPTCHA or manual review".into());
             }
+            let uninspected_frame = page.walls.iter().any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW);
             let current = browser.current_url().map_err(|e| e.to_string())?;
             let original = url::Url::parse(&url).map_err(|_| "Invalid URL")?;
             let reached = url::Url::parse(&current).map_err(|_| "Invalid destination")?;
@@ -410,7 +411,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
             }
             let scripts = browser.structured_data_scripts().map_err(|e| e.to_string())?;
             let structured = parse(&scripts, &current)?;
-            let job = if let Some(job) = structured { job } else {
+            let mut job = if let Some(job) = structured { job } else {
                 let model = crate::resident_model().ok().flatten().ok_or("No structured job found and no eligible local model is loaded; review manually")?;
                 let _lease = crate::doc_suggest::lease()?;
                 let (page_text, truncated) = browser.page_text_bounded(16_000).map_err(|e|e.to_string())?;
@@ -420,6 +421,12 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 job["page_text_truncated"]=json!(truncated);
                 job
             };
+            if uninspected_frame {
+                if job["extraction_warnings"].as_array().is_none() {
+                    job["extraction_warnings"] = json!([]);
+                }
+                job["extraction_warnings"].as_array_mut().expect("warnings array").push(json!(waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+            }
             let capture=capture_listing(&mut browser,&url,&current,&scripts);
             Ok(InspectedListing { job, capture })
         })

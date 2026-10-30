@@ -2,6 +2,8 @@
 
 Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this list is not a claim of absence of problems.
 
+This register is a historical gate snapshot. For subsequent changes and current web-prototype limitations, see `IMPLEMENTATION_STATUS.md` and `docs/WEB_PROTOTYPE_CHECKPOINT.md`; older entries below may describe behavior that has since changed.
+
 ## Hard limitations (known, deliberate, documented)
 
 1. **Job postings are stored in plaintext on purpose; the candidate's own material is sealed.**

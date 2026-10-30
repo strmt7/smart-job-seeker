@@ -382,7 +382,11 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 .current_url()
                 .ok()
                 .and_then(|current| displayable_inspected_url(&url, &current));
-            if page.walls.is_empty() {
+            if page
+                .walls
+                .iter()
+                .all(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW)
+            {
                 let current = browser
                     .current_url()
                     .map_err(|_| "The listing destination could not be checked.")?;
@@ -467,7 +471,9 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             {
                 let (summary, _) = classify_fields(&page.schema.fields, followed);
                 (
-                    format!("{summary} Some custom or autocomplete choices need manual review."),
+                    format!(
+                        "{summary} Some custom controls or embedded content need manual review."
+                    ),
                     true,
                 )
             } else if !page.walls.is_empty() {

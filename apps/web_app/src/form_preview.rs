@@ -55,7 +55,8 @@ impl FormPreview {
 
 // Unsupported custom questions remain review obligations; other walls block.
 pub(crate) fn is_custom_review(reason: &str) -> bool {
-    reason == "an unavailable field needs manual review"
+    reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+        || reason == "an unavailable field needs manual review"
         || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
         || reason == "a custom control needs manual review"
@@ -523,6 +524,7 @@ mod tests {
             "a custom control needs manual review: City"
         ));
         assert!(is_custom_review("an unavailable field needs manual review"));
+        assert!(is_custom_review(waypoint_browser::UNINSPECTED_FRAME_REVIEW));
         assert!(!is_custom_review(
             "a required field is disabled or read-only"
         ));
@@ -1708,6 +1710,46 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("captcha")));
         assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    fn embedded_frame_keeps_reviewable_main_fields_but_requires_stable_warning() {
+        let field = waypoint_applications::form_mapping::FormField {
+            selector: "#first".into(),
+            label: "First name".into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: Some("given-name".into()),
+        };
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![field],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![waypoint_browser::UNINSPECTED_FRAME_REVIEW.into()],
+        };
+        let preview =
+            suggest_without_model(live, &json!({"first_name":"Fictional"}), "No model").unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+        assert!(same_reviewable_walls(
+            &preview,
+            &[waypoint_browser::UNINSPECTED_FRAME_REVIEW.into()]
+        ));
+        assert!(!same_reviewable_walls(&preview, &[]));
+        assert!(!same_reviewable_walls(
+            &preview,
+            &["captcha present".into()]
+        ));
     }
 
     #[test]

@@ -23,7 +23,11 @@ fn open_application_page(
     url: &str,
 ) -> Result<(waypoint_applications::driver::LiveForm, Option<String>), String> {
     let mut live = driver.open(url).map_err(|e| e.to_string())?;
-    if !live.walls.is_empty() {
+    if live
+        .walls
+        .iter()
+        .any(|wall| wall != waypoint_browser::UNINSPECTED_FRAME_REVIEW)
+    {
         return Ok((live, None));
     }
     let current = driver.current_url().map_err(|e| e.to_string())?;
