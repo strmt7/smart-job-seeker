@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Compact model references for embedded fields — 2026-10-30
+
+- The form-mapping and option-selection prompts use short collision-checked identifiers for embedded fields. Model responses are translated back to their original frame-bound selectors before validation and filling; guessed internal paths are not accepted as supplied identifiers. Manual-review selections use the same translation.
+- Scripted inference tests cover translation, collisions, rejected guessed paths and dropdown options. A scripted response was also exercised against a real local browser fixture. No actual local model was loaded: the host GPU already had about 14 GiB of dedicated memory in use. Model accuracy or improvement from this prompt change has not been measured.
+
 ## Checking other answers after visual navigation — 2026-10-30
 
 - Visual focus rechecks the selected answer first, then other completed fields. It reports verified, failed and unchecked counts, stops after a failure, and records a manual-review reason if any field fails or is left unchecked. The pass checks at most 32 fields and stops starting new checks after four seconds; individual browser protocol calls have a one-second timeout during the pass.

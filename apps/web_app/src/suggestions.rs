@@ -14,6 +14,59 @@ const MAX_FIELD_BATCH_BYTES: usize = 6_000;
 const MAX_PROFILE_VALUE: usize = 2000;
 type SuggestionsWithReview = (Vec<ProposedMapping>, Vec<String>, HashSet<String>);
 
+// Internal frame paths can be long and are not meaningful to a language model.
+// Short, collision-free references are translated back before validation.
+fn model_field_selector(schema: &FormSchema, index: usize) -> String {
+    let original = &schema.fields[index].selector;
+    if !original.starts_with("waypoint-frame:") {
+        return original.clone();
+    }
+    let mut alias = format!("@waypoint-field-{index}");
+    while schema.fields.iter().any(|field| field.selector == alias) {
+        alias.push('_');
+    }
+    alias
+}
+
+fn restore_model_selectors(
+    output: &mut Value,
+    fields: &[&waypoint_applications::form_mapping::FormField],
+    descriptions: &[Value],
+) {
+    let translate = |value: &mut Value| {
+        let Some(received) = value.as_str() else {
+            return;
+        };
+        if let Some((field, _)) = fields.iter().zip(descriptions).find(|(_, description)| {
+            description.get("selector").and_then(Value::as_str) == Some(received)
+        }) {
+            *value = Value::String(field.selector.clone());
+        } else if fields.iter().zip(descriptions).any(|(field, description)| {
+            field.selector == received
+                && description.get("selector").and_then(Value::as_str) != Some(received)
+        }) {
+            // An internal frame path was not sent to the model. Treat it as an
+            // unknown identifier rather than accepting a guessed path.
+            *value = Value::String(String::new());
+        }
+    };
+    if let Some(items) = output.get_mut("mappings").and_then(Value::as_array_mut) {
+        for item in items {
+            if let Some(selector) = item.get_mut("selector") {
+                translate(selector);
+            }
+        }
+    }
+    if let Some(items) = output
+        .get_mut("manual_review")
+        .and_then(Value::as_array_mut)
+    {
+        for selector in items {
+            translate(selector);
+        }
+    }
+}
+
 /// Conservative offline fallback using exact labels or standard autocomplete hints.
 pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<ProposedMapping>, String> {
     if schema.fields.len() > MAX_FIELDS {
@@ -198,7 +251,8 @@ pub fn suggest_with_review(
                 FormFieldType::File => "file",
                 FormFieldType::Date => "date",
             };
-            json!({"selector":field.selector,"label":field.label,"type":kind,"autocomplete":field.autocomplete})
+            let index = schema.fields.iter().position(|candidate| candidate.selector == field.selector).expect("field belongs to schema");
+            json!({"selector":model_field_selector(schema, index),"label":field.label,"type":kind,"autocomplete":field.autocomplete})
         }).collect();
     let mut start = 0;
     while start < fields.len() {
@@ -241,7 +295,8 @@ pub fn suggest_with_review(
             steps: schema.steps,
         };
         let response = match inference.generate_structured("form_mapping", &prompt, 1024) {
-            Ok((output, _)) => {
+            Ok((mut output, _)) => {
+                restore_model_selectors(&mut output, chunk, descriptions);
                 let mut record_review = |output: &Value| {
                     let reviews = output.get("manual_review").and_then(Value::as_array);
                     let valid = reviews.is_some_and(|items| {
@@ -266,7 +321,10 @@ pub fn suggest_with_review(
                     let repaired = inference
                         .generate_structured("form_sensitivity_review", &repair_prompt, 512)
                         .ok()
-                        .is_some_and(|(review, _)| record_review(&review));
+                        .is_some_and(|(mut review, _)| {
+                            restore_model_selectors(&mut review, chunk, descriptions);
+                            record_review(&review)
+                        });
                     if !repaired {
                         unclassified_batches += 1;
                         unclassified_selectors
@@ -481,8 +539,12 @@ fn resolve_choice_options(
         {
             continue;
         }
-        let item =
-            json!({"selector":field.selector,"label":field.label,"value":value,"options":options});
+        let index = schema
+            .fields
+            .iter()
+            .position(|candidate| candidate.selector == field.selector)
+            .ok_or("Unknown field")?;
+        let item = json!({"selector":model_field_selector(schema, index),"label":field.label,"value":value,"options":options});
         let length = item.to_string().len();
         if length > BATCH_BYTES {
             continue;
@@ -516,12 +578,12 @@ fn resolve_choice_options(
         if selections.len() > candidates.len() {
             continue;
         }
-        for (mapping, _) in candidates {
+        for (mapping, item) in candidates {
+            let model_selector = item.get("selector").and_then(Value::as_str);
             let matching: Vec<_> = selections
                 .iter()
                 .filter(|selection| {
-                    selection.get("selector").and_then(Value::as_str)
-                        == Some(mapping.field_selector.as_str())
+                    selection.get("selector").and_then(Value::as_str) == model_selector
                 })
                 .collect();
             let [selection] = matching.as_slice() else {
@@ -667,6 +729,179 @@ mod tests {
             .any(|item| item.field_selector == "#candidate"
                 && item.value == PacketValue::Text("Example, Avery".into())));
     }
+    #[test]
+    fn embedded_model_aliases_restore_choices_and_manual_review() {
+        struct AliasModel {
+            prompts: Vec<String>,
+        }
+        impl Inference for AliasModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.prompts.push(prompt.into());
+                let output = match task {
+                    "form_mapping" => {
+                        json!({"mappings":[{"selector":"@waypoint-field-0","profile_key":"country"}],"manual_review":["@waypoint-field-1"]})
+                    }
+                    "form_option_mapping" => {
+                        json!({"selections":[{"selector":"@waypoint-field-0","option":"Deutschland"}]})
+                    }
+                    _ => panic!("unexpected task"),
+                };
+                Ok((
+                    output,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let selector = format!(
+            "waypoint-frame:12:34:waypoint-frame:56:78:{}",
+            "section > ".repeat(100) + "select"
+        );
+        let sensitive_selector = "waypoint-frame:12:34:input[name=question]".to_owned();
+        let field = |selector: String, label: &str, field_type| FormField {
+            selector,
+            label: label.into(),
+            field_type,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: None,
+        };
+        let schema = FormSchema {
+            origin: "https://example.invalid".into(),
+            fields: vec![
+                field(
+                    selector.clone(),
+                    "Location",
+                    FormFieldType::Select {
+                        options: vec!["Deutschland".into(), "Canada".into()],
+                    },
+                ),
+                field(
+                    sensitive_selector.clone(),
+                    "Special question",
+                    FormFieldType::Text,
+                ),
+            ],
+            multi_step: false,
+            steps: 1,
+        };
+        let mut model = AliasModel { prompts: vec![] };
+        let (mappings, _, manual) =
+            suggest_with_review(&mut model, &schema, &json!({"country":"Germany"})).unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].field_selector, selector);
+        assert_eq!(mappings[0].value, PacketValue::Text("Deutschland".into()));
+        assert!(manual.contains(&sensitive_selector));
+        assert_eq!(model.prompts.len(), 2);
+        assert!(model
+            .prompts
+            .iter()
+            .all(|prompt| prompt.contains("@waypoint-field-0")
+                && !prompt.contains("waypoint-frame:")));
+    }
+
+    #[test]
+    #[ignore = "starts one browser with a fictional embedded form and a scripted local model response"]
+    fn embedded_alias_model_mapping_reaches_the_real_browser_field() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::BrowserCommand;
+        struct AliasModel;
+        impl Inference for AliasModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                assert_eq!(task, "form_mapping");
+                let fields = prompt
+                    .split_once("Form fields: ")
+                    .unwrap()
+                    .1
+                    .split_once(". Available keys:")
+                    .unwrap()
+                    .0;
+                let fields: Vec<Value> = serde_json::from_str(fields).unwrap();
+                let selector = fields
+                    .iter()
+                    .find(|field| field["label"] == "Name")
+                    .unwrap()["selector"]
+                    .as_str()
+                    .unwrap();
+                assert!(selector.starts_with("@waypoint-field-"));
+                Ok((
+                    json!({"mappings":[{"selector":selector,"profile_key":"first_name"}],"manual_review":[]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_iframe_controls.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let (mappings, _, _) = suggest_with_review(
+            &mut AliasModel,
+            &live.schema,
+            &json!({"first_name":"Fictional"}),
+        )
+        .unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert!(mappings[0].field_selector.starts_with("waypoint-frame:"));
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: mappings[0].field_selector.clone(),
+                value: mappings[0].value.clone(),
+            })
+            .unwrap();
+        driver
+            .verify_text_value(&mappings[0].field_selector, "Fictional")
+            .unwrap();
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
+    fn embedded_aliases_reject_guessed_internal_paths_and_avoid_collisions() {
+        let mut schema = form();
+        schema.fields.truncate(2);
+        schema.fields[0].selector = "waypoint-frame:1:2:#first".into();
+        schema.fields[1].selector = "@waypoint-field-0".into();
+        let alias = model_field_selector(&schema, 0);
+        assert_eq!(alias, "@waypoint-field-0_");
+        let descriptions = vec![
+            json!({"selector":alias}),
+            json!({"selector":schema.fields[1].selector}),
+        ];
+        let fields: Vec<_> = schema.fields.iter().collect();
+        let mut output = json!({"mappings":[{"selector":"waypoint-frame:1:2:#first","profile_key":"first_name"}],"manual_review":["@waypoint-field-0_"]});
+        restore_model_selectors(&mut output, &fields, &descriptions);
+        assert_eq!(output["mappings"][0]["selector"], "");
+        assert_eq!(output["manual_review"][0], "waypoint-frame:1:2:#first");
+    }
+
     #[test]
     fn full_name_uses_the_explicit_profile_value_only() {
         let mut schema = form();
