@@ -1818,10 +1818,14 @@ fn serve(
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/listing-inspect/pending" => {
+            let pending = candidate_task::pending()?;
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":candidate_task::pending()?}),
+                match pending {
+                    Some((task_id, url)) => json!({"task_id":task_id,"url":url}),
+                    None => json!({"task_id":null}),
+                },
             );
         }
         "/api/listing-salary-evidence" => {

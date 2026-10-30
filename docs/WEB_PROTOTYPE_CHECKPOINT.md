@@ -659,3 +659,14 @@ three pages, the cap and clearing selection. The queue depends on the open UI
 and its recoverable session state; it does not establish that candidates are
 live vacancies or that application pages are usable. No external pages were
 opened in these tests.
+
+The selected-listings queue can now recover a lost start response by checking
+the server's pending listing URL or application-check job ID. It resumes only
+when the pending task matches the current queue item; an unrelated task or an
+ambiguous network failure pauses the queue for review. Explicit server
+rejections with no pending task remain recorded as manual-review outcomes.
+The pending listing endpoint includes its normalized source URL for this local
+binding check. Fictional endpoint and mocked UI tests covered both task types,
+an unrelated task, a lost response and an explicit rejection. Recovery remains
+in-memory and depends on the browser session and running app; it does not
+survive an app restart or establish that a page is an application.

@@ -15,6 +15,7 @@ pub struct InspectedListing {
 }
 struct Task {
     id: String,
+    url: String,
     rx: mpsc::Receiver<Result<InspectedListing, String>>,
     result: Option<Result<Arc<InspectedListing>, String>>,
 }
@@ -25,12 +26,12 @@ pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
 }
 
-pub fn pending() -> Result<Option<String>, String> {
+pub fn pending() -> Result<Option<(String, String)>, String> {
     Ok(TASK
         .lock()
         .map_err(|_| "Listing inspection unavailable")?
         .as_ref()
-        .map(|task| task.id.clone()))
+        .map(|task| (task.id.clone(), task.url.clone())))
 }
 
 pub fn discard(id: &str) -> Result<(), String> {
@@ -385,6 +386,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
     *tasks = Some(Task {
         id,
+        url: url.clone(),
         rx,
         result: None,
     });
@@ -485,6 +487,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel();
         *TASK.lock().unwrap() = Some(Task {
             id: "save-retry".into(),
+            url: "https://example.org/job".into(),
             rx,
             result: Some(Ok(Arc::new(InspectedListing {
                 job: json!({"url":"https://example.org/job","title":"Engineer","employer":""}),
@@ -528,6 +531,7 @@ mod tests {
         let pending_response: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(pending_response["task_id"], "save-retry");
+        assert_eq!(pending_response["url"], "https://example.org/job");
         assert!(call(status, request()).0.is_err());
         {
             let mut task = TASK.lock().unwrap();
@@ -567,6 +571,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel();
         *TASK.lock().unwrap() = Some(Task {
             id: "discard-test".into(),
+            url: "https://example.org/job".into(),
             rx,
             result: None,
         });
