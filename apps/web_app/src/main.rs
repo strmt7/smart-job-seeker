@@ -4449,7 +4449,57 @@ fn serve(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(error) = run() {
+        let message = startup_error_message(&error.to_string());
+        eprintln!("{message}");
+        #[cfg(windows)]
+        show_startup_error(&message);
+        std::process::exit(1);
+    }
+}
+
+fn startup_error_message(error: &str) -> String {
+    let detail: String = error
+        .chars()
+        .take(1000)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let detail = detail.trim();
+    if detail.is_empty() {
+        "Waypoint could not start. Check the workspace and try again.".into()
+    } else {
+        format!("Waypoint could not start. Check the workspace and try again.\n\n{detail}")
+    }
+}
+
+/// Use a fixed system command and stdin for the message; user data is never
+/// interpolated into a shell command. The child has no console window.
+#[cfg(windows)]
+fn show_startup_error(message: &str) {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let Some(system_root) = std::env::var_os("SystemRoot") else {
+        return;
+    };
+    let executable = std::path::PathBuf::from(system_root)
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let script = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; $message = [Console]::In.ReadToEnd(); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show($message, 'Waypoint startup error', 'OK', 'Error') | Out-Null";
+    if let Ok(mut child) = Command::new(executable)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        if let Some(mut input) = child.stdin.take() {
+            let _ = input.write_all(message.as_bytes());
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let data = storage_settings::load_at(
         &storage_settings::control_dir()?,
         &storage_settings::default_workspace()?,
@@ -4765,6 +4815,18 @@ mod tests {
         assert_eq!(selected.len(), 20);
         assert_eq!(selected[0], "Built Rust compilers for embedded devices");
         assert_eq!(super::select_fit_facts(&facts, "unmatched")[0], facts[0]);
+    }
+
+    #[test]
+    fn startup_error_message_is_bounded_and_removes_control_characters() {
+        let result = startup_error_message(&format!("  invalid\nsetting {}", "x".repeat(2000)));
+        assert!(result.contains("invalid setting"));
+        assert!(result.chars().count() < 1100);
+        assert!(!result.contains('\r'));
+        assert_eq!(
+            startup_error_message("\n\t"),
+            "Waypoint could not start. Check the workspace and try again."
+        );
     }
 
     #[test]

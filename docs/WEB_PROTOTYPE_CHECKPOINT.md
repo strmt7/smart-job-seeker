@@ -788,3 +788,7 @@ The prototype installer now rejects a destination lexically inside the extracted
 ## Installer junction-aware containment — 2026-10-30
 
 The prototype installer now resolves the source directory and the destination's nearest existing parent through Windows directory handles before checking containment. Fictional local tests rejected a destination junction into the source and a source junction pointing to the real package, while allowing an unrelated destination junction. The installer fixture passed under PowerShell 7 and Windows PowerShell 5.1. This check is not atomic against a concurrent path change and does not establish support for every network, mount or alias configuration; installation and dependency provisioning on a clean host remain unverified.
+
+## Startup error visibility — 2026-10-30
+
+A failure returned from the application startup path now produces a bounded error message on stderr and, on Windows, requests a native error dialog using a hidden Windows PowerShell process. The message is sent over stdin rather than embedded in the command. A focused unit test covers message bounds and control characters; the dialog itself was not exercised in this checkpoint. Missing DLLs that prevent the executable from starting, a missing or restricted PowerShell host, and errors swallowed inside the tray implementation are not covered by this fallback.
