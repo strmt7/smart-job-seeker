@@ -942,3 +942,9 @@ In the fictional `gemma3:4b` related-skills fixture, the first response invented
 When a form segment's local vision transcription directly differs from a reviewed answer, the visual-status handler now adds a persistent manual-review reason and includes it in the active form preview. A field not observed in a single segment does not by itself trigger this reason because it may appear in another segment. This is an advisory model observation: an incorrect transcription can cause a false warning, and an unobserved field or model error may still be missed. It does not establish that the form is complete or correct.
 
 A fictional workspace test verified that a mismatch creates the review reason and an unobserved field does not; web Clippy and formatting passed. This checkpoint did not run a local vision model, render a live form or submit an application.
+
+## Failed visual review queue — 2026-10-30
+
+A failed form-vision task now retains its associated job ID. When its status is polled, the handler adds a persistent manual-review reason even if the form session has expired; an active preview is updated only for the matching session and job. A failed write is returned as an error. This does not cover a task that fails but is never polled, such as after the application exits, and does not imply that a completed visual review is accurate.
+
+Fictional tests covered the job ID retained by a failed task, repeated polling, and the manual-review reason; 16 visual-review tests passed with four live tests ignored, and web Clippy and formatting passed. This checkpoint did not use a local vision model or a live employer form, and no application was submitted.

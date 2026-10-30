@@ -3444,7 +3444,12 @@ fn serve(
             visual_review::start(
                 task_id.clone(),
                 current.id.clone(),
-                (signature.as_str().to_owned(), segment as usize, half),
+                (
+                    signature.as_str().to_owned(),
+                    segment as usize,
+                    half,
+                    current.job_id.as_str().to_owned(),
+                ),
                 model,
                 screenshot.clone(),
                 expected,
@@ -3464,6 +3469,30 @@ fn serve(
         "/api/form/visual-review-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             let mut result = visual_review::poll(id)?;
+            if result["status"] == "failed" {
+                let job = JobIdentityId::new(
+                    result["job_id"]
+                        .as_str()
+                        .ok_or("Visual review has no job")?,
+                )
+                .map_err(|e| e.to_string())?;
+                visual_review::flag_visual_failure(ws, &job, "failed", now())?;
+                if let Some(current) = session.as_mut().filter(|s| {
+                    Some(s.id.as_str()) == result["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                        && s.job_id == job
+                }) {
+                    let reason = visual_review::VISUAL_FAILURE_REASON;
+                    if !current
+                        .preview
+                        .manual_review
+                        .iter()
+                        .any(|item| item == reason)
+                    {
+                        current.preview.manual_review.push(reason.into());
+                    }
+                }
+            }
             if matches!(result["status"].as_str(), Some("running" | "complete")) {
                 let current = session
                     .as_mut()

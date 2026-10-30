@@ -5,6 +5,7 @@ use std::sync::Mutex;
 struct Task {
     id: String,
     session: String,
+    job_id: String,
     page_signature: String,
     segment: usize,
     half: Option<usize>,
@@ -24,6 +25,7 @@ pub fn set_completed_fixture(id: &str, session: &str, signature: &str, image: &s
     *TASK.lock().unwrap() = Some(Task {
         id: id.into(),
         session: session.into(),
+        job_id: "fixture-job".into(),
         page_signature: signature.into(),
         segment: 0,
         half: None,
@@ -245,6 +247,23 @@ pub fn transcription_mismatch_count(result: &Value) -> usize {
 
 pub const TRANSCRIPTION_MISMATCH_REASON: &str =
     "A visually transcribed field differs from its reviewed answer";
+pub const VISUAL_FAILURE_REASON: &str = "Visual form review failed; inspect the form manually";
+
+pub fn flag_visual_failure(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    status: &str,
+    timestamp: i64,
+) -> Result<bool, String> {
+    if status != "failed" {
+        return Ok(false);
+    }
+    ws.mark_manual_review(job, VISUAL_FAILURE_REASON, timestamp)
+        .map_err(|e| {
+            format!("Visual review failed, but its manual-review flag could not be saved: {e}")
+        })?;
+    Ok(true)
+}
 
 pub fn flag_transcription_mismatch(
     ws: &waypoint_workspace::Workspace,
@@ -391,7 +410,7 @@ pub fn segment_half_geometry(
 pub fn start(
     id: String,
     session: String,
-    capture: (String, usize, Option<usize>),
+    capture: (String, usize, Option<usize>, String),
     model: String,
     image: String,
     expected: ExpectedFields,
@@ -414,6 +433,7 @@ pub fn start(
     *task = Some(Task {
         id: id.clone(),
         session,
+        job_id: capture.3,
         page_signature: capture.0,
         segment: capture.1,
         half: capture.2,
@@ -554,6 +574,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
         return Ok(json!({"status":"running","session_id":task.session}));
     };
     let session = task.session.clone();
+    let job_id = task.job_id.clone();
     let page_signature = task.page_signature.clone();
     let segment = task.segment;
     let half = task.half;
@@ -564,7 +585,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
             json!({"status":"complete","session_id":session,"page_signature":page_signature,"segment":segment,"half":half,"screenshot_hash":screenshot_hash,"visual_review":observed,"record_saved":record_saved})
         }
         Err(error) => {
-            json!({"status":"failed","session_id":session,"error":error,"record_saved":record_saved})
+            json!({"status":"failed","session_id":session,"job_id":job_id,"error":error,"record_saved":record_saved})
         }
     };
     *COMPLETED.lock().map_err(|_| "Visual review unavailable")? = Some((id.into(), output.clone()));
@@ -870,6 +891,7 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "fixture-review".into(),
             session: "fixture-session".into(),
+            job_id: "fixture-job".into(),
             page_signature: "fixture-page".into(),
             segment: 0,
             half: None,
@@ -881,6 +903,22 @@ mod tests {
         let first = poll("fixture-review").unwrap();
         assert_eq!(first, poll("fixture-review").unwrap());
         assert!(poll("different-review").is_err());
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-failure".into(),
+            session: "expired-session".into(),
+            job_id: "fictional-job".into(),
+            page_signature: "fixture-page".into(),
+            segment: 0,
+            half: None,
+            screenshot_hash: "fixture-hash".into(),
+            result: Some(Err("fictional vision failure".into())),
+            completed: Some(std::time::Instant::now()),
+            record_saved: true,
+        });
+        let failed = poll("fixture-failure").unwrap();
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["job_id"], "fictional-job");
+        assert_eq!(failed, poll("fixture-failure").unwrap());
     }
     #[test]
     fn visual_comparisons_cover_later_filled_fields_with_a_bounded_limit() {
@@ -1046,6 +1084,14 @@ mod tests {
             .unwrap()
             .iter()
             .any(|reason| reason.reason == TRANSCRIPTION_MISMATCH_REASON));
+        assert!(!flag_visual_failure(&ws, &job, "running", 4).unwrap());
+        assert!(!flag_visual_failure(&ws, &job, "complete", 4).unwrap());
+        assert!(flag_visual_failure(&ws, &job, "failed", 5).unwrap());
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|reason| reason.reason == VISUAL_FAILURE_REASON));
     }
 
     #[test]
