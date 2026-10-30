@@ -2123,6 +2123,22 @@ mod tests {
         let criteria = result["rubric"].as_array().unwrap();
         assert!(criteria.iter().any(|item| item["excerpt"] == "C"));
         assert!(criteria.iter().any(|item| item["excerpt"] == "C++"));
+        assert_eq!(
+            criteria.len(),
+            2,
+            "generic experience must not duplicate the specific requirements: {result}"
+        );
+        let additional = "Fictional engineer. Required: C and C++ programming, plus at least five years of overall software development experience.";
+        let result = assess(&mut model, &[], "", additional).unwrap();
+        println!("Independent experience assessment: {result}");
+        assert!(
+            result["rubric"].as_array().unwrap().iter().any(|item| {
+                item["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("five years"))
+            }),
+            "an independent experience requirement must remain visible: {result}"
+        );
     }
 
     #[test]
