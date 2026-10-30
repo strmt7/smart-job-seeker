@@ -301,9 +301,9 @@ fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     Ok(value.clone())
 }
 
-/// Extract ASCII numeric literals without treating a decimal or grouped number
-/// as separate evidence. This is conservative, not a semantic number parser.
-fn numeric_literals(text: &str) -> Vec<String> {
+/// Extract ASCII numeric literals and a small set of unit distinctions without
+/// splitting decimals or grouped numbers. This is not semantic verification.
+fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut index = 0;
@@ -328,13 +328,34 @@ fn numeric_literals(text: &str) -> Vec<String> {
             }
             break;
         }
-        out.push(text[start..index].to_owned());
+        let suffix = text[index..].trim_start();
+        let word: String = suffix
+            .chars()
+            .take_while(char::is_ascii_alphabetic)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let unit = if suffix.starts_with('%') {
+            "percent"
+        } else {
+            match word.as_str() {
+                "percent" | "percentage" => "percent",
+                "second" | "seconds" | "sec" | "secs" => "second",
+                "minute" | "minutes" | "min" | "mins" => "minute",
+                "hour" | "hours" | "hr" | "hrs" => "hour",
+                "day" | "days" => "day",
+                "week" | "weeks" => "week",
+                "month" | "months" => "month",
+                "year" | "years" | "yr" | "yrs" => "year",
+                _ => "other",
+            }
+        };
+        out.push((text[start..index].to_owned(), unit));
     }
     out
 }
 
 pub(crate) fn numeric_claims_supported(paragraph: &str, facts: &[&str]) -> bool {
-    let evidence: std::collections::HashSet<String> = facts
+    let evidence: std::collections::HashSet<(String, &'static str)> = facts
         .iter()
         .flat_map(|fact| numeric_literals(fact))
         .collect();
@@ -447,7 +468,7 @@ fn check_document_evidence(llm: &mut dyn Inference, draft: &Value, facts: &[Stri
                 let cited: Vec<&str> = source["cited_facts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                 let numeric_uncertain = status == "supported" && !numeric_claims_supported(source["paragraph"].as_str().unwrap_or(""), &cited);
                 clean.push(if numeric_uncertain {
-                    json!({"id":id,"status":"uncertain","explanation":"A numeric claim does not appear in the cited facts. Check the numbers and original evidence manually.","numeric_guard":true})
+                    json!({"id":id,"status":"uncertain","explanation":"A number or its unit does not match the cited facts. Check the original evidence manually.","numeric_guard":true})
                 } else { json!({"id":id,"status":status,"explanation":explanation}) });
                     true
                 })
@@ -662,8 +683,27 @@ mod tests {
             "uncertain"
         );
         assert_eq!(
+            check(
+                "Reduced outage by 90 percent.",
+                "Troubleshot outage for 90 minutes."
+            )["items"][0]["status"],
+            "uncertain"
+        );
+        assert_eq!(
+            check("Managed 5 engineers.", "Managed budgets for 5 years.")["items"][0]["status"],
+            "uncertain"
+        );
+        assert_eq!(
+            check("Reduced outage by 90%.", "Reduced outage by 90 percent.")["items"][0]["status"],
+            "supported"
+        );
+        assert_eq!(
             numeric_literals("1,000.5 and 2020–2022"),
-            vec!["1,000.5", "2020", "2022"]
+            vec![
+                ("1,000.5".into(), "other"),
+                ("2020".into(), "other"),
+                ("2022".into(), "other")
+            ]
         );
     }
 
@@ -919,6 +959,16 @@ mod tests {
                 "unsupported",
                 "I reduced outage duration by 90 percent.",
                 "Helped resolve a service outage.",
+            ),
+            (
+                "unsupported",
+                "I reduced outage duration by 90 percent.",
+                "Helped troubleshoot an outage for 90 minutes.",
+            ),
+            (
+                "unsupported",
+                "I managed 5 engineers.",
+                "Managed budgets for 5 years.",
             ),
         ];
         let mut failed = Vec::new();

@@ -848,3 +848,9 @@ In one fictional live `gemma3:4b` case, the model itself marked an invented 90% 
 ## Edited answer evidence state — 2026-10-30
 
 Form and email draft panels now state that evidence checks apply to the original generated text. After inserting a draft, editing the destination field changes the panel to a visible, live-announced review warning; using a draft again resets the message. The existing backend continues to reject a stale generated-answer provenance binding after edits. Focused UI fixtures covered insertion, editing, rebinding and the existing answer evidence panel. These checks do not validate edited text, and no rendered employer form or email was sent.
+
+## Numeric units in evidence review — 2026-10-30
+
+The shared document and answer numeric check now distinguishes percentages and a limited set of English time units when comparing a model-supported claim with cited facts. A number with a different or missing recognized unit is downgraded to uncertain. Percent signs and the word percent are treated alike. This is a conservative literal check: it can flag equivalent wording and does not establish semantic relationships, currencies, spelled-out numbers or correctness when the same number and recognized unit refer to different things.
+
+Two additional fictional `gemma3:4b` evidence cases used the same number with different meanings. The model rejected them after a repair, although one first response contained contradictory extra judgments. Synthetic tests forced a model-supported response and verified that the unit check flags a 90-percent versus 90-minute mismatch and a five-engineer versus five-year mismatch; a matching percent format remained supported. The six-case live fixture, focused backend and UI tests, and web-app Clippy passed. This is not general accuracy evidence, and no employer site or application submission was involved.

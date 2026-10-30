@@ -343,7 +343,7 @@ fn check_evidence(llm: &mut dyn Inference, answer: &Value) -> Value {
         let numeric_uncertain =
             status == "supported" && !crate::draft_task::numeric_claims_supported(excerpt, &cited);
         clean.push(if numeric_uncertain {
-            json!({"excerpt":excerpt,"status":"uncertain","explanation":"A numeric claim does not appear in the cited facts. Check the numbers and original evidence manually.","numeric_guard":true})
+            json!({"excerpt":excerpt,"status":"uncertain","explanation":"A number or its unit does not match the cited facts. Check the original evidence manually.","numeric_guard":true})
         } else { json!({"excerpt":excerpt,"status":status,"explanation":explanation}) });
     }
     json!({"status":"completed","limit_reached":clean.len()==8,"numeric_review":numeric_review,"claims":clean})
