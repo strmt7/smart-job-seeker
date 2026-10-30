@@ -764,3 +764,7 @@ An application-attempt folder now receives an incomplete metadata record before 
 ## Fieldset accessible names — 2026-10-30
 
 Native radio groups inside a fieldset can now use `aria-label` or `aria-labelledby` as their group question, with a referenced name taking precedence over a legend. A real local browser selected and verified options in two fictional groups; a separate fixture with duplicate referenced IDs raised a manual-review wall. This does not add automatic navigation or support every custom radio widget, and no employer site, local model or application submission was involved.
+
+## Accessible disabled state — 2026-10-30
+
+Form inspection now excludes controls individually marked `aria-disabled` or `aria-readonly`; required excluded fields raise the existing review warning. Native radio selection and later verification also refuse a radio inside an ARIA-disabled or ARIA-readonly ancestor. A fictional local-browser fixture checked an individually disabled option and a group disabled after inspection. Equivalent live-state checks are not yet implemented for every other control type, and no employer site or application submission was used.

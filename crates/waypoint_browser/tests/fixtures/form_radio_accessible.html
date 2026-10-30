@@ -18,6 +18,11 @@
   <input id="shift-day" type="radio" name="shift" aria-label="Day" checked>
   <input id="shift-night" type="radio" name="shift" aria-label="Night" onchange="this.setAttribute('data-seen',String(this.checked))">
 </fieldset>
+<fieldset id="availability-group" aria-label="Interview availability">
+  <input id="interview-no" type="radio" name="interview" aria-label="No" aria-disabled="true">
+  <input id="interview-yes" type="radio" name="interview" aria-label="Yes">
+</fieldset>
+<label for="lock-trigger">Lock controls</label><select id="lock-trigger" onchange="document.getElementById('availability-group').setAttribute('aria-disabled','true')"><option>Unlocked</option><option>Lock</option></select>
 <div role="radiogroup" aria-label="Ambiguous option">
   <input id="duplicate-one" type="radio" name="duplicate" aria-label="Same">
   <input id="duplicate-two" type="radio" name="duplicate" aria-label="Same">

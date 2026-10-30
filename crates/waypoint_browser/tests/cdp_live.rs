@@ -505,6 +505,37 @@ fn selects_accessibly_labelled_native_radio_groups() {
         .fields
         .iter()
         .any(|field| field.label == "Outdated legend"));
+    let availability = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Interview availability")
+        .unwrap();
+    assert_eq!(
+        availability.field_type,
+        FormFieldType::Radio {
+            options: vec!["Yes".into()]
+        }
+    );
+    assert!(driver
+        .execute(&BrowserCommand::SelectRadio {
+            selector: availability.selector.clone(),
+            label: "No".into()
+        })
+        .is_err());
+    let yes = BrowserCommand::SelectRadio {
+        selector: availability.selector.clone(),
+        label: "Yes".into(),
+    };
+    driver.execute(&yes).unwrap();
+    driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#lock-trigger".into(),
+            label: "Lock".into(),
+        })
+        .unwrap();
+    assert!(driver.verify_choice(&yes).is_err());
+    assert!(driver.execute(&yes).is_err());
     let duplicate = live
         .schema
         .fields

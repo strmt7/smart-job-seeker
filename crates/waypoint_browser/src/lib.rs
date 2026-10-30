@@ -1164,7 +1164,17 @@ impl CdpDriver {
                     .attrs
                     .get("aria-required")
                     .is_some_and(|v| v == "true");
-            if control.attrs.contains_key("disabled") || control.attrs.contains_key("readonly") {
+            if control.attrs.contains_key("disabled")
+                || control.attrs.contains_key("readonly")
+                || control
+                    .attrs
+                    .get("aria-disabled")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                || control
+                    .attrs
+                    .get("aria-readonly")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+            {
                 if required {
                     walls.push("a required field is disabled or read-only".into());
                 }
@@ -1580,7 +1590,8 @@ impl CdpDriver {
             }
             return r.getAttribute('aria-label') || (r.labels && r.labels[0] && r.labels[0].textContent) || r.getAttribute('name') || '';
           };
-          const radios = Array.from(group.querySelectorAll('input[type=radio]')).filter(r => r.closest(selector) === group && r.name === this.name && r.form === this.form && !r.matches(':disabled'));
+          const unavailable = r => r.matches(':disabled') || !!r.closest('[aria-disabled="true" i], [aria-readonly="true" i]');
+          const radios = Array.from(group.querySelectorAll('input[type=radio]')).filter(r => r.closest(selector) === group && r.name === this.name && r.form === this.form && !unavailable(r));
           const allRadios = document.querySelectorAll('input[type=radio]'); if (allRadios.length > 5000) return false;
           const sameName = Array.from(allRadios).filter(r => r.name === this.name && r.form === this.form);
           if (sameName.some(r => r.closest(selector) !== group)) return false;
@@ -1588,7 +1599,7 @@ impl CdpDriver {
           if (choices.length !== 1) return false;
           const chosen = choices[0];
           if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
-          return chosen.isConnected && chosen.checked && !chosen.matches(':disabled') && chosen.validity.valid;
+          return chosen.isConnected && chosen.checked && !unavailable(chosen) && chosen.validity.valid;
         }"#,"arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
