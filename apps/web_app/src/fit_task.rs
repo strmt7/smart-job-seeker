@@ -1129,12 +1129,35 @@ fn validate(
         }
         let normalized = excerpt.to_lowercase();
         if seen.iter().any(|(previous_source, previous)| {
-            previous_source == source
-                && (previous.contains(&normalized) || normalized.contains(previous))
+            if previous_source != source {
+                return false;
+            }
+            let previous_normalized = previous.to_lowercase();
+            if previous_normalized == normalized {
+                return true;
+            }
+            if !previous_normalized.contains(&normalized)
+                && !normalized.contains(&previous_normalized)
+            {
+                return false;
+            }
+            // A short excerpt can be part of another excerpt while also
+            // appearing separately (for example, C and C++). Reject it only
+            // when the source has no possible non-overlapping occurrences.
+            let previous_first = source_text.find(previous);
+            let previous_last = source_text.rfind(previous);
+            let current_first = source_text.find(&excerpt);
+            let current_last = source_text.rfind(&excerpt);
+            !previous_first
+                .zip(current_last)
+                .is_some_and(|(a, b)| a + previous.len() <= b)
+                && !current_first
+                    .zip(previous_last)
+                    .is_some_and(|(a, b)| a + excerpt.len() <= b)
         }) {
             return Err("Duplicate or overlapping criterion excerpt".into());
         }
-        seen.push((source.to_owned(), normalized));
+        seen.push((source.to_owned(), excerpt.clone()));
         let importance = item["importance"]
             .as_str()
             .ok_or("Missing criterion importance")?;
@@ -2084,6 +2107,26 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_job_fit_distinguishes_c_and_cpp() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let listing = "Fictional engineer. Required: C and C++ programming experience.";
+        let result = assess(&mut model, &[], "", listing).unwrap();
+        println!("C and C++ assessment: {result}");
+        let criteria = result["rubric"].as_array().unwrap();
+        assert!(criteria.iter().any(|item| item["excerpt"] == "C"));
+        assert!(criteria.iter().any(|item| item["excerpt"] == "C++"));
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_job_fit_semantic_candidate_comparison() {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
@@ -2976,6 +3019,25 @@ mod tests {
             .unwrap()
             .iter()
             .any(|item| item.as_str().unwrap().contains("Possible overlap")));
+    }
+
+    #[test]
+    fn distinct_substring_requirements_need_separate_source_occurrences() {
+        let listing = "Required: C and C++.";
+        let criteria = json!({"summary":"Review","criteria":[
+            {"source":"listing","excerpt":"C","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"},
+            {"source":"listing","excerpt":"C++","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}
+        ]});
+        let result = validate(criteria.clone(), &[], "", listing).unwrap();
+        assert_eq!(result["rubric"].as_array().unwrap().len(), 2);
+        assert_eq!(result["scoring_basis"]["total_weight"], 6);
+        let mut reversed = criteria.clone();
+        reversed["criteria"].as_array_mut().unwrap().reverse();
+        assert_eq!(
+            validate(reversed, &[], "", listing).unwrap()["score"],
+            result["score"]
+        );
+        assert!(validate(criteria, &[], "", "Required: C++.").is_err());
     }
 
     #[test]
