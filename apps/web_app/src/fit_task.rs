@@ -1302,7 +1302,24 @@ fn compare_preferences_with_source(
                 verification_text
                     .is_some_and(|source| interval_requires_review(preference, text, source))
             });
-        let needs_review = source_unavailable || ambiguous_quote || numerical_review;
+        // A statement that information is unstated is not evidence of the
+        // opposite. This is a limited English-language guard, not semantic validation.
+        let absent_information = matches!(status, "supported" | "contradicted")
+            && quote.as_str().is_some_and(|text| {
+                let lower = text.to_lowercase();
+                [
+                    "no information about",
+                    "no information on",
+                    "not stated",
+                    "not specified",
+                    "not mentioned",
+                    "details unavailable",
+                ]
+                .iter()
+                .any(|marker| lower.contains(marker))
+            });
+        let needs_review =
+            source_unavailable || ambiguous_quote || numerical_review || absent_information;
         updates.push((
             id - 1,
             if needs_review { "unknown" } else { status }.to_owned(),
@@ -1313,6 +1330,8 @@ fn compare_preferences_with_source(
                 "The cited listing text occurs more than once; review the full context before deciding whether this preference is met.".to_owned()
             } else if numerical_review {
                 "A numeric interval in or near the cited text crosses the preference's stated number; check the bounds and units manually.".to_owned()
+            } else if absent_information {
+                "The cited text says information is not stated; review the preference manually.".to_owned()
             } else {
                 explanation.to_owned()
             },
@@ -3668,6 +3687,21 @@ mod tests {
             result["rubric"][0]["qualification"],
             "Fully remote in Germany"
         );
+        for status in ["supported", "contradicted"] {
+            let mut invented = response.clone();
+            invented["items"][1] =
+                json!({"id":2,"status":status,"quote":"Salary not stated","explanation":"Fixture"});
+            let result = compare_preferences(
+                &mut Fixture(invented),
+                source.clone(),
+                fallback.clone(),
+                &[],
+                preferences,
+                listing,
+            );
+            assert_eq!(result["rubric"][1]["status"], "unknown");
+            assert_eq!(result["score_range"], json!({"lower":50,"upper":100}));
+        }
         let mut unknown_quote = response.clone();
         unknown_quote["items"][1]["quote"] = json!("Salary not stated");
         let result = compare_preferences(
@@ -3986,24 +4020,26 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "qualification benchmark requires a preloaded local qwen3.5:9b model and resource preflight"]
+    #[ignore = "qualification benchmark requires a preloaded local model and resource preflight"]
     fn live_preference_comparison_distinguishes_ambiguous_cases() {
+        let model_name = std::env::var("WAYPOINT_FIT_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
         let addr = "127.0.0.1:11434".parse().unwrap();
         let (_, bytes) =
             waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
         let ps: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some("qwen3.5:9b")
+            Some(model_name.as_str())
         );
         assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
-        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+        let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
             .unwrap()
             .with_context_window(4096)
             .unwrap();
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
-            "qwen3.5:9b".into(),
+            model_name,
             crate::resident_model,
         );
         let cases = [
