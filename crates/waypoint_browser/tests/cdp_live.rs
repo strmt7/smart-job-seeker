@@ -563,7 +563,20 @@ fn selects_accessibly_labelled_native_radio_groups() {
 #[ignore = "launches one browser against a local fixture without submitting"]
 fn controls_reject_an_aria_disabled_ancestor_after_inspection() {
     let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
-    driver.open(&file_url("form_aria_locked.html")).unwrap();
+    let live = driver.open(&file_url("form_aria_locked.html")).unwrap();
+    let options = &live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#single")
+        .unwrap()
+        .field_type;
+    assert_eq!(
+        options,
+        &FormFieldType::Select {
+            options: vec!["A".into(), "B".into(), "D".into()]
+        }
+    );
     let file = upload_dir().join("aria-state-fixture.txt");
     std::fs::write(&file, b"fictional attachment").unwrap();
     let text = BrowserCommand::Fill {
@@ -612,6 +625,24 @@ fn controls_reject_an_aria_disabled_ancestor_after_inspection() {
             label: "Lock".into(),
         })
         .unwrap();
+    let updated = driver.inspect_current().unwrap();
+    let options = &updated
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#single")
+        .unwrap()
+        .field_type;
+    assert_eq!(
+        options,
+        &FormFieldType::Select {
+            options: vec!["A".into(), "B".into()]
+        }
+    );
+    assert_ne!(
+        live.schema.schema_hash_input(),
+        updated.schema.schema_hash_input()
+    );
     for action in [&text, &date, &check, &single, &multiple, &editor] {
         assert!(
             driver.execute(action).is_err(),

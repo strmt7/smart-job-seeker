@@ -2191,7 +2191,14 @@ fn options_of(node: &Value) -> Vec<String> {
                 .unwrap_or("")
                 .to_ascii_lowercase();
             let attrs = attributes(child);
-            if attrs.contains_key("disabled") {
+            if attrs.contains_key("disabled")
+                || attrs
+                    .get("aria-disabled")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                || attrs
+                    .get("aria-readonly")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+            {
                 continue;
             }
             if tag == "optgroup" {

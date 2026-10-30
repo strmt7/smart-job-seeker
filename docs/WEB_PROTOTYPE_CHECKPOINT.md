@@ -772,3 +772,7 @@ Form inspection now excludes controls individually marked `aria-disabled` or `ar
 ## Live ARIA state for native controls — 2026-10-30
 
 Text, date, checkbox, single-select, multi-select, editable text and file attachment operations now check their live ARIA-disabled and ARIA-readonly ancestry before acting and when verifying retained values. Single and multi-select also reject options carrying those states. A fictional local-browser fixture exercised normal operations, disabled options and a container disabled after inspection, then confirmed the later operations and verifications failed. This does not cover every custom widget or make page changes atomic; no employer site or application submission was used.
+
+## Available options in reviewed schemas — 2026-10-30
+
+Native select inspection now excludes options and option groups marked `aria-disabled` or `aria-readonly`, matching the driver's live selection checks. A fictional local-browser fixture verified exclusion and that changing an option's state changes the review schema; the existing grouped-select fixture also passed. The availability of controls inside ARIA-disabled containers can still be discovered during inspection and is checked again at action time. No employer site or application submission was involved.
