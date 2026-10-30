@@ -219,4 +219,44 @@ mod tests {
             "unsupported duration: {text}"
         );
     }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_two_template_passages_are_drafted_sequentially() {
+        let first = "Designed accessible interfaces for screen-reader users.";
+        let second = "Maintained Python services for three years.";
+        let source = format!("{first}\n{second}");
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let mut outputs = Vec::new();
+        for passage in [first, second] {
+            let mut input = input_with_passage(passage, &source);
+            input.facts.clear();
+            input.listing = "Build accessible web interfaces and maintain Python services.".into();
+            outputs.push(suggest(&mut model, input).unwrap());
+        }
+        println!("Fictional sequential template suggestions: {outputs:?}");
+        let first_text = outputs[0]["text"].as_str().unwrap().to_lowercase();
+        let second_text = outputs[1]["text"].as_str().unwrap().to_lowercase();
+        assert!(first_text.contains("accessib"));
+        assert!(second_text.contains("python"));
+        assert!(!second_text.contains("five years") && !second_text.contains("5 years"));
+        assert!(outputs
+            .iter()
+            .all(|output| output["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|source| source
+                    .as_str()
+                    .unwrap()
+                    .contains("not independently verified"))));
+    }
 }

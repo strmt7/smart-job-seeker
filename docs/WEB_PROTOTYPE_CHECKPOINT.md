@@ -414,3 +414,13 @@ inserting duplicate pairs. A fictional local API fixture checked repeated
 polling, saving and replay after the saved pairs changed the neighbor set.
 Pending task state and the replay are in memory only and do not survive an app
 restart; this does not establish model accuracy or eliminate duplicate jobs.
+
+The template editor can request local suggestions for up to five selected,
+unique, non-overlapping lines in sequence. Each result shows its original,
+replacement and cited sources; the user individually adds desired changes to
+the existing reviewed queue, which retains job and context bindings. A failed
+later request leaves earlier suggestions available. A fictional DOCX test ran
+two passages through the resident local model; a rendered mock exercised the
+queue at desktop and narrow widths. The browser test used mocked API responses,
+not a real file export. Suggestions are not automatically applied, model
+accuracy remains unproven, and a lost model response may require another request.
