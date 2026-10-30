@@ -38,6 +38,45 @@ try {
         $rejected = $true
     }
     if (-not $rejected -or (Test-Path -LiteralPath $nested)) { throw 'Case-insensitive source containment was not enforced.' }
+    # The junction itself is removed without recursion before fixture cleanup.
+    $junction = Join-Path $testRoot 'source-alias'
+    New-Item -ItemType Junction -Path $junction -Target $app | Out-Null
+    try {
+        $aliasedNested = Join-Path $junction 'nested-through-junction'
+        $rejected = $false
+        try { & $installer -InstallDirectory $aliasedNested -NoShortcut } catch {
+            if ($_.Exception.Message -notmatch 'outside the extracted package') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected -or (Test-Path -LiteralPath $aliasedNested)) { throw 'Junction into the package was not rejected.' }
+    } finally {
+        [IO.Directory]::Delete($junction)
+    }
+    $aliasPackage = Join-Path $testRoot 'alias-package'
+    New-Item -ItemType Directory -Path $aliasPackage | Out-Null
+    Copy-Item -LiteralPath $installer -Destination (Join-Path $aliasPackage 'install.ps1')
+    $sourceLink = Join-Path $aliasPackage 'app'
+    New-Item -ItemType Junction -Path $sourceLink -Target $app | Out-Null
+    try {
+        $rejected = $false
+        try { & (Join-Path $aliasPackage 'install.ps1') -InstallDirectory (Join-Path $app 'nested-real-source') -NoShortcut } catch {
+            if ($_.Exception.Message -notmatch 'outside the extracted package') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected -or (Test-Path -LiteralPath (Join-Path $app 'nested-real-source'))) { throw 'Aliased source containment was not enforced.' }
+    } finally {
+        [IO.Directory]::Delete($sourceLink)
+    }
+    $other = Join-Path $testRoot 'other-target'
+    New-Item -ItemType Directory -Path $other | Out-Null
+    $otherLink = Join-Path $testRoot 'other-alias'
+    New-Item -ItemType Junction -Path $otherLink -Target $other | Out-Null
+    try {
+        & $installer -InstallDirectory (Join-Path $otherLink 'installed') -NoShortcut
+        if (-not (Test-Path -LiteralPath (Join-Path $other 'installed/waypoint_web.exe'))) { throw 'Safe junction destination did not install.' }
+    } finally {
+        [IO.Directory]::Delete($otherLink)
+    }
     $sibling = Join-Path $testRoot 'app2'
     & $installer -InstallDirectory $sibling -NoShortcut
     if (-not (Test-Path -LiteralPath (Join-Path $sibling 'waypoint_web.exe') -PathType Leaf)) { throw 'A sibling with a similar prefix was incorrectly rejected.' }

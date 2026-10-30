@@ -784,3 +784,7 @@ Rendered native controls and supported editable text fields now have their live 
 ## Installer destination containment — 2026-10-30
 
 The prototype installer now rejects a destination lexically inside the extracted `app` source before creating the destination, avoiding a recursive source-to-child copy. Fictional Windows installer tests checked nested paths, case-insensitive comparison and a similarly named sibling. This does not resolve junction or symlink aliases, establish clean-host installation, or provision the still-missing Chromium, Ollama and Visual C++ runtime dependencies.
+
+## Installer junction-aware containment — 2026-10-30
+
+The prototype installer now resolves the source directory and the destination's nearest existing parent through Windows directory handles before checking containment. Fictional local tests rejected a destination junction into the source and a source junction pointing to the real package, while allowing an unrelated destination junction. The installer fixture passed under PowerShell 7 and Windows PowerShell 5.1. This check is not atomic against a concurrent path change and does not establish support for every network, mount or alias configuration; installation and dependency provisioning on a clean host remain unverified.

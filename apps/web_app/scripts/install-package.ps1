@@ -16,6 +16,59 @@ if ($InstallDirectory.StartsWith($sourcePrefix, [StringComparison]::OrdinalIgnor
 }
 $manifestPath = Join-Path $source 'package-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Package manifest is missing. Extract the complete package and try again.' }
+# Resolve the existing source and destination ancestors through junctions and
+# symlinks before comparing them. Never follow a link by deleting or moving it.
+if (-not ('WaypointInstallerPath' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class WaypointInstallerPath {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint size, uint flags);
+    public static string ResolveDirectory(string path) {
+        using (var handle = CreateFile(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            var value = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandle(handle, value, (uint)value.Capacity, 0);
+            if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (length >= value.Capacity) throw new InvalidOperationException("Resolved path is too long.");
+            string result = value.ToString();
+            if (result.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + result.Substring(8);
+            if (result.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)) return result.Substring(4);
+            return result;
+        }
+    }
+}
+"@
+}
+function Resolve-ProspectiveDirectory([string]$Path) {
+    $current = $Path
+    $missing = @()
+    while (-not (Test-Path -LiteralPath $current -PathType Container)) {
+        if (Test-Path -LiteralPath $current) { throw 'An installation parent exists but is not a directory.' }
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if (-not $parent -or $parent -eq $current) { throw 'Could not resolve an existing installation parent.' }
+        $missing = @([IO.Path]::GetFileName($current)) + $missing
+        $current = $parent
+    }
+    $resolved = [WaypointInstallerPath]::ResolveDirectory($current)
+    foreach ($component in $missing) { $resolved = Join-Path $resolved $component }
+    return [IO.Path]::GetFullPath($resolved)
+}
+try {
+    $resolvedSource = [WaypointInstallerPath]::ResolveDirectory($source)
+    $resolvedDestination = Resolve-ProspectiveDirectory $InstallDirectory
+} catch { throw "Could not verify the installation path; nothing was copied. $($_.Exception.Message)" }
+$resolvedPrefix = $resolvedSource.TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+if ($resolvedDestination.Equals($resolvedSource, [StringComparison]::OrdinalIgnoreCase) -or
+    $resolvedDestination.StartsWith($resolvedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Choose an installation directory outside the extracted package app folder.'
+}
 try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { throw 'Package manifest is invalid. Extract the complete package and try again.' }
 if ($manifest.openssl_dll -notmatch '^libcrypto[A-Za-z0-9_.-]*\.dll$' -or
     $manifest.openssl_sha256 -notmatch '^[a-fA-F0-9]{64}$' -or
