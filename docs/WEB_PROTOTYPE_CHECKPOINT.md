@@ -457,3 +457,12 @@ restrict software redistribution. The Chromium snapshot was unsigned and its
 test launch in the repository directory reported a sandbox access failure. No
 browser was bundled on this evidence. Automatic browser provisioning remains
 open; no third-party application was contacted.
+
+Local form mapping now formats larger field batches with indented JSON while
+retaining the earlier compact layout for shorter batches. In a fictional
+ablation the resident model mapped a given-name question in the indented
+10-, 15- and 20-field variants where it omitted or flagged it in compact input.
+The [evaluation record](g1/FORM_MAPPING_LAYOUT_2026-10-30.md) also describes a
+short-form regression seen when applying indented formatting everywhere and the
+limited safety checks run on the revised path. These results are not evidence of
+general form accuracy; uncertain fields still need review.
