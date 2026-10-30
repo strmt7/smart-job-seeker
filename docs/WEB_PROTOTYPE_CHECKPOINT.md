@@ -670,3 +670,17 @@ binding check. Fictional endpoint and mocked UI tests covered both task types,
 an unrelated task, a lost response and an explicit rejection. Recovery remains
 in-memory and depends on the browser session and running app; it does not
 survive an app restart or establish that a page is an application.
+
+Application-page checks can now optionally follow one unambiguous external
+application link when the user enables the option. The link must pass the
+existing label filter, have no query or fragment, avoid final-action-looking
+paths, resolve to public addresses at the preflight, and belong to a known
+source whose registry permits public reads. Unknown sources and sources that
+require review remain manual. The final URL is checked for a further
+cross-origin redirect; the browser may already have followed that redirect,
+and page scripts can perform their own network actions. The check never issues
+field-entry or submit commands and still reports manual review rather than
+confirming a usable application. Fictional policy and UI tests covered opt-in,
+ambiguity, rejected destinations and option propagation. No real external ATS
+was contacted, so behaviour across employer sites and redirect chains is
+unverified.

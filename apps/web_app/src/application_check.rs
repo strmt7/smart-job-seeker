@@ -215,6 +215,14 @@ fn suggest_page_links(browser: &mut waypoint_browser::CdpDriver) -> Result<Strin
 // Follow only one unambiguous same-origin link. In particular, never navigate
 // a URL that looks like a final submit action or contains query parameters.
 pub(crate) fn application_destination(current: &str, links: &[String]) -> Option<String> {
+    application_destination_with_external(current, links, false)
+}
+
+fn application_destination_with_external(
+    current: &str,
+    links: &[String],
+    allow_external: bool,
+) -> Option<String> {
     let base = Url::parse(current).ok()?;
     if base.scheme() != "https" || !waypoint_connectors::is_public_host_url(current) {
         return None;
@@ -230,7 +238,7 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
             }
         };
         if candidate.scheme() != "https"
-            || candidate.origin() != base.origin()
+            || (candidate.origin() != base.origin() && !allow_external)
             || candidate.query().is_some()
             || candidate.fragment().is_some()
             || !candidate.username().is_empty()
@@ -243,6 +251,17 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
         {
             rejected = true;
             continue;
+        }
+        if candidate.origin() != base.origin() {
+            let source = crate::manual_job::source(candidate.host_str()?);
+            if source == "user_supplied_url"
+                || waypoint_workspace::default_registry()
+                    .check_public_route(source, waypoint_policy::Operation::Read)
+                    .is_err()
+            {
+                rejected = true;
+                continue;
+            }
         }
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
@@ -261,8 +280,10 @@ fn vetted_application_destination(
     current: &str,
     links: &[String],
     vetted: &[String],
+    allow_external: bool,
 ) -> Option<String> {
-    application_destination(current, links).filter(|destination| vetted.contains(destination))
+    application_destination_with_external(current, links, allow_external)
+        .filter(|destination| vetted.contains(destination))
 }
 
 fn classify_fields(
@@ -328,7 +349,7 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
         .map(|task| (task.id.clone(), task.job_id.clone())))
 }
 
-pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
+pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
     if task.is_some() {
         return Err("An application check is already active or awaiting its result".into());
@@ -385,8 +406,16 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                         }
                     }
                 };
-                if let Some(destination) = vetted_application_destination(&current, &links, &vetted)
+                if let Some(destination) =
+                    vetted_application_destination(&current, &links, &vetted, allow_external)
                 {
+                    let destination_url = waypoint_net::parse_url(&destination)
+                        .map_err(|_| "The application link is invalid.")?;
+                    waypoint_net::resolve_public(&destination_url)
+                        .map_err(|_| "The application host could not be verified as public.")?;
+                    let destination_origin = Url::parse(&destination)
+                        .map_err(|_| "Invalid application destination")?
+                        .origin();
                     page = browser
                         .open(&destination)
                         .map_err(|error| navigation_failure("application page", &error))?;
@@ -395,10 +424,13 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                         .current_url()
                         .map_err(|_| "The application destination could not be checked.")?;
                     let final_origin = Url::parse(&final_url).map_err(|e| e.to_string())?.origin();
-                    if final_origin != original.origin() {
+                    if final_origin != destination_origin {
                         return Ok(("The application link redirected to another site; review the destination manually.".into(), true));
                     }
-                    inspected_url = displayable_inspected_url(&url, &final_url);
+                    inspected_url = displayable_inspected_url(&destination, &final_url);
+                    if destination_origin != original.origin() {
+                        link_warning = Some("An external application destination was opened for inspection; review its identity and the original listing.");
+                    }
                 } else if !links.is_empty() && link_warning.is_none() {
                     link_warning = Some("Application links need manual review before opening.");
                 }
@@ -584,6 +616,7 @@ mod tests {
             "http-error-fixture".into(),
             "fictional-job".into(),
             format!("http://127.0.0.1:{port}/fixture"),
+            false,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
@@ -736,7 +769,13 @@ mod tests {
             }
         });
         let url = format!("http://127.0.0.1:{port}/fixture");
-        super::start("ambiguous-fixture".into(), "fictional-job".into(), url).unwrap();
+        super::start(
+            "ambiguous-fixture".into(),
+            "fictional-job".into(),
+            url,
+            false,
+        )
+        .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         let (_, _, result, review) = loop {
             if let Some(done) = poll("ambiguous-fixture").unwrap() {
@@ -799,6 +838,7 @@ mod tests {
             "unfamiliar-fixture".into(),
             "fictional-job".into(),
             format!("http://127.0.0.1:{port}/fixture"),
+            false,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
@@ -1079,16 +1119,20 @@ mod tests {
             super::vetted_application_destination(
                 base,
                 &["/apply".into()],
-                &["https://jobs.example.org/apply".into()]
+                &["https://jobs.example.org/apply".into()],
+                false
             )
             .as_deref(),
             Some("https://jobs.example.org/apply")
         );
-        assert!(super::vetted_application_destination(base, &["/apply".into()], &[]).is_none());
+        assert!(
+            super::vetted_application_destination(base, &["/apply".into()], &[], false).is_none()
+        );
         assert!(super::vetted_application_destination(
             base,
             &["/apply".into(), "/other".into()],
-            &["https://jobs.example.org/apply".into()]
+            &["https://jobs.example.org/apply".into()],
+            false
         )
         .is_none());
     }
@@ -1133,7 +1177,61 @@ mod tests {
         assert!(super::vetted_application_destination(
             "https://jobs.example.org/role",
             &links,
-            &vetted
+            &vetted,
+            false
+        )
+        .is_none());
+        assert!(super::vetted_application_destination(
+            "https://jobs.example.org/role",
+            &links,
+            &vetted,
+            true
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn external_inspection_requires_opt_in_public_policy_and_unambiguous_link() {
+        let base = "https://employer.example/jobs/42";
+        let allowed = "https://boards.greenhouse.io/example/jobs/123";
+        let links = vec![allowed.to_owned()];
+        assert!(super::vetted_application_destination(base, &links, &links, false).is_none());
+        assert_eq!(
+            super::vetted_application_destination(base, &links, &links, true).as_deref(),
+            Some(allowed)
+        );
+        assert!(super::vetted_application_destination(base, &links, &[], true).is_none());
+        for target in [
+            "https://example.myworkdayjobs.com/apply",
+            "https://linkedin.com/jobs/apply",
+            "https://unknown.example/apply",
+            "https://boards.greenhouse.io/example/submit",
+            "https://boards.greenhouse.io/example/apply?token=abc",
+        ] {
+            assert!(
+                super::vetted_application_destination(
+                    base,
+                    &[target.into()],
+                    &[target.into()],
+                    true
+                )
+                .is_none(),
+                "{target}"
+            );
+        }
+        assert!(super::vetted_application_destination(
+            base,
+            &links,
+            &["https://boards.greenhouse.io/example/other".into()],
+            true
+        )
+        .is_none());
+        let other = "https://jobs.lever.co/example/123";
+        assert!(super::vetted_application_destination(
+            base,
+            &[allowed.into(), other.into()],
+            &[allowed.into(), other.into()],
+            true
         )
         .is_none());
     }

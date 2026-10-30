@@ -1676,7 +1676,8 @@ fn serve(
                 return Err("Application URL is not a public HTTPS URL".into());
             }
             let id = random_id()?;
-            application_check::start(id.clone(), job_id.as_str().to_owned(), url)?;
+            let allow_external = body["allow_external"].as_bool().unwrap_or(false);
+            application_check::start(id.clone(), job_id.as_str().to_owned(), url, allow_external)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/application-check/pending" => {
