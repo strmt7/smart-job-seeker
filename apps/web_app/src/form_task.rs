@@ -491,7 +491,11 @@ mod tests {
             Ok(self.current.clone())
         }
         fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
-            Ok(self.links.clone())
+            if self.links == ["fixture-link-inspection-error"] {
+                Err(DriverError("fictional link read failure".into()))
+            } else {
+                Ok(self.links.clone())
+            }
         }
         fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
             panic!("inspection must not execute field actions")
@@ -587,6 +591,32 @@ mod tests {
     }
 
     #[test]
+    fn failed_link_read_keeps_existing_form_available() {
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec!["fixture-link-inspection-error".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: false,
+        };
+        let (form, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/form").unwrap();
+        assert!(warning.unwrap().contains("could not be inspected"));
+        assert!(form.walls.is_empty());
+        let preview = form_preview::suggest_without_model(
+            form,
+            &serde_json::json!({"first_name":"Alex"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        assert!(preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#name"));
+        assert_eq!(driver.opened.len(), 1);
+    }
+
+    #[test]
     #[ignore = "starts one headless browser against a fictional local form"]
     fn background_inspection_keeps_form_and_ambiguous_link_warning() {
         let _guard = TEST_LOCK.lock().unwrap();
@@ -614,6 +644,73 @@ mod tests {
                     .suggestions
                     .iter()
                     .any(|mapping| mapping.field_selector == "#email"));
+                assert!(driver
+                    .trace
+                    .iter()
+                    .all(|entry| !entry.contains("submitted")));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "inspection did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and requires preloaded qwen3.5:9b and resource preflight"]
+    fn local_model_inspects_form_with_ambiguous_links() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        assert_eq!(
+            crate::resident_model().unwrap().as_deref(),
+            Some("qwen3.5:9b")
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-ambiguous-contact.html");
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        start(
+            "model-ambiguous-fixture".into(),
+            JobIdentityId::new("fixture-job").unwrap(),
+            url,
+            serde_json::json!({"email":"alex@example.invalid"}),
+            Some("qwen3.5:9b".into()),
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        loop {
+            if let Some(done) = poll("model-ambiguous-fixture").unwrap() {
+                let (driver, preview) = done.result.unwrap();
+                println!(
+                    "fictional model inspection warnings: {:?}, mappings: {:?}",
+                    preview.manual_review, preview.suggestions
+                );
+                assert!(preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason.contains("Application links are ambiguous")));
+                assert!(
+                    !preview.manual_review.iter().any(|reason| reason.contains(
+                        "only exact labels or standard autocomplete hints are suggested"
+                    )),
+                    "the model pass fell back to exact labels"
+                );
+                assert!(
+                    !preview
+                        .suggestions
+                        .iter()
+                        .any(|mapping| mapping.field_selector == "#contact"),
+                    "an ambiguous contact method must not be guessed"
+                );
+                assert!(
+                    preview
+                        .manual_review
+                        .iter()
+                        .any(|reason| reason
+                            .contains("Where should our recruiting team send updates?")),
+                    "the ambiguous field must be reported for review"
+                );
                 assert!(driver
                     .trace
                     .iter()
