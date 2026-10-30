@@ -437,6 +437,8 @@ fn assess(
                     let mut assessment =
                         compare_preferences(model, value, assessment, facts, instructions, listing);
                     assessment["requirement_audit"] = completeness;
+                    assessment["redundancy_review"] =
+                        review_redundant_criteria(model, &assessment, listing);
                     return Ok(assessment);
                 }
                 Err(error) => last_error = error,
@@ -448,6 +450,59 @@ fn assess(
     Err(format!(
         "Assessment could not be validated after one repair: {last_error}"
     ))
+}
+
+/// Identify possible duplicate listing criteria for user review only. The
+/// model's proposal never removes evidence or changes the calculated score.
+fn review_redundant_criteria(
+    model: &mut dyn Inference,
+    assessment: &Value,
+    listing: &str,
+) -> Value {
+    let Some(rubric) = assessment["rubric"].as_array() else {
+        return json!({"status":"invalid"});
+    };
+    let items: Vec<Value> = rubric
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            (item["source"] == "listing")
+                .then(|| item["excerpt"].as_str())
+                .flatten()
+                .map(|excerpt| json!({"id":index+1,"excerpt":excerpt}))
+        })
+        .collect();
+    if items.len() < 2 {
+        return json!({"status":"not_needed"});
+    }
+    let end = listing.floor_char_boundary(listing.len().min(5000));
+    let prompt = format!("Which listed criteria add no independent requirement beyond the others? Consider the full listing. A criterion is redundant only if every applicant meeting all other criteria necessarily meets it too. A general experience duration never proves a specific skill, and specific skills do not prove a minimum number of years. Return JSON only: {{\"redundant_ids\":[1-based criterion IDs]}}. Return an empty array if none are redundant. Listing: {}. Criteria: {}", json!(&listing[..end]), json!(items));
+    if prompt.len() > 8000 {
+        return json!({"status":"input_limit"});
+    }
+    let Ok((response, _)) = model.generate_structured("fit_redundancy_review", &prompt, 400) else {
+        return json!({"status":"unavailable"});
+    };
+    let Some(ids) = response["redundant_ids"]
+        .as_array()
+        .filter(|ids| ids.len() < items.len())
+    else {
+        return json!({"status":"invalid"});
+    };
+    let mut seen = Vec::new();
+    for id in ids {
+        let Some(index) = id
+            .as_u64()
+            .filter(|id| *id > 0 && *id <= rubric.len() as u64)
+        else {
+            return json!({"status":"invalid"});
+        };
+        if rubric[index as usize - 1]["source"] != "listing" || seen.contains(&index) {
+            return json!({"status":"invalid"});
+        }
+        seen.push(index);
+    }
+    json!({"status":"completed","possible_redundant_ids":seen,"listing_truncated":end < listing.len()})
 }
 
 /// A second, bounded pass searches for omitted explicit requirements. New
@@ -2107,6 +2162,65 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_redundant_criterion_judgment_on_fictional_cases() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let cases = [
+            (
+                "Required: C and C++ programming experience.",
+                vec!["C", "C++", "programming experience"],
+                vec![3],
+            ),
+            (
+                "Required: C and C++, plus at least five years of software development experience.",
+                vec![
+                    "C",
+                    "C++",
+                    "at least five years of software development experience",
+                ],
+                vec![],
+            ),
+            (
+                "Required: fluent German and English language skills.",
+                vec!["fluent German", "English", "language skills"],
+                vec![3],
+            ),
+            (
+                "Required: an active nursing license and five years of clinical experience.",
+                vec![
+                    "active nursing license",
+                    "five years of clinical experience",
+                ],
+                vec![],
+            ),
+        ];
+        for (listing, criteria, expected) in cases {
+            let items: Vec<_> = criteria.iter().map(|excerpt| json!({"source":"listing","excerpt":excerpt,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"})).collect();
+            let assessment = validate(
+                json!({"summary":"fixture","criteria":items}),
+                &[],
+                "",
+                listing,
+            )
+            .unwrap();
+            let result = review_redundant_criteria(&mut model, &assessment, listing);
+            println!("listing={listing:?}; result={result}");
+            assert_eq!(result["status"], "completed");
+            let actual: Vec<u64> =
+                serde_json::from_value(result["possible_redundant_ids"].clone()).unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_job_fit_distinguishes_c_and_cpp() {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
@@ -3035,6 +3149,61 @@ mod tests {
             .unwrap()
             .iter()
             .any(|item| item.as_str().unwrap().contains("Possible overlap")));
+    }
+
+    #[test]
+    fn redundancy_review_validates_ids_without_changing_score() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct Fixture(Value);
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    self.0.clone(),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let listing = "C and C++ programming experience";
+        let source = json!({"summary":"fixture","criteria":[
+            {"source":"listing","excerpt":"C","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"},
+            {"source":"listing","excerpt":"C++","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"},
+            {"source":"listing","excerpt":"programming experience","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}
+        ]});
+        let assessment = validate(source, &[], "", listing).unwrap();
+        let original = assessment.clone();
+        let report = review_redundant_criteria(
+            &mut Fixture(json!({"redundant_ids":[3]})),
+            &assessment,
+            listing,
+        );
+        assert_eq!(report["possible_redundant_ids"], json!([3]));
+        assert_eq!(assessment, original);
+        for ids in [
+            json!([0]),
+            json!([4]),
+            json!([3, 3]),
+            json!([1, 2, 3]),
+            json!(["3"]),
+        ] {
+            let report = review_redundant_criteria(
+                &mut Fixture(json!({"redundant_ids":ids})),
+                &assessment,
+                listing,
+            );
+            assert_eq!(report["status"], "invalid");
+        }
     }
 
     #[test]

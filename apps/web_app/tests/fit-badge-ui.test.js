@@ -36,4 +36,11 @@ assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 43% · 0�
 selects[1].value='supported';
 selects[1].listeners.change();
 assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 64% · 43–86% range');
+selects[0].value='exclude';
+selects[0].listeners.change();
+assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 75% · 75–75% range');
+selects[1].value='exclude';
+selects[2].value='exclude';
+selects[2].listeners.change();
+assert.equal(controls.children.at(-1).textContent,'Temporary estimate unavailable');
 console.log('Fit badge UI checks passed.');
