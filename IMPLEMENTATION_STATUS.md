@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Overlapping fit evidence — 2026-10-30
+
+- Fit validation rejects two excerpts from the same source when every possible occurrence overlaps, including partial overlaps where neither excerpt contains the other. Separate occurrences remain eligible. Existing assessments become stale because the input digest version changed. This prevents one identifiable form of double counting, but can also reject distinct criteria phrased in overlapping passages; a revised rubric may be needed. Separate or semantically equivalent passages can still describe the same consideration, and model judgments remain unverified.
+- With the Windows SQLCipher build helper and one Cargo build job, the fit-task tests passed (37 passed, 21 ignored). The full web suite initially exposed a stale draft fixture expecting three model calls despite the bounded evidence-check repair; after correcting that expectation, it passed (285 passed, 117 ignored). Web Clippy and formatting passed. No local model was loaded for this change, so it does not establish model accuracy or live repeatability.
+
 ## DOCX insertion formatting — 2026-10-29
 
 - Exact DOCX edits that insert text without deleting the matched passage now preserve the original runs instead of rewriting the whole match. An insertion at the beginning of the match uses the following run's style; otherwise it uses the preceding run's style. The chosen style may not match the user's intent and still requires visual review. Unicode and unique-match checks remain in force.

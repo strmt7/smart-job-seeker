@@ -1645,14 +1645,9 @@ fn validate(
             if previous_normalized == normalized {
                 return true;
             }
-            if !previous_normalized.contains(&normalized)
-                && !normalized.contains(&previous_normalized)
-            {
-                return false;
-            }
-            // A short excerpt can be part of another excerpt while also
-            // appearing separately (for example, C and C++). Reject it only
-            // when the source has no possible non-overlapping occurrences.
+            // Excerpts can overlap without either containing the other. Only
+            // count both when the source has possible separate occurrences;
+            // this also preserves distinct C and C++ requirements.
             let previous_first = source_text.find(previous);
             let previous_last = source_text.rfind(previous);
             let current_first = source_text.find(&excerpt);
@@ -4730,6 +4725,22 @@ mod tests {
             result["score"]
         );
         assert!(validate(criteria, &[], "", "Required: C++.").is_err());
+    }
+
+    #[test]
+    fn partially_overlapping_excerpts_need_separate_occurrences() {
+        let criteria = json!({"summary":"Review","criteria":[
+            {"source":"listing","excerpt":"Python and SQL","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"},
+            {"source":"listing","excerpt":"SQL and Rust","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}
+        ]});
+        let overlapping = "Python and SQL and Rust";
+        assert!(validate(criteria.clone(), &[], "", overlapping).is_err());
+        let mut reversed = criteria.clone();
+        reversed["criteria"].as_array_mut().unwrap().reverse();
+        assert!(validate(reversed, &[], "", overlapping).is_err());
+        let separate = "Python and SQL; SQL and Rust";
+        let result = validate(criteria, &[], "", separate).unwrap();
+        assert_eq!(result["scoring_basis"]["total_weight"], 6);
     }
 
     #[test]

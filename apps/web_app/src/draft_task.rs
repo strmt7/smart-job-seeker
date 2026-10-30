@@ -1345,7 +1345,9 @@ mod tests {
             " ",
         )
         .unwrap();
-        assert_eq!(llm.calls, 3);
+        // Two drafting passes and two bounded attempts to validate the fake's
+        // deliberately malformed evidence-check response.
+        assert_eq!(llm.calls, 4);
         assert_eq!(v["evidence_check"]["status"], "invalid");
         assert_eq!(v["paragraphs"][0]["facts"][0], 1);
         assert_eq!(
@@ -1366,7 +1368,7 @@ mod tests {
             "CV template",
         )
         .unwrap();
-        assert_eq!(cv_llm.calls, 3);
+        assert_eq!(cv_llm.calls, 4);
         assert_eq!(cv["kind"], "cv");
         assert!(cv["framing"].is_null());
         assert!(validate(&json!({"paragraphs":[{"text":"x","facts":[2]}]}), &facts).is_err());
