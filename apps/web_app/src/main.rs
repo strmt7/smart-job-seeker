@@ -3372,6 +3372,7 @@ fn serve(
                 return Err("Profile changed; inspect the current page again".into());
             }
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
+            let requested_fields = form_preview::requested_field_records(&prepared)?;
             let intent =
                 IntentId::new(format!("prefill-{}", current.id)).map_err(|e| e.to_string())?;
             let grant_id = GrantId::new(random_id()?).map_err(|e| e.to_string())?;
@@ -3433,7 +3434,7 @@ fn serve(
                 }
             }
             if let Some(record) = &mut current.record {
-                if let Err(error) = record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions})) {
+                if let Err(error) = record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions,"fields":requested_fields,"note":"These are requested answers, not proof that the fields were filled or submitted."})) {
                     let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written; no fields were filled", now()).err();
                     current.preview = original_preview;
                     *session = Some(current);
@@ -6105,6 +6106,27 @@ mod tests {
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect();
+            let requested = event_values
+                .iter()
+                .find(|event| {
+                    event["type"] == "fields_requested"
+                        && event["fields"].as_array().is_some_and(|fields| {
+                            fields.iter().any(|field| {
+                                field["selector"] == "#candidate"
+                                    && field["value"]["text"] == "Revised"
+                            })
+                        })
+                })
+                .unwrap();
+            let field = requested["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["selector"] == "#candidate")
+                .unwrap();
+            assert_eq!(field["question"], "Given name");
+            assert_eq!(field["review_label"], "Given name");
+            assert!(requested["note"].as_str().unwrap().contains("not proof"));
             let incomplete = event_values
                 .iter()
                 .position(|event| event["type"] == "fill_incomplete")

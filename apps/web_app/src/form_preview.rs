@@ -113,6 +113,16 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
     (filled, remaining)
 }
 
+/// Pair each reviewed value with the original site question before any browser
+/// command runs. This records requested answers, not verified page state.
+pub fn requested_field_records(preview: &FormPreview) -> Result<Vec<Value>, String> {
+    preview.suggestions.iter().map(|mapping| {
+        let field = preview.schema.fields.iter().find(|field| field.selector == mapping.field_selector)
+            .ok_or("Requested field is missing from the inspected form")?;
+        Ok(serde_json::json!({"selector":field.selector,"question":field.label,"review_label":field_review_label(&preview.schema, field),"value":mapping.value}))
+    }).collect()
+}
+
 /// Compare display labels conservatively: changes in case and whitespace do
 /// not establish that otherwise identical labels refer to different fields.
 fn same_review_label(left: &str, right: &str) -> bool {
@@ -1213,6 +1223,57 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("field 2 of 2")));
         assert_eq!(preview.schema.fields[0].label, " Email Address ");
+    }
+
+    #[test]
+    fn requested_field_records_preserve_question_value_and_repeated_identity() {
+        use waypoint_applications::form_mapping::FormField;
+        let fields = [
+            ("#personal", "Email"),
+            ("#work", "EMAIL"),
+            ("#start", "Start date"),
+        ]
+        .into_iter()
+        .map(|(selector, label)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            autocomplete: None,
+        })
+        .collect();
+        let mut preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#work".into(),
+                    value: PacketValue::Text("fictional@example.invalid".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#start".into(),
+                    value: PacketValue::Date("2029-01-01".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let recorded = requested_field_records(&preview).unwrap();
+        assert_eq!(recorded[0]["question"], "EMAIL");
+        assert_eq!(recorded[0]["review_label"], "EMAIL (field 2 of 2)");
+        assert_eq!(recorded[0]["selector"], "#work");
+        assert_eq!(
+            recorded[0]["value"],
+            json!({"text":"fictional@example.invalid"})
+        );
+        assert_eq!(recorded[1]["value"], json!({"date":"2029-01-01"}));
+        preview.suggestions[0].field_selector = "#missing".into();
+        assert!(requested_field_records(&preview).is_err());
     }
 
     #[test]
