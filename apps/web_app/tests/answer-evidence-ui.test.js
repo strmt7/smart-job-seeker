@@ -1,0 +1,14 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line = source.split('\n').find(x=>x.startsWith('function showAnswerEvidence('));
+assert.ok(line);
+const element=(tag,text,cls)=>({tag,textContent:text,className:cls});
+const show=vm.runInNewContext(`(${line})`,{element});
+const panel=()=>({items:[],append(item){this.items.push(item)}});
+const failed=panel();show(failed,{evidence_check:{status:'invalid'}});assert.match(failed.items[0].textContent,/unavailable or incomplete/);
+const completed=panel();show(completed,{evidence_check:{status:'completed',claims:[{status:'unsupported',excerpt:'five years',explanation:'Not established'}],limit_reached:true}});
+assert.match(completed.items[0].textContent,/claim limit reached/);assert.match(completed.items[1].textContent,/unsupported: five years/);
+assert.ok(source.includes('showAnswerEvidence(draft,answer)'));assert.ok(source.includes('showAnswerEvidence(draft,outcome.answer)'));assert.ok(source.includes('showAnswerEvidence(panel,outcome.answer)'));
+console.log('Answer evidence UI checks passed.');
