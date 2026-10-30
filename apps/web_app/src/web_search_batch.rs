@@ -58,6 +58,10 @@ fn send(tx: &SyncSender<Message>, mut message: Message, cancel: &AtomicBool) -> 
     }
 }
 
+fn send_completion(tx: &SyncSender<Message>, limited: bool, cancel: &AtomicBool) -> bool {
+    send(tx, Message::Done(limited), cancel)
+}
+
 /// Count requested provider pages, not jobs or distinct websites. Provider
 /// engine availability and provider-side truncation are reported separately.
 fn coverage(total: usize, history: &[Value]) -> Value {
@@ -186,7 +190,11 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
                 break;
             }
         }
-        let _ = send(&tx, Message::Done(limit_reached), &AtomicBool::new(false));
+        // A completed page may still occupy the one-slot channel when the
+        // user cancels. Do not keep a worker waiting indefinitely for a
+        // client that may never poll; disconnection preserves cancellation
+        // and the buffered page is still available to the receiver.
+        let _ = send_completion(&tx, limit_reached, &stop);
     });
     Ok(())
 }
@@ -282,6 +290,42 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::time::Instant;
+    #[test]
+    fn cancelled_batch_releases_worker_and_keeps_buffered_page() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(Message::Query(
+            "fictional".into(),
+            1,
+            Ok(json!({"results":[]})),
+        ))
+        .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        *TASK.lock().unwrap() = Some(Task {
+            id: "cancel-full-channel".into(),
+            rx,
+            cancel: stop.clone(),
+            total: 2,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+        });
+        let (finished, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let sent = send_completion(&tx, false, &stop);
+            finished.send(sent).unwrap();
+        });
+        cancel("cancel-full-channel").unwrap();
+        assert!(!result.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        let page = poll("cancel-full-channel", 0).unwrap();
+        assert_eq!(page["query"], "fictional");
+        let done = poll("cancel-full-channel", 1).unwrap();
+        assert_eq!(done["status"], "complete");
+        assert_eq!(done["cancelled"], true);
+        assert_eq!(done["history"][0], page);
+        assert_eq!(done["coverage"]["unattempted_pages"], 1);
+    }
     #[test]
     fn batch_cap_reports_links_dropped_from_a_provider_page() {
         let mut seen: HashSet<String> = (0..598)

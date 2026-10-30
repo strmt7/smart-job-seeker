@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Cancelled batch-search worker — 2026-10-30
+
+- When batch search is cancelled while a completed page occupies the one-slot result channel, the worker now stops waiting to send its completion message. The buffered page remains available to a later poll, which reports cancellation and unattempted pages after the worker disconnects. The task itself remains available until the client polls it; this change does not add automatic job import or expand provider coverage.
+- A bounded-channel test verified worker exit, buffered-page recovery and coverage accounting; all 10 batch-search tests passed. The web suite passed (289 passed, 118 ignored), web Clippy and formatting passed with one Cargo build job. No live search provider or local model was used for this change; GPU usage was approximately 14.8 GiB before the work, so no additional model was loaded. No application was sent.
+
 ## Protect active form-review markers — 2026-10-30
 
 - Review endpoints now reject clearing the pending inspection/session marker while its worker, browser session or navigation worker is active, and reject clearing all review reasons during that active work. Other individual reasons remain independently resolvable. Once the task or session is no longer active, a retained marker can be reviewed and cleared normally. The navigation worker also protects its own pending marker while it holds the browser session.
