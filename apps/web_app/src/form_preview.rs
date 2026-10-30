@@ -29,7 +29,7 @@ impl FormPreview {
                 self.schema
                     .fields
                     .iter()
-                    .filter(|other| other.label == field.label)
+                    .filter(|other| same_review_label(&other.label, &field.label))
                     .count()
                     > 1
             })
@@ -113,6 +113,19 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
     (filled, remaining)
 }
 
+/// Compare display labels conservatively: changes in case and whitespace do
+/// not establish that otherwise identical labels refer to different fields.
+fn same_review_label(left: &str, right: &str) -> bool {
+    fn normalized(label: &str) -> String {
+        label
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    }
+    normalized(left) == normalized(right)
+}
+
 /// Repeated labels are common in address sections. Preserve the site's label
 /// while making each unresolved control distinguishable in review messages.
 fn field_review_label(
@@ -122,7 +135,7 @@ fn field_review_label(
     let matching: Vec<_> = schema
         .fields
         .iter()
-        .filter(|other| other.label == field.label)
+        .filter(|other| same_review_label(&other.label, &field.label))
         .collect();
     if matching.len() <= 1 {
         return field.label.clone();
@@ -1152,6 +1165,57 @@ mod tests {
     }
 
     #[test]
+    fn repeated_labels_ignore_case_and_whitespace_without_merging_distinct_fields() {
+        use waypoint_applications::form_mapping::FormField;
+        let fields = [
+            ("#one", " Email Address "),
+            ("#two", "email\u{a0}address"),
+            ("#three", "Work email address"),
+        ]
+        .into_iter()
+        .map(|(selector, label)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Email,
+            required: true,
+            sensitive: false,
+            autocomplete: None,
+        })
+        .collect();
+        let mut preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![ProposedMapping {
+                field_selector: "#one".into(),
+                value: PacketValue::Text("fictional@example.invalid".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        assert_eq!(preview.repeated_label_selectors(), ["#one", "#two"]);
+        let fields = preview.fields_for_review();
+        assert_eq!(fields[0].label, " Email Address  (field 1 of 2)");
+        assert_eq!(fields[1].label, "email\u{a0}address (field 2 of 2)");
+        assert_eq!(fields[2].label, "Work email address");
+        let (filled, missing) = fill_coverage(&preview);
+        assert_eq!(filled, [" Email Address  (field 1 of 2)"]);
+        assert_eq!(
+            missing,
+            ["email\u{a0}address (field 2 of 2)", "Work email address"]
+        );
+        refresh_required_review(&mut preview);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("field 2 of 2")));
+        assert_eq!(preview.schema.fields[0].label, " Email Address ");
+    }
+
+    #[test]
     #[ignore = "starts one local browser against a fictional form without submitting"]
     fn duplicate_labels_are_distinguishable_on_a_live_form() {
         use waypoint_applications::driver::BrowserDriver;
@@ -1188,6 +1252,39 @@ mod tests {
         .unwrap();
         assert_eq!(mapped.suggestions.len(), 2);
         assert_eq!(mapped.repeated_label_selectors().len(), 2);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one local browser against a fictional form without submitting"]
+    fn similar_labels_require_individual_review_on_a_live_form() {
+        use waypoint_applications::driver::BrowserDriver;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-similar-labels.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = suggest_without_model(
+            live,
+            &json!({"email":"fictional@example.invalid"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        assert_eq!(preview.suggestions.len(), 2);
+        assert_eq!(preview.repeated_label_selectors().len(), 2);
+        let fields = preview.fields_for_review();
+        assert_eq!(
+            fields
+                .iter()
+                .map(|field| field.label.as_str())
+                .collect::<Vec<_>>(),
+            ["EMAIL (field 1 of 2)", "email (field 2 of 2)"]
+        );
         assert!(driver
             .trace
             .iter()

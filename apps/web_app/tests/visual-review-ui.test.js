@@ -22,4 +22,9 @@ assert.equal(status(multiline, [multiline], [{label: ' FIRST\n  NAME ', visible_
 assert.equal(status(multiline, [multiline, {label: 'FIRST\nNAME', expected: 'Example'}], [{label: 'First name', visible_value: 'Example'}], true), 'not uniquely observed');
 assert.equal(status(multiline, [multiline], [{label: 'FIRST NAME', visible_value: 'Example'}, {label: 'First\nname', visible_value: 'Example'}], true), 'not uniquely observed');
 assert.equal(status(multiline, [multiline], [{label: '\ufeffFirst name', visible_value: 'Example'}], true), 'not uniquely observed');
+const international = {label: 'Prénom complet', expected: 'Élodie'};
+const translated = {label: 'PRÉNOM\u00a0COMPLET', visible_value: 'Élodie'};
+assert.equal(status(international, [international], [translated], true), 'transcription matches reviewed answer');
+assert.equal(status(international, [international, {label: 'PRÉNOM\u00a0COMPLET', expected: 'Élodie'}], [translated], true), 'not uniquely observed');
+assert.equal(status(international, [international], [translated, {label: 'Prénom complet', visible_value: 'Élodie'}], true), 'not uniquely observed');
 console.log('Visual comparison UI checks passed.');
