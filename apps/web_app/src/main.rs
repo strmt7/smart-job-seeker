@@ -138,6 +138,14 @@ fn random_id() -> Result<String, String> {
     getrandom::fill(&mut bytes).map_err(|e| format!("random id generation failed: {e}"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
+
+fn required_attempt_record(
+    ws: &Workspace,
+    job: &JobIdentityId,
+) -> Result<attempt_record::AttemptRecord, String> {
+    attempt_record::AttemptRecord::start(ws, job, &random_id()?, now())?
+        .ok_or("A disk-backed workspace is required for an application record".into())
+}
 const PROFILE_FIELDS: &[&str] = &[
     "first_name",
     "last_name",
@@ -3008,7 +3016,13 @@ fn serve(
             let mut record = match random_id()
                 .and_then(|id| attempt_record::AttemptRecord::start(ws, &job_id, &id, now()))
             {
-                Ok(record) => record,
+                Ok(Some(record)) => Some(record),
+                Ok(None) => {
+                    preview.manual_review.push(
+                        "Attempt record unavailable: a disk-backed workspace is required".into(),
+                    );
+                    None
+                }
                 Err(error) => {
                     preview
                         .manual_review
@@ -3601,10 +3615,8 @@ fn serve(
             current.preview.suggestions = prepared.suggestions;
             form_preview::refresh_required_review(&mut current.preview);
             if current.record.is_none() {
-                match random_id().and_then(|id| {
-                    attempt_record::AttemptRecord::start(ws, &current.job_id, &id, now())
-                }) {
-                    Ok(record) => current.record = record,
+                match required_attempt_record(ws, &current.job_id) {
+                    Ok(record) => current.record = Some(record),
                     Err(error) => {
                         let review_error = ws
                             .mark_manual_review(
@@ -3895,12 +3907,7 @@ fn serve(
                 "not_found"
             };
             if current.record.is_none() {
-                current.record = attempt_record::AttemptRecord::start(
-                    ws,
-                    &current.job_id,
-                    &random_id()?,
-                    now(),
-                )?;
+                current.record = Some(required_attempt_record(ws, &current.job_id)?);
             }
             if visual_review.is_none() {
                 ws.mark_manual_review(
@@ -4421,6 +4428,16 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn application_record_is_required_for_memory_only_workspace() {
+        let ws = Workspace::in_memory().unwrap();
+        let job = JobIdentityId::new("fictional-job").unwrap();
+        let error = match required_attempt_record(&ws, &job) {
+            Ok(_) => panic!("an in-memory workspace cannot create the required record"),
+            Err(error) => error,
+        };
+        assert!(error.contains("disk-backed workspace"));
+    }
     #[test]
     #[ignore = "uses installed LibreOffice to convert a fictional saved Markdown file"]
     fn markdown_conversion_endpoint_saves_plain_text_pdf() {
