@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><body>
+<h1>Fictional application</h1>
+<a href="#/profile">Continue to profile</a>
+<section id="first"><label for="name">First name</label><input id="name"></section>
+<section id="profile" hidden><label for="email">Email</label><input id="email"></section>
+<script>
+window.addEventListener('hashchange', () => {
+  document.getElementById('first').hidden = location.hash === '#/profile';
+  document.getElementById('profile').hidden = location.hash !== '#/profile';
+});
+</script>
+</body></html>

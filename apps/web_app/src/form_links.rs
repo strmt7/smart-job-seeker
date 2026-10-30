@@ -129,11 +129,19 @@ fn filtered_candidates(
             .collect()
     };
     for link in hrefs.into_iter().take(200) {
-        let Ok(mut url) = current.join(&link.url) else {
+        let Ok(url) = current.join(&link.url) else {
             continue;
         };
-        url.set_fragment(None);
-        let route = format!("{}?{}", url.path(), url.query().unwrap_or("")).to_ascii_lowercase();
+        // Hash-based applications use the fragment as a route. Removing it
+        // changes the reviewed destination and can reopen the wrong section.
+        // Include it when excluding obvious final-action links as well.
+        let route = format!(
+            "{}?{}#{}",
+            url.path(),
+            url.query().unwrap_or(""),
+            url.fragment().unwrap_or("")
+        )
+        .to_ascii_lowercase();
         if ["submit", "confirm", "complete", "finish", "send"]
             .iter()
             .any(|word| route.contains(word))
@@ -540,6 +548,71 @@ mod tests {
         assert_eq!(found[0].label, "Example");
         let mut many = Links((0..80).map(|i| format!("/page/{i}")).collect());
         assert_eq!(other_candidates(&mut many).unwrap().len(), 30);
+    }
+
+    #[test]
+    fn hash_routes_preserve_the_reviewed_destination_and_exclude_final_actions() {
+        let mut driver = Links(vec![
+            "#/application".into(),
+            "#/profile".into(),
+            "#/submit".into(),
+        ]);
+        let links = other_candidates(&mut driver).unwrap();
+        assert_eq!(
+            links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "https://jobs.example.org/role#/application",
+                "https://jobs.example.org/role#/profile"
+            ]
+        );
+        assert!(reviewed_link_matches(
+            &links[0],
+            "https://jobs.example.org/role#/application",
+            "Example"
+        ));
+        assert!(!reviewed_link_matches(
+            &links[0],
+            "https://jobs.example.org/role",
+            "Example"
+        ));
+    }
+
+    #[test]
+    #[ignore = "starts one headless browser against a fictional local page"]
+    fn browser_inspects_a_hash_routed_section_without_submitting() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-hash-navigation.html");
+        let mut url = url::Url::from_file_path(path).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let first = driver.open(url.as_str()).unwrap();
+        assert!(first
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#name"));
+        url.set_fragment(Some("/profile"));
+        let started = std::time::Instant::now();
+        let next = driver.open(url.as_str()).unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "same-document navigation waited for a full page load"
+        );
+        assert_eq!(driver.current_url().unwrap(), url.as_str());
+        assert!(
+            next.schema
+                .fields
+                .iter()
+                .any(|field| field.selector == "#email"),
+            "profile section was not inspected: {:?}",
+            next.schema.fields
+        );
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
     #[test]
     fn cross_origin_candidates_require_a_public_permitted_non_submit_route() {

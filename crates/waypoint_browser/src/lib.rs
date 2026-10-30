@@ -1597,14 +1597,25 @@ impl BrowserDriver for CdpDriver {
 
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
         self.cdp.take_events();
-        self.cdp
+        let navigation = self
+            .cdp
             .call("Page.navigate", json!({ "url": url }))
             .map_err(derr)?;
-        // Wait for the load event, then for the document to be readable.
+        let frame_id = navigation.get("frameId").and_then(Value::as_str);
+        // Same-document hash navigation does not fire a new load event.
+        // Wait for either navigation event, then inspect the resulting page.
         let deadline = Instant::now() + self.load_wait;
         loop {
             self.cdp.pump(Duration::from_millis(200));
-            if self.cdp.saw_event("Page.loadEventFired") {
+            if self.cdp.saw_event("Page.loadEventFired")
+                || frame_id.is_some_and(|frame| {
+                    self.cdp.events.iter().any(|(name, event)| {
+                        name == "Page.navigatedWithinDocument"
+                            && event.pointer("/params/frameId").and_then(Value::as_str)
+                                == Some(frame)
+                    })
+                })
+            {
                 break;
             }
             if Instant::now() >= deadline {
