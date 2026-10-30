@@ -533,3 +533,10 @@ local-model test with a long listing and 25 facts produced a rewrite; one
 selection batch failed and the reported fallback was used. A separate vague
 fictional passage produced no answer and was left for manual review. These
 checks do not establish that rewritten claims are accurate or complete.
+
+Automatic application-page checks now require both the existing conservative
+single-link rule and the label-aware review filter before following a candidate.
+A fictional driver fixture verified that a shared destination labelled both
+“Apply now” and “Submit application” is not followed. The check remains
+heuristic: labels and paths cannot prove that an arbitrary page has no external
+side effects. No employer site or application submission was used in this test.

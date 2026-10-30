@@ -255,6 +255,16 @@ pub(crate) fn application_destination(current: &str, links: &[String]) -> Option
     }
 }
 
+/// Automatic inspection must satisfy both the conservative single-link rule
+/// and the current page's label-aware review filter.
+fn vetted_application_destination(
+    current: &str,
+    links: &[String],
+    vetted: &[String],
+) -> Option<String> {
+    application_destination(current, links).filter(|destination| vetted.contains(destination))
+}
+
 fn classify_fields(
     fields: &[waypoint_applications::form_mapping::FormField],
     followed: bool,
@@ -364,7 +374,19 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                         }
                     }
                 };
-                if let Some(destination) = application_destination(&current, &links) {
+                let vetted = if links.is_empty() {
+                    Vec::new()
+                } else {
+                    match crate::form_links::candidates(&mut browser) {
+                        Ok(candidates) => candidates,
+                        Err(_) => {
+                            link_warning = Some("Application link labels could not be checked completely; navigate manually.");
+                            Vec::new()
+                        }
+                    }
+                };
+                if let Some(destination) = vetted_application_destination(&current, &links, &vetted)
+                {
                     page = browser
                         .open(&destination)
                         .map_err(|error| navigation_failure("application page", &error))?;
@@ -377,7 +399,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                         return Ok(("The application link redirected to another site; review the destination manually.".into(), true));
                     }
                     inspected_url = displayable_inspected_url(&url, &final_url);
-                } else if !links.is_empty() {
+                } else if !links.is_empty() && link_warning.is_none() {
                     link_warning = Some("Application links need manual review before opening.");
                 }
             }
@@ -1052,6 +1074,67 @@ mod tests {
         )
         .is_none());
         assert!(application_destination(base, &["/apply".into(), "/submit".into()]).is_none());
+        assert_eq!(
+            super::vetted_application_destination(
+                base,
+                &["/apply".into()],
+                &["https://jobs.example.org/apply".into()]
+            )
+            .as_deref(),
+            Some("https://jobs.example.org/apply")
+        );
+        assert!(super::vetted_application_destination(base, &["/apply".into()], &[]).is_none());
+        assert!(super::vetted_application_destination(
+            base,
+            &["/apply".into(), "/other".into()],
+            &["https://jobs.example.org/apply".into()]
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn automatic_check_does_not_follow_a_link_with_a_conflicting_submit_label() {
+        use waypoint_applications::driver::{DriverError, LiveForm, PageLink, SiteAck};
+        use waypoint_applications::form_mapping::BrowserCommand;
+        struct Fixture;
+        impl BrowserDriver for Fixture {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                panic!("must not navigate")
+            }
+            fn current_url(&mut self) -> Result<String, DriverError> {
+                Ok("https://jobs.example.org/role".into())
+            }
+            fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+                Ok(vec!["/apply".into()])
+            }
+            fn page_links(&mut self) -> Result<Vec<PageLink>, DriverError> {
+                Ok(vec![
+                    PageLink {
+                        url: "/apply".into(),
+                        label: "Apply now".into(),
+                    },
+                    PageLink {
+                        url: "/apply".into(),
+                        label: "Submit application".into(),
+                    },
+                ])
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                panic!("must not fill")
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                panic!("must not submit")
+            }
+        }
+        let mut browser = Fixture;
+        let links = browser.application_links().unwrap();
+        let vetted = crate::form_links::candidates(&mut browser).unwrap();
+        assert!(super::vetted_application_destination(
+            "https://jobs.example.org/role",
+            &links,
+            &vetted
+        )
+        .is_none());
     }
 
     #[test]
