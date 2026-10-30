@@ -385,3 +385,14 @@ returned no answer when the relevant experience existed only in the template;
 after this change it produced a replacement retaining the accessibility and
 screen-reader details. This is one case, not proof that all original details or
 model-generated claims are correct. No application was sent.
+
+Form-field interpretation now sends at most 20 fields per sequential model
+request and splits batches by serialized field-description size, with an 8,000
+byte prompt limit. An oversized individual description remains a manual-review
+case. A deterministic test exercised six long labels across three requests. In
+a 25-field fictional local-model check, the second batch mapped a family name;
+the model incorrectly flagged an ordinary given-name question in the first
+batch, which remained explicitly pending review. A prompt wording change did
+not correct that result and was not retained. These checks do not establish
+reliability on employer forms or prove that smaller batches always fit a model's
+token context. Requests remain sequential, and no application was sent.
