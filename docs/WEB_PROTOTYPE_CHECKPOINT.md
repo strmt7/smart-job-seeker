@@ -768,3 +768,7 @@ Native radio groups inside a fieldset can now use `aria-label` or `aria-labelled
 ## Accessible disabled state — 2026-10-30
 
 Form inspection now excludes controls individually marked `aria-disabled` or `aria-readonly`; required excluded fields raise the existing review warning. Native radio selection and later verification also refuse a radio inside an ARIA-disabled or ARIA-readonly ancestor. A fictional local-browser fixture checked an individually disabled option and a group disabled after inspection. Equivalent live-state checks are not yet implemented for every other control type, and no employer site or application submission was used.
+
+## Live ARIA state for native controls — 2026-10-30
+
+Text, date, checkbox, single-select, multi-select, editable text and file attachment operations now check their live ARIA-disabled and ARIA-readonly ancestry before acting and when verifying retained values. Single and multi-select also reject options carrying those states. A fictional local-browser fixture exercised normal operations, disabled options and a container disabled after inspection, then confirmed the later operations and verifications failed. This does not cover every custom widget or make page changes atomic; no employer site or application submission was used.

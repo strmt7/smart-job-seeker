@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fictional form</title></head><body>
+<div id="controls">
+<label>Name <input id="name" type="text"></label>
+<label>Available from <input id="date" type="date"></label>
+<label>Option <select id="single"><option>A</option><option>B</option><option aria-disabled="true">C</option></select></label>
+<label>Options <select id="multiple" multiple><option>A</option><option>B</option><option aria-disabled="true">C</option></select></label>
+<label>Check <input id="check" type="checkbox"></label>
+<label>Attachment <input id="file" type="file"></label>
+<div id="editor" role="textbox" aria-label="Notes" contenteditable="true"></div>
+</div>
+<label>State <select id="lock" onchange="document.getElementById('controls').setAttribute('aria-disabled','TRUE')"><option>Open</option><option>Lock</option></select></label>
+</body></html>

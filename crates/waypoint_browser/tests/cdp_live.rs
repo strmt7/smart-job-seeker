@@ -561,6 +561,77 @@ fn selects_accessibly_labelled_native_radio_groups() {
 
 #[test]
 #[ignore = "launches one browser against a local fixture without submitting"]
+fn controls_reject_an_aria_disabled_ancestor_after_inspection() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    driver.open(&file_url("form_aria_locked.html")).unwrap();
+    let file = upload_dir().join("aria-state-fixture.txt");
+    std::fs::write(&file, b"fictional attachment").unwrap();
+    let text = BrowserCommand::Fill {
+        selector: "#name".into(),
+        value: PacketValue::Text("Avery".into()),
+    };
+    let date = BrowserCommand::Fill {
+        selector: "#date".into(),
+        value: PacketValue::Date("2026-11-01".into()),
+    };
+    let check = BrowserCommand::Fill {
+        selector: "#check".into(),
+        value: PacketValue::Bool(true),
+    };
+    let single = BrowserCommand::SelectOption {
+        selector: "#single".into(),
+        label: "B".into(),
+    };
+    let multiple = BrowserCommand::SelectOptions {
+        selector: "#multiple".into(),
+        labels: vec!["A".into(), "B".into()],
+    };
+    let editor = BrowserCommand::Fill {
+        selector: "#editor".into(),
+        value: PacketValue::Text("Notes".into()),
+    };
+    for action in [&text, &date, &check, &single, &multiple, &editor] {
+        driver.execute(action).unwrap();
+    }
+    assert!(driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#single".into(),
+            label: "C".into()
+        })
+        .is_err());
+    assert!(driver
+        .execute(&BrowserCommand::SelectOptions {
+            selector: "#multiple".into(),
+            labels: vec!["C".into()]
+        })
+        .is_err());
+    driver.attach_local_file("#file", &file).unwrap();
+    driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#lock".into(),
+            label: "Lock".into(),
+        })
+        .unwrap();
+    for action in [&text, &date, &check, &single, &multiple, &editor] {
+        assert!(
+            driver.execute(action).is_err(),
+            "locked control accepted {action:?}"
+        );
+    }
+    assert!(driver.verify_text_value("#name", "Avery").is_err());
+    assert!(driver.verify_text_value("#date", "2026-11-01").is_err());
+    assert!(driver.verify_text_value("#editor", "Notes").is_err());
+    for action in [&check, &single, &multiple] {
+        assert!(driver.verify_choice(action).is_err());
+    }
+    assert!(driver.verify_local_file("#file", &file).is_err());
+    assert!(driver.attach_local_file("#file", &file).is_err());
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    std::fs::remove_file(&file).unwrap();
+}
+
+#[test]
+#[ignore = "launches one browser against a local fixture without submitting"]
 fn ambiguous_fieldset_accessible_name_requires_review() {
     let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
     let live = driver
