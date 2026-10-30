@@ -109,6 +109,7 @@ fn generate_with_selection(
         }
     }
     let qualification_count = facts.len();
+    selection["draft_used_facts"] = json!(facts);
     if qualification_count == 0 {
         return Err(
             "Selected qualifications exceed the local document context; review manually".into(),
@@ -767,6 +768,8 @@ mod tests {
         };
         let draft = generate_with_selection(&mut model, &input, &"t".repeat(1000)).unwrap();
         assert_eq!(draft["selection"]["used_in_draft"], 2);
+        assert_eq!(draft["selection"]["draft_used_facts"], json!(&facts[..2]));
+        assert_eq!(draft["selection"]["selected_facts"], json!(facts));
         assert_eq!(draft["selection"]["draft_fact_budget_omitted"], 6);
         assert_eq!(draft["selection"]["job_truncated"], true);
         assert_eq!(draft["selection"]["template_truncated"], true);

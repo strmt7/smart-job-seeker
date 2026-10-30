@@ -172,6 +172,7 @@ fn generate_with_required_selection(
     input.facts = facts;
     let mut selection = selection;
     selection["used_in_draft"] = json!(input.facts.len());
+    selection["draft_used_facts"] = json!(input.facts);
     selection["draft_fact_budget_omitted"] = json!(selected.len() - input.facts.len());
     selection["draft_listing_truncated"] = json!(listing_truncated);
     selection["draft_question_truncated"] = json!(question_truncated);
@@ -879,6 +880,8 @@ mod tests {
         };
         let result = generate_with_selection(&mut model, input).unwrap();
         assert_eq!(result["selection"]["used_in_draft"], 3);
+        assert_eq!(result["selection"]["draft_used_facts"], json!(&facts[..3]));
+        assert_eq!(result["selection"]["selected_facts"], json!(facts));
         assert_eq!(result["selection"]["draft_fact_budget_omitted"], 5);
         assert_eq!(result["selection"]["draft_listing_truncated"], true);
         assert_eq!(result["sources"][0], facts[0]);
