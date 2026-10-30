@@ -319,6 +319,65 @@ pub fn apply_reviewed_text_fields(
     Ok(preview.suggestions.len())
 }
 
+/// Bounded live-value check after navigation. A failure or budget cutoff is
+/// explicit; remaining fields are not counted as verified.
+pub struct CompletedFieldCheck {
+    pub selected_retained: bool,
+    pub verified: usize,
+    pub unverified: usize,
+    pub failed_labels: Vec<String>,
+}
+
+pub fn verify_completed_fields(
+    driver: &mut dyn BrowserDriver,
+    preview: &FormPreview,
+    completed: &[String],
+    selected: &str,
+) -> CompletedFieldCheck {
+    let start = std::time::Instant::now();
+    let mut checked = 0usize;
+    let mut verified = 0usize;
+    let mut selected_retained = false;
+    let mut failed_labels = Vec::new();
+    for selector in std::iter::once(selected).chain(
+        completed
+            .iter()
+            .map(String::as_str)
+            .filter(|item| *item != selected),
+    ) {
+        if checked >= 32 || start.elapsed() >= std::time::Duration::from_secs(4) {
+            break;
+        }
+        checked += 1;
+        let valid = verify_filled_field(driver, preview, selector).is_ok();
+        if selector == selected {
+            selected_retained = valid;
+        }
+        if valid {
+            verified += 1;
+        } else {
+            failed_labels.push(
+                preview
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.selector == selector)
+                    .map(|field| field.label.clone())
+                    .unwrap_or_else(|| "Unknown field".into()),
+            );
+            // A changed field or disconnected browser requires manual review;
+            // do not spend the remaining budget repeatedly querying a broken page.
+            break;
+        }
+    }
+    CompletedFieldCheck {
+        selected_retained,
+        verified,
+        unverified: completed.len().saturating_sub(checked),
+        failed_labels,
+    }
+}
+
 /// Confirm a completed answer remains in the current field without changing it.
 pub fn verify_filled_field(
     driver: &mut dyn BrowserDriver,
@@ -522,6 +581,84 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn completed_field_check_reports_budget_and_stops_after_failure() {
+        struct CheckingDriver {
+            failed: Option<String>,
+        }
+        impl BrowserDriver for CheckingDriver {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                unreachable!()
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                unreachable!()
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                unreachable!()
+            }
+            fn verify_text_value(&mut self, selector: &str, _: &str) -> Result<(), DriverError> {
+                if self.failed.as_deref() == Some(selector) {
+                    Err(DriverError("fictional change".into()))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let fields: Vec<_> = (0..34)
+            .map(|i| waypoint_applications::form_mapping::FormField {
+                selector: format!("#field-{i}"),
+                label: format!("Field {i}"),
+                field_type: FormFieldType::Text,
+                required: false,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: None,
+                autocomplete: None,
+            })
+            .collect();
+        let suggestions = fields
+            .iter()
+            .map(|field| ProposedMapping {
+                field_selector: field.selector.clone(),
+                value: PacketValue::Text("fictional".into()),
+            })
+            .collect();
+        let completed: Vec<_> = fields.iter().map(|field| field.selector.clone()).collect();
+        let preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions,
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let limited = verify_completed_fields(
+            &mut CheckingDriver { failed: None },
+            &preview,
+            &completed,
+            "#field-0",
+        );
+        assert!(limited.selected_retained);
+        assert_eq!(limited.verified, 32);
+        assert_eq!(limited.unverified, 2);
+        assert!(limited.failed_labels.is_empty());
+        let failed = verify_completed_fields(
+            &mut CheckingDriver {
+                failed: Some("#field-1".into()),
+            },
+            &preview,
+            &completed,
+            "#field-0",
+        );
+        assert!(failed.selected_retained);
+        assert_eq!(failed.verified, 1);
+        assert_eq!(failed.unverified, 32);
+        assert_eq!(failed.failed_labels, vec!["Field 1"]);
+    }
 
     #[test]
     fn optional_custom_choice_is_a_reviewable_obligation() {

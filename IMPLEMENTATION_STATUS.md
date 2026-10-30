@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Checking other answers after visual navigation — 2026-10-30
+
+- Visual focus rechecks the selected answer first, then other completed fields. It reports verified, failed and unchecked counts, stops after a failure, and records a manual-review reason if any field fails or is left unchecked. The pass checks at most 32 fields and stops starting new checks after four seconds; individual browser protocol calls have a one-second timeout during the pass.
+- A fictional local page changed a different filled field during scrolling; an HTTP/browser test confirmed it was identified while the selected field remained intact. A unit test covers the 32-field cap and early-failure accounting. This is a point-in-time check, not a guarantee against later site changes.
+
 ## Checking answers after visual navigation — 2026-10-30
 
 - After scrolling to a completed field, Waypoint rechecks its live value against the reviewed answer. An unavailable or changed value creates a manual-review reason and is reported alongside the screenshot; this does not guarantee the site will keep the value later. The shared verification path covers supported text, date and native choice fields.

@@ -343,6 +343,15 @@ impl CdpDriver {
         Ok(data.to_owned())
     }
 
+    /// Temporarily bound individual browser protocol calls during a review operation.
+    pub fn with_review_timeout<T>(&mut self, operation: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = self.cdp.timeout;
+        self.cdp.timeout = Duration::from_secs(1);
+        let result = operation(self);
+        self.cdp.timeout = previous;
+        result
+    }
+
     /// Scroll a known field into view without focusing, changing or submitting it.
     pub fn scroll_field_into_view(&mut self, selector: &str) -> Result<(), DriverError> {
         let node = self

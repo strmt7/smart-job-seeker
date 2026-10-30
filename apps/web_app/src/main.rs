@@ -3502,18 +3502,18 @@ fn serve(
                 .driver
                 .scroll_field_into_view(selector)
                 .map_err(|e| e.to_string())?;
-            let retained =
-                form_preview::verify_filled_field(&mut current.driver, &current.preview, selector)
-                    .is_ok();
-            if !retained {
+            let check = current.driver.with_review_timeout(|driver| {
+                form_preview::verify_completed_fields(
+                    driver,
+                    &current.preview,
+                    &current.completed_selectors,
+                    selector,
+                )
+            });
+            if !check.failed_labels.is_empty() || check.unverified > 0 {
                 let reason =
-                    "A filled field changed or could not be verified after visual navigation";
-                ws.mark_manual_review(&current.job_id, reason, now())
-                    .map_err(|e| {
-                        format!(
-                            "Field verification failed and the review flag could not be saved: {e}"
-                        )
-                    })?;
+                    "Filled fields changed or could not all be verified after visual navigation";
+                ws.mark_manual_review(&current.job_id, reason, now()).map_err(|e| format!("Field verification was incomplete and the review flag could not be saved: {e}"))?;
                 if !current
                     .preview
                     .manual_review
@@ -3528,12 +3528,12 @@ fn serve(
                 .screenshot_base64()
                 .map_err(|e| e.to_string())?;
             let saved = current.record.as_mut().is_some_and(|record| {
-                record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"value_retained":retained,"screenshot":format!("screenshots/{name}")}))).is_ok()
+                record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"value_retained":check.selected_retained,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"screenshot":format!("screenshots/{name}")}))).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":retained}),
+                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels}),
             );
         }
         "/api/form/visual-review-start" => {
@@ -5005,15 +5005,29 @@ mod tests {
             .unwrap()
             .selector
             .clone();
+        let other = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Far email")
+            .unwrap()
+            .selector
+            .clone();
         driver
             .execute(&BrowserCommand::Fill {
                 selector: selector.clone(),
                 value: PacketValue::Text("Fictional".into()),
             })
             .unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: other.clone(),
+                value: PacketValue::Text("fictional@example.invalid".into()),
+            })
+            .unwrap();
         let preview = form_preview::suggest_without_model(
             live,
-            &json!({"first_name":"Fictional"}),
+            &json!({"first_name":"Fictional","email":"fictional@example.invalid"}),
             "fixture",
         )
         .unwrap();
@@ -5029,7 +5043,7 @@ mod tests {
             created: Instant::now(),
             ttl: SESSION_TTL,
             filled: true,
-            completed_selectors: vec![selector.clone()],
+            completed_selectors: vec![selector.clone(), other.clone()],
             answer_drafts: Default::default(),
             visible: false,
             staged_files: vec![],
@@ -5060,6 +5074,7 @@ mod tests {
             ("#other", false),
             (selector.as_str(), true),
             (selector.as_str(), true),
+            (selector.as_str(), true),
         ]
         .into_iter()
         .enumerate()
@@ -5071,6 +5086,21 @@ mod tests {
                     .driver
                     .execute(&BrowserCommand::Click {
                         selector: "#arm-change".into(),
+                    })
+                    .unwrap();
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if step == 3 {
+                let driver = &mut session.as_mut().unwrap().driver;
+                driver
+                    .execute(&BrowserCommand::Fill {
+                        selector: selector.clone(),
+                        value: PacketValue::Text("Fictional".into()),
+                    })
+                    .unwrap();
+                driver
+                    .execute(&BrowserCommand::Click {
+                        selector: "#arm-other".into(),
                     })
                     .unwrap();
                 std::thread::sleep(Duration::from_millis(200));
@@ -5095,6 +5125,10 @@ mod tests {
             if step == 2 {
                 assert!(response.contains("\"value_retained\":false"));
             }
+            if step == 3 {
+                assert!(response.contains("\"value_retained\":true"));
+                assert!(response.contains("Far email"));
+            }
         }
         assert!(ws
             .manual_review_reasons(&JobIdentityId::new("fixture-job").unwrap())
@@ -5102,9 +5136,13 @@ mod tests {
             .iter()
             .any(|reason| reason.reason.contains("after visual navigation")));
         let current = session.as_mut().unwrap();
-        assert!(current
+        current
             .driver
             .verify_text_value(&selector, "Fictional")
+            .unwrap();
+        assert!(current
+            .driver
+            .verify_text_value(&other, "fictional@example.invalid")
             .is_err());
         assert!(current
             .driver
