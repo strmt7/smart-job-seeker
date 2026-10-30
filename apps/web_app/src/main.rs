@@ -241,7 +241,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile["instructions"].as_str().unwrap_or("");
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v28","facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v29","facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
@@ -2005,6 +2005,31 @@ fn serve(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let task_id = random_id()?;
+            let job = ws
+                .job(&job_id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let description = ws
+                .job_description(&job_id)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default();
+            // The model still receives only its bounded excerpt. The separate
+            // source is used solely for deterministic citation checks.
+            let source_bytes = [
+                job.title.len(),
+                job.employer.len(),
+                job.location.len(),
+                description.len(),
+                "Title: \nEmployer: \nLocation: \nDescription: ".len(),
+            ]
+            .into_iter()
+            .try_fold(0usize, usize::checked_add);
+            let verification_text = source_bytes.filter(|size| *size <= 1_048_576).map(|_| {
+                format!(
+                    "Title: {}\nEmployer: {}\nLocation: {}\nDescription: {}",
+                    job.title, job.employer, job.location, description
+                )
+            });
             fit_task::start(
                 task_id.clone(),
                 model,
@@ -2012,7 +2037,10 @@ fn serve(
                 digest,
                 fit_task::FactPool { facts, available },
                 instructions,
-                listing,
+                fit_task::FitListing {
+                    model_text: listing,
+                    verification_text,
+                },
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
