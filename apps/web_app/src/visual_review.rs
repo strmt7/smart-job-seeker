@@ -65,6 +65,75 @@ pub fn freshness_record_key(task_id: &str, freshness: &str, image: Option<&str>)
 /// Limit reviewed answers independently of the number of observations per image.
 pub const MAX_EXPECTED_FIELDS: usize = 200;
 
+pub struct ExpectedFields {
+    pub values: Vec<(String, String)>,
+    pub ambiguous_labels: Vec<String>,
+}
+
+pub fn expected_from_preview(
+    preview: &crate::form_preview::FormPreview,
+    completed: &[String],
+) -> (ExpectedFields, bool) {
+    let (values, truncated) = bounded_expected(
+        preview
+            .suggestions
+            .iter()
+            .filter(|mapping| completed.contains(&mapping.field_selector))
+            .filter_map(|mapping| {
+                let field = preview
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.selector == mapping.field_selector)?;
+                expected_value(&mapping.value).map(|value| (field.label.clone(), value))
+            }),
+    );
+    let repeated: std::collections::HashSet<_> =
+        preview.repeated_label_selectors().into_iter().collect();
+    let ambiguous_labels = preview
+        .schema
+        .fields
+        .iter()
+        .filter(|field| repeated.contains(&field.selector))
+        .map(|field| field.label.clone())
+        .collect();
+    (
+        ExpectedFields {
+            values,
+            ambiguous_labels,
+        },
+        truncated,
+    )
+}
+
+fn normalized_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// A screenshot cannot identify which of several similarly labeled fields is
+/// shown, even if only one of them was selected for filling.
+fn mark_ambiguous(result: &mut Value, ambiguous_labels: &[String]) {
+    let labels: std::collections::HashSet<_> = ambiguous_labels
+        .iter()
+        .map(|label| normalized_label(label))
+        .collect();
+    if let Some(comparisons) = result["comparisons"].as_array_mut() {
+        for item in comparisons {
+            if item["label"]
+                .as_str()
+                .is_some_and(|label| labels.contains(&normalized_label(label)))
+            {
+                item["status"] = json!("unobserved");
+                item["ambiguous"] = json!(true);
+            }
+        }
+    }
+}
+
 pub fn bounded_expected(
     values: impl IntoIterator<Item = (String, String)>,
 ) -> (Vec<(String, String)>, bool) {
@@ -112,13 +181,6 @@ fn validate(output: &Value) -> Result<Value, String> {
 }
 
 fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
-    fn normalized_label(label: &str) -> String {
-        label
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_lowercase()
-    }
     let items = observed["observations"]
         .as_array()
         .expect("validated observations");
@@ -198,7 +260,7 @@ pub fn start(
     capture: (String, usize, Option<usize>),
     model: String,
     image: String,
-    expected: Vec<(String, String)>,
+    expected: ExpectedFields,
     result_path: Option<std::path::PathBuf>,
 ) -> Result<(), String> {
     if image.len() > 4 * 1024 * 1024 || image.is_empty() {
@@ -235,14 +297,16 @@ pub fn start(
             if crate::resident_model()?.as_deref() != Some(model.as_str()) {
                 return Err("Resident model changed; visual review was not started".into());
             }
-            analyze(
+            let mut result = analyze(
                 "127.0.0.1:11434"
                     .parse()
                     .map_err(|_| "Invalid local runtime address")?,
                 &model,
                 &image,
-                &expected,
-            )
+                &expected.values,
+            )?;
+            mark_ambiguous(&mut result, &expected.ambiguous_labels);
+            Ok(result)
         })
         .unwrap_or_else(|_| Err("Visual review stopped unexpectedly".into()));
         let record_saved = result_path.as_deref().is_some_and(|path| {
@@ -731,6 +795,100 @@ mod tests {
         .unwrap();
         let result = compare(&different, &[("First name".into(), "Example".into())]);
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
+    }
+
+    #[test]
+    fn unfilled_duplicate_label_cannot_make_filled_field_appear_unique() {
+        use waypoint_applications::form_mapping::{
+            FormField, FormFieldType, FormSchema, PacketValue, ProposedMapping,
+        };
+        let fields = [
+            ("#one", "Prénom complet"),
+            ("#two", "PRÉNOM\u{a0}COMPLET"),
+            ("#three", "City"),
+        ]
+        .into_iter()
+        .map(|(selector, label)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: false,
+            sensitive: false,
+            autocomplete: None,
+        })
+        .collect();
+        let preview = crate::form_preview::FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![ProposedMapping {
+                field_selector: "#one".into(),
+                value: PacketValue::Text("Élodie".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let (expected, truncated) = expected_from_preview(&preview, &["#one".into()]);
+        assert!(!truncated);
+        assert_eq!(expected.values.len(), 1);
+        let observed = validate(
+            &json!({"observations":[{"label":"PRÉNOM\u{a0}COMPLET","visible_value":"Élodie"}]}),
+        )
+        .unwrap();
+        let mut result = compare(&observed, &expected.values);
+        assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
+        mark_ambiguous(&mut result, &expected.ambiguous_labels);
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        assert_eq!(result["comparisons"][0]["ambiguous"], true);
+        assert_eq!(result["comparisons"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and requires a preloaded local vision model"]
+    fn live_visual_review_keeps_a_single_filled_duplicate_ambiguous() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::BrowserCommand;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-similar-labels.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = crate::form_preview::suggest_without_model(
+            live,
+            &json!({"email":"fictional@example.invalid"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        let chosen = &preview.suggestions[0];
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: chosen.field_selector.clone(),
+                value: chosen.value.clone(),
+            })
+            .unwrap();
+        let (expected, truncated) =
+            expected_from_preview(&preview, std::slice::from_ref(&chosen.field_selector));
+        assert!(!truncated);
+        let mut result = analyze(
+            "127.0.0.1:11434".parse().unwrap(),
+            "qwen3.5:9b",
+            &driver.screenshot_base64().unwrap(),
+            &expected.values,
+        )
+        .unwrap();
+        println!("fictional visual observations: {}", result["observations"]);
+        mark_ambiguous(&mut result, &expected.ambiguous_labels);
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        assert_eq!(result["comparisons"][0]["ambiguous"], true);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
     #[test]
     fn observation_limit_is_reported_as_possible_incomplete_coverage() {

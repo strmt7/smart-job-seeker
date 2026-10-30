@@ -12,6 +12,9 @@ const status = vm.runInNewContext(`${source.slice(start, end)}; visualComparison
 const field = {label: 'Email', expected: 'candidate@example.invalid'};
 const observed = {label: 'email', visible_value: field.expected};
 assert.equal(status(field, [field], [observed], true), 'transcription matches reviewed answer');
+const ambiguous = {...field, ambiguous: true};
+assert.equal(status(ambiguous, [ambiguous], [observed], true), 'not uniquely observed');
+assert.equal(status(ambiguous, [ambiguous], [observed], false), 'capture changed or freshness could not be confirmed');
 assert.equal(status(field, [field], [observed], false), 'capture changed or freshness could not be confirmed');
 assert.equal(status(field, [field], [], true), 'not uniquely observed');
 assert.equal(status(field, [field], [observed, observed], true), 'not uniquely observed');

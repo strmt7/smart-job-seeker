@@ -65,6 +65,7 @@ function fitReviewControls(rubric){if(!fitRubricScore(rubric))return null;const 
 function showFitBadge(badge,text){badge.textContent=text;badge.hidden=false;if(badge._selectedMirror){badge._selectedMirror.textContent=text;badge._selectedMirror.hidden=false;}}
 function visualComparisonStatus(item,expected,observations,allFresh){
  if(!allFresh)return 'capture changed or freshness could not be confirmed';
+ if(item.ambiguous===true)return 'not uniquely observed';
  const normalize=label=>label.replace(/[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g,' ').replace(/^ | $/g,'').toLowerCase(),label=normalize(item.label),same=expected.filter(other=>normalize(other.label)===label),matches=observations.filter(other=>normalize(other.label)===label);
  return same.length!==1 || matches.length!==1?'not uniquely observed':matches[0].visible_value===item.expected?'transcription matches reviewed answer':'transcription differs from reviewed answer';
 }
