@@ -1934,6 +1934,67 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_job_fit_order_sensitivity_on_fictional_listings() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let facts = vec!["Maintained backend services in Python for three years".into()];
+        let listings = [
+            "Fictional software engineer. Required: Python and SQL. Preferred: cloud deployment.",
+            "Fictional software engineer. Preferred: cloud deployment. Required: SQL and Python.",
+        ];
+        let mut assessments = Vec::new();
+        for listing in listings {
+            let assessment = assess(&mut model, &facts, "", listing).unwrap();
+            println!("fictional reordered listing: {listing}\nassessment: {assessment}");
+            assessments.push(assessment);
+        }
+        println!(
+            "score change after reordering: {} percentage points",
+            assessments[1]["score"].as_i64().unwrap() - assessments[0]["score"].as_i64().unwrap()
+        );
+        assert_eq!(
+            assessments[0]["score"], assessments[1]["score"],
+            "equivalent reordering changed the score"
+        );
+        assert_eq!(
+            assessments[0]["score_range"], assessments[1]["score_range"],
+            "equivalent reordering changed the uncertainty range"
+        );
+        for assessment in assessments {
+            assert!(
+                assessment["rubric"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|item| item["excerpt"]
+                        .as_str()
+                        .is_some_and(|s| s.to_lowercase().contains("python"))
+                        && item["status"] == "supported"),
+                "Python should be supported: {assessment}"
+            );
+            assert!(
+                assessment["rubric"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|item| item["excerpt"]
+                        .as_str()
+                        .is_some_and(|s| s.to_lowercase().contains("sql"))
+                        && item["status"] == "unknown"),
+                "SQL should remain unknown: {assessment}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_job_fit_reports_fictional_missing_qualifications() {
         use waypoint_inference::{CapabilityReport, UsageReport};
         struct Recording<I> {
