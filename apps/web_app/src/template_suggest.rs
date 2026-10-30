@@ -70,7 +70,15 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     {
         return Err("Select a unique single-line passage from the template".into());
     }
-    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:format!("Rewrite this original CV or cover letter passage for the job. Preserve supported facts and return only the replacement passage: {}",input.before),listing:input.listing,facts:input.facts,instructions:input.instructions};
+    // A passage deliberately selected by the user is source material for the
+    // rewrite, even if it has not been added to the reviewed fact inventory.
+    // Preserve its provenance: selecting text does not independently verify it.
+    let mut sources = vec![format!(
+        "User-selected template passage (not independently verified): {}",
+        input.before
+    )];
+    sources.extend(input.facts);
+    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:format!("Rewrite this original CV or cover letter passage for the job. Preserve the meaning of the user-selected template passage and supported facts; do not add qualifications or details. Return only the replacement passage: {}",input.before),listing:input.listing,facts:sources,instructions:input.instructions};
     let suggestion = crate::answer_task::generate(model, &request)?;
     if suggestion["text"]
         .as_str()
@@ -135,7 +143,7 @@ mod tests {
             ))
         }
     }
-    fn input(before: &str) -> Inputs {
+    fn input_with_passage(before: &str, document_text: &str) -> Inputs {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         writer
             .start_file(
@@ -143,7 +151,7 @@ mod tests {
                 zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
-        writer.write_all(b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:p><w:r><w:t>Fictional research</w:t></w:r></w:p></w:document>").unwrap();
+        writer.write_all(format!("<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:p><w:r><w:t>{document_text}</w:t></w:r></w:p></w:document>").as_bytes()).unwrap();
         Inputs {
             document_id: "d".into(),
             document_name: "source.docx".into(),
@@ -156,12 +164,59 @@ mod tests {
             instructions: String::new(),
         }
     }
+    fn input(before: &str) -> Inputs {
+        input_with_passage(before, "Fictional research")
+    }
     #[test]
     fn suggestion_uses_existing_passage_and_two_reviewable_passes() {
         let mut model = Fake { calls: 0 };
         let result = suggest(&mut model, input("Fictional research")).unwrap();
         assert_eq!(result["text"], "Applied research");
+        assert_eq!(
+            result["sources"][0],
+            "User-selected template passage (not independently verified): Fictional research"
+        );
         assert_eq!(model.calls, 2);
+        let mut without_reviewed_facts = input("Fictional research");
+        without_reviewed_facts.facts.clear();
+        let result = suggest(&mut model, without_reviewed_facts).unwrap();
+        assert!(result["sources"][0]
+            .as_str()
+            .unwrap()
+            .contains("not independently verified"));
         assert!(suggest(&mut model, input("Not present")).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_template_suggestion_preserves_selected_fictional_experience() {
+        let passage = "Designed accessible interfaces for screen-reader users.";
+        let mut input = input_with_passage(passage, passage);
+        input.facts = vec!["Maintained Python services.".into()];
+        input.listing = "Frontend developer: build accessible web interfaces.".into();
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let result = suggest(&mut model, input).unwrap();
+        println!("Fictional template suggestion: {result}");
+        let text = result["text"].as_str().unwrap().to_lowercase();
+        assert!(
+            text.contains("accessib"),
+            "the selected accessibility experience was omitted: {text}"
+        );
+        assert!(
+            text.contains("screen reader") || text.contains("screen-reader"),
+            "the selected screen-reader detail was omitted: {text}"
+        );
+        assert!(
+            !text.contains("ten years") && !text.contains("10 years"),
+            "unsupported duration: {text}"
+        );
     }
 }

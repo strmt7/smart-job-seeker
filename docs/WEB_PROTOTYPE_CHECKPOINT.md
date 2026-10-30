@@ -376,3 +376,12 @@ sampled facts were evaluated and keeps the same limits on calls, bytes and
 selected facts. A fictional local-model check with long facts selected a sampled
 accessibility paraphrase; this single case does not establish general recall or
 calibration. The revised input version invalidates older assessments.
+
+Template passage suggestions now include the user-selected passage as an
+explicitly labelled, unverified source, even if no reviewed qualifications are
+available. The source remains visible with the suggestion and the replacement
+still requires review. On one fictional DOCX passage, the local model previously
+returned no answer when the relevant experience existed only in the template;
+after this change it produced a replacement retaining the accessibility and
+screen-reader details. This is one case, not proof that all original details or
+model-generated claims are correct. No application was sent.

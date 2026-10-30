@@ -834,9 +834,6 @@ fn template_suggestion_inputs(
         .map_err(|e| e.to_string())?
         .ok_or("Document not found")?;
     let (facts, _, listing, _) = fit_inputs(ws, job_id)?;
-    if facts.is_empty() {
-        return Err("Add reviewed qualifications before requesting a suggestion".into());
-    }
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(value) => serde_json::from_str(&value).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
