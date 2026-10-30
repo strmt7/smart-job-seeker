@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('function bindDraftEvidence('),end=source.indexOf('function useFormDraft(',start);
+assert.ok(start>=0&&end>start);
+const bind=vm.runInNewContext(`(${source.slice(start,end).trim()})`);
+const input={events:[],addEventListener(name,fn){assert.equal(name,'input');this.events.push(fn)}};
+const first={textContent:''},second={textContent:''};
+bind(input,first);assert.match(first.textContent,/original generated text/);assert.equal(input.events.length,1);
+input.events[0]();assert.match(first.textContent,/edited after insertion/);
+bind(input,second);assert.equal(input.events.length,1);assert.match(second.textContent,/original generated text/);
+input.events[0]();assert.match(second.textContent,/edited after insertion/);
+assert.ok(source.includes('bindDraftEvidence(input,evidenceState)'));
+assert.ok(source.includes('bindDraftEvidence(message,evidenceState)'));
+console.log('Draft evidence edit-state checks passed.');
