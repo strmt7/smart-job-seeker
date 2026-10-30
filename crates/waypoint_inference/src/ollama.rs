@@ -6,7 +6,7 @@
 //!   that could dial a cloud model, so "no silent cloud fallback" is a
 //!   property of the type, not a promise in a prompt.
 //! - Structured output uses Ollama's JSON-schema `format` when the caller
-//!   names one of the six handoff schemas, else strict `json` mode.
+//!   names a registered schema, else strict `json` mode.
 //! - Reasoning is probed with an adequate token budget; a model that can only
 //!   produce an empty answer under `think:true` is unqualified (recorded G1
 //!   pitfall: small `num_predict` silently yields an empty final answer).
@@ -22,9 +22,13 @@ use serde_json::Value;
 
 use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 
-/// The six JSON Schemas vendored from the research handoff. Passing any other
-/// name falls back to generic JSON mode (never a silent schema mismatch).
+/// Registered local JSON schemas include handoff and task-specific schemas.
+/// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
+    (
+        "document_evidence_check",
+        r#"{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":8},"status":{"type":"string","enum":["supported","unsupported","uncertain"]},"explanation":{"type":"string","minLength":1,"maxLength":500}},"required":["id","status","explanation"],"additionalProperties":false},"minItems":1,"maxItems":8}},"required":["items"],"additionalProperties":false}"#,
+    ),
     (
         "application_link_ranking",
         r#"{"type":"object","properties":{"indices":{"type":"array","items":{"type":"integer","minimum":0,"maximum":29},"maxItems":5}},"required":["indices"],"additionalProperties":false}"#,
