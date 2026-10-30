@@ -44,6 +44,21 @@ fn report_inspected_page(mut message: String, inspected_url: Option<String>) -> 
     message
 }
 
+/// Preserve only a validated HTTP status from a driver error. Other browser
+/// errors may contain URLs or sensitive query parameters and stay generic.
+fn navigation_failure(stage: &str, error: &waypoint_applications::driver::DriverError) -> String {
+    let status = error
+        .0
+        .strip_prefix("The page returned HTTP ")
+        .and_then(|text| text.strip_suffix("; manual review is required"))
+        .and_then(|text| text.parse::<u16>().ok())
+        .filter(|code| (400..=599).contains(code));
+    match status {
+        Some(code) => format!("The {stage} returned HTTP {code}; it could not be inspected."),
+        None => format!("The {stage} could not be opened or inspected."),
+    }
+}
+
 /// The model's judgment is advisory. A matching DOM excerpt supports where
 /// its evidence came from, but does not prove visibility or interpretation.
 fn visual_page_advice(
@@ -316,7 +331,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 .map_err(|_| "The local browser could not start.")?;
             let mut page = browser
                 .open(&url)
-                .map_err(|_| "The listing page could not be opened or inspected.")?;
+                .map_err(|error| navigation_failure("listing page", &error))?;
             let mut followed = false;
             let mut link_warning = None;
             let mut inspected_url = browser
@@ -352,7 +367,7 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 if let Some(destination) = application_destination(&current, &links) {
                     page = browser
                         .open(&destination)
-                        .map_err(|_| "The application link could not be opened or inspected.")?;
+                        .map_err(|error| navigation_failure("application page", &error))?;
                     followed = true;
                     let final_url = browser
                         .current_url()
@@ -367,10 +382,11 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                 }
             }
             let (mut message, review) = if !page.walls.is_empty() {
-                (
-                    "Sign-in, CAPTCHA or another obstacle detected; manual review needed.".into(),
-                    true,
-                )
+                (if page.walls.iter().any(|wall| wall == "The main page response status could not be verified; manual review is required") {
+                    "The main page response status could not be verified; other obstacles may also be present. Manual review needed.".into()
+                } else {
+                    "Sign-in, CAPTCHA or another obstacle detected; manual review needed.".into()
+                }, true)
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
@@ -490,6 +506,81 @@ mod tests {
         TASK,
     };
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[test]
+    fn navigation_errors_expose_only_validated_http_status() {
+        use waypoint_applications::driver::DriverError;
+        assert_eq!(
+            super::navigation_failure(
+                "listing page",
+                &DriverError("The page returned HTTP 404; manual review is required".into())
+            ),
+            "The listing page returned HTTP 404; it could not be inspected."
+        );
+        for error in [
+            "The page returned HTTP 999; manual review is required",
+            "The page returned HTTP 404; manual review is required token=secret",
+            "https://example.invalid/?token=secret",
+        ] {
+            let message = super::navigation_failure("listing page", &DriverError(error.into()));
+            assert_eq!(
+                message,
+                "The listing page could not be opened or inspected."
+            );
+            assert!(!message.contains("secret"));
+        }
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional HTTP error page"]
+    fn http_error_is_reported_as_a_reviewable_application_check() {
+        use std::io::{Read, Write};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                        let mut request = [0u8; 2048];
+                        let _ = stream.read(&mut request);
+                        let body = "<html><body><input name='email'></body></html>";
+                        let response = format!("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                        let _ = stream.write_all(response.as_bytes());
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(25))
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        super::start(
+            "http-error-fixture".into(),
+            "fictional-job".into(),
+            format!("http://127.0.0.1:{port}/fixture"),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("http-error-fixture").unwrap() {
+                break done;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "application check did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        server.join().unwrap();
+        acknowledge("http-error-fixture").unwrap();
+        assert!(review);
+        assert!(result.contains("HTTP 404"), "{result}");
+        assert!(!result.contains("fields detected"), "{result}");
+    }
     #[test]
     fn visual_advice_requires_a_bounded_excerpt_and_stays_advisory() {
         use serde_json::json;
