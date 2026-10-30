@@ -1,0 +1,5 @@
+const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const lines=source.split('\n');const use=lines.find(x=>x.startsWith('function useFormDraft(')),payload=lines.find(x=>x.startsWith('function formAnswerPayload('));assert.ok(use&&payload);
+const ctx=vm.createContext({});vm.runInContext(`${use}\n${payload}`,ctx);
+const input={value:'',focus(){this.focused=true}};ctx.useFormDraft(input,{text:'Fictional answer'},'task-1',true);assert.equal(input.value,'Fictional answer');assert.equal(input._draftId,'task-1');assert.equal(ctx.formAnswerPayload({selector:'#answer',input,kind:'text'}).draft_id,'task-1');delete input._draftId;input.value='Edited';assert.equal(ctx.formAnswerPayload({selector:'#answer',input,kind:'text'}).draft_id,undefined);ctx.useFormDraft(input,{text:'New answer'},'task-2',false);assert.equal(input._draftId,undefined);assert.ok(source.includes("input.addEventListener('input',()=>{delete input._draftId;})"));console.log('Form draft provenance UI checks passed.');

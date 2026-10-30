@@ -298,6 +298,7 @@ pub fn start(
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
                 }
                 session.id = new_id;
+                session.answer_drafts.clear();
                 session.profile_digest = Sha256Digest::of(&profile.to_string());
                 session.preview = preview;
                 session.filled = false;

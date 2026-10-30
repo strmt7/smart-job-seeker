@@ -23,6 +23,18 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 
+#[cfg(test)]
+pub(crate) fn set_completed_fixture(id: &str, input: Inputs, answer: Value) {
+    *TASK.lock().unwrap() = Some(Task {
+        id: id.into(),
+        session_id: input.session_id,
+        selector: input.selector,
+        digest: input.digest,
+        result: Some(Ok(answer)),
+        completed_at: Some(std::time::Instant::now()),
+    });
+}
+
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK.lock().map_err(|_| "Answer drafting unavailable")?;

@@ -96,6 +96,7 @@ struct ReviewSession {
     ttl: Duration,
     filled: bool,
     completed_selectors: Vec<String>,
+    answer_drafts: std::collections::HashMap<String, SavedFormAnswer>,
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
     // Attachment verification is scoped to the inspection session in which
@@ -103,6 +104,12 @@ struct ReviewSession {
     attachments: Vec<(String, std::path::PathBuf, String)>,
     last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
+}
+
+struct SavedFormAnswer {
+    selector: String,
+    digest: String,
+    answer: Value,
 }
 
 fn interrupt_session(
@@ -662,6 +669,51 @@ fn answer_inputs(
         facts,
         instructions,
     })
+}
+
+/// Link only exact, current session drafts to the requested answer. Edited
+/// text remains fillable but must not inherit the original draft's citations.
+fn attach_answer_provenance(
+    ws: &Workspace,
+    session: &ReviewSession,
+    body: &Value,
+    fields: &mut [Value],
+) -> Result<(), String> {
+    let Some(answers) = body.get("answers").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let mut used = std::collections::HashSet::new();
+    for answer in answers {
+        let id = match answer.get("draft_id") {
+            None => continue,
+            Some(Value::String(id)) if !id.is_empty() => id.as_str(),
+            _ => return Err("Invalid linked draft identifier".into()),
+        };
+        if !used.insert(id) {
+            return Err("A draft cannot be linked to multiple answers".into());
+        }
+        let selector = answer["selector"].as_str().ok_or("Missing answer field")?;
+        let draft = session
+            .answer_drafts
+            .get(id)
+            .ok_or("The linked answer draft is no longer available; review the answer again")?;
+        let fresh = answer_inputs(ws, session, selector)?;
+        if draft.selector != selector
+            || draft.digest != fresh.digest
+            || draft.answer["text"].as_str() != answer["value"].as_str()
+        {
+            return Err(
+                "The linked draft or its supporting information changed; review the answer again"
+                    .into(),
+            );
+        }
+        let field = fields
+            .iter_mut()
+            .find(|field| field["selector"].as_str() == Some(selector))
+            .ok_or("Linked answer field is missing")?;
+        field["source_draft"] = json!({"task_id":id,"sources":draft.answer["sources"],"evidence_check":draft.answer["evidence_check"],"note":"The reviewed answer exactly matched this local draft. Model citations and checks are advisory."});
+    }
+    Ok(())
 }
 
 fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task::Inputs, String> {
@@ -2892,6 +2944,7 @@ fn serve(
                 ttl,
                 filled: false,
                 completed_selectors: vec![],
+                answer_drafts: Default::default(),
                 visible,
                 staged_files: vec![],
                 attachments: vec![],
@@ -3336,6 +3389,35 @@ fn serve(
             if result["status"] != "running" {
                 result = answer_task::complete(id, result)?;
             }
+            if result["status"] == "complete" {
+                let current = session
+                    .as_mut()
+                    .filter(|s| Some(s.id.as_str()) == result["session_id"].as_str())
+                    .ok_or("Form session expired")?;
+                let available =
+                    current.answer_drafts.contains_key(id) || current.answer_drafts.len() < 20;
+                if available {
+                    current.answer_drafts.insert(
+                        id.to_owned(),
+                        SavedFormAnswer {
+                            selector: result["selector"]
+                                .as_str()
+                                .ok_or("Missing answer field")?
+                                .to_owned(),
+                            digest: result["digest"]
+                                .as_str()
+                                .ok_or("Missing answer digest")?
+                                .to_owned(),
+                            answer: result["answer"].clone(),
+                        },
+                    );
+                }
+                result["provenance_available"] = json!(available);
+            } else if result["status"] == "failed" {
+                if let Some(current) = session.as_mut() {
+                    current.answer_drafts.remove(id);
+                }
+            }
             json_reply(stream, "200 OK", result);
         }
         "/api/form/fill" => {
@@ -3372,7 +3454,8 @@ fn serve(
                 return Err("Profile changed; inspect the current page again".into());
             }
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
-            let requested_fields = form_preview::requested_field_records(&prepared)?;
+            let mut requested_fields = form_preview::requested_field_records(&prepared)?;
+            attach_answer_provenance(ws, current, &body, &mut requested_fields)?;
             let intent =
                 IntentId::new(format!("prefill-{}", current.id)).map_err(|e| e.to_string())?;
             let grant_id = GrantId::new(random_id()?).map_err(|e| e.to_string())?;
@@ -5633,6 +5716,8 @@ mod tests {
             .unwrap();
             let profile = json!({"first_name":"Synthetic","country":"Germany"});
             ws.save_candidate_profile(&profile.to_string()).unwrap();
+            ws.add_fact("Fictional research experience", FactOrigin::UserAttested)
+                .unwrap();
             let doc_name = format!("{}.pdf", "x".repeat(251));
             let staged_name = attempt_record::attachment_filename(&doc_name);
             ws.add_document("fictional-doc", &doc_name, b"%PDF-fictional resume", 1)
@@ -5705,12 +5790,70 @@ mod tests {
                 ttl: SESSION_TTL,
                 filled: false,
                 completed_selectors: vec![],
+                answer_drafts: Default::default(),
                 visible: false,
                 staged_files: vec![],
                 attachments: vec![],
                 last_visual_freshness_key: None,
                 record: None,
             });
+            let input = answer_inputs(&ws, session.as_ref().unwrap(), "#candidate").unwrap();
+            answer_task::set_completed_fixture(
+                "fixture-draft",
+                input,
+                json!({"text":"Revised","sources":["Fictional research experience"],"evidence_check":{"status":"completed","claims":[]}}),
+            );
+            let draft_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let draft_port = draft_listener.local_addr().unwrap().port();
+            let draft_body = json!({"task_id":"fixture-draft"}).to_string();
+            let mut draft_client = TcpStream::connect(("127.0.0.1", draft_port)).unwrap();
+            write!(draft_client, "POST /api/form/answer-status HTTP/1.1\r\nHost: 127.0.0.1:{draft_port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{draft_body}", draft_body.len()).unwrap();
+            let (mut draft_server, _) = draft_listener.accept().unwrap();
+            serve(
+                &mut draft_server,
+                &mut ws,
+                &mut session,
+                "test-token",
+                draft_port,
+            )
+            .unwrap();
+            drop(draft_server);
+            let mut draft_response = String::new();
+            draft_client.read_to_string(&mut draft_response).unwrap();
+            let draft_response: Value =
+                serde_json::from_str(draft_response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(draft_response["provenance_available"], true);
+            let current = session.as_mut().unwrap();
+            let request = json!({"selectors":[],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"}]});
+            let (prepared, _) = prepare_reviewed_fill(&current.preview, &request).unwrap();
+            let mut fields = form_preview::requested_field_records(&prepared).unwrap();
+            attach_answer_provenance(&ws, current, &request, &mut fields).unwrap();
+            assert_eq!(
+                fields[0]["source_draft"]["sources"][0],
+                "Fictional research experience"
+            );
+            let edited = json!({"selectors":[],"answers":[{"selector":"#candidate","value":"Edited","draft_id":"fixture-draft"}]});
+            let (prepared, _) = prepare_reviewed_fill(&current.preview, &edited).unwrap();
+            let mut fields = form_preview::requested_field_records(&prepared).unwrap();
+            assert!(attach_answer_provenance(&ws, current, &edited, &mut fields).is_err());
+            let digest = current.answer_drafts["fixture-draft"].digest.clone();
+            current
+                .answer_drafts
+                .get_mut("fixture-draft")
+                .unwrap()
+                .digest = "stale".into();
+            let (prepared, _) = prepare_reviewed_fill(&current.preview, &request).unwrap();
+            let mut fields = form_preview::requested_field_records(&prepared).unwrap();
+            assert!(attach_answer_provenance(&ws, current, &request, &mut fields).is_err());
+            current
+                .answer_drafts
+                .get_mut("fixture-draft")
+                .unwrap()
+                .digest = digest;
+            let wrong_field = json!({"selectors":[],"answers":[{"selector":"#later-answer","value":"Revised","draft_id":"fixture-draft"}]});
+            let (prepared, _) = prepare_reviewed_fill(&current.preview, &wrong_field).unwrap();
+            let mut fields = form_preview::requested_field_records(&prepared).unwrap();
+            assert!(attach_answer_provenance(&ws, current, &wrong_field, &mut fields).is_err());
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
             assert!(error.contains("Close the active review session"));
@@ -6126,6 +6269,11 @@ mod tests {
                 .unwrap();
             assert_eq!(field["question"], "Given name");
             assert_eq!(field["review_label"], "Given name");
+            assert_eq!(field["source_draft"]["task_id"], "fixture-draft");
+            assert_eq!(
+                field["source_draft"]["sources"][0],
+                "Fictional research experience"
+            );
             assert!(requested["note"].as_str().unwrap().contains("not proof"));
             let incomplete = event_values
                 .iter()
@@ -6179,7 +6327,7 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("Close the active review session"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
