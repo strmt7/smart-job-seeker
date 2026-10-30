@@ -1076,13 +1076,43 @@ pub fn capture_inspection(
     screenshot: Option<&str>,
     timestamp: i64,
 ) -> Result<(), String> {
-    record.inspection(origin, reasons, screenshot, timestamp)?;
+    record_initial_inspection(record, origin, reasons, screenshot, timestamp)?;
     if let Err(error) = capture_page(driver, record, timestamp) {
-        let _ = record.event(json!({"type":"capture_incomplete","time":timestamp,"error":error}));
-        let _ = record.status("manual_review", timestamp);
-        return Err(error);
+        return Err(record_capture_failure(record, error, timestamp));
     }
     Ok(())
+}
+
+fn record_initial_inspection(
+    record: &mut AttemptRecord,
+    origin: &str,
+    reasons: &[String],
+    screenshot: Option<&str>,
+    timestamp: i64,
+) -> Result<(), String> {
+    if let Err(error) = record.inspection(origin, reasons, screenshot, timestamp) {
+        // Persist the incomplete state even when the first screenshot or event
+        // cannot be recorded. The original error remains visible to the caller.
+        return Err(record_capture_failure(record, error, timestamp));
+    }
+    Ok(())
+}
+
+fn record_capture_failure(record: &mut AttemptRecord, error: String, timestamp: i64) -> String {
+    let event_error = record
+        .event(json!({"type":"capture_incomplete","time":timestamp,"error":error}))
+        .err();
+    let status_error = record.status("manual_review", timestamp).err();
+    let mut message = error;
+    if let Some(problem) = event_error {
+        message.push_str(&format!("; could not record failure: {problem}"));
+    }
+    if let Some(problem) = status_error {
+        message.push_str(&format!(
+            "; could not mark attempt for manual review: {problem}"
+        ));
+    }
+    message
 }
 
 /// Save a maximum of six segments; report when a page exceeds the limit.
@@ -1138,6 +1168,46 @@ mod tests {
     use super::*;
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
+
+    #[test]
+    fn failed_initial_screenshot_marks_attempt_for_manual_review() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        fs::create_dir(root.path().join("screenshots")).unwrap();
+        fs::write(
+            root.path().join("attempt.json"),
+            br#"{"status":"preparation_in_progress"}"#,
+        )
+        .unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_path_buf(),
+            sequence: 0,
+        };
+        assert!(record_initial_inspection(
+            &mut record,
+            "https://example.invalid",
+            &[],
+            Some("not base64!"),
+            2
+        )
+        .is_err());
+        let meta: Value =
+            serde_json::from_slice(&fs::read(root.path().join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(meta["status"], "manual_review");
+        let events = fs::read_to_string(root.path().join("events.jsonl")).unwrap();
+        let event: Value = serde_json::from_str(events.trim()).unwrap();
+        assert_eq!(event["type"], "capture_incomplete");
+        fs::remove_file(root.path().join("attempt.json")).unwrap();
+        let error = record_initial_inspection(
+            &mut record,
+            "https://example.invalid",
+            &[],
+            Some("not base64!"),
+            3,
+        )
+        .unwrap_err();
+        assert!(error.contains("could not mark attempt for manual review"));
+    }
 
     #[test]
     fn attachment_names_are_windows_safe_and_keep_the_extension() {
