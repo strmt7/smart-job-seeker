@@ -396,3 +396,13 @@ batch, which remained explicitly pending review. A prompt wording change did
 not correct that result and was not retained. These checks do not establish
 reliability on employer forms or prove that smaller batches always fit a model's
 token context. Requests remain sequential, and no application was sent.
+
+AI duplicate search now compares up to three related listings per sequential
+model request. Valid matches from successful batches are retained when another
+batch fails, and the interface reports the number compared, unassessed and
+failed, alongside the existing candidate-limit notice. A local-model fictional
+check compared four listings across two batches, flagging two variants of one
+requisition (including different titles) and leaving two unrelated roles out.
+This is one small fixture; model omissions, incorrect matches, the employer
+neighbor filter and its candidate cap remain limitations. Every flagged pair
+still requires user review.
