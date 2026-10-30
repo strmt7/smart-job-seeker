@@ -515,6 +515,103 @@ mod tests {
 
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    fn live_local_model_fills_and_visually_checks_rich_textbox() {
+        use waypoint_domain::GrantId;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        assert_eq!(
+            waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
+            4096
+        );
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-rich-model.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_resident_context();
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let preview =
+            inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery"}))
+                .unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        let selector = preview.suggestions[0].field_selector.clone();
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("rich-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Fictional role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("rich-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("rich-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fictional".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        assert_eq!(
+            apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                &url,
+                &preview,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1,
+                    completed: &mut completed
+                }
+            )
+            .unwrap(),
+            1
+        );
+        driver.verify_text_value(&selector, "Avery").unwrap();
+        let visual = crate::visual_review::analyze(
+            addr,
+            "qwen3.5:9b",
+            &driver.screenshot_base64().unwrap(),
+            &[("First name".into(), "Avery".into())],
+        )
+        .unwrap();
+        println!("fictional rich textbox visual review: {visual}");
+        assert_eq!(visual["comparisons"][0]["status"], "matches_transcription");
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_prefills_and_visually_checks_fictional_form() {
         exercise_local_model_form_pipeline(false, false);
     }

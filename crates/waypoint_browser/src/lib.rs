@@ -684,14 +684,7 @@ impl CdpDriver {
             if hidden && !matches!(tag.as_str(), "input" | "textarea" | "select") {
                 return !matches!(tag.as_str(), "script" | "style" | "noscript" | "template");
             }
-            // Only explicitly plain-text editing hosts are supported; rich editors remain manual.
-            let plain_editor = !matches!(tag.as_str(), "input" | "textarea" | "select")
-                && attrs
-                    .get("contenteditable")
-                    .is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only"))
-                && attrs
-                    .get("role")
-                    .is_none_or(|v| v.eq_ignore_ascii_case("textbox"));
+            let plain_editor = supported_editing_host(&tag, &attrs);
             // Custom ARIA controls are not handled by the native-field driver.
             // Do not silently omit a required question on an otherwise readable form.
             if (attrs.contains_key("required")
@@ -1060,10 +1053,7 @@ impl CdpDriver {
         for control in controls {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector)
-                || control
-                    .attrs
-                    .get("contenteditable")
-                    .is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only"))
+                || supported_editing_host(&control.tag, &control.attrs)
             {
                 css_paths
                     .get(&control.node_id)
@@ -1222,12 +1212,7 @@ impl CdpDriver {
                 (_, "email") => FormFieldType::Email,
                 (_, "date") => FormFieldType::Date,
                 ("textarea", _) => FormFieldType::TextArea,
-                (_, _)
-                    if control
-                        .attrs
-                        .get("contenteditable")
-                        .is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only")) =>
-                {
+                (_, _) if supported_editing_host(&control.tag, &control.attrs) => {
                     FormFieldType::TextArea
                 }
                 _ => FormFieldType::Text,
@@ -1300,12 +1285,35 @@ impl CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect text field".into()))?;
-                let check = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly || this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true'); }","returnByValue":true})).map_err(derr)?;
+                let check = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly || (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true'); }","returnByValue":true})).map_err(derr)?;
                 if check.get("exceptionDetails").is_some()
                     || check.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
                     return Err(DriverError(
                         "Text field is unavailable or requires manual handling".into(),
+                    ));
+                }
+                let rich = if t.contains('\n') {
+                    let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return ['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox'; }","returnByValue":true})).map_err(derr)?;
+                    if result.get("exceptionDetails").is_some() {
+                        return Err(DriverError(
+                            "Text editor could not be inspected; review it manually".into(),
+                        ));
+                    }
+                    result
+                        .pointer("/result/value")
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| {
+                            DriverError(
+                                "Text editor could not be inspected; review it manually".into(),
+                            )
+                        })?
+                } else {
+                    false
+                };
+                if rich && t.bytes().filter(|byte| *byte == b'\n').count() > 40 {
+                    return Err(DriverError(
+                        "Rich text has too many lines; review it manually".into(),
                     ));
                 }
                 // Real focus + real typing: the page sees the same events a
@@ -1324,10 +1332,25 @@ impl CdpDriver {
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
-                self.cdp
-                    .call("Input.insertText", json!({ "text": t }))
-                    .map_err(derr)?;
-                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' ? this.isContentEditable && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
+                if rich {
+                    for (index, line) in t.split('\n').enumerate() {
+                        if index > 0 {
+                            self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
+                            self.cdp.call("Input.dispatchKeyEvent", json!({"type":"char","key":"Enter","code":"Enter","text":"\r","unmodifiedText":"\r","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
+                            self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
+                        }
+                        if !line.is_empty() {
+                            self.cdp
+                                .call("Input.insertText", json!({"text":line}))
+                                .map_err(derr)?;
+                        }
+                    }
+                } else {
+                    self.cdp
+                        .call("Input.insertText", json!({ "text": t }))
+                        .map_err(derr)?;
+                }
+                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1776,7 +1799,7 @@ impl BrowserDriver for CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' ? this.isContentEditable && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
@@ -1941,6 +1964,26 @@ fn add_hidden_selectors(hidden: &mut std::collections::HashSet<String>, control:
     if let Some(kind) = control.attrs.get("type") {
         hidden.insert(format!("{}[type=\"{}\"]", control.tag, css_string(kind)));
     }
+}
+
+fn supported_editing_host(tag: &str, attrs: &HashMap<String, String>) -> bool {
+    if matches!(tag, "input" | "textarea" | "select") {
+        return false;
+    }
+    let Some(editable) = attrs.get("contenteditable") else {
+        return false;
+    };
+    let role = attrs.get("role");
+    if editable.eq_ignore_ascii_case("plaintext-only") {
+        return role.is_none_or(|value| value.eq_ignore_ascii_case("textbox"));
+    }
+    (editable.is_empty() || editable.eq_ignore_ascii_case("true"))
+        && role.is_some_and(|value| value.eq_ignore_ascii_case("textbox"))
+        && ["aria-label", "aria-labelledby"].iter().any(|name| {
+            attrs
+                .get(*name)
+                .is_some_and(|value| !value.trim().is_empty())
+        })
 }
 
 fn attributes(node: &Value) -> HashMap<String, String> {
@@ -2216,7 +2259,8 @@ fn walk_with_visibility<F: FnMut(&Value, bool, bool) -> bool>(
         let child_in_control = inside_control
             || ["input", "textarea", "select"]
                 .iter()
-                .any(|kind| tag.eq_ignore_ascii_case(kind));
+                .any(|kind| tag.eq_ignore_ascii_case(kind))
+            || supported_editing_host(&tag.to_ascii_lowercase(), &attributes(current));
         if let Some(children) = current.get("children").and_then(Value::as_array) {
             pending.extend(
                 children

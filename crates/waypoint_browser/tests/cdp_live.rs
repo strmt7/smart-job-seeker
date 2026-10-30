@@ -575,6 +575,82 @@ fn native_text_limits_are_observed_in_the_live_schema() {
 }
 
 #[test]
+#[ignore = "launches a real browser with a fictional rich text fixture"]
+fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_rich_textbox.html")).unwrap();
+    assert_eq!(
+        page.schema.fields.len(),
+        3,
+        "unlabelled editor must not be offered"
+    );
+    let field = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Motivation")
+        .unwrap();
+    assert_eq!(field.field_type, FormFieldType::TextArea);
+    assert!(field.required);
+    let selector = field.selector.clone();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("Fictional motivation".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value(&selector, "Fictional motivation")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("First line\nSecond line".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value(&selector, "First line\nSecond line")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("First\n\nThird".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value(&selector, "First\n\nThird")
+        .unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("line\n".repeat(41))
+        })
+        .is_err());
+    driver
+        .verify_text_value(&selector, "First\n\nThird")
+        .unwrap();
+    for label in ["Unsafe editor", "Disabled editor"] {
+        let selector = &page
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .unwrap()
+            .selector;
+        assert!(driver
+            .execute(&BrowserCommand::Fill {
+                selector: selector.clone(),
+                value: PacketValue::Text("must not enter".into())
+            })
+            .is_err());
+    }
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_real_browser_submits_the_packet_and_returns_a_qualified_receipt() {
     let url = file_url("form_ok.html");

@@ -696,3 +696,16 @@ Policy tests covered opt-in and rejected destinations. A real local-browser
 fixture confirmed a loopback cross-origin redirect remains manual even with the
 option on. No real external ATS or redirect chain was tested, and the app did
 not issue field-entry or submit commands in these checks.
+
+The browser can now offer explicitly labelled `contenteditable=true` textboxes
+for reviewed plain-text entry. It rejects nested input or editable controls and
+read-only or disabled editors, verifies focus and exact retained text, and
+limits multiline entry to 40 line breaks. Input replaces the editor contents;
+formatting and advanced editor features are not preserved or interpreted.
+A fictional local Chromium fixture covered single-line and multiline entry,
+refusal of nested and disabled controls, and the line limit. A separate
+qwen3.5:9b fixture mapped a fictional name, filled it with a simulated review
+grant and visually transcribed it. The first vision attempt failed when the
+label was not visible; after adding a visible label, it passed. This is not
+proof of accuracy on real rich editors, hidden labels or changing pages; failed
+or mismatched entry still needs manual review. No application was submitted.
