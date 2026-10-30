@@ -286,6 +286,18 @@ fn vetted_application_destination(
         .filter(|destination| vetted.contains(destination))
 }
 
+/// A redirect has already occurred in Chromium. Decide only whether its final
+/// destination is eligible for inspection; this cannot police prior hops.
+fn eligible_external_redirect(original: &str, current: &str, allow_external: bool) -> bool {
+    allow_external
+        && Url::parse(original)
+            .ok()
+            .zip(Url::parse(current).ok())
+            .is_some_and(|(a, b)| a.origin() != b.origin())
+        && application_destination_with_external(original, &[current.to_owned()], true).as_deref()
+            == Some(current)
+}
+
 fn classify_fields(
     fields: &[waypoint_applications::form_mapping::FormField],
     followed: bool,
@@ -365,6 +377,7 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 .map_err(|error| navigation_failure("listing page", &error))?;
             let mut followed = false;
             let mut link_warning = None;
+            let mut redirect_warning = None;
             let mut inspected_url = browser
                 .current_url()
                 .ok()
@@ -375,12 +388,17 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                     .map_err(|_| "The listing destination could not be checked.")?;
                 let original = Url::parse(&url).map_err(|e| e.to_string())?;
                 let reached = Url::parse(&current).map_err(|e| e.to_string())?;
-                if original.origin() != reached.origin() {
-                    return Ok((
-                        "The listing redirected to another site; review the destination manually."
-                            .into(),
-                        true,
-                    ));
+                let redirected_external = original.origin() != reached.origin();
+                if redirected_external {
+                    let accepted = eligible_external_redirect(&url, &current, allow_external);
+                    if !accepted {
+                        return Ok(("The listing redirected to another site; review the destination manually.".into(), true));
+                    }
+                    let parsed = waypoint_net::parse_url(&current)
+                        .map_err(|_| "The redirected destination is invalid.")?;
+                    waypoint_net::resolve_public(&parsed)
+                        .map_err(|_| "The redirected host could not be verified as public.")?;
+                    inspected_url = displayable_inspected_url(&current, &current);
                 }
                 let links = if crate::form_task::has_upload_control(&page.schema.fields) {
                     Vec::new()
@@ -406,9 +424,12 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                         }
                     }
                 };
-                if let Some(destination) =
-                    vetted_application_destination(&current, &links, &vetted, allow_external)
-                {
+                if let Some(destination) = vetted_application_destination(
+                    &current,
+                    &links,
+                    &vetted,
+                    allow_external && !redirected_external,
+                ) {
                     let destination_url = waypoint_net::parse_url(&destination)
                         .map_err(|_| "The application link is invalid.")?;
                     waypoint_net::resolve_public(&destination_url)
@@ -434,6 +455,9 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 } else if !links.is_empty() && link_warning.is_none() {
                     link_warning = Some("Application links need manual review before opening.");
                 }
+                if redirected_external {
+                    redirect_warning = Some("The listing redirected to an external destination before inspection; review its identity and the original listing.");
+                }
             }
             let (mut message, review) = if !page.walls.is_empty() {
                 (if page.walls.iter().any(|wall| wall == "The main page response status could not be verified; manual review is required") {
@@ -445,6 +469,10 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 classify_fields(&page.schema.fields, followed)
             };
             if let Some(warning) = link_warning {
+                message.push(' ');
+                message.push_str(warning);
+            }
+            if let Some(warning) = redirect_warning {
                 message.push(' ');
                 message.push_str(warning);
             }
@@ -635,6 +663,63 @@ mod tests {
         assert!(review);
         assert!(result.contains("HTTP 404"), "{result}");
         assert!(!result.contains("fields detected"), "{result}");
+    }
+
+    #[test]
+    #[ignore = "starts one browser and two fictional loopback servers"]
+    fn local_cross_origin_redirect_remains_manual_even_when_opted_in() {
+        use std::io::{Read, Write};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let destination = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let destination_port = destination.local_addr().unwrap().port();
+        let source = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let source_port = source.local_addr().unwrap().port();
+        for listener in [&destination, &source] {
+            listener.set_nonblocking(true).unwrap();
+        }
+        let servers = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut served_source = false;
+            let mut served_destination = false;
+            while std::time::Instant::now() < deadline && !(served_source && served_destination) {
+                if let Ok((mut stream, _)) = source.accept() {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                    let mut request = [0u8; 2048];
+                    let _ = stream.read(&mut request);
+                    let _ = write!(stream, "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{destination_port}/form\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    served_source = true;
+                }
+                if let Ok((mut stream, _)) = destination.accept() {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                    let mut request = [0u8; 2048];
+                    let _ = stream.read(&mut request);
+                    let body = "<html><body><label>Name<input name='name'></label></body></html>";
+                    let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    served_destination = true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+        super::start(
+            "redirect-fixture".into(),
+            "fictional-job".into(),
+            format!("http://127.0.0.1:{source_port}/listing"),
+            true,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("redirect-fixture").unwrap() {
+                break done;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        servers.join().unwrap();
+        acknowledge("redirect-fixture").unwrap();
+        assert!(review);
+        assert!(result.contains("redirected to another site"), "{result}");
+        assert!(!result.contains("form fields detected"), "{result}");
     }
     #[test]
     fn visual_advice_requires_a_bounded_excerpt_and_stays_advisory() {
@@ -1234,6 +1319,27 @@ mod tests {
             true
         )
         .is_none());
+    }
+
+    #[test]
+    fn external_redirect_requires_opt_in_and_a_permitted_final_destination() {
+        let original = "https://employer.example/jobs/42";
+        let ats = "https://boards.greenhouse.io/example/jobs/123";
+        assert!(!super::eligible_external_redirect(original, ats, false));
+        assert!(super::eligible_external_redirect(original, ats, true));
+        for reached in [
+            "https://employer.example/apply",
+            "https://boards.greenhouse.io/example/jobs/123?token=secret",
+            "https://boards.greenhouse.io/example/submit",
+            "https://unknown.example/jobs/123",
+            "https://example.myworkdayjobs.com/apply",
+            "http://boards.greenhouse.io/example/jobs/123",
+        ] {
+            assert!(
+                !super::eligible_external_redirect(original, reached, true),
+                "{reached}"
+            );
+        }
     }
 
     #[test]

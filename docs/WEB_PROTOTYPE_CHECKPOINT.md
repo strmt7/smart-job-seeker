@@ -684,3 +684,15 @@ confirming a usable application. Fictional policy and UI tests covered opt-in,
 ambiguity, rejected destinations and option propagation. No real external ATS
 was contacted, so behaviour across employer sites and redirect chains is
 unverified.
+
+With the external-destination option enabled, an application-page check may
+inspect a final redirected URL if it is a known source with public-read
+permission, public HTTPS, no query or fragment, and no final-action-looking
+path. The final host is checked for public DNS addresses after the browser has
+already followed the redirect; prior redirect hops and page scripts are not
+controlled by this check. Any subsequent link must remain on that destination's
+origin, and the result identifies the redirect and requires manual review.
+Policy tests covered opt-in and rejected destinations. A real local-browser
+fixture confirmed a loopback cross-origin redirect remains manual even with the
+option on. No real external ATS or redirect chain was tested, and the app did
+not issue field-entry or submit commands in these checks.
