@@ -1,5 +1,6 @@
 param(
     [string]$OpenSslRoot = $env:OPENSSL_DIR,
+    [string]$OpenSslInstaller,
     [switch]$Release,
     [switch]$Test,
     [switch]$Clippy,
@@ -11,6 +12,12 @@ if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for W
 if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
 if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
 if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires -Test and a specific -TestFilter.' }
+if ($OpenSslInstaller -and $PSBoundParameters.ContainsKey('OpenSslRoot') -and $OpenSslRoot) { throw 'Choose either -OpenSslRoot or -OpenSslInstaller.' }
+$repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
+if ($OpenSslInstaller) {
+    New-Item -ItemType Directory -Path (Join-Path $repo 'target') -Force | Out-Null
+    $OpenSslRoot = & (Join-Path $PSScriptRoot 'provision-openssl.ps1') -TargetRoot (Join-Path $repo 'target') -InstallerPath $OpenSslInstaller
+}
 if (-not $OpenSslRoot) {
     # The official Windows runner and common developer installers use different
     # directories. Only select a complete x64 development installation.
@@ -25,7 +32,8 @@ if (-not $OpenSslRoot) {
         @(Get-ChildItem -LiteralPath (Join-Path $candidate 'bin') -Filter 'libcrypto*.dll' -File).Count -eq 1
     } | Select-Object -First 1
     if (-not $OpenSslRoot) {
-        throw 'No complete x64 OpenSSL development installation was found in the standard locations. Automatic provisioning is not yet available; set OPENSSL_DIR or pass -OpenSslRoot.'
+        New-Item -ItemType Directory -Path (Join-Path $repo 'target') -Force | Out-Null
+        $OpenSslRoot = & (Join-Path $PSScriptRoot 'provision-openssl.ps1') -TargetRoot (Join-Path $repo 'target')
     }
 }
 if (-not (Test-Path -LiteralPath $OpenSslRoot -PathType Container)) { throw "OpenSSL directory does not exist: $OpenSslRoot" }
@@ -48,10 +56,31 @@ function Set-PreferredSearchPath([string]$Current, [string]$Preferred) {
     if (-not $Current) { return $Preferred }
     return (@($Preferred) + $remaining) -join $separator
 }
+function Install-OpenSslRuntime([string]$Source, [string]$Destination, [string]$ReceiptPath, [string]$Profile) {
+    $newHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not (Test-Path -LiteralPath $Destination)) {
+        Copy-Item -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+        return
+    }
+    $oldHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($oldHash -eq $newHash) { return }
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { throw "A different DLL exists at $Destination without a build receipt; inspect it before replacing it." }
+    try { $previous = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json } catch { throw 'The previous build receipt is invalid; the existing DLL was not replaced.' }
+    if ($previous.profile -ne $Profile -or $previous.openssl_dll -ne (Split-Path -Leaf $Destination) -or $previous.openssl_sha256 -ne $oldHash) {
+        throw "The previous build receipt does not identify the existing DLL at $Destination; it was not replaced."
+    }
+    $backupDir = Join-Path (Split-Path -Parent $Destination) 'waypoint-openssl-backups'
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    $backup = Join-Path $backupDir ($oldHash + '-' + [guid]::NewGuid() + '-' + (Split-Path -Leaf $Destination))
+    $temporary = $Destination + '.new-' + [guid]::NewGuid()
+    [IO.File]::Copy($Source, $temporary, $false)
+    if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ne $newHash) { throw "The staged OpenSSL runtime is damaged; it remains at $temporary." }
+    if ((Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -ne $oldHash) { throw "The existing OpenSSL runtime changed during the build; the staged file remains at $temporary." }
+    [IO.File]::Replace($temporary, $Destination, $backup)
+}
 $env:LIB = Set-PreferredSearchPath $env:LIB $lib
 $env:PATH = Set-PreferredSearchPath $env:PATH (Join-Path $root 'bin')
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '1' }
-$repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
 Push-Location $repo
 try {
     $operation = if ($Test) { 'test' } elseif ($Clippy) { 'clippy' } else { 'build' }
@@ -66,9 +95,7 @@ try {
     if ($Clippy) { Write-Host "Waypoint lint completed using the configured SQLCipher runtime."; return }
     $profile = if ($Release) { 'release' } else { 'debug' }
     $destination = Join-Path $repo "target/$profile/$($dlls[0].Name)"
-    if (Test-Path -LiteralPath $destination) {
-        if ((Get-FileHash -LiteralPath $destination).Hash -ne (Get-FileHash -LiteralPath $dlls[0].FullName).Hash) { throw "A different DLL already exists at $destination; inspect it before replacing it." }
-    } else { Copy-Item -LiteralPath $dlls[0].FullName -Destination $destination }
+    Install-OpenSslRuntime $dlls[0].FullName $destination (Join-Path $repo "target/$profile/waypoint-build.json") $profile
     $buildReceipt = @{
         profile = $profile
         sqlcipher = $true

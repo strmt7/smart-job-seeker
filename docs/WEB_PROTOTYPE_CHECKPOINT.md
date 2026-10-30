@@ -424,3 +424,18 @@ two passages through the resident local model; a rendered mock exercised the
 queue at desktop and narrow widths. The browser test used mocked API responses,
 not a real file export. Suggestions are not automatically applied, model
 accuracy remains unproven, and a lost model response may require another request.
+
+The Windows development build helper can provision OpenSSL 4.1.0 x64 into its
+repository-local `target` cache when no compatible developer installation is
+found. It downloads a pinned publisher MSI, verifies its size, SHA-256 and
+Windows signature, extracts it without a system installation, and verifies the
+development-header, import-library, runtime-DLL and license inventory on reuse.
+A fresh network download, a SQLCipher test build and a debug build using the
+extracted package were exercised on this host. The debug runtime matched its
+new receipt and the previous receipt-matched runtime was retained as a backup.
+Offline fixture checks covered cache reuse and
+rejection of modified headers and an invalid installer. Rust and MSVC build
+tools still require separate setup; this does not finish application installer
+provisioning for Chromium, Ollama or other missing dependencies.
+When changing OpenSSL versions, the build helper replaces an existing runtime
+DLL only when the previous build receipt identifies it, and retains a backup.

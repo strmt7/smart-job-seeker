@@ -6,7 +6,9 @@ On Windows, build the prototype from the repository root with:
 ./apps/web_app/scripts/build-windows.ps1
 ```
 
-The helper requires Rust, the MSVC build tools and a compatible x64 OpenSSL developer installation (headers, import library and runtime DLL). It checks the standard `Program Files/OpenSSL-Win64` and `Program Files/OpenSSL` locations; pass `-OpenSslRoot` or set `OPENSSL_DIR` to use another installation. It builds one job at a time by default and copies the OpenSSL runtime next to `target/debug/waypoint_web.exe`. Add `-Release` for a release build. This is a build helper, not an installer or a dependency downloader.
+The helper requires Rust and the MSVC build tools. It checks for a compatible x64 OpenSSL developer installation in the standard `Program Files/OpenSSL-Win64` and `Program Files/OpenSSL` locations; pass `-OpenSslRoot` or set `OPENSSL_DIR` to use another installation. If none is available, it downloads the pinned, signed OpenSSL 4.1.0 x64 MSI, verifies it and extracts the development files into `target/waypoint-openssl-4.1.0` without installing OpenSSL system-wide. Provisioning needs network access and at least 1 GiB of free disk space; the download is about 58 MiB. For offline setup, pass `-OpenSslInstaller <path>` with that exact MSI. A verified existing cache is reused. Incomplete or modified caches are rejected and retained for inspection. The helper builds one job at a time by default and copies the OpenSSL runtime next to `target/debug/waypoint_web.exe`. Add `-Release` for a release build. Rust and MSVC are not installed by this helper.
+
+When a later build uses a different OpenSSL DLL with the same name, the helper replaces it only if the previous Waypoint build receipt identifies the existing file. It keeps the old DLL in `target/<profile>/waypoint-openssl-backups`. An unrecognized DLL is left untouched.
 
 Use `./apps/web_app/scripts/build-windows.ps1 -Test` to run the web-app tests or `./apps/web_app/scripts/build-windows.ps1 -Clippy` to lint its targets with warnings treated as errors. Both commands configure the same detected OpenSSL paths as the build.
 
