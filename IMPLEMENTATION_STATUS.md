@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Split fit extraction probe — 2026-10-30
+
+- Three isolated fictional prompts explored separating criterion extraction from fit judgment using the resident `gemma3:4b` model (digest `c30276f7dffec93a536d283e15088990454b8d21cf180a3d6eea4959e4147291`, 4,096 context). Listing-only extraction returned the four named technical requirements separately; preference-only extraction returned the two explicit preferences. A combined listing-and-preference request grouped three skills into one criterion and omitted the cloud preference. These were single responses on one case, not repeatability or accuracy measurements, and did not exercise evidence matching, scoring, or the production workflow. No fallback was added because incomplete or grouped criteria can distort the score. Raw fictional prompts and responses are retained under `target/model-eval/`.
+- Each probe used the already resident model and a resource preflight. A later snapshot showed 25.10 GiB free system memory and 10.10 GiB maximum dedicated adapter usage; peak usage was not measured. The model was left to its normal expiry. No application was sent.
+
 ## Small-model fit repeatability check — 2026-10-30
 
 - In the existing three-run fictional repeatability test, local `gemma3:4b` (digest `c30276f7dffec93a536d283e15088990454b8d21cf180a3d6eea4959e4147291`, 4,096 context) returned no valid assessments after the bounded repair. Its responses included a Python fact as supposed SQL evidence, candidate facts as listing criteria, and non-null fact references for unknown judgments. Validation withheld every score. An experimental prompt that numbered facts and emphasized source rules also produced zero valid assessments in three runs and was discarded; this single case does not establish general model performance or test the overlap-specific repair.
