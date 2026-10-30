@@ -93,6 +93,34 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
 }
 
 fn generate_with_selection(llm: &mut dyn Inference, mut input: Inputs) -> Result<Value, String> {
+    generate_with_required_selection(llm, &mut input, false)
+}
+
+/// Template rewrites must retain the user-selected passage even if semantic
+/// selection prefers other facts. The first input fact is that passage.
+pub(crate) fn generate_template_with_selection(
+    llm: &mut dyn Inference,
+    mut input: Inputs,
+) -> Result<Value, String> {
+    generate_with_required_selection(llm, &mut input, true)
+}
+
+fn generate_with_required_selection(
+    llm: &mut dyn Inference,
+    input: &mut Inputs,
+    require_first: bool,
+) -> Result<Value, String> {
+    let required = if require_first {
+        Some(
+            input
+                .facts
+                .first()
+                .ok_or("Selected passage is unavailable")?
+                .clone(),
+        )
+    } else {
+        None
+    };
     let (selected, selection) = crate::fit_task::select_answer_facts(
         llm,
         &input.facts,
@@ -111,6 +139,14 @@ fn generate_with_selection(llm: &mut dyn Inference, mut input: Inputs) -> Result
     let instructions = json_prefix(&input.instructions, 1000);
     let instructions_truncated = instructions.len() < input.instructions.len();
     input.instructions = instructions.to_owned();
+    let mut selected = selected;
+    let mut displaced = false;
+    if let Some(required) = &required {
+        selected.retain(|fact| fact != required);
+        selected.insert(0, required.clone());
+        displaced = selected.len() > 20;
+        selected.truncate(20);
+    }
     let mut bytes = 2usize;
     let mut facts = Vec::new();
     for fact in &selected {
@@ -126,6 +162,12 @@ fn generate_with_selection(llm: &mut dyn Inference, mut input: Inputs) -> Result
     if facts.is_empty() {
         return Err("Selected qualifications exceed the local answer context; review this question manually".into());
     }
+    if required
+        .as_ref()
+        .is_some_and(|required| facts.first() != Some(required))
+    {
+        return Err("Selected passage exceeds the local answer context; review manually".into());
+    }
     input.facts = facts;
     let mut selection = selection;
     selection["used_in_draft"] = json!(input.facts.len());
@@ -133,7 +175,11 @@ fn generate_with_selection(llm: &mut dyn Inference, mut input: Inputs) -> Result
     selection["draft_listing_truncated"] = json!(listing_truncated);
     selection["draft_question_truncated"] = json!(question_truncated);
     selection["draft_instructions_truncated"] = json!(instructions_truncated);
-    let mut answer = generate(llm, &input)?;
+    if require_first {
+        selection["selected_passage_retained"] = json!(true);
+        selection["selected_passage_displaced_fact"] = json!(displaced);
+    }
+    let mut answer = generate(llm, input)?;
     answer["selection"] = selection;
     Ok(answer)
 }
@@ -337,6 +383,56 @@ pub(crate) fn generate(llm: &mut dyn Inference, input: &Inputs) -> Result<Value,
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn template_selection_retains_passage_and_bounds_long_inputs() {
+        struct Model;
+        impl Inference for Model {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                assert!(prompt.len() <= 8000);
+                let value = match schema {
+                    "fit_fact_selection" => json!({"indices":[2]}),
+                    "application_answer" | "application_answer_style" => {
+                        assert!(prompt.contains("User-selected passage: original"));
+                        json!({"text":"Revised passage","facts":[1]})
+                    }
+                    _ => json!({"claims":[]}),
+                };
+                Ok((
+                    value,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let mut facts = vec!["User-selected passage: original".to_owned()];
+        facts.extend((0..21).map(|i| format!("Fact {i} {}", "x".repeat(500))));
+        let input = Inputs {
+            session_id: String::new(),
+            selector: String::new(),
+            digest: String::new(),
+            question: "Rewrite the selected passage".into(),
+            listing: "Job detail ".repeat(1000),
+            available_facts: facts.len(),
+            facts,
+            instructions: "Style ".repeat(500),
+        };
+        let result = generate_template_with_selection(&mut Model, input).unwrap();
+        assert_eq!(result["sources"][0], "User-selected passage: original");
+        assert_eq!(result["selection"]["selected_passage_retained"], true);
+        assert_eq!(result["selection"]["draft_listing_truncated"], true);
+        assert_eq!(result["selection"]["draft_instructions_truncated"], true);
+    }
     use super::*;
     use waypoint_inference::{CapabilityReport, UsageReport};
 

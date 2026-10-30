@@ -114,8 +114,8 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
         input.before
     )];
     sources.extend(input.facts);
-    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:format!("Rewrite this original CV or cover letter passage for the job. Preserve the meaning of the user-selected template passage and supported facts; do not add qualifications or details. Return only the replacement passage: {}",input.before),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
-    let suggestion = crate::answer_task::generate(model, &request)?;
+    let request=crate::answer_task::Inputs{session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; do not add qualifications or details. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
+    let suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
     if suggestion["text"]
         .as_str()
         .is_none_or(|text| text.chars().any(char::is_control))
@@ -293,6 +293,32 @@ mod tests {
             .iter()
             .any(|(id, _, _)| id == "expired" || id == "task-0"));
         assert!(saved.iter().any(|(id, _, _)| id == "task-16"));
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_long_template_context_retains_selected_passage() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let passage = "Designed accessible interfaces for screen-reader users.";
+        let mut request = input_with_passage(passage, passage);
+        request.listing = "Frontend role: create accessible web interfaces. ".repeat(160);
+        request.instructions = "Write concisely and avoid embellishment. ".repeat(50);
+        request.facts = (0..25)
+            .map(|i| format!("Fictional task {i}: maintained a web interface."))
+            .collect();
+        let result = suggest(&mut model, request).unwrap();
+        println!("fictional long-template suggestion: {result}");
+        assert_eq!(result["selection"]["selected_passage_retained"], true);
+        assert_eq!(result["selection"]["draft_listing_truncated"], true);
+        assert_eq!(result["selection"]["draft_instructions_truncated"], true);
     }
 
     #[test]

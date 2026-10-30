@@ -525,3 +525,11 @@ three separate checks and marked an invented management claim unsupported;
 fixture tests also covered partial failure and the interface message. This is
 not proof of factual accuracy, and edits after generation remain outside the
 check.
+
+Template rewrite suggestions now use bounded fact selection and prompt inputs,
+while always retaining the user-selected passage as an explicitly unverified
+source. The interface reports selection and truncation limits. A fictional
+local-model test with a long listing and 25 facts produced a rewrite; one
+selection batch failed and the reported fallback was used. A separate vague
+fictional passage produced no answer and was left for manual review. These
+checks do not establish that rewritten claims are accurate or complete.
