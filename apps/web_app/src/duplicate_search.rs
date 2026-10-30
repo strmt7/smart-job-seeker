@@ -22,11 +22,21 @@ struct SearchResult {
     unexamined: usize,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+pub fn pending() -> Result<Value, String> {
+    let task = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
+    Ok(match task.as_ref() {
+        Some(task) => {
+            json!({"active":true,"task_id":task.id,"job_id":task.input.job_id,"finished":task.result.is_some()})
+        }
+        None => json!({"active":false}),
+    })
+}
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
-    if task.as_ref().is_some_and(|t| t.result.is_none()) {
-        return Err("A duplicate search is already running".into());
+    if task.is_some() {
+        return Err("A duplicate search is running or awaiting its result".into());
     }
     let job_id = input.job_id.clone();
     let target = input.target.clone();
@@ -63,12 +73,17 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     Ok(())
 }
 pub fn poll(id: &str) -> Result<Value, String> {
-    let mut tasks = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Duplicate search not found")?;
-    let Some(result) = task.result.take() else {
+    let tasks = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
+    let Some(task) = tasks.as_ref().filter(|t| t.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Duplicate search unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| "Duplicate search not found".into());
+    };
+    let Some(result) = task.result.as_ref() else {
         return Ok(json!({"status":"running"}));
     };
     let (job, digest, count, truncated) = (
@@ -77,13 +92,30 @@ pub fn poll(id: &str) -> Result<Value, String> {
         task.input.candidates.len(),
         task.input.truncated,
     );
-    *tasks = None;
     Ok(match result {
         Ok(result) => {
             json!({"status":"complete","job_id":job,"digest":digest,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"truncated":truncated,"matches":result.matches})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
+}
+pub fn complete(id: &str, result: Value) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
+    let mut completed = COMPLETED
+        .lock()
+        .map_err(|_| "Duplicate search unavailable")?;
+    if tasks
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.result.is_some())
+    {
+        *completed = Some((id.to_owned(), result));
+        *tasks = None;
+        Ok(())
+    } else if completed.as_ref().is_some_and(|(task_id, _)| task_id == id) {
+        Ok(())
+    } else {
+        Err("Duplicate search not found or still running".into())
+    }
 }
 fn search(
     model: &mut dyn Inference,
@@ -171,6 +203,7 @@ fn validate(
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+    static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
     struct Fake;
     impl Inference for Fake {
         fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
@@ -211,6 +244,65 @@ mod tests {
         let result = search(&mut Fake, "Research group", &candidates).unwrap();
         assert_eq!(result.matches[0]["id"], "id");
         assert_eq!(result.examined, 1);
+    }
+
+    #[test]
+    fn api_retries_uncollected_results_and_replays_saved_candidates() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let add = |ws: &mut waypoint_workspace::Workspace, url, title| {
+            let added = crate::manual_job::add(
+                ws,
+                &json!({"url":url,"title":title,"employer":"Fictional Example Labs"}),
+                1,
+            )
+            .unwrap();
+            waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap()
+        };
+        let first = add(&mut ws, "https://example.org/a", "Nurse");
+        let second = add(&mut ws, "https://example.org/b", "Research scientist");
+        let input = crate::duplicate_search_inputs(&ws, &first).unwrap();
+        assert!(input.candidates.iter().any(|(id, _)| id == second.as_str()));
+        *TASK.lock().unwrap() = Some(Task {
+            id: "retry-fixture".into(),
+            input,
+            result: Some(Ok(SearchResult {
+                matches: vec![
+                    json!({"id":second.as_str(),"reason":"Fixture","target_excerpt":"Nurse","candidate_excerpt":"Research scientist"}),
+                ],
+                examined: 1,
+                failed_batches: 0,
+                unexamined: 0,
+            })),
+        });
+        assert_eq!(pending().unwrap()["finished"], true);
+        assert_eq!(
+            poll("retry-fixture").unwrap(),
+            poll("retry-fixture").unwrap()
+        );
+        let call = |ws: &mut waypoint_workspace::Workspace| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"task_id":"retry-fixture"}).to_string();
+            write!(client, "POST /api/duplicates/search-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let first_result = call(&mut ws);
+        assert_eq!(first_result["added"], 1);
+        assert_eq!(first_result["saved"], true);
+        assert_eq!(pending().unwrap()["active"], false);
+        assert_eq!(call(&mut ws), first_result);
+        assert!(ws.has_duplicate_hold(&first).unwrap());
+        assert!(ws.has_duplicate_hold(&second).unwrap());
+        *COMPLETED.lock().unwrap() = None;
     }
 
     #[test]

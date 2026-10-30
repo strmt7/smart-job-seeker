@@ -406,3 +406,11 @@ requisition (including different titles) and leaving two unrelated roles out.
 This is one small fixture; model omissions, incorrect matches, the employer
 neighbor filter and its candidate cap remain limitations. Every flagged pair
 still requires user review.
+
+Completed AI duplicate searches now remain available until the result has been
+saved or rejected as stale. The interface can resume a pending search after a
+request interruption, and the last saved response can be replayed without
+inserting duplicate pairs. A fictional local API fixture checked repeated
+polling, saving and replay after the saved pairs changed the neighbor set.
+Pending task state and the replay are in memory only and do not survive an app
+restart; this does not establish model accuracy or eliminate duplicate jobs.

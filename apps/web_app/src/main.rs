@@ -1327,6 +1327,9 @@ fn serve(
                 json!({"configured":selected.to_string_lossy(),"restart_required":true}),
             );
         }
+        "/api/duplicates/search-pending" => {
+            json_reply(stream, "200 OK", duplicate_search::pending()?);
+        }
         "/api/duplicates/search-start" => {
             let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job")?)
                 .map_err(|e| e.to_string())?;
@@ -1344,7 +1347,7 @@ fn serve(
         "/api/duplicates/search-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             let mut result = duplicate_search::poll(id)?;
-            if result["status"] == "complete" {
+            if result["status"] == "complete" && result["saved"] != true {
                 let job = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job")?)
                     .map_err(|e| e.to_string())?;
                 let input = duplicate_search_inputs(ws, &job)?;
@@ -1360,11 +1363,17 @@ fn serve(
                         let reason=format!("Local AI flagged a possible duplicate (review required): {}. Listing excerpts: {} / {}",item["reason"].as_str().unwrap_or(""),item["target_excerpt"].as_str().unwrap_or(""),item["candidate_excerpt"].as_str().unwrap_or(""));
                         flagged.push((candidate.to_owned(), reason));
                     }
-                    let added = ws
-                        .add_ai_duplicates(&job, &flagged)
-                        .map_err(|e| e.to_string())?;
+                    let added = ws.add_ai_duplicates(&job, &flagged).map_err(|e| {
+                        format!(
+                            "Could not save duplicate candidates; retry this search result: {e}"
+                        )
+                    })?;
                     result["added"] = json!(added);
+                    result["saved"] = json!(true);
                 }
+            }
+            if result["status"] != "running" {
+                duplicate_search::complete(id, result.clone())?;
             }
             json_reply(stream, "200 OK", result);
         }
