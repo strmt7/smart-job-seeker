@@ -22,10 +22,15 @@ jobs:
           node --check apps/web_app/web/app.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/visual-review-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/letter-export-recovery-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/template-edit-recovery-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/application-check-recovery-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/draft-recovery-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/visual-dense-retry-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/partial-fill-visual-ui.test.js
@@ -33,6 +38,10 @@ jobs:
           node apps/web_app/tests/search-coverage-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/fit-badge-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/fit-split-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/fit-dimensions-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/attachment-name-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

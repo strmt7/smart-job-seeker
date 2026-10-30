@@ -9,11 +9,12 @@ function checkDraftFraming(){
  const line=source.split('\n').find(item=>item.startsWith('function showLetter('));
  const evidence=source.split('\n').find(item=>item.startsWith('function showDocumentEvidence('));
  const selection=source.split('\n').find(item=>item.startsWith('function draftSelectionSummary('));
+ const selected=source.split('\n').find(item=>item.startsWith('function selectedFactsDetails('));
  assert.ok(line);
- assert.ok(evidence && selection);
+ assert.ok(evidence && selection && selected);
  const children=[], panel={replaceChildren(...items){children.push(...items);},append(...items){children.push(...items);}};
  const make=(tag,text='')=>({tag,text,value:'',setAttribute(){},addEventListener(){}});
- const show=vm.runInNewContext(`${evidence}\n${selection}\n${line}; showLetter`,{setWorkspaceView(){},document:{querySelector:()=>panel,createElement:make},element:make});
+ const show=vm.runInNewContext(`${evidence}\n${selection}\n${selected}\n${line}; showLetter`,{setWorkspaceView(){},document:{querySelector:()=>panel,createElement:make},element:make});
  const body={paragraphs:[{text:'I used Python.',facts:[1]}],facts:['Used Python'],notice:'Review',kind:'cover_letter',template_used:false,framing:{opening:'I am applying for the Scientist position at Example Lab.',closing:'Thank you for considering my application.'}};
  show({id:'fixture',title:'Scientist',employer:'Example Lab'},body,'fixture');
  assert.equal(children.find(item=>item.tag==='textarea').value,'I am applying for the Scientist position at Example Lab.\n\nI used Python.\n\nThank you for considering my application.');

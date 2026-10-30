@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Web UI checks in CI — 2026-10-30
+
+- CI now stops immediately when each of the first six web review checks fails, instead of allowing a later Node command to overwrite the failure exit code. It also runs the fit split and dimension checks. Enabling proper gating exposed a stale export-recovery fixture that did not include the selected-facts rendering helper; the fixture now loads the actual helper. All nine affected Node checks passed locally. This does not prove the hosted workflow or unrelated checks pass.
+
 ## Windows package copy verification — 2026-10-30
 
 - The per-user installer includes hidden files when copying and verifies the installed executable, OpenSSL DLL and inventoried Python and LibreOffice files before creating a shortcut or reporting success. The additional hash pass increases installation time. A fictional Windows installer fixture reproduced the previous hidden-file omission and passed after the change; it also simulated post-copy dependency corruption and confirmed that installation fails instead of reporting success. A complete package on a clean Windows host was not exercised.
