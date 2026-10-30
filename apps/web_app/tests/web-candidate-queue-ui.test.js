@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('async function runCandidateBatch()'),end=source.indexOf('\ndocument.querySelector(\'#candidate-batch-start\')',start);
+assert.ok(start>=0&&end>start);
+const node=()=>({textContent:'',replaceChildren(){},append(){}}),nodes=new Map();
+let active=0,maxActive=0,started=0,finished=0;
+const context={candidateBatch:{items:Array.from({length:100},(_,i)=>({url:`https://example.test/${i}`,title:`Role ${i}`})),index:0,phase:'listing',task:null,job:null,events:[],stop:false,verify:false},candidateBatchRunning:false,applicationChecks:new Map(),selectedCandidates:new Map(),renderCandidateBatch(){},saveCandidateBatch(){},updateCandidateSelection(){},refresh:async()=>{},setTimeout:fn=>fn(),element:node,document:{querySelector:key=>{if(!nodes.has(key))nodes.set(key,node());return nodes.get(key);}},api:async(path)=>{if(path.endsWith('/start')){active++;maxActive=Math.max(maxActive,active);return {task_id:`task-${++started}`};}active--;finished++;return {status:'complete',saved:{id:`job-${finished}`,existing:false},capture:{saved:true,complete:true,structured_source:'captured'}};}};
+const run=vm.runInNewContext(`${source.slice(start,end)}\nrunCandidateBatch`,context);
+(async()=>{await run();assert.equal(started,100);assert.equal(finished,100);assert.equal(maxActive,1);assert.equal(active,0);assert.match(nodes.get('#candidate-batch-status').textContent,/Finished: 100 of 100/);console.log('Bounded candidate inspection queue checks passed.');})().catch(e=>{console.error(e);process.exitCode=1;});

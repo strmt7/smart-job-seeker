@@ -649,3 +649,13 @@ change hard constraints from these strings. A fictional browser DOM fixture,
 source-parser and endpoint tests, and a mocked UI check covered the dates and
 provenance; no external listing was used. Dates remain unavailable when the
 site does not provide a usable structured JobPosting capture.
+
+The wider-web candidate queue now accepts up to 100 selected links per run,
+with page-level select and clear controls for the paged batch results. It still
+inspects one listing or application page at a time, observes the existing
+source policy, and can stop after the current page. A mocked 100-item queue
+checked that no more than one inspection was active; UI tests covered selecting
+three pages, the cap and clearing selection. The queue depends on the open UI
+and its recoverable session state; it does not establish that candidates are
+live vacancies or that application pages are usable. No external pages were
+opened in these tests.
