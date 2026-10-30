@@ -379,6 +379,20 @@ fn capture_listing(
     ListingCapture { metadata, segments }
 }
 
+fn listing_frame_warnings(walls: &[String]) -> Result<Vec<String>, String> {
+    let mut warnings = Vec::new();
+    for wall in walls {
+        if wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+            || wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW
+        {
+            warnings.push(wall.clone());
+        } else {
+            return Err("The page needs sign-in, CAPTCHA or manual review".into());
+        }
+    }
+    Ok(warnings)
+}
+
 pub fn start(id: String, url: String) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Listing inspection unavailable")?;
     if tasks.is_some() {
@@ -399,10 +413,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
             let mut browser =
                 waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
             let page = browser.open(&url).map_err(|e| e.to_string())?;
-            if page.walls.iter().any(|wall| wall != waypoint_browser::UNINSPECTED_FRAME_REVIEW) {
-                return Err("The page needs sign-in, CAPTCHA or manual review".into());
-            }
-            let uninspected_frame = page.walls.iter().any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW);
+            let frame_warnings = listing_frame_warnings(&page.walls)?;
             let current = browser.current_url().map_err(|e| e.to_string())?;
             let original = url::Url::parse(&url).map_err(|_| "Invalid URL")?;
             let reached = url::Url::parse(&current).map_err(|_| "Invalid destination")?;
@@ -421,11 +432,11 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 job["page_text_truncated"]=json!(truncated);
                 job
             };
-            if uninspected_frame {
+            if !frame_warnings.is_empty() {
                 if job["extraction_warnings"].as_array().is_none() {
                     job["extraction_warnings"] = json!([]);
                 }
-                job["extraction_warnings"].as_array_mut().expect("warnings array").push(json!(waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+                job["extraction_warnings"].as_array_mut().expect("warnings array").extend(frame_warnings.into_iter().map(Value::String));
             }
             let capture=capture_listing(&mut browser,&url,&current,&scripts);
             Ok(InspectedListing { job, capture })
@@ -486,6 +497,16 @@ pub fn complete(id: &str, value: Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn listing_keeps_frame_warnings_but_stops_on_captcha() {
+        let walls = vec![
+            waypoint_browser::UNINSPECTED_FRAME_REVIEW.to_owned(),
+            waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW.to_owned(),
+        ];
+        assert_eq!(super::listing_frame_warnings(&walls).unwrap(), walls);
+        assert!(super::listing_frame_warnings(&["captcha present".into()]).is_err());
+    }
+
     use super::*;
 
     #[test]

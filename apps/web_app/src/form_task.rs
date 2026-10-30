@@ -5,6 +5,62 @@ use waypoint_applications::driver::BrowserDriver;
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_inference::OllamaInference;
 
+#[cfg(test)]
+pub(crate) struct CrossOriginFixture {
+    pub url: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(test)]
+impl Drop for CrossOriginFixture {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn cross_origin_form_fixture() -> CrossOriginFixture {
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let child = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let parent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let child_port = child.local_addr().unwrap().port();
+    let parent_port = parent.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut threads = vec![];
+    for (listener, body) in [(child, "<form><label>Name <input name='name'></label></form>".to_owned()), (parent, format!("<iframe title='Fictional form' src='http://127.0.0.1:{child_port}/'></iframe><a href='#apply'>Apply elsewhere</a>"))] {
+        listener.set_nonblocking(true).unwrap();
+        let stop = stop.clone();
+        threads.push(std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(300)));
+                        let mut request = [0u8; 2048]; let _ = stream.read(&mut request);
+                        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(std::time::Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+        }));
+    }
+    CrossOriginFixture {
+        url: format!("http://127.0.0.1:{parent_port}/"),
+        stop,
+        threads,
+    }
+}
+
 pub(crate) fn has_upload_control(
     fields: &[waypoint_applications::form_mapping::FormField],
 ) -> bool {
@@ -651,6 +707,25 @@ mod tests {
             ]
         );
         assert!(has_main_fields_and_embedded_content(&page));
+    }
+
+    #[test]
+    #[ignore = "starts one local browser against a fictional inaccessible form"]
+    fn inaccessible_embedded_form_does_not_follow_another_link() {
+        let fixture = cross_origin_form_fixture();
+        let url = fixture.url.clone();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let (page, _) = open_application_page(&mut driver, &url).unwrap();
+        assert!(page.schema.fields.is_empty());
+        assert!(page
+            .walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
+        assert_eq!(driver.current_url().unwrap(), url);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
     }
 
     #[test]

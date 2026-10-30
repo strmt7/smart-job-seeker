@@ -40,6 +40,10 @@ use cdp::{BrowserProcess, Cdp, CdpError};
 pub const UNINSPECTED_FRAME_REVIEW: &str =
     "An embedded frame may contain uninspected application content; review it manually";
 
+/// A visible frame outside the page's access boundary appears to contain form controls.
+pub const INACCESSIBLE_FRAME_FORM_REVIEW: &str =
+    "An inaccessible embedded frame may contain form controls; review it manually";
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -698,10 +702,10 @@ impl CdpDriver {
         Ok((visible, path.to_owned(), available))
     }
 
-    /// Whether the embedding document can access this frame and it is rendered.
-    fn accessible_visible_frame(&mut self, node: u64) -> Result<bool, DriverError> {
+    /// None means hidden; otherwise report whether the embedding document can access it.
+    fn frame_access(&mut self, node: u64) -> Result<Option<bool>, DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
-            return Ok(false);
+            return Ok(None);
         }
         let model = self
             .cdp
@@ -718,7 +722,7 @@ impl CdpDriver {
                 .unwrap_or(0.0)
                 <= 0.0
         {
-            return Ok(false);
+            return Ok(None);
         }
         let resolved = self
             .cdp
@@ -737,7 +741,13 @@ impl CdpDriver {
             .call("Runtime.releaseObject", json!({"objectId":object}));
         let result = result.map_err(derr)?;
         released.map_err(derr)?;
-        Ok(result.pointer("/result/value").and_then(Value::as_bool) == Some(true))
+        Ok(Some(
+            result.pointer("/result/value").and_then(Value::as_bool) == Some(true),
+        ))
+    }
+
+    fn accessible_visible_frame(&mut self, node: u64) -> Result<bool, DriverError> {
+        Ok(self.frame_access(node)? == Some(true))
     }
 
     /// Read the main document and a bounded number of accessible embedded documents.
@@ -781,7 +791,61 @@ impl CdpDriver {
                     if started.elapsed() > Duration::from_secs(8) {
                         return Err(DriverError("Embedded form inspection exceeded its time budget; manual review is needed".into()));
                     }
-                    if !self.accessible_visible_frame(frame_id)? {
+                    let access = self.frame_access(frame_id)?;
+                    if access == Some(false) {
+                        let mut has_controls = false;
+                        walk(&document, false, &mut |node, _| {
+                            if node.get("backendNodeId").and_then(Value::as_u64)
+                                == Some(frame_backend)
+                            {
+                                if let Some(child) = node.get("contentDocument") {
+                                    walk_with_visibility(
+                                        child,
+                                        false,
+                                        false,
+                                        &mut |field, _, hidden| {
+                                            let tag = field
+                                                .get("nodeName")
+                                                .and_then(Value::as_str)
+                                                .unwrap_or("");
+                                            if !hidden
+                                                && (tag.eq_ignore_ascii_case("input")
+                                                    || tag.eq_ignore_ascii_case("textarea")
+                                                    || tag.eq_ignore_ascii_case("select"))
+                                            {
+                                                let attrs = attributes(field);
+                                                let non_answer =
+                                                    attrs.get("type").is_some_and(|kind| {
+                                                        matches!(
+                                                            kind.to_ascii_lowercase().as_str(),
+                                                            "hidden"
+                                                                | "submit"
+                                                                | "button"
+                                                                | "reset"
+                                                                | "image"
+                                                        )
+                                                    });
+                                                if !non_answer {
+                                                    has_controls = true;
+                                                }
+                                            }
+                                            true
+                                        },
+                                    );
+                                }
+                            }
+                            true
+                        });
+                        if has_controls
+                            && !walls
+                                .iter()
+                                .any(|wall| wall == INACCESSIBLE_FRAME_FORM_REVIEW)
+                        {
+                            walls.push(INACCESSIBLE_FRAME_FORM_REVIEW.into());
+                        }
+                        continue;
+                    }
+                    if access != Some(true) {
                         continue;
                     }
                     let mut child = None;

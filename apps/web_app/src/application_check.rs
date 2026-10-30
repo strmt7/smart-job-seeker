@@ -470,7 +470,19 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                     .iter()
                     .all(|wall| crate::form_preview::is_custom_review(wall))
             {
-                let (summary, _) = classify_fields(&page.schema.fields, followed);
+                let (summary, _) = if page.schema.fields.is_empty()
+                    && page
+                        .walls
+                        .iter()
+                        .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW)
+                {
+                    (
+                        "An inaccessible embedded frame may contain form controls.".to_owned(),
+                        true,
+                    )
+                } else {
+                    classify_fields(&page.schema.fields, followed)
+                };
                 (
                     format!(
                         "{summary} Some custom controls or embedded content need manual review."
@@ -1413,6 +1425,39 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one browser using a fictional inaccessible embedded form"]
+    fn application_check_reports_inaccessible_form_for_manual_review() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let fixture = crate::form_task::cross_origin_form_fixture();
+        let url = fixture.url.clone();
+        super::start(
+            "fixture-inaccessible".into(),
+            "fictional-job".into(),
+            url,
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some((_, _, message, review)) = poll("fixture-inaccessible").unwrap() {
+                assert!(review);
+                assert!(
+                    message.contains("inaccessible embedded frame may contain form controls"),
+                    "{message}"
+                );
+                assert!(
+                    !message.contains("after opening an application link"),
+                    "{message}"
+                );
+                acknowledge("fixture-inaccessible").unwrap();
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     #[test]

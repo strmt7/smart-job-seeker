@@ -56,6 +56,7 @@ impl FormPreview {
 // Unsupported custom questions remain review obligations; other walls block.
 pub(crate) fn is_custom_review(reason: &str) -> bool {
     reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+        || reason == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW
         || reason == "an unavailable field needs manual review"
         || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
@@ -668,6 +669,9 @@ mod tests {
         ));
         assert!(is_custom_review("an unavailable field needs manual review"));
         assert!(is_custom_review(waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+        assert!(is_custom_review(
+            waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW
+        ));
         assert!(!is_custom_review(
             "a required field is disabled or read-only"
         ));

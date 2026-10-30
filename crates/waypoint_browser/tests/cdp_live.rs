@@ -978,6 +978,106 @@ fn visible_embedded_form_can_be_filled_with_review_and_rejects_stale_scope() {
 }
 
 #[test]
+#[ignore = "launches a real browser against fictional inaccessible frames"]
+fn sandboxed_out_of_process_frame_stays_uninspected() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver
+        .open(&file_url("form_inaccessible_frame.html"))
+        .unwrap();
+    assert!(page.schema.fields.is_empty());
+    // Sandboxed out-of-process content may not be present in the parent DOM.
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+    assert!(!page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#hide-unavailable".into(),
+        })
+        .unwrap();
+    let hidden = driver.inspect_current().unwrap();
+    assert!(!hidden
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser and two fictional local origins"]
+fn inaccessible_same_site_cross_origin_form_is_detected_without_fields() {
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let child = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let parent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let child_port = child.local_addr().unwrap().port();
+    let parent_port = parent.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut threads = vec![];
+    for (listener, body) in [(child, "<form><label>Name <input name='name'></label></form>".to_owned()), (parent, format!("<iframe id='frame' src='http://127.0.0.1:{child_port}/'></iframe><button id='hide' type='button' onclick=\"document.getElementById('frame').style.display='none'\">Hide</button>"))] {
+        listener.set_nonblocking(true).unwrap();
+        let stop = stop.clone();
+        threads.push(std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(300)));
+                        let mut request = [0u8; 2048]; let _ = stream.read(&mut request);
+                        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(std::time::Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+        }));
+    }
+    let outcome = std::panic::catch_unwind(|| {
+        let mut driver = CdpDriver::launch(vec![]).unwrap();
+        let page = driver
+            .open(&format!("http://127.0.0.1:{parent_port}/"))
+            .unwrap();
+        assert!(page.schema.fields.is_empty());
+        assert!(
+            page.walls
+                .iter()
+                .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW),
+            "{:?}",
+            page.walls
+        );
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#hide".into(),
+            })
+            .unwrap();
+        assert!(!driver
+            .inspect_current()
+            .unwrap()
+            .walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
+    });
+    stop.store(true, Ordering::Relaxed);
+    for thread in threads {
+        thread.join().unwrap();
+    }
+    if let Err(error) = outcome {
+        std::panic::resume_unwind(error);
+    }
+}
+
+#[test]
 #[ignore = "launches a real browser against a fictional nested embedded form"]
 fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

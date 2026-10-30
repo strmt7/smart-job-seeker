@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Detectable inaccessible embedded forms — 2026-10-30
+
+- When the browser protocol exposes a visible frame document that the embedding page cannot access, Waypoint can flag apparent form controls without offering those fields for autofill. Application inspection keeps that page for manual review rather than automatically following an alternate link. Listing extraction retains the frame warnings while CAPTCHA and other blocking walls still stop extraction.
+- Fictional local tests exercised separate origins on the same host, the application-check and form-inspection paths, and a sandboxed process-isolated frame. Process-isolated frames whose DOM is absent from the parent protocol session remain uninspected and may still be indistinguishable from decorative content; no cross-origin filling was added and no live site was tested.
+
 ## Preference warnings on job match badges — 2026-10-30
 
 - Job-list estimates now indicate a possible preference conflict or that preferences need review when the preference audit, comparison, limits, or unknown judgments leave a gap. This is a cue to inspect the assessment, not proof that the model found every preference. Current saved assessments have this cue recomputed on read; the batch response carries only the status, not the user's instruction text.
