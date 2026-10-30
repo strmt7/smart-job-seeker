@@ -2084,6 +2084,52 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_job_fit_semantic_candidate_comparison() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let listing = "Fictional platform engineer. Required: hands-on PostgreSQL query optimization and experience mentoring engineers. Preferred: Kubernetes operations.";
+        let relevant = vec![
+            "Investigated slow PostgreSQL queries and improved their execution plans".into(),
+            "Coached junior software engineers through regular code reviews".into(),
+            "Administered Kubernetes clusters for production services".into(),
+        ];
+        let unrelated = vec!["Scheduled interviews and managed office supplies".into()];
+        let strong = assess(&mut model, &relevant, "", listing).unwrap();
+        let weak = assess(&mut model, &unrelated, "", listing).unwrap();
+        println!("Relevant fictional candidate: {strong}");
+        println!("Unrelated fictional candidate: {weak}");
+        assert!(
+            strong["score"].as_u64().unwrap() > weak["score"].as_u64().unwrap(),
+            "relevant candidate should score above unrelated candidate"
+        );
+        assert!(
+            weak["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["status"] == "unknown"),
+            "unrelated facts do not prove a qualification or its absence"
+        );
+        assert!(
+            strong["rubric"].as_array().unwrap().iter().any(|item| {
+                item["excerpt"]
+                    .as_str()
+                    .is_some_and(|s| s.to_lowercase().contains("mentoring"))
+                    && item["status"] == "supported"
+            }),
+            "coaching through code reviews should support mentoring: {strong}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_job_fit_order_sensitivity_on_fictional_listings() {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
