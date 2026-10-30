@@ -21,6 +21,7 @@ pub struct JournalEntry {
 #[derive(Debug, Default)]
 pub struct SubmissionJournal {
     entries: Vec<JournalEntry>,
+    states: std::collections::HashMap<String, ApplicationState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +41,7 @@ impl SubmissionJournal {
     }
 
     pub fn append(&mut self, entry: JournalEntry) -> Result<(), JournalError> {
-        let last = self.entries.last().map(|e| e.state);
+        let last = self.states.get(&entry.application_id).copied();
         if let Some(from) = last {
             if !from.may_transition_to(entry.state) {
                 return Err(JournalError::IllegalTransition {
@@ -60,16 +61,14 @@ impl SubmissionJournal {
                 return Err(JournalError::AutoRetryAfterWriteBoundary);
             }
         }
+        self.states
+            .insert(entry.application_id.clone(), entry.state);
         self.entries.push(entry);
         Ok(())
     }
 
     pub fn state_of(&self, application_id: &str) -> Option<ApplicationState> {
-        self.entries
-            .iter()
-            .rev()
-            .find(|e| e.application_id == application_id)
-            .map(|e| e.state)
+        self.states.get(application_id).copied()
     }
 
     pub fn entries_for(&self, application_id: &str) -> Vec<&JournalEntry> {
@@ -181,5 +180,49 @@ mod tests {
         .unwrap();
         assert_eq!(j.state_of("a1"), Some(ApplicationState::Confirmed));
         assert_eq!(j.entries_for("a1").len(), 3);
+    }
+
+    #[test]
+    fn interleaved_applications_keep_independent_transitions_and_retry_guards() {
+        let mut journal = SubmissionJournal::new();
+        journal
+            .append(entry("a", ApplicationState::Prepared, "prepared"))
+            .unwrap();
+        journal
+            .append(entry("b", ApplicationState::Discovered, "discovered"))
+            .unwrap();
+        journal
+            .append(entry("a", ApplicationState::Approved, "user_approved"))
+            .unwrap();
+        journal
+            .append(entry(
+                "b",
+                ApplicationState::Shortlisted,
+                "user_shortlisted",
+            ))
+            .unwrap();
+        journal
+            .append(entry("a", ApplicationState::Submitting, "write_started"))
+            .unwrap();
+        journal
+            .append(entry("b", ApplicationState::Prepared, "prepared"))
+            .unwrap();
+        journal
+            .append(entry("a", ApplicationState::Uncertain, "timeout"))
+            .unwrap();
+        journal
+            .append(entry("b", ApplicationState::Approved, "user_approved"))
+            .unwrap();
+        assert_eq!(
+            journal.append(entry("a", ApplicationState::Approved, "auto_retry")),
+            Err(JournalError::AutoRetryAfterWriteBoundary)
+        );
+        assert_eq!(journal.state_of("a"), Some(ApplicationState::Uncertain));
+        assert_eq!(journal.state_of("b"), Some(ApplicationState::Approved));
+        journal
+            .append(entry("b", ApplicationState::Submitting, "write_started"))
+            .unwrap();
+        assert_eq!(journal.entries_for("a").len(), 4);
+        assert_eq!(journal.entries_for("b").len(), 5);
     }
 }

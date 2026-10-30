@@ -270,6 +270,9 @@ const MIGRATIONS: &[&str] = &[
        WHERE c.status='bounded' AND length(CAST(trim(j.requisition_id) AS BLOB))>=3
      );
      UPDATE meta SET value='27' WHERE key='schema_version';",
+    // v28 — keep per-application history lookup bounded as other jobs accumulate.
+    "CREATE INDEX submission_journal_application_seq ON submission_journal(application_id,seq);
+     UPDATE meta SET value='28' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1239,6 +1242,35 @@ mod tests {
         let rows = s.journal_entries("app-1").unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].reason, "write_started", "history is intact");
+    }
+
+    #[test]
+    fn journal_index_migration_preserves_interleaved_history() {
+        let conn = Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &MIGRATIONS[..27] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute_batch("INSERT INTO submission_journal(application_id,state,timestamp,reason) VALUES ('a','\"approved\"','1','review'),('b','\"approved\"','2','review'),('a','\"submitting\"','3','write_started');").unwrap();
+        let store = Store::migrate(conn).unwrap();
+        let history = store.journal_entries("a").unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].reason, "review");
+        assert_eq!(history[1].reason, "write_started");
+        let plan: String = store.conn.query_row("EXPLAIN QUERY PLAN SELECT application_id,state,timestamp,reason FROM submission_journal WHERE application_id=?1 ORDER BY seq ASC", ["a"], |row| row.get(3)).unwrap();
+        assert!(
+            plan.contains("submission_journal_application_seq"),
+            "{plan}"
+        );
+        assert!(store
+            .conn
+            .execute(
+                "DELETE FROM submission_journal WHERE application_id='a'",
+                []
+            )
+            .is_err());
     }
 
     #[test]

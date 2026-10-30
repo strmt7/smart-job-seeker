@@ -730,3 +730,13 @@ autocomplete; an application-check fixture confirmed that other fields are
 reported without mislabelling the custom control as a CAPTCHA. These controls
 are not automatically selected, and custom widgets without these signals can
 still be missed. No employer site or application submission was used.
+
+The in-memory submission journal now validates transitions against the last
+entry for the same application, rather than the last entry globally. An
+interleaved fictional test verifies independent state transitions and that an
+uncertain write still cannot be retried automatically. The durable workspace
+already retrieves journal entries per application; migration v28 adds an index
+for those lookups without altering prior migrations. Tests exercised a v27-to-v28
+upgrade, preserved history and append-only triggers, and confirmed SQLite used
+the new index, both with bundled SQLite and SQLCipher. This is not a performance
+benchmark or proof of real-world submission behaviour. No application was sent.
