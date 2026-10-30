@@ -529,9 +529,18 @@ fn read_fit_with_context(
             let (facts, instructions) = context.as_ref().ok_or("Candidate context unavailable")?;
             let (_, _, digest) = fit_assessment_digest(ws, job_id, facts, instructions)?;
             if value["input_digest"].as_str() == Some(digest.as_str()) {
-                Ok(
-                    json!({"status":"current","assessment":value["assessment"],"model":value["model"]}),
-                )
+                let mut assessment = value["assessment"].clone();
+                if !assessment.is_object() {
+                    return Err("Stored assessment is invalid".into());
+                }
+                let coverage =
+                    if assessment["preference_audit"].is_null() && instructions.trim().is_empty() {
+                        "not_requested"
+                    } else {
+                        fit_task::preference_coverage(&assessment)
+                    };
+                assessment["preference_coverage"] = json!(coverage);
+                Ok(json!({"status":"current","assessment":assessment,"model":value["model"]}))
             } else {
                 Ok(json!({"status":"stale"}))
             }
@@ -2124,7 +2133,7 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
-                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"]})
+                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"]})
                     }
                     Ok(value) => json!({"id":id.as_str(),"status":value["status"]}),
                     Err(_) => json!({"id":id.as_str(),"status":"unavailable"}),
@@ -5968,10 +5977,54 @@ mod tests {
         let saved = json!({"input_digest":digest,"assessment":{"score":73},"model":"fixture"});
         ws.save_fit_assessment(&id, saved.to_string().as_bytes())
             .unwrap();
-        assert_eq!(read_fit(&ws, &id).unwrap()["status"], "current");
+        let current = read_fit(&ws, &id).unwrap();
+        assert_eq!(current["status"], "current");
+        assert_eq!(
+            current["assessment"]["preference_coverage"],
+            "not_requested"
+        );
         ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
             .unwrap();
         assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
+    }
+
+    #[test]
+    fn fit_batch_reports_recomputed_preference_conflict_without_preference_text() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/fictional-role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.save_candidate_profile(
+            &json!({"instructions":"Fictional remote-only preference"}).to_string(),
+        )
+        .unwrap();
+        let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
+        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","status":"contradicted","excerpt":"Fictional remote-only preference"}]});
+        ws.save_fit_assessment(
+            &id,
+            json!({"input_digest":digest,"assessment":assessment,"model":"fixture"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"ids":[id.as_str()]}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/fit/batch HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let json: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(
+            json["results"][0]["preference_coverage"],
+            "possible_conflict"
+        );
+        assert!(!response.contains("Fictional remote-only preference"));
     }
 
     #[cfg(windows)]

@@ -10,8 +10,11 @@ assert.equal(label(75, {lower: 75, upper: 75}), '75% AI estimate · 75–75% ran
 assert.equal(label(55, null), '55% AI estimate · range unavailable');
 assert.equal(label(55, {lower: 60, upper: 100}), '55% AI estimate · range unavailable');
 assert.equal(label(-1, {lower: 0, upper: 100}), 'Estimate unavailable');
-assert.ok(source.includes('fitBadgeLabel(item.score,item.score_range)'), 'batch badges must use their stored range');
-assert.ok(source.includes('fitBadgeLabel(score,result.assessment?.score_range)'), 'new assessments must use their range');
+assert.match(label(75,{lower:50,upper:100},'needs_review'), /check preferences/);
+assert.match(label(75,{lower:50,upper:100},'possible_conflict'), /possible preference conflict/);
+assert.doesNotMatch(label(75,{lower:50,upper:100},'included'), /check preferences|conflict/);
+assert.ok(source.includes('fitBadgeLabel(item.score,item.score_range,item.preference_coverage)'), 'batch badges must use their stored range');
+assert.ok(source.includes('fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage)'), 'new assessments must use their range');
 const scoreLine = source.split('\n').find(value => value.startsWith('function fitRubricScore('));
 assert.ok(scoreLine, 'temporary correction calculation must exist');
 const calculate = vm.runInNewContext(`(${scoreLine})`);

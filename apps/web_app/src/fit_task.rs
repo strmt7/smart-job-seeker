@@ -703,6 +703,7 @@ fn assess_with_source(
                         );
                         assessment["requirement_audit"] = completeness;
                         assessment["preference_audit"] = preference_audit;
+                        assessment["preference_coverage"] = json!(preference_coverage(&assessment));
                         assessment["redundancy_review"] =
                             review_redundant_criteria(model, &assessment, listing);
                         return Ok(assessment);
@@ -717,6 +718,48 @@ fn assess_with_source(
     Err(format!(
         "Assessment could not be validated after one repair: {last_error}"
     ))
+}
+
+/// Summarize evidence gaps for the job-list badge without claiming that a
+/// model extracted every user preference or interpreted it correctly.
+pub(crate) fn preference_coverage(assessment: &Value) -> &'static str {
+    let audit = &assessment["preference_audit"];
+    let rubric = assessment["rubric"].as_array();
+    if rubric.is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| item["source"] == "preference" && item["status"] == "contradicted")
+    }) {
+        return "possible_conflict";
+    }
+    if audit["status"] == "no_instructions" {
+        return "not_requested";
+    }
+    let clean_audit = audit["status"] == "completed"
+        && audit["instructions_truncated"] == false
+        && audit["criterion_limit_reached"] == false
+        && audit["audit_limit_reached"] == false;
+    let Some(items) = rubric else {
+        return "needs_review";
+    };
+    let preferences: Vec<_> = items
+        .iter()
+        .filter(|item| item["source"] == "preference")
+        .collect();
+    let comparison = &assessment["preference_comparison"];
+    let total = preferences.len() as u64;
+    if clean_audit
+        && total > 0
+        && preferences.iter().all(|item| item["status"] == "supported")
+        && comparison["status"] == "completed"
+        && comparison["selected"] == total
+        && comparison["total"] == total
+        && comparison["listing_truncated"] == false
+    {
+        "included"
+    } else {
+        "needs_review"
+    }
 }
 
 /// Identify possible duplicate listing criteria for user review only. The
@@ -1997,6 +2040,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preference_coverage_marks_missing_unknown_and_conflicting_conditions() {
+        let mut assessment = json!({"preference_audit":{"status":"completed","instructions_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"preference_comparison":{"status":"completed","selected":1,"total":1,"listing_truncated":false},"rubric":[{"source":"preference","status":"supported"}]});
+        assert_eq!(preference_coverage(&assessment), "included");
+        assessment["rubric"][0]["status"] = json!("unknown");
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["rubric"][0]["status"] = json!("contradicted");
+        assert_eq!(preference_coverage(&assessment), "possible_conflict");
+        assessment["rubric"][0]["status"] = json!("supported");
+        assessment["preference_audit"]["audit_limit_reached"] = json!(true);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["preference_audit"]["audit_limit_reached"] = json!(false);
+        assessment["preference_comparison"]["listing_truncated"] = json!(true);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["rubric"] = json!([]);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["preference_audit"]["status"] = json!("no_instructions");
+        assert_eq!(preference_coverage(&assessment), "not_requested");
+    }
+
+    #[test]
     fn fit_pipeline_compares_a_recovered_preference_to_the_listing() {
         use waypoint_inference::{CapabilityReport, UsageReport};
         struct Fixture;
@@ -2037,6 +2100,7 @@ mod tests {
         let result =
             assess_with_source(&mut Fixture, &[], "Remote only", listing, Some(listing)).unwrap();
         assert_eq!(result["preference_audit"]["added"], 1);
+        assert_eq!(result["preference_coverage"], "included");
         assert_eq!(result["rubric"][1]["source"], "preference");
         assert_eq!(result["rubric"][1]["status"], "supported");
         assert_eq!(

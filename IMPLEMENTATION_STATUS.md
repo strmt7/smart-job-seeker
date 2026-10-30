@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Preference warnings on job match badges — 2026-10-30
+
+- Job-list estimates now indicate a possible preference conflict or that preferences need review when the preference audit, comparison, limits, or unknown judgments leave a gap. This is a cue to inspect the assessment, not proof that the model found every preference. Current saved assessments have this cue recomputed on read; the batch response carries only the status, not the user's instruction text.
+- Tests cover missing and unknown criteria, conflicting judgments, audit limits, saved assessment handling, the batch endpoint and badge wording. These use fictional data and do not measure local-model accuracy.
+
 ## Recovering missed job preferences in fit assessments — 2026-10-30
 
 - When job-search instructions are present, an additional bounded model pass checks for up to three omitted job-selection preferences. Valid exact excerpts enter the rubric as unknown, and only the existing separate listing comparison can establish a supported or contradicted judgment. Invalid or unavailable results leave the original rubric intact; an assessment with instructions but no extracted preferences carries an explicit review warning.
