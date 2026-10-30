@@ -291,6 +291,35 @@ fn fit_semantic_pool(facts: &[String], listing: &str) -> Vec<String> {
     pool
 }
 
+fn draft_priority_facts(ws: &Workspace, value: &Value) -> Result<Vec<String>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let ids = value
+        .as_array()
+        .filter(|ids| ids.len() <= 3)
+        .ok_or("Choose at most three qualifications to prioritize")?;
+    let available = ws
+        .reviewed_facts_bounded(500, 1000)
+        .map_err(|error| error.to_string())?;
+    let mut seen = std::collections::HashSet::new();
+    let mut facts = Vec::new();
+    for id in ids {
+        let id = id
+            .as_str()
+            .filter(|id| !id.is_empty() && id.len() <= 128)
+            .ok_or("Invalid qualification identity")?;
+        if !seen.insert(id) {
+            return Err("A prioritized qualification was selected twice".into());
+        }
+        let fact = available.iter().find(|fact| fact.id == id).ok_or("A prioritized qualification is no longer reviewed or available; refresh and select again")?;
+        if !facts.contains(&fact.text) {
+            facts.push(fact.text.clone());
+        }
+    }
+    Ok(facts)
+}
+
 fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String> {
     let facts: Vec<String> = ws
         .reviewed_facts_bounded(500, 1000)
@@ -4299,6 +4328,7 @@ fn serve(
             if all_facts.is_empty() {
                 return Err("Add verified qualifications before drafting".into());
             }
+            let priority_facts = draft_priority_facts(ws, &body["priority_ids"])?;
             let mut contact_facts = Vec::new();
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(text) => {
@@ -4380,6 +4410,7 @@ fn serve(
                     facts,
                     available_facts: all_facts.len(),
                     contact_facts,
+                    priority_facts,
                     selection_listing,
                     instructions,
                     template,
@@ -5260,6 +5291,27 @@ mod tests {
         )
         .is_ok());
     }
+    #[test]
+    fn draft_priorities_require_current_reviewed_claims() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let reviewed = ws
+            .add_fact("Fictional reviewed skill", FactOrigin::UserAttested)
+            .unwrap();
+        let unreviewed = ws
+            .add_fact("Unreviewed claim", FactOrigin::ModelInferred)
+            .unwrap();
+        assert_eq!(
+            draft_priority_facts(&ws, &json!([reviewed])).unwrap(),
+            vec!["Fictional reviewed skill"]
+        );
+        assert!(draft_priority_facts(&ws, &json!([unreviewed])).is_err());
+        assert!(draft_priority_facts(&ws, &json!([reviewed, reviewed])).is_err());
+        assert!(draft_priority_facts(&ws, &json!(["a", "b", "c", "d"])).is_err());
+        ws.correct_fact(&reviewed, "Corrected fictional skill", 1)
+            .unwrap();
+        assert!(draft_priority_facts(&ws, &json!([reviewed])).is_err());
+    }
+
     #[test]
     fn draft_qualifications_prioritize_reviewed_relevant_facts() {
         let mut ws = Workspace::in_memory().unwrap();

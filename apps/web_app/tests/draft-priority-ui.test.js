@@ -1,0 +1,20 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('function draftPriorityPicker('), end=source.indexOf('function selectedFactsDetails(',start);
+assert.ok(start>=0&&end>start);
+const make=(tag,text)=>({tag,text,children:[],events:{},append(...nodes){this.children.push(...nodes)},prepend(node){this.children.unshift(node)},addEventListener(name,fn){this.events[name]=fn}});
+const notices=[];
+const render=vm.runInNewContext(`(function(element,document,notify,TextEncoder){${source.slice(start,end)};return draftPriorityPicker;})`)(make,{createElement:tag=>make(tag)},m=>notices.push(m),TextEncoder);
+const selected=new Set();
+const facts=[{id:'a',text:'First'},{id:'b',text:'Second'},{id:'c',text:'Third'},{id:'d',text:'Fourth'},{id:'e',text:'Unreviewed',requires_review:true},{id:'f',text:'x'.repeat(1001)}];
+const picker=render(facts,selected);picker.open=true;picker.events.toggle();
+const items=picker.children[2].children;assert.equal(items.length,4);
+for(const item of items.slice(0,3)){const input=item.children[0];input.checked=true;input.events.change();}
+const fourth=items[3].children[0];fourth.checked=true;fourth.events.change();
+assert.equal(fourth.checked,false);assert.equal(selected.size,3);assert.match(notices[0],/at most three/);
+items[1].children[0].checked=false;items[1].children[0].events.change();
+fourth.checked=true;fourth.events.change();assert.equal(selected.has('d'),true);
+assert.ok(source.includes("priority_ids:[...priorityIds]"));
+console.log('Draft priority picker checks passed.');

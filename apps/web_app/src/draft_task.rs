@@ -30,6 +30,7 @@ pub struct Inputs {
     pub facts: Vec<String>,
     pub available_facts: usize,
     pub contact_facts: Vec<String>,
+    pub priority_facts: Vec<String>,
     pub selection_listing: String,
     pub instructions: String,
     pub template: Option<(String, Vec<u8>)>,
@@ -93,6 +94,16 @@ fn generate_with_selection(
         &input.instructions,
         &input.selection_listing,
     );
+    if !input.priority_facts.is_empty() {
+        selection["model_selected_facts"] = json!(selected);
+        selected.retain(|fact| !input.priority_facts.contains(fact));
+        let mut ordered = input.priority_facts.clone();
+        ordered.extend(selected);
+        selected = ordered;
+        selection["user_prioritized_facts"] = json!(input.priority_facts);
+        selection["selected_facts"] = json!(selected);
+        selection["selected"] = json!(selected.len());
+    }
     let limit = if input.kind == "cv" { 18 } else { 20 };
     let over_limit = selected.len().saturating_sub(limit);
     selected.truncate(limit);
@@ -107,6 +118,13 @@ fn generate_with_selection(
             bytes += size;
             facts.push(fact.clone());
         }
+    }
+    if input
+        .priority_facts
+        .iter()
+        .any(|priority| !facts.contains(priority))
+    {
+        return Err("Prioritized qualifications exceed the local document context; select fewer or shorter qualifications".into());
     }
     let qualification_count = facts.len();
     selection["draft_used_facts"] = json!(facts);
@@ -762,6 +780,7 @@ mod tests {
             facts: facts.clone(),
             available_facts: facts.len(),
             contact_facts: vec!["Email: fictional@example.invalid".into()],
+            priority_facts: Vec::new(),
             selection_listing: "Role".into(),
             instructions: String::new(),
             template: None,
@@ -773,6 +792,24 @@ mod tests {
         assert_eq!(draft["selection"]["draft_fact_budget_omitted"], 6);
         assert_eq!(draft["selection"]["job_truncated"], true);
         assert_eq!(draft["selection"]["template_truncated"], true);
+        let mut prioritized = input;
+        prioritized.priority_facts = vec![facts[7].clone()];
+        let prioritized_draft =
+            generate_with_selection(&mut Fake { calls: 0 }, &prioritized, "").unwrap();
+        assert_eq!(
+            prioritized_draft["selection"]["draft_used_facts"][0],
+            facts[7]
+        );
+        assert_eq!(
+            prioritized_draft["selection"]["user_prioritized_facts"],
+            json!([facts[7]])
+        );
+        prioritized.priority_facts = vec![facts[5].clone(), facts[6].clone(), facts[7].clone()];
+        assert!(
+            generate_with_selection(&mut Fake { calls: 0 }, &prioritized, "")
+                .unwrap_err()
+                .contains("exceed")
+        );
         assert_eq!(draft["facts"][0], facts[0]);
         assert!(draft["facts"]
             .as_array()
@@ -805,6 +842,7 @@ mod tests {
             available_facts: facts.len(),
             facts,
             contact_facts: vec!["Email: fictional@example.invalid".into()],
+            priority_facts: Vec::new(),
             selection_listing: "Frontend engineer: improve accessibility for disabled users".into(),
             instructions: "Be concise.".into(),
             template: None,
