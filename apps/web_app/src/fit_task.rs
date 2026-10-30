@@ -1332,6 +1332,36 @@ fn validate(
     let lower = round(supported, total);
     let upper = round(supported + unknown, total);
     let score = round(supported * 2 + unknown, total * 2);
+    // A leave-one-out check exposes dependence on any one extracted criterion.
+    // It does not account for omitted requirements or validate model judgments.
+    let mut excluded_scores = Vec::new();
+    for item in &rubric {
+        let weight = item["weight"].as_u64().expect("validated weight") as u32;
+        if total == weight {
+            continue;
+        }
+        let item_supported = if item["status"] == "supported" {
+            weight
+        } else {
+            0
+        };
+        let item_unknown = if item["status"] == "unknown" {
+            weight
+        } else {
+            0
+        };
+        excluded_scores.push(round(
+            (supported - item_supported) * 2 + unknown - item_unknown,
+            (total - weight) * 2,
+        ));
+    }
+    let sensitivity = if excluded_scores.is_empty() {
+        Value::Null
+    } else {
+        let low = *excluded_scores.iter().min().expect("nonempty scores");
+        let high = *excluded_scores.iter().max().expect("nonempty scores");
+        json!({"minimum":low,"maximum":high,"largest_change":score.abs_diff(low).max(score.abs_diff(high))})
+    };
     let largest_weight = rubric
         .iter()
         .filter_map(|criterion| criterion["weight"].as_u64())
@@ -1369,7 +1399,7 @@ fn validate(
     let dimensions = json!({"job_requirements":dimension("source", "listing"),"user_preferences":dimension("source", "preference"),"required":dimension("importance", "required"),"preferred":dimension("importance", "preferred")});
     let summary = format!("{supported_count} supported, {unknown_count} unknown, {contradicted_count} contradicted criteria in the model's rubric.");
     Ok(
-        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"scoring_basis":{"supported_weight":supported,"unknown_weight":unknown,"contradicted_weight":total-supported-unknown,"total_weight":total,"largest_criterion_share_percent":largest_criterion_share},"dimensions":dimensions,"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v2","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
+        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"scoring_basis":{"supported_weight":supported,"unknown_weight":unknown,"contradicted_weight":total-supported-unknown,"total_weight":total,"largest_criterion_share_percent":largest_criterion_share},"dimensions":dimensions,"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v2","sensitivity":sensitivity,"summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
     )
 }
 
@@ -3274,6 +3304,17 @@ mod tests {
         assert_eq!(a["score_range"], reversed["score_range"]);
         assert_eq!(a["score"], 64);
         assert_eq!(a["score_range"], json!({"lower":43,"upper":86}));
+        assert_eq!(
+            a["sensitivity"],
+            json!({"minimum":38,"maximum":75,"largest_change":26})
+        );
+        assert_eq!(a["sensitivity"], reversed["sensitivity"]);
+        let mut single = criteria.clone();
+        single["criteria"].as_array_mut().unwrap().truncate(1);
+        assert_eq!(
+            validate(single, &facts, "", listing).unwrap()["sensitivity"],
+            Value::Null
+        );
         assert_eq!(
             a["scoring_basis"],
             json!({"supported_weight":3,"unknown_weight":3,"contradicted_weight":1,"total_weight":7,"largest_criterion_share_percent":43})

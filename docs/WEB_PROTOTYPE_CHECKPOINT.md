@@ -740,3 +740,7 @@ for those lookups without altering prior migrations. Tests exercised a v27-to-v2
 upgrade, preserved history and append-only triggers, and confirmed SQLite used
 the new index, both with bundled SQLite and SQLCipher. This is not a performance
 benchmark or proof of real-world submission behaviour. No application was sent.
+
+## Match estimate sensitivity — 2026-10-30
+
+A fit assessment now reports the lowest and highest scores obtained by removing one extracted criterion at a time, and the largest change from the original score. This is deterministic for a fixed validated rubric and helps identify dependence on individual criteria. It is not a confidence interval, calibration, or a check for omitted requirements or incorrect local-model interpretations. A single-criterion rubric has no leave-one-out score. The model still selects and judges criteria, so repeatability and real-world accuracy remain unproven.
