@@ -551,6 +551,31 @@ fn the_schema_comes_from_the_real_page() {
 
 #[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
+fn native_text_limits_are_observed_in_the_live_schema() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_maxlength.html")).unwrap();
+    let field = |label: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|f| f.label == label)
+            .unwrap()
+    };
+    assert_eq!(field("Name").max_length_utf16, Some(3));
+    assert_eq!(field("Answer").max_length_utf16, Some(5));
+    assert_eq!(field("Invalid limit").max_length_utf16, None);
+    let mut changed = live.schema.clone();
+    changed
+        .fields
+        .iter_mut()
+        .find(|f| f.label == "Name")
+        .unwrap()
+        .max_length_utf16 = Some(4);
+    assert_ne!(changed.schema_hash_input(), live.schema.schema_hash_input());
+}
+
+#[test]
+#[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_real_browser_submits_the_packet_and_returns_a_qualified_receipt() {
     let url = file_url("form_ok.html");
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");

@@ -588,3 +588,13 @@ redundancy-review prompt flagged an independent five-year requirement as
 redundant. Both prompt changes were rejected. These are single-case results,
 not accuracy estimates; the unmodified system can still count overlapping
 criteria and its review suggestions require human judgment.
+
+Native text inputs and textareas now report a valid HTML maxlength in the form
+review, measured in UTF-16 code units as browsers do. Reviewed suggestions and
+manual answers exceeding that limit are refused before filling; the limit is
+also part of the form schema identity, so a changed limit invalidates a review.
+A local Chromium fixture checked extraction, invalid negative limits and schema
+identity; a fictional review test covered an emoji boundary. The page can use
+other validation rules, change limits after inspection, or count text differently
+for custom controls, so this is not a guarantee that an answer will be accepted.
+No external application was used.

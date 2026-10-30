@@ -1014,6 +1014,7 @@ mod tests {
             field_type,
             required: false,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: autocomplete.map(str::to_owned),
         };
         let fields = vec![

@@ -223,8 +223,8 @@ pub fn apply_reviewed_text_fields(
         let valid = match (&field.field_type, &mapping.value) {
             (
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
-                PacketValue::Text(_),
-            ) => true,
+                PacketValue::Text(text),
+            ) => waypoint_applications::form_mapping::text_fits_field(field, text),
             (FormFieldType::Date, PacketValue::Date(value)) => {
                 waypoint_applications::form_mapping::valid_iso_date(value)
             }
@@ -1065,6 +1065,7 @@ mod tests {
             field_type,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         })
         .collect();
@@ -1130,6 +1131,7 @@ mod tests {
                 field_type: FormFieldType::Email,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1189,6 +1191,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         })
         .collect();
@@ -1240,6 +1243,7 @@ mod tests {
             field_type: FormFieldType::Text,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         })
         .collect();
@@ -1427,6 +1431,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    max_length_utf16: None,
                     autocomplete: Some("given-name".into()),
                 }],
                 multi_step: false,
@@ -1488,6 +1493,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: Some("email".into()),
             }],
             multi_step: false,
@@ -1538,6 +1544,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: Some("email".into()),
             }],
             multi_step: false,
@@ -1589,6 +1596,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();

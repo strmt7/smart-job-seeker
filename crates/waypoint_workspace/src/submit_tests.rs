@@ -24,6 +24,7 @@ fn answerable_schema() -> FormSchema {
                 field_type: FormFieldType::TextArea,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             },
             FormField {
@@ -32,6 +33,7 @@ fn answerable_schema() -> FormSchema {
                 field_type: FormFieldType::File,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             },
         ],
@@ -183,6 +185,7 @@ fn a_changed_form_voids_the_approval_and_sends_nothing() {
         field_type: FormFieldType::Text,
         required: false,
         sensitive: false,
+        max_length_utf16: None,
         autocomplete: None,
     });
     let mut driver = ScriptedDriver::new(live(changed), Ok(qualified_ack()));
@@ -216,6 +219,7 @@ fn a_sensitive_field_is_never_auto_answered_and_does_not_burn_the_approval() {
         field_type: FormFieldType::Text,
         required: true,
         sensitive: true,
+        max_length_utf16: None,
         autocomplete: None,
     });
     let (mut ws, id) = approved_for(&schema);
@@ -255,6 +259,7 @@ fn a_required_field_the_packet_cannot_answer_blocks_before_any_write() {
         field_type: FormFieldType::Text,
         required: true,
         sensitive: false,
+        max_length_utf16: None,
         autocomplete: None,
     });
     let (mut ws, id) = approved_for(&schema);
@@ -439,6 +444,7 @@ fn the_fill_plan_only_claims_what_the_packet_really_answers() {
         },
         required: false,
         sensitive: true,
+        max_length_utf16: None,
         autocomplete: None,
     });
     let plan = plan_fill(&with_sensitive, "body");

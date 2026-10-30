@@ -29,6 +29,9 @@ pub struct FormField {
     pub field_type: FormFieldType,
     pub required: bool,
     pub sensitive: bool, // salary/authorization/demographic/attestation
+    /// HTML maxlength for native text controls, measured in UTF-16 code units.
+    #[serde(default)]
+    pub max_length_utf16: Option<u32>,
     #[serde(default)]
     pub autocomplete: Option<String>,
 }
@@ -51,12 +54,25 @@ impl FormSchema {
         ];
         for f in &self.fields {
             parts.push(format!(
-                "{}|{}|{:?}|{}|{}|{:?}",
-                f.selector, f.label, f.field_type, f.required, f.sensitive, f.autocomplete
+                "{}|{}|{:?}|{}|{}|{:?}|{:?}",
+                f.selector,
+                f.label,
+                f.field_type,
+                f.required,
+                f.sensitive,
+                f.autocomplete,
+                f.max_length_utf16
             ));
         }
         parts.join("\n")
     }
+}
+
+/// HTML text field limits count UTF-16 code units, not bytes or Unicode scalars.
+pub fn text_fits_field(field: &FormField, text: &str) -> bool {
+    field
+        .max_length_utf16
+        .is_none_or(|limit| text.encode_utf16().count() <= limit as usize)
 }
 
 /// A typed value a packet can supply.
@@ -179,10 +195,11 @@ pub fn validate_mapping(
         }
 
         let type_ok = match (&f.field_type, value) {
-            (FormFieldType::Text, PacketValue::Text(_))
-            | (FormFieldType::Email, PacketValue::Text(_))
-            | (FormFieldType::TextArea, PacketValue::Text(_))
-            | (FormFieldType::Date, PacketValue::Date(_))
+            (
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+                PacketValue::Text(text),
+            ) => text_fits_field(f, text),
+            (FormFieldType::Date, PacketValue::Date(_))
             | (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::Select { options }, PacketValue::Text(t)) => options.contains(t),
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -268,6 +285,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    max_length_utf16: None,
                     autocomplete: None,
                 },
                 FormField {
@@ -276,6 +294,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: true,
+                    max_length_utf16: None,
                     autocomplete: None,
                 },
                 FormField {
@@ -286,6 +305,7 @@ mod tests {
                     },
                     required: true,
                     sensitive: false,
+                    max_length_utf16: None,
                     autocomplete: None,
                 },
             ],

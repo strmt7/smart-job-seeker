@@ -457,6 +457,7 @@ mod tests {
                     field_type: FormFieldType::File,
                     required: false,
                     sensitive: false,
+                    max_length_utf16: None,
                     autocomplete: None,
                 }]
             } else if url.ends_with("/apply") || url.ends_with("/form") {
@@ -471,6 +472,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    max_length_utf16: None,
                     autocomplete: None,
                 }]
             } else {

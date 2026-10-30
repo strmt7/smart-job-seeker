@@ -639,6 +639,7 @@ mod tests {
             field_type: FormFieldType::Text,
             required: false,
             sensitive,
+            max_length_utf16: None,
             autocomplete: None,
         };
         let mut fields = vec![field("Private question".into(), true)];
@@ -669,6 +670,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             }],
             multi_step: true,

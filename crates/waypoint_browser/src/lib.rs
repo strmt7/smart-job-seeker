@@ -1200,6 +1200,7 @@ impl CdpDriver {
                             },
                             required,
                             sensitive: sensitive || is_sensitive_label(&group_label),
+                            max_length_utf16: None,
                             autocomplete: None,
                         });
                     }
@@ -1237,6 +1238,19 @@ impl CdpDriver {
                 field_type,
                 required,
                 sensitive,
+                max_length_utf16: if control.tag == "textarea"
+                    || (control.tag == "input"
+                        && matches!(
+                            input_type.as_str(),
+                            "text" | "email" | "search" | "tel" | "url"
+                        )) {
+                    control
+                        .attrs
+                        .get("maxlength")
+                        .and_then(|value| value.trim().parse::<u32>().ok())
+                } else {
+                    None
+                },
                 autocomplete: control
                     .attrs
                     .get("autocomplete")

@@ -605,6 +605,28 @@ fn prepare_reviewed_fill(
     if prepared.suggestions.len() > suggestions::MAX_FIELDS {
         return Err("Select at most 200 fields to fill".into());
     }
+    for mapping in &prepared.suggestions {
+        if let Some(field) = prepared
+            .schema
+            .fields
+            .iter()
+            .find(|f| f.selector == mapping.field_selector)
+        {
+            if matches!(
+                field.field_type,
+                waypoint_applications::form_mapping::FormFieldType::Text
+                    | waypoint_applications::form_mapping::FormFieldType::Email
+                    | waypoint_applications::form_mapping::FormFieldType::TextArea
+            ) {
+                if let waypoint_applications::form_mapping::PacketValue::Text(text) = &mapping.value
+                {
+                    if !waypoint_applications::form_mapping::text_fits_field(field, text) {
+                        return Err(format!("The answer for {} exceeds the page's {} UTF-16-unit limit; shorten it before filling", field.label, field.max_length_utf16.unwrap_or(0)));
+                    }
+                }
+            }
+        }
+    }
     let omitted = preview.suggestions.iter().any(|original| {
         !prepared
             .suggestions
@@ -4948,6 +4970,7 @@ mod tests {
                         field_type: FormFieldType::TextArea,
                         required: true,
                         sensitive: false,
+                        max_length_utf16: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -4958,6 +4981,7 @@ mod tests {
                         },
                         required: true,
                         sensitive: false,
+                        max_length_utf16: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -4966,6 +4990,7 @@ mod tests {
                         field_type: FormFieldType::Text,
                         required: false,
                         sensitive: true,
+                        max_length_utf16: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -4974,6 +4999,7 @@ mod tests {
                         field_type: FormFieldType::Date,
                         required: false,
                         sensitive: false,
+                        max_length_utf16: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -4984,6 +5010,7 @@ mod tests {
                         },
                         required: true,
                         sensitive: false,
+                        max_length_utf16: None,
                         autocomplete: None,
                     },
                 ],
@@ -5053,6 +5080,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -5076,6 +5104,42 @@ mod tests {
             .map(|index| json!({"selector":format!("#field-{index}"),"value":"Example"}))
             .collect();
         assert!(prepare_reviewed_fill(&preview, &json!({"answers":too_many})).is_err());
+    }
+
+    #[test]
+    fn reviewed_fill_respects_native_utf16_limit_before_filling() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
+        let preview = form_preview::FormPreview {
+            schema: FormSchema {
+                origin: "https://example.org".into(),
+                fields: vec![FormField {
+                    selector: "#answer".into(),
+                    label: "Answer".into(),
+                    field_type: FormFieldType::Text,
+                    required: false,
+                    sensitive: false,
+                    max_length_utf16: Some(3),
+                    autocomplete: None,
+                }],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        assert!(prepare_reviewed_fill(
+            &preview,
+            &json!({"answers":[{"selector":"#answer","value":"A😀"}]})
+        )
+        .is_ok());
+        let error = prepare_reviewed_fill(
+            &preview,
+            &json!({"answers":[{"selector":"#answer","value":"AB😀"}]}),
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains("3 UTF-16-unit limit"));
     }
     #[test]
     fn queued_template_suggestion_requires_its_original_context() {

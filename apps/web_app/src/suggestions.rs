@@ -760,6 +760,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
+                    max_length_utf16: None,
                     autocomplete: None,
                 },
                 FormField {
@@ -768,6 +769,7 @@ mod tests {
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: true,
+                    max_length_utf16: None,
                     autocomplete: None,
                 },
             ],
@@ -954,6 +956,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let (mappings, warnings) = suggest_with_diagnostics(
@@ -1020,6 +1023,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let matches = suggest_exact(
@@ -1080,6 +1084,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: Some("email".into()),
         });
         let mut model = FakeInference {
@@ -1117,6 +1122,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let response = json!({"mappings":[{"selector":"#country","profile_key":"country"}],"manual_review":[]});
@@ -1205,6 +1211,7 @@ mod tests {
             field_type: FormFieldType::Checkbox,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let mut model = FakeInference {
@@ -1270,6 +1277,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1350,6 +1358,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: Some("email".into()),
         });
         schema.fields.push(FormField {
@@ -1358,6 +1367,7 @@ mod tests {
             field_type: FormFieldType::Checkbox,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
@@ -1481,6 +1491,7 @@ mod tests {
             field_type: FormFieldType::Email,
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: Some("email".into()),
         });
         let mut model = FakeInference {
@@ -1520,6 +1531,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1577,6 +1589,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1622,6 +1635,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: false,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1677,6 +1691,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: index == 0 || index == 20,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1725,6 +1740,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: index == 0 || index == 5 || index == 6,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: (index == 5 || index == 6).then(|| "email".into()),
             })
             .collect();
@@ -1766,6 +1782,7 @@ mod tests {
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1796,6 +1813,7 @@ mod tests {
                 },
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1828,6 +1846,7 @@ mod tests {
                 },
                 required: true,
                 sensitive: false,
+                max_length_utf16: None,
                 autocomplete: None,
             })
             .collect();
@@ -1857,6 +1876,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let mapping = json!({"mappings":[{"selector":"#country","profile_key":"country"}],"manual_review":[]});
@@ -1886,6 +1906,7 @@ mod tests {
             },
             required: true,
             sensitive: false,
+            max_length_utf16: None,
             autocomplete: None,
         });
         let mapping = json!({"mappings":[{"selector":"#location","profile_key":"country"}],"manual_review":[]});
