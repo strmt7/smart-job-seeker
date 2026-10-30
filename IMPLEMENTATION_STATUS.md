@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Bringing filled fields into view — 2026-10-30
+
+- After a successful prefill, the review panel offers a list of fields filled in that session. The selected field can be scrolled into view and captured without Waypoint typing into it; the site may react to scrolling; the server checks the current form schema and review walls before scrolling and rejects fields outside the completed set. A fresh visual review can then be run, and captures are saved to the attempt record when available.
+- Outer-page capture coverage is no longer marked complete when an embedded-frame review warning is present. An actual local-browser fixture verified scrolling inside a frame, and an HTTP integration test checked the completed-field restriction and retained answer. The UI handler's success and error states were tested. The rendered interface at multiple widths and local-model interpretation of this capture have not been verified.
+
 ## Nested embedded forms — 2026-10-30
 
 - The form reader can inspect accessible visible frames up to three levels deep, with at most four embedded documents per inspection. Field selectors carry each ancestor frame and document identity; every level is checked again before a field action. Uninspected, inaccessible and deeper frames remain a manual-review concern.

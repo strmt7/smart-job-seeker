@@ -3469,6 +3469,52 @@ fn serve(
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/form/visual-focus" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"]
+                .as_str()
+                .filter(|value| !value.is_empty() && value.len() <= 8192)
+                .ok_or("Invalid field selector")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            if !current
+                .completed_selectors
+                .iter()
+                .any(|item| item == selector)
+            {
+                return Err(
+                    "Only fields filled in this review session can be brought into view".into(),
+                );
+            }
+            let fresh = current
+                .driver
+                .inspect_current()
+                .map_err(|e| e.to_string())?;
+            if fresh.schema != current.preview.schema
+                || fresh.origin != current.preview.schema.origin
+                || !form_preview::same_reviewable_walls(&current.preview, &fresh.walls)
+            {
+                return Err("Form changed or requires manual attention; inspect again".into());
+            }
+            current
+                .driver
+                .scroll_field_into_view(selector)
+                .map_err(|e| e.to_string())?;
+            let screenshot = current
+                .driver
+                .screenshot_base64()
+                .map_err(|e| e.to_string())?;
+            let saved = current.record.as_mut().is_some_and(|record| {
+                record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"screenshot":format!("screenshots/{name}")}))).is_ok()
+            });
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"screenshot":screenshot,"record_saved":saved}),
+            );
+        }
         "/api/form/visual-review-start" => {
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let current = session
@@ -3493,8 +3539,14 @@ fn serve(
                 .driver
                 .page_dimensions()
                 .map_err(|e| e.to_string())?;
-            let (clip_width, y, clip_height, total, coverage_complete) =
+            let (clip_width, y, clip_height, total, page_coverage_complete) =
                 visual_review::segment_half_geometry(width, height, segment as usize, half)?;
+            let coverage_complete = page_coverage_complete
+                && !current
+                    .preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW);
             let url = current.driver.current_url().map_err(|e| e.to_string())?;
             let signature = visual_review::page_signature(&url, width, height);
             let screenshot = current
@@ -4091,7 +4143,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"filled":filled,"filled_fields":filled_fields,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
+                json!({"filled":filled,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
             );
             *session = Some(current);
         }
@@ -4908,6 +4960,86 @@ mod tests {
             .unwrap()
             .iter()
             .any(|reason| reason.revision == interrupted));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and verifies a fictional visual-focus request"]
+    fn visual_focus_only_accepts_completed_fields_and_keeps_their_value() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_iframe_scroll.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let selector = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Far name")
+            .unwrap()
+            .selector
+            .clone();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: selector.clone(),
+                value: PacketValue::Text("Fictional".into()),
+            })
+            .unwrap();
+        let preview = form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let mut session = Some(ReviewSession {
+            id: "fixture-session".into(),
+            job_id: JobIdentityId::new("fixture-job").unwrap(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url,
+            profile_digest: Sha256Digest::of("fixture"),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: true,
+            completed_selectors: vec![selector.clone()],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let mut ws = Workspace::in_memory().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for (selected, allowed) in [("#other", false), (selector.as_str(), true)] {
+            let body = json!({"session_id":"fixture-session","selector":selected}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "POST /api/form/visual-focus HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let result = serve(&mut server, &mut ws, &mut session, "fixture-token", port);
+            if !allowed {
+                assert!(result.unwrap_err().contains("Only fields filled"));
+                continue;
+            }
+            result.unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(response.contains("200 OK") && response.contains("\"screenshot\""));
+        }
+        let current = session.as_mut().unwrap();
+        current
+            .driver
+            .verify_text_value(&selector, "Fictional")
+            .unwrap();
+        assert!(current
+            .driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
     }
 
     #[test]

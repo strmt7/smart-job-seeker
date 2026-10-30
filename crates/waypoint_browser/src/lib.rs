@@ -343,6 +343,23 @@ impl CdpDriver {
         Ok(data.to_owned())
     }
 
+    /// Scroll a known field into view without focusing, changing or submitting it.
+    pub fn scroll_field_into_view(&mut self, selector: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Field is no longer available for visual review".into()))?;
+        self.cdp
+            .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
+            .map_err(derr)?;
+        // The document or frame may have changed while the scroll was running.
+        if self.node_id(selector)?.is_none() {
+            return Err(DriverError(
+                "Field changed during visual review; inspect again".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Attach a caller-selected local file to a known form control.
     pub fn attach_local_file(
         &mut self,

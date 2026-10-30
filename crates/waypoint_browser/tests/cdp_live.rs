@@ -1049,6 +1049,41 @@ fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
 }
 
 #[test]
+#[ignore = "launches a real browser against a fictional scrollable form"]
+fn scroll_to_embedded_field_reveals_it_without_changing_the_answer() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_iframe_scroll.html")).unwrap();
+    let selector = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Far name")
+        .unwrap()
+        .selector
+        .clone();
+    let frame_body = format!(
+        "{}body",
+        selector.rsplit_once(':').unwrap().0.to_owned() + ":"
+    );
+    let before = driver.screenshot_base64().unwrap();
+    driver.scroll_field_into_view(&selector).unwrap();
+    let after = driver.screenshot_base64().unwrap();
+    assert_ne!(before, after);
+    let scrolled = driver
+        .read_attribute(&frame_body, "data-scrolled")
+        .unwrap()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    assert!(scrolled > 0.0);
+    assert!(driver.read_attribute(&selector, "value").unwrap().is_none());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser against fictional embedded controls"]
 fn embedded_controls_after_hidden_frames_can_be_filled_and_verified() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
