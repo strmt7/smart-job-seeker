@@ -9,6 +9,7 @@ use waypoint_policy::Operation;
 struct Task {
     id: String,
     job_id: waypoint_domain::JobIdentityId,
+    pending_revision: i64,
     rx: mpsc::Receiver<Result<ReviewSession, NavigationFailure>>,
     failure: Option<NavigationFailure>,
 }
@@ -17,9 +18,41 @@ pub struct NavigationFailure {
     pub job_id: waypoint_domain::JobIdentityId,
     pub reason: String,
     pub review_saved: bool,
+    pub pending_revision: i64,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED_FAILURE: Mutex<Option<(String, NavigationFailure)>> = Mutex::new(None);
+
+pub fn pending_reason(task_id: &str) -> String {
+    format!("Application navigation pending: {task_id}")
+}
+
+pub fn begin_pending(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    task_id: &str,
+    timestamp: i64,
+) -> Result<i64, String> {
+    let reason = pending_reason(task_id);
+    ws.mark_manual_review(job, &reason, timestamp)
+        .map_err(|e| format!("Could not save pending navigation: {e}"))?;
+    ws.manual_review_reasons(job)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|entry| entry.reason == reason)
+        .map(|entry| entry.revision)
+        .ok_or_else(|| "Pending navigation was not found after saving".into())
+}
+
+pub fn finish_pending(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    task_id: &str,
+    revision: i64,
+) -> Result<bool, String> {
+    ws.clear_manual_review_reason(job, &pending_reason(task_id), revision)
+        .map_err(|e| format!("Could not clear pending navigation: {e}"))
+}
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
@@ -234,6 +267,7 @@ pub fn start(
     allow_other: bool,
     reviewed_label: Option<String>,
     profile: serde_json::Value,
+    pending_revision: i64,
 ) -> Result<(), (Box<ReviewSession>, String)> {
     let mut tasks = match TASK.lock() {
         Ok(tasks) => tasks,
@@ -250,6 +284,7 @@ pub fn start(
     *tasks = Some(Task {
         id,
         job_id,
+        pending_revision,
         rx,
         failure: None,
     });
@@ -353,6 +388,7 @@ pub fn start(
                 job_id: session.job_id.clone(),
                 reason,
                 review_saved: false,
+                pending_revision,
             })
             .map(|new_id| {
                 if !session.attachments.is_empty() {
@@ -372,7 +408,9 @@ pub fn start(
     Ok(())
 }
 
-pub fn poll(id: &str) -> Result<Option<Result<ReviewSession, NavigationFailure>>, String> {
+pub type NavigationOutcome = Result<(ReviewSession, i64), NavigationFailure>;
+
+pub fn poll(id: &str) -> Result<Option<NavigationOutcome>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Navigation unavailable")?;
     let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
         let completed = COMPLETED_FAILURE
@@ -389,8 +427,9 @@ pub fn poll(id: &str) -> Result<Option<Result<ReviewSession, NavigationFailure>>
     }
     match task.rx.try_recv() {
         Ok(Ok(result)) => {
+            let revision = task.pending_revision;
             *tasks = None;
-            Ok(Some(Ok(result)))
+            Ok(Some(Ok((result, revision))))
         }
         Ok(Err(failure)) => {
             task.failure = Some(failure.clone());
@@ -402,6 +441,7 @@ pub fn poll(id: &str) -> Result<Option<Result<ReviewSession, NavigationFailure>>
                 job_id: task.job_id.clone(),
                 reason: "Navigation stopped unexpectedly".into(),
                 review_saved: false,
+                pending_revision: task.pending_revision,
             };
             task.failure = Some(failure.clone());
             Ok(Some(Err(failure)))
@@ -452,11 +492,13 @@ mod tests {
         )
         .unwrap();
         let job_id = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let revision = begin_pending(&ws, &job_id, "fictional-navigation", 1).unwrap();
         let (sender, rx) = mpsc::channel();
         drop(sender);
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-navigation".into(),
             job_id: job_id.clone(),
+            pending_revision: revision,
             rx,
             failure: None,
         });
@@ -489,6 +531,11 @@ mod tests {
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].job_id, job_id.as_str());
         assert!(reviews[0].reason.contains("navigation stopped"));
+        assert!(!ws
+            .manual_review_reasons(&job_id)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == pending_reason("fictional-navigation")));
         let revision = ws.manual_review_reasons(&job_id).unwrap()[0].revision;
         let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(client, "POST /api/form/open-link-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
@@ -505,6 +552,31 @@ mod tests {
             revision
         );
         assert!(!busy());
+    }
+
+    #[test]
+    fn pending_navigation_survives_reopen_and_preserves_other_reasons() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let (job, revision) = {
+            let mut ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
+            let added = crate::manual_job::add(&mut ws, &serde_json::json!({"url":"https://example.org/navigation-fixture","title":"Role","employer":"Fixture"}), 1).unwrap();
+            let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let revision = begin_pending(&ws, &job, "navigation-task", 2).unwrap();
+            ws.mark_manual_review(&job, "Another review issue", 3)
+                .unwrap();
+            (job, revision)
+        };
+        let ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == pending_reason("navigation-task")));
+        assert!(finish_pending(&ws, &job, "navigation-task", revision).unwrap());
+        let reasons = ws.manual_review_reasons(&job).unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].reason, "Another review issue");
     }
 
     struct Links(Vec<String>);

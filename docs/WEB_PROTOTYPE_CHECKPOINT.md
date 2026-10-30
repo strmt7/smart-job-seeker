@@ -980,3 +980,9 @@ Two fictional local HTTP fixtures rendered the normal and recovered flows in hea
 ## Visual pending state in local form workflow — 2026-10-30
 
 The existing fictional local-browser prefill endpoint fixture now also seeds a task-specific pending visual-review reason before a completed visual result is processed. After the form changes, the status endpoint retains the separate changed-form review reason and clears that task's pending reason. The complete local fixture passed with one headless browser; it also exercises reviewed field filling, value changes, screenshots and application-record events. The visual result itself is injected by the fixture, so this is not a live model test or proof of behavior on employer sites. Web Clippy and formatting passed. No application was submitted.
+
+## Interrupted form navigation tracking — 2026-10-30
+
+Opening a reviewed application link or rescanning the current form now records a task-specific pending navigation reason before launching the worker. A processed result clears only that task's recorded revision after saving any needed review flag; a disconnected worker replaces its pending reason with a manual-review reason. If the app exits before the result is processed, the pending reason remains. If starting the worker fails, the handler attempts to clear its own pending reason and restores the prior session. A job already at the 20-reason limit may need review before a new navigation can start.
+
+A fictional on-disk workspace test verified that pending navigation survives reopening and can be cleared without removing another reason. The local HTTP failure fixture verified that a disconnected worker leaves a failure reason and removes its pending reason. Nine navigation tests passed with three browser tests ignored; web Clippy and formatting passed. This checkpoint did not test a live employer site or automatic next-step controls and did not submit an application.

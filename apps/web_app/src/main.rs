@@ -3276,6 +3276,7 @@ fn serve(
                 None
             };
             let task_id = random_id()?;
+            let pending_revision = form_links::begin_pending(ws, &current.job_id, &task_id, now())?;
             let current = session.take().ok_or("Form session expired")?;
             if let Err((current, error)) = form_links::start(
                 task_id.clone(),
@@ -3284,8 +3285,12 @@ fn serve(
                 allow_other,
                 reviewed_label,
                 profile,
+                pending_revision,
             ) {
+                let cleanup =
+                    form_links::finish_pending(ws, &current.job_id, &task_id, pending_revision);
                 *session = Some(*current);
+                cleanup?;
                 return Err(error);
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
@@ -3305,6 +3310,7 @@ fn serve(
                             format!("Navigation failed and its review flag could not be saved: {e}")
                         })?;
                     }
+                    form_links::finish_pending(ws, &error.job_id, id, error.pending_revision)?;
                     form_links::acknowledge_failure(id)?;
                     json_reply(
                         stream,
@@ -3312,7 +3318,7 @@ fn serve(
                         json!({"status":"failed","error":error.reason}),
                     )
                 }
-                Some(Ok(mut current)) => {
+                Some(Ok((mut current, pending_revision))) => {
                     let job = ws.job(&current.job_id).map_err(|e| e.to_string())?;
                     let job_unchanged = job.as_ref().is_some_and(|job| {
                         matches!(
@@ -3367,6 +3373,7 @@ fn serve(
                         )
                         .map_err(|e| e.to_string())?;
                     }
+                    form_links::finish_pending(ws, &current.job_id, id, pending_revision)?;
                     json_reply(
                         stream,
                         "200 OK",
@@ -3391,11 +3398,21 @@ fn serve(
                 None => json!({}),
             };
             let task_id = random_id()?;
+            let pending_revision = form_links::begin_pending(ws, &current.job_id, &task_id, now())?;
             let current = session.take().ok_or("Form session expired")?;
-            if let Err((current, error)) =
-                form_links::start(task_id.clone(), current, None, false, None, profile)
-            {
+            if let Err((current, error)) = form_links::start(
+                task_id.clone(),
+                current,
+                None,
+                false,
+                None,
+                profile,
+                pending_revision,
+            ) {
+                let cleanup =
+                    form_links::finish_pending(ws, &current.job_id, &task_id, pending_revision);
                 *session = Some(*current);
+                cleanup?;
                 return Err(error);
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
