@@ -234,6 +234,7 @@ fn selection_listing_excerpts(listing: &str) -> Vec<&str> {
 fn complete_listing_chunks(listing: &str) -> Option<Vec<&str>> {
     const MAX_BYTES: usize = 2400;
     const MAX_CHUNKS: usize = 4;
+    const OVERLAP_BYTES: usize = 256;
     let mut chunks = Vec::new();
     let mut start = 0;
     while start < listing.len() {
@@ -248,7 +249,17 @@ fn complete_listing_chunks(listing: &str) -> Option<Vec<&str>> {
             return None;
         }
         chunks.push(&listing[start..end]);
-        start = end;
+        if end == listing.len() {
+            break;
+        }
+        let mut next = end.saturating_sub(OVERLAP_BYTES);
+        while !listing.is_char_boundary(next) {
+            next += 1;
+        }
+        if next <= start {
+            return None;
+        }
+        start = next;
     }
     if chunks.is_empty() {
         chunks.push("");
@@ -2466,10 +2477,25 @@ mod tests {
             assert_eq!(report["cross_check"]["status"], "context_incomplete");
             assert_eq!(model.checks, 0);
         }
-        let unicode = "界".repeat(3200);
+        let unicode = "界".repeat(2800);
         let chunks = complete_listing_chunks(&unicode).unwrap();
-        assert_eq!(chunks.concat(), unicode);
         assert!(chunks.iter().all(|part| part.len() <= 2400));
+        assert!(chunks
+            .windows(2)
+            .all(|pair| pair[0].ends_with(&pair[1][..255])));
+        assert!(unicode.ends_with(chunks.last().unwrap()));
+        assert!(complete_listing_chunks(&"x".repeat(8833)).is_none());
+        let boundary = format!("{}MID_MARK{}", "x".repeat(2396), "y".repeat(1300));
+        let mut model = Fixture {
+            selection_calls: 0,
+            checks: 0,
+        };
+        let (selected, report) = select_semantic_facts(&mut model, &pool, 21, "", &boundary);
+        assert!(
+            selected.contains(&pool[20]),
+            "boundary-spanning requirement was lost"
+        );
+        assert_eq!(report["cross_check"]["chunks"], 2);
     }
 
     #[test]
@@ -2580,6 +2606,49 @@ mod tests {
             vec![pool[20].clone()],
             "model missed relevant evidence or selected irrelevant facts"
         );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local gemma3:4b model and resource preflight"]
+    fn live_small_model_retains_boundary_spanning_requirement() {
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some("gemma3:4b")
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", "gemma3:4b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "gemma3:4b".into(),
+            crate::resident_model,
+        );
+        let mut pool: Vec<_> = (0..20)
+            .map(|i| format!("Managed unrelated inventory record {i}"))
+            .collect();
+        pool.push("Built interfaces for screen-reader users".into());
+        let mut listing = format!(
+            "Fictional software engineer. {}",
+            "General company background. ".repeat(100)
+        );
+        listing.truncate(2390);
+        listing.push_str("Required: build accessible interfaces for screen-reader users.");
+        assert!(listing.find("screen-reader users").unwrap() > 2400);
+        let (selected, report) = select_semantic_facts(&mut model, &pool, 21, "", &listing);
+        println!("fictional boundary selection: {selected:?}; report: {report}");
+        assert!(
+            selected.contains(&pool[20]),
+            "relevant qualification was lost"
+        );
+        assert_eq!(report["cross_check"]["status"], "completed");
+        assert_eq!(report["cross_check"]["chunks"], 2);
     }
 
     #[test]
