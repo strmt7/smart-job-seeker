@@ -2226,6 +2226,9 @@ fn serve(
                     result = json!({"status":"failed","error":"The job, qualifications or instructions changed; draft the email again"});
                 }
             }
+            if result["status"] != "running" {
+                result = answer_task::complete(id, result)?;
+            }
             json_reply(stream, "200 OK", result);
         }
         "/api/documents/convert-pdf-start" => {
@@ -3329,6 +3332,9 @@ fn serve(
                 if fresh.as_ref().map(|input| input.digest.as_str()) != result["digest"].as_str() {
                     result = json!({"status":"failed","error":"The form or supporting information changed; inspect and draft again"});
                 }
+            }
+            if result["status"] != "running" {
+                result = answer_task::complete(id, result)?;
             }
             json_reply(stream, "200 OK", result);
         }

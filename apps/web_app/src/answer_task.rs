@@ -21,10 +21,22 @@ struct Task {
     completed_at: Option<std::time::Instant>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
+    {
+        let mut completed = COMPLETED
+            .lock()
+            .map_err(|_| "Answer drafting unavailable")?;
+        if completed
+            .as_ref()
+            .is_some_and(|(_, _, at)| at.elapsed() > std::time::Duration::from_secs(600))
+        {
+            *completed = None;
+        }
+    }
     if task.as_ref().is_some_and(|t| {
         t.completed_at
             .is_some_and(|at| at.elapsed() > std::time::Duration::from_secs(600))
@@ -67,12 +79,19 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     Ok(())
 }
 pub fn poll(id: &str) -> Result<Value, String> {
-    let mut tasks = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Answer draft not found")?;
-    let Some(result) = task.result.take() else {
+    let tasks = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
+    let Some(task) = tasks.as_ref().filter(|t| t.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Answer drafting unavailable")?
+            .as_ref()
+            .filter(|(task_id, _, at)| {
+                task_id == id && at.elapsed() <= std::time::Duration::from_secs(600)
+            })
+            .map(|(_, result, _)| result.clone())
+            .ok_or_else(|| "Answer draft not found".into());
+    };
+    let Some(result) = task.result.as_ref() else {
         return Ok(json!({"status":"running"}));
     };
     let (session, selector, digest) = (
@@ -80,13 +99,40 @@ pub fn poll(id: &str) -> Result<Value, String> {
         task.selector.clone(),
         task.digest.clone(),
     );
-    *tasks = None;
     Ok(match result {
         Ok(answer) => {
             json!({"status":"complete","answer":answer,"session_id":session,"selector":selector,"digest":digest})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
+}
+
+/// Release a finished worker only after its result has been checked against
+/// the current form or job. Retain the checked response for retrying a lost
+/// HTTP response; callers recheck successful cached results on every poll.
+pub fn complete(id: &str, result: Value) -> Result<Value, String> {
+    let mut tasks = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
+    let mut completed = COMPLETED
+        .lock()
+        .map_err(|_| "Answer drafting unavailable")?;
+    if tasks
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.result.is_some())
+    {
+        *completed = Some((id.to_owned(), result.clone(), std::time::Instant::now()));
+        *tasks = None;
+        Ok(result)
+    } else if let Some((_, previous, _)) = completed.as_mut().filter(|(task_id, _, at)| {
+        task_id == id && at.elapsed() <= std::time::Duration::from_secs(600)
+    }) {
+        if previous["status"] == "failed" && result["status"] == "complete" {
+            return Ok(previous.clone());
+        }
+        *previous = result.clone();
+        Ok(result)
+    } else {
+        Err("Answer draft not found".into())
+    }
 }
 fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     let text = value["text"]
@@ -206,6 +252,119 @@ pub(crate) fn generate(llm: &mut dyn Inference, input: &Inputs) -> Result<Value,
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, UsageReport};
+
+    #[test]
+    fn email_answer_replays_after_lost_response_and_invalidates_changed_inputs() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("fictional-answer-replay").unwrap();
+        ws.import_manual_job(
+            waypoint_store::StoredJob {
+                id: job_id.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some("https://example.org/job".into()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional role"),
+        )
+        .unwrap();
+        ws.add_fact(
+            "Experience with research",
+            waypoint_workspace::FactOrigin::UserAttested,
+        )
+        .unwrap();
+        let input = crate::email_answer_inputs(&ws, &job_id).unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "replay-fixture".into(),
+            session_id: input.session_id,
+            selector: input.selector,
+            digest: input.digest,
+            result: Some(Ok(
+                json!({"text":"Research experience","facts":[1],"sources":["Experience with research"]}),
+            )),
+            completed_at: Some(std::time::Instant::now()),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"task_id":"replay-fixture"}).to_string();
+        let mut responses = Vec::new();
+        for iteration in 0..4 {
+            if iteration == 2 {
+                ws.save_candidate_profile(&json!({"document_instructions":"Changed"}).to_string())
+                    .unwrap();
+            }
+            if iteration == 3 {
+                ws.save_candidate_profile("{}").unwrap();
+            }
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/email-answer/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            responses.push(
+                serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap(),
+            );
+        }
+        assert_eq!(responses[0]["status"], "complete");
+        assert_eq!(responses[0], responses[1]);
+        assert_eq!(responses[2]["status"], "failed");
+        assert_eq!(responses[2], responses[3]);
+        assert!(TASK.lock().unwrap().is_none());
+        *TASK.lock().unwrap() = Some(Task {
+            id: "form-replay-fixture".into(),
+            session_id: "expired-session".into(),
+            selector: "#question".into(),
+            digest: "stale".into(),
+            result: Some(Ok(
+                json!({"text":"Research experience","facts":[1],"sources":["Experience with research"]}),
+            )),
+            completed_at: Some(std::time::Instant::now()),
+        });
+        let body = json!({"task_id":"form-replay-fixture"}).to_string();
+        let mut form_responses = Vec::new();
+        for _ in 0..2 {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/answer-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            form_responses.push(
+                serde_json::from_str::<Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap(),
+            );
+        }
+        assert_eq!(form_responses[0]["status"], "failed");
+        assert_eq!(form_responses[0], form_responses[1]);
+        assert!(TASK.lock().unwrap().is_none());
+        let late = complete(
+            "form-replay-fixture",
+            json!({"status":"complete","answer":{"text":"stale"}}),
+        )
+        .unwrap();
+        assert_eq!(late, form_responses[0]);
+        *COMPLETED.lock().unwrap() = Some((
+            "expired-result".into(),
+            json!({"status":"complete"}),
+            std::time::Instant::now() - std::time::Duration::from_secs(601),
+        ));
+        assert!(poll("expired-result").is_err());
+        assert!(complete("expired-result", json!({"status":"complete"})).is_err());
+        *COMPLETED.lock().unwrap() = None;
+    }
 
     #[test]
     fn evidence_check_rejects_invented_quotes_and_reports_uncertainty() {
