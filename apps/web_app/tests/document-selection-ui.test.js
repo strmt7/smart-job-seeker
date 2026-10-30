@@ -1,0 +1,5 @@
+const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');
+const src=fs.readFileSync('apps/web_app/web/app.js','utf8');const line=src.split('\n').find(x=>x.startsWith('function draftSelectionSummary('));assert.ok(line);const format=vm.runInNewContext(`(${line})`);
+const partial=format({method:'bounded_semantic_with_lexical_fallback',pool:60,examined:25,used_in_draft:4,failed_batches:1,fallback_selected:3,budget_truncated:true,selection_capped:false,draft_fact_budget_omitted:2,contact_omitted:1,template_truncated:true});
+for(const text of ['25 of 60','1 selection batch failed','3 fallback','selection budget reached','2 selected qualifications omitted','1 contact detail omitted','template text was shortened'])assert.ok(partial.includes(text),text);
+assert.match(format({method:'all_pool_facts',pool:3,examined:3,used_in_draft:3}),/All 3 pooled qualifications were supplied/);assert.match(format(null),/details are unavailable/);assert.ok(src.includes('draftSelectionSummary(draft.selection)'));console.log('Document selection UI checks passed.');

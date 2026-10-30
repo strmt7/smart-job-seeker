@@ -140,7 +140,7 @@ pub fn start(
 /// Bounded semantic reranking. Interleave lexical candidates with sampled
 /// inventory facts, so long lexical facts cannot exhaust the batch budget
 /// before the model sees a potentially relevant paraphrase.
-fn select_semantic_facts(
+pub(crate) fn select_semantic_facts(
     model: &mut dyn Inference,
     pool: &[String],
     available: usize,

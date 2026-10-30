@@ -139,7 +139,7 @@ fn generate_with_selection(llm: &mut dyn Inference, mut input: Inputs) -> Result
 }
 
 /// Maximum serialized JSON string size, including quotes and escaping.
-fn json_prefix(text: &str, max_bytes: usize) -> &str {
+pub(crate) fn json_prefix(text: &str, max_bytes: usize) -> &str {
     let mut used = 2usize;
     let mut end = 0usize;
     for (index, character) in text.char_indices() {

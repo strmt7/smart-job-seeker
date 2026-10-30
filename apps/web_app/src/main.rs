@@ -369,6 +369,7 @@ fn select_fit_facts(facts: &[String], listing: &str) -> Vec<String> {
 }
 
 /// Select reviewed evidence relevant to the listing without loading the full fact history.
+#[cfg(test)]
 fn draft_qualifications(
     ws: &Workspace,
     job: &JobIdentityId,
@@ -3978,7 +3979,11 @@ fn serve(
             ) {
                 return Err("Shortlist the job before drafting".into());
             }
-            let mut facts = draft_qualifications(ws, &id, kind)?;
+            let (all_facts, _) = fit_candidate_context(ws)?;
+            if all_facts.is_empty() {
+                return Err("Add verified qualifications before drafting".into());
+            }
+            let mut contact_facts = Vec::new();
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(text) => {
                     serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?
@@ -3999,7 +4004,7 @@ fn serve(
                         .as_str()
                         .filter(|value| !value.trim().is_empty() && value.len() <= 500)
                     {
-                        facts.push(format!("{label}: {value}"));
+                        contact_facts.push(format!("{label}: {value}"));
                     }
                 }
             }
@@ -4038,6 +4043,11 @@ fn serve(
                 .take(8000)
                 .collect::<String>();
             let job_info = json!({"title":job.title,"employer":job.employer,"location":job.location,"description":description});
+            let selection_listing = format!(
+                "Title: {}\nEmployer: {}\nLocation: {}\nDescription: {}",
+                job.title, job.employer, job.location, description
+            );
+            let facts = fit_semantic_pool(&all_facts, &selection_listing);
             let model =
                 resident_model()?.ok_or("No eligible already-loaded local model is available")?;
             let task_id = random_id()?;
@@ -4051,6 +4061,9 @@ fn serve(
                     job: job_info,
                     kind: kind.to_owned(),
                     facts,
+                    available_facts: all_facts.len(),
+                    contact_facts,
+                    selection_listing,
                     instructions,
                     template,
                 },
