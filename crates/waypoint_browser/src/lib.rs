@@ -685,34 +685,54 @@ impl CdpDriver {
                 return !matches!(tag.as_str(), "script" | "style" | "noscript" | "template");
             }
             let plain_editor = supported_editing_host(&tag, &attrs);
-            // Custom ARIA controls are not handled by the native-field driver.
-            // Do not silently omit a required question on an otherwise readable form.
-            if (attrs.contains_key("required")
+            // Typing into an editable choice widget does not establish that a
+            // site-side option was selected, even if the text is retained.
+            let dynamic_choice = !(tag == "input"
+                && attrs
+                    .get("type")
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("password")))
+                && ((tag != "select"
+                    && attrs
+                        .get("role")
+                        .is_some_and(|role| role.eq_ignore_ascii_case("combobox")))
+                    || (tag == "input" && attrs.contains_key("list"))
+                    || (matches!(tag.as_str(), "input" | "textarea")
+                        && attrs.get("aria-autocomplete").is_some_and(|value| {
+                            matches!(
+                                value.to_ascii_lowercase().as_str(),
+                                "list" | "both" | "inline"
+                            )
+                        })));
+            let required_custom = attrs.contains_key("required")
                 || attrs
                     .get("aria-required")
-                    .is_some_and(|value| value.eq_ignore_ascii_case("true")))
-                && !plain_editor
-                && (attrs.get("contenteditable").is_some_and(|value| {
-                    matches!(
-                        value.to_ascii_lowercase().as_str(),
-                        "" | "true" | "plaintext-only"
-                    ) && !matches!(tag.as_str(), "input" | "textarea" | "select")
-                }) || attrs.get("role").is_some_and(|role| {
-                    match role.to_ascii_lowercase().as_str() {
-                        "combobox" | "listbox" => tag != "select",
-                        "spinbutton" => {
-                            !(tag == "input"
-                                && attrs
-                                    .get("type")
-                                    .is_some_and(|kind| kind.eq_ignore_ascii_case("number")))
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+            // Custom ARIA controls are not handled by the native-field driver.
+            // Do not silently omit a required question on an otherwise readable form.
+            if dynamic_choice
+                || required_custom
+                    && !plain_editor
+                    && (attrs.get("contenteditable").is_some_and(|value| {
+                        matches!(
+                            value.to_ascii_lowercase().as_str(),
+                            "" | "true" | "plaintext-only"
+                        ) && !matches!(tag.as_str(), "input" | "textarea" | "select")
+                    }) || attrs.get("role").is_some_and(|role| {
+                        match role.to_ascii_lowercase().as_str() {
+                            "combobox" | "listbox" => tag != "select",
+                            "spinbutton" => {
+                                !(tag == "input"
+                                    && attrs
+                                        .get("type")
+                                        .is_some_and(|kind| kind.eq_ignore_ascii_case("number")))
+                            }
+                            "slider" | "switch" => true,
+                            "textbox" | "searchbox" | "checkbox" | "radio" => {
+                                !matches!(tag.as_str(), "input" | "textarea" | "select")
+                            }
+                            _ => false,
                         }
-                        "slider" | "switch" => true,
-                        "textbox" | "searchbox" | "checkbox" | "radio" => {
-                            !matches!(tag.as_str(), "input" | "textarea" | "select")
-                        }
-                        _ => false,
-                    }
-                }))
+                    }))
             {
                 if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
                     let label = attrs
@@ -720,9 +740,16 @@ impl CdpDriver {
                         .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
                         .filter(|value| !value.is_empty() && value.len() <= 160);
                     let references = attrs.get("aria-labelledby").cloned();
-                    custom_nodes.push((id, label, references));
+                    custom_nodes.push((id, label, references, required_custom));
                 } else {
-                    wall_flags.push("a required custom control needs manual review".into());
+                    wall_flags.push(
+                        if required_custom {
+                            "a required custom control needs manual review"
+                        } else {
+                            "a custom control needs manual review"
+                        }
+                        .into(),
+                    );
                 }
             }
             if tag == "label" {
@@ -806,6 +833,9 @@ impl CdpDriver {
             if matches!(tag.as_str(), "script" | "style" | "noscript" | "template") {
                 return false; // skip this subtree for text collection
             }
+            if dynamic_choice {
+                return true;
+            }
             if (matches!(tag.as_str(), "input" | "textarea" | "select") || plain_editor)
                 && !in_control
             {
@@ -852,7 +882,7 @@ impl CdpDriver {
                 wanted_next.insert(id.to_owned());
             }
         }
-        for (_, _, references) in &custom_nodes {
+        for (_, _, references, _) in &custom_nodes {
             if let Some(ids) = references.as_ref().filter(|ids| ids.len() <= 512) {
                 for id in ids.split_whitespace().take(16) {
                     wanted_next.insert(id.to_owned());
@@ -945,7 +975,7 @@ impl CdpDriver {
                     add_hidden_selectors(&mut hidden_selectors, &control);
                 }
             }
-            for (node, label, references) in custom_nodes {
+            for (node, label, references, required) in custom_nodes {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
@@ -971,11 +1001,14 @@ impl CdpDriver {
                     } else {
                         label
                     };
+                    let prefix = if required {
+                        "a required custom control needs manual review"
+                    } else {
+                        "a custom control needs manual review"
+                    };
                     wall_flags.push(match label {
-                        Some(label) => {
-                            format!("a required custom control needs manual review: {label}")
-                        }
-                        None => "a required custom control needs manual review".into(),
+                        Some(label) => format!("{prefix}: {label}"),
+                        None => prefix.into(),
                     });
                 }
             }
@@ -1301,7 +1334,7 @@ impl CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect text field".into()))?;
-                let check = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly || (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true'); }","returnByValue":true})).map_err(derr)?;
+                let check = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) || (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true'); }","returnByValue":true})).map_err(derr)?;
                 if check.get("exceptionDetails").is_some()
                     || check.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1338,10 +1371,10 @@ impl CdpDriver {
                 self.cdp
                     .call("DOM.focus", json!({ "nodeId": node }))
                     .map_err(derr)?;
-                let focus = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return document.activeElement === this; }","returnByValue":true})).map_err(derr)?;
+                let focus = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return document.activeElement === this && !((this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) && (this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()))); }","returnByValue":true})).map_err(derr)?;
                 if focus.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
                     return Err(DriverError(
-                        "Text field did not receive focus; review it manually".into(),
+                        "Text field did not retain safe focus or changed to a choice control; review it manually".into(),
                     ));
                 }
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
@@ -1366,7 +1399,7 @@ impl CdpDriver {
                         .call("Input.insertText", json!({ "text": t }))
                         .map_err(derr)?;
                 }
-                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
+                let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
@@ -1815,7 +1848,7 @@ impl BrowserDriver for CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return this.isConnected && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
@@ -2276,7 +2309,11 @@ fn walk_with_visibility<F: FnMut(&Value, bool, bool) -> bool>(
             || ["input", "textarea", "select"]
                 .iter()
                 .any(|kind| tag.eq_ignore_ascii_case(kind))
-            || supported_editing_host(&tag.to_ascii_lowercase(), &attributes(current));
+            || supported_editing_host(&tag.to_ascii_lowercase(), &attributes(current))
+            || (!tag.eq_ignore_ascii_case("select")
+                && attributes(current)
+                    .get("role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("combobox")));
         if let Some(children) = current.get("children").and_then(Value::as_array) {
             pending.extend(
                 children

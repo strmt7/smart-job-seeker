@@ -459,7 +459,18 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                     redirect_warning = Some("The listing redirected to an external destination before inspection; review its identity and the original listing.");
                 }
             }
-            let (mut message, review) = if !page.walls.is_empty() {
+            let (mut message, review) = if !page.walls.is_empty()
+                && page
+                    .walls
+                    .iter()
+                    .all(|wall| crate::form_preview::is_custom_review(wall))
+            {
+                let (summary, _) = classify_fields(&page.schema.fields, followed);
+                (
+                    format!("{summary} Some custom or autocomplete choices need manual review."),
+                    true,
+                )
+            } else if !page.walls.is_empty() {
                 (if page.walls.iter().any(|wall| wall == "The main page response status could not be verified; manual review is required") {
                     "The main page response status could not be verified; other obstacles may also be present. Manual review needed.".into()
                 } else {
@@ -720,6 +731,34 @@ mod tests {
         assert!(review);
         assert!(result.contains("redirected to another site"), "{result}");
         assert!(!result.contains("form fields detected"), "{result}");
+    }
+
+    #[test]
+    #[ignore = "starts one browser against a fictional autocomplete form"]
+    fn custom_choice_does_not_hide_other_fields_in_check_summary() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_autocomplete_choice.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        super::start("choice-fixture".into(), "fictional-job".into(), url, false).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("choice-fixture").unwrap() {
+                break done;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        acknowledge("choice-fixture").unwrap();
+        assert!(review);
+        assert!(result.contains("form fields detected"), "{result}");
+        assert!(
+            result.contains("autocomplete choices need manual review"),
+            "{result}"
+        );
+        assert!(!result.contains("Sign-in, CAPTCHA"), "{result}");
     }
     #[test]
     fn visual_advice_requires_a_bounded_excerpt_and_stays_advisory() {

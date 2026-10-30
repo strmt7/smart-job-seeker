@@ -719,3 +719,14 @@ changed; the local qwen3.5:9b rich-text fill and visual fixture also passed
 again. Older serialized form fields without the new property deserialize with
 no editing mode. This does not prove compatibility with arbitrary dynamic
 editors, and a changed form still requires a new review.
+
+Combobox widgets and editable inputs that expose a native datalist or list/inline
+ARIA autocomplete are now left for manual review: retaining typed text does not
+prove an option was selected. This applies to optional as well as required
+controls; unrelated ordinary fields can still be reviewed and filled. The driver
+also rechecks after focus so a field that turns into a combobox is not typed
+into. A fictional local browser fixture covered these cases and ordinary name
+autocomplete; an application-check fixture confirmed that other fields are
+reported without mislabelling the custom control as a CAPTCHA. These controls
+are not automatically selected, and custom widgets without these signals can
+still be missed. No employer site or application submission was used.

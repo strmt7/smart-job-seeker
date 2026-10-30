@@ -54,9 +54,11 @@ impl FormPreview {
 }
 
 // Unsupported custom questions remain review obligations; other walls block.
-fn is_custom_review(reason: &str) -> bool {
+pub(crate) fn is_custom_review(reason: &str) -> bool {
     reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
+        || reason == "a custom control needs manual review"
+        || reason.starts_with("a custom control needs manual review: ")
 }
 
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
@@ -512,6 +514,15 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn optional_custom_choice_is_a_reviewable_obligation() {
+        assert!(is_custom_review("a custom control needs manual review"));
+        assert!(is_custom_review(
+            "a custom control needs manual review: City"
+        ));
+        assert!(!is_custom_review("captcha present"));
+    }
 
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]

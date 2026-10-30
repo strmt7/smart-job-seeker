@@ -676,6 +676,71 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
 }
 
 #[test]
+#[ignore = "launches a real browser with a fictional autocomplete fixture"]
+fn autocomplete_choices_are_not_mistaken_for_selected_text_fields() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver
+        .open(&file_url("form_autocomplete_choice.html"))
+        .unwrap();
+    assert!(page.schema.fields.iter().any(|field| field.label == "Name"));
+    for label in [
+        "City",
+        "Country",
+        "Category",
+        "Region",
+        "Nested choice",
+        "Search terms",
+    ] {
+        assert!(
+            !page.schema.fields.iter().any(|field| field.label == label),
+            "{label} should remain manual"
+        );
+    }
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall.contains("City") && wall.contains("manual review")));
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall.contains("Country") && wall.contains("manual review")));
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall.contains("Region") && wall.contains("manual review")));
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall.contains("Search terms") && wall.contains("manual review")));
+    assert!(page.walls.iter().any(|wall| wall.contains("manual review")));
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#city".into(),
+            value: PacketValue::Text("Berlin".into())
+        })
+        .is_err());
+    assert_eq!(driver.read_attribute("body", "data-changed").unwrap(), None);
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#changing".into(),
+            value: PacketValue::Text("Berlin".into())
+        })
+        .is_err());
+    assert_eq!(driver.read_attribute("body", "data-changed").unwrap(), None);
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#name".into(),
+            value: PacketValue::Text("Avery".into()),
+        })
+        .unwrap();
+    driver.verify_text_value("#name", "Avery").unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser (Edge/Chrome)"]
 fn a_real_browser_submits_the_packet_and_returns_a_qualified_receipt() {
     let url = file_url("form_ok.html");

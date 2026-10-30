@@ -1,0 +1,10 @@
+<!doctype html><html><body><form>
+<label for="name">Name</label><input id="name" autocomplete="given-name">
+<input id="city" role="combobox" aria-label="City" aria-autocomplete="list" oninput="document.body.dataset.changed='yes'">
+<input id="country" role="combobox" aria-label="Country" aria-required="true" aria-autocomplete="list">
+<label for="category">Category</label><input id="category" list="category-options"><datalist id="category-options"><option value="Research"></datalist>
+<label for="changing">Changing field</label><input id="changing" onfocus="this.setAttribute('role','combobox')" oninput="document.body.dataset.changed='yes'">
+<div role="combobox" aria-label="Region"><input aria-label="Nested choice"></div>
+<textarea aria-label="Search terms" aria-autocomplete="list"></textarea>
+<button type="submit">Submit</button>
+</form></body></html>
