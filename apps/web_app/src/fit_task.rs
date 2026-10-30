@@ -622,9 +622,11 @@ fn unique_requirement_context<'a>(listing: &'a str, excerpt: &str) -> Option<&'a
     if excerpt.is_empty() {
         return None;
     }
-    let mut matches = listing.match_indices(excerpt);
-    let (position, _) = matches.next()?;
-    if matches.next().is_some() {
+    let position = listing.find(excerpt)?;
+    // `match_indices` skips overlapping matches, so advance by one character
+    // before looking for a second occurrence.
+    let next = position + listing[position..].chars().next()?.len_utf8();
+    if listing[next..].contains(excerpt) {
         return None;
     }
     let start = listing.ceil_char_boundary(position.saturating_sub(160));
@@ -1616,6 +1618,8 @@ mod tests {
             find_unknown_qualification_evidence(&mut NoCalls, changed.clone(), &facts, listing);
         assert_eq!(unchanged, changed);
         assert!(report.is_none());
+        assert!(unique_requirement_context("aaaa", "aaa").is_none());
+        assert!(unique_requirement_context("ééé", "éé").is_none());
     }
 
     #[test]
@@ -1928,10 +1932,21 @@ mod tests {
             "",
             "Seeking a frontend engineer with accessibility experience.",
         );
+        let assessment = assessment.expect("semantic selection did not produce a valid assessment");
         println!("fictional assessment after semantic selection: {assessment:?}");
         assert!(
-            assessment.is_ok(),
-            "semantic selection did not produce a valid assessment"
+            assessment["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["excerpt"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("accessibility"))
+                    && item["status"] == "supported"
+                    && item["qualification"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("assistive technology"))),
+            "semantic evidence did not support the accessibility criterion: {assessment}"
         );
     }
 
@@ -2061,6 +2076,36 @@ mod tests {
                 "SQL should remain unknown: {assessment}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_fit_disambiguates_repeated_fictional_requirement() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let listing =
+            "Our Python team runs internal training. Required: five years of Python experience.";
+        let facts = vec!["Built Python applications for six years".into()];
+        let result = assess(&mut model, &facts, "", listing).unwrap();
+        println!("fictional repeated requirement assessment: {result}");
+        assert!(
+            result["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["excerpt"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("Python") && s.contains("five years"))
+                    && item["status"] == "supported"),
+            "required experience should be uniquely identified and supported: {result}"
+        );
     }
 
     #[test]
