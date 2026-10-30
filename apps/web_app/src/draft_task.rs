@@ -333,7 +333,7 @@ fn numeric_literals(text: &str) -> Vec<String> {
     out
 }
 
-fn numeric_claims_supported(paragraph: &str, facts: &[&str]) -> bool {
+pub(crate) fn numeric_claims_supported(paragraph: &str, facts: &[&str]) -> bool {
     let evidence: std::collections::HashSet<String> = facts
         .iter()
         .flat_map(|fact| numeric_literals(fact))
