@@ -1582,6 +1582,29 @@ impl CdpDriver {
     }
 }
 
+fn check_navigation_result(navigation: &Value) -> Result<(), DriverError> {
+    if let Some(error) = navigation
+        .get("errorText")
+        .and_then(Value::as_str)
+        .filter(|error| !error.is_empty())
+    {
+        let safe_error: String = error
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-' | '.'))
+            .take(100)
+            .collect();
+        return Err(DriverError(format!(
+            "Browser navigation failed: {safe_error}"
+        )));
+    }
+    if navigation.get("isDownload").and_then(Value::as_bool) == Some(true) {
+        return Err(DriverError(
+            "The destination started a download instead of opening a page".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl BrowserDriver for CdpDriver {
     fn current_url(&mut self) -> Result<String, DriverError> {
         CdpDriver::current_url(self)
@@ -1601,6 +1624,7 @@ impl BrowserDriver for CdpDriver {
             .cdp
             .call("Page.navigate", json!({ "url": url }))
             .map_err(derr)?;
+        check_navigation_result(&navigation)?;
         let frame_id = navigation.get("frameId").and_then(Value::as_str);
         // Same-document hash navigation does not fire a new load event.
         // Wait for either navigation event, then inspect the resulting page.
@@ -2117,6 +2141,21 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn navigation_result_rejects_errors_and_downloads() {
+        assert!(check_navigation_result(&json!({"frameId":"frame"})).is_ok());
+        assert!(
+            check_navigation_result(&json!({"errorText":"net::ERR_FILE_NOT_FOUND"}))
+                .unwrap_err()
+                .0
+                .contains("ERR_FILE_NOT_FOUND")
+        );
+        assert!(check_navigation_result(&json!({"isDownload":true}))
+            .unwrap_err()
+            .0
+            .contains("download"));
+    }
 
     #[test]
     fn file_accept_checks_extensions_mime_types_and_unknown_formats() {

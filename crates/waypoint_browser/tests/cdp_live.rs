@@ -43,6 +43,20 @@ fn file_url(name: &str) -> String {
 }
 
 #[test]
+#[ignore = "launches one local browser and opens a nonexistent fictional file"]
+fn failed_navigation_does_not_return_an_inspected_form() {
+    let missing = format!("waypoint-nonexistent-{}.html", std::process::id());
+    assert!(!fixtures_dir().join(&missing).exists());
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_ok.html")).unwrap();
+    let result = driver.open(&file_url(&missing));
+    assert!(
+        result.is_err(),
+        "failed navigation returned a form: {result:?}"
+    );
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional form without submitting"]
 fn file_accept_is_checked_before_the_attachment_changes() {
     use std::io::Write;
