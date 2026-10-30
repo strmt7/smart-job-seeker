@@ -872,35 +872,44 @@ fn duplicate_search_inputs(
                 .into(),
         );
     }
-    let listing = |job: &waypoint_store::StoredJob| -> Result<String, String> {
+    let listing = |job: &waypoint_store::StoredJob| -> Result<(String, String, bool), String> {
         let description = ws
             .job_description(&job.id)
             .map_err(|e| e.to_string())?
             .unwrap_or_default();
-        Ok(format!(
+        let full = format!(
             "Title: {}\nEmployer: {}\nLocation: {}\nRequisition: {}\nDescription: {}",
             job.title,
             job.employer,
             job.location,
             job.requisition_id.as_deref().unwrap_or(""),
             description
-        )
-        .chars()
-        .take(1800)
-        .collect())
+        );
+        let short: String = full.chars().take(1800).collect();
+        let shortened = short.len() < full.len();
+        Ok((
+            short,
+            waypoint_domain::sha256_hex(full.as_bytes()),
+            shortened,
+        ))
     };
     let job = ws
         .job(id)
         .map_err(|e| e.to_string())?
         .ok_or("Job not found")?;
-    let target = listing(&job)?;
+    let (target, target_digest, target_shortened) = listing(&job)?;
     let (neighbors, truncated) = ws.duplicate_neighbors(id).map_err(|e| e.to_string())?;
     let mut candidates = Vec::with_capacity(neighbors.len());
+    let mut source_digests = Vec::with_capacity(neighbors.len());
+    let mut source_texts_shortened = usize::from(target_shortened);
     for job in neighbors {
-        candidates.push((job.id.as_str().to_owned(), listing(&job)?));
+        let (text, digest, shortened) = listing(&job)?;
+        source_texts_shortened += usize::from(shortened);
+        source_digests.push((job.id.as_str().to_owned(), digest));
+        candidates.push((job.id.as_str().to_owned(), text));
     }
     let digest = Sha256Digest::of(
-        &json!({"target":target,"candidates":candidates,"truncated":truncated}).to_string(),
+        &json!({"target":target,"target_digest":target_digest,"candidates":candidates,"source_digests":source_digests,"truncated":truncated}).to_string(),
     )
     .as_str()
     .to_owned();
@@ -910,6 +919,7 @@ fn duplicate_search_inputs(
         candidates,
         digest,
         truncated,
+        source_texts_shortened,
     })
 }
 

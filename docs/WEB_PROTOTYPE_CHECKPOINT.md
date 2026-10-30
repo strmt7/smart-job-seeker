@@ -549,3 +549,23 @@ browser session and can resume it after a rerender. A fictional API fixture and
 UI retry test covered response loss and a subsequent duplicate decision. The
 cache is bounded to the latest result, does not survive an app restart, and a
 lost start response before the browser receives a task ID is not recovered.
+
+Duplicate candidate search now bounds serialized model input and checks quoted
+excerpts against exactly the shortened text supplied to the model. It reports
+shortened source listings, shortened model inputs, unexamined candidates and
+failed model calls, and retries an invalid multi-candidate response individually
+within a fixed bound. The full listing text is hashed before the candidate
+comparison is saved, so edits outside the displayed prefix invalidate an in-flight
+result. A fictional multilingual long-text fixture with local qwen3.5:9b
+identified one matching requisition with a different title and excluded one
+unrelated job after the prompt requested short excerpts. Earlier runs of that
+fixture exceeded the model output limit; the successful run does not establish
+general duplicate accuracy. Candidate selection remains capped and does not
+cover every potential duplicate, and all proposed matches require review.
+
+On 2026-10-30, the existing fit repeatability fixture was run three times with
+resident qwen3.5:9b at a 4096-token context. All three fictional assessments
+produced the same cited rubric and 83% estimate, with a 67–100% uncertainty
+range. Each also flagged a possible overlap between a remote-work preference and
+a listing criterion. This single repeated fixture does not establish accuracy,
+calibration or repeatability across other jobs, profiles or model versions.
