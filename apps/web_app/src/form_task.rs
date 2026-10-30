@@ -21,10 +21,10 @@ pub(crate) fn has_upload_control(
 fn open_application_page(
     driver: &mut dyn BrowserDriver,
     url: &str,
-) -> Result<waypoint_applications::driver::LiveForm, String> {
+) -> Result<(waypoint_applications::driver::LiveForm, Option<String>), String> {
     let mut live = driver.open(url).map_err(|e| e.to_string())?;
     if !live.walls.is_empty() {
-        return Ok(live);
+        return Ok((live, None));
     }
     let current = driver.current_url().map_err(|e| e.to_string())?;
     let original = url::Url::parse(url).map_err(|_| "Invalid listing URL")?;
@@ -32,15 +32,25 @@ fn open_application_page(
     if original.scheme() == "https" && original.origin() != reached.origin() {
         live.walls
             .push("The listing redirected to another site; continue manually".into());
-        return Ok(live);
+        return Ok((live, None));
     }
     // A file upload is evidence that this may already be an application form.
     // Keep the current page for user review rather than navigating away from it;
     // this is not proof that the page accepts applications.
     if has_upload_control(&live.schema.fields) {
-        return Ok(live);
+        return Ok((live, None));
     }
-    let links = driver.application_links().map_err(|e| e.to_string())?;
+    let links = match driver.application_links() {
+        Ok(links) => links,
+        Err(_) => {
+            return Ok((
+                live,
+                Some(
+                    "Application links could not be inspected; review navigation manually.".into(),
+                ),
+            ))
+        }
+    };
     if let Some(destination) = crate::application_check::application_destination(&current, &links) {
         live = driver.open(&destination).map_err(|e| e.to_string())?;
         let final_url = driver.current_url().map_err(|e| e.to_string())?;
@@ -50,10 +60,12 @@ fn open_application_page(
                 .push("The application link redirected to another site; continue manually".into());
         }
     } else if !links.is_empty() {
-        live.walls
-            .push("Application links are ambiguous or require manual navigation".into());
+        return Ok((
+            live,
+            Some("Application links are ambiguous or require manual navigation".into()),
+        ));
     }
-    Ok(live)
+    Ok((live, None))
 }
 
 pub struct Finished {
@@ -122,8 +134,8 @@ pub fn start(
         let result = std::panic::catch_unwind(|| -> Result<_, String> {
             let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
                 .map_err(|e| e.to_string())?;
-            let live = open_application_page(&mut driver, &url)?;
-            let preview = if let Some(model) = model {
+            let (live, navigation_warning) = open_application_page(&mut driver, &url)?;
+            let mut preview = if let Some(model) = model {
                 let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                     .map_err(|e| e.to_string())?
                     .with_resident_context();
@@ -136,6 +148,9 @@ pub fn start(
             } else {
                 form_preview::suggest_without_model(live, &profile, &no_model_reason)?
             };
+            if let Some(warning) = navigation_warning {
+                preview.manual_review.push(warning);
+            }
             Ok((driver, preview))
         })
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
@@ -444,10 +459,15 @@ mod tests {
                     sensitive: false,
                     autocomplete: None,
                 }]
-            } else if url.ends_with("/apply") {
+            } else if url.ends_with("/apply") || url.ends_with("/form") {
                 vec![FormField {
                     selector: "#name".into(),
-                    label: "Name".into(),
+                    label: if url.ends_with("/form") {
+                        "First name"
+                    } else {
+                        "Name"
+                    }
+                    .into(),
                     field_type: FormFieldType::Text,
                     required: true,
                     sensitive: false,
@@ -490,7 +510,9 @@ mod tests {
             redirect: None,
             direct_upload: false,
         };
-        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        let (form, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert!(warning.is_none());
         assert_eq!(
             driver.opened,
             [
@@ -506,9 +528,11 @@ mod tests {
             redirect: None,
             direct_upload: false,
         };
-        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        let (form, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert_eq!(driver.opened.len(), 1);
-        assert!(!form.walls.is_empty());
+        assert!(form.walls.is_empty());
+        assert!(warning.unwrap().contains("ambiguous"));
         let mut driver = FakeDriver {
             current: String::new(),
             links: vec![],
@@ -516,7 +540,8 @@ mod tests {
             redirect: Some("https://another.example/job".into()),
             direct_upload: false,
         };
-        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        let (form, _) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert!(!form.walls.is_empty());
     }
 
@@ -529,9 +554,78 @@ mod tests {
             redirect: None,
             direct_upload: true,
         };
-        let form = open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        let (form, _) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert_eq!(driver.opened, ["https://jobs.example.org/role"]);
         assert_eq!(form.schema.fields[0].field_type, FormFieldType::File);
+    }
+
+    #[test]
+    fn ambiguous_links_do_not_block_existing_form_suggestions() {
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec!["https://other.example/apply".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: false,
+        };
+        let (form, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/form").unwrap();
+        assert!(warning.unwrap().contains("ambiguous"));
+        assert!(form.walls.is_empty());
+        assert_eq!(driver.opened.len(), 1);
+        let preview = form_preview::suggest_without_model(
+            form,
+            &serde_json::json!({"first_name":"Alex"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        assert!(preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#name"));
+    }
+
+    #[test]
+    #[ignore = "starts one headless browser against a fictional local form"]
+    fn background_inspection_keeps_form_and_ambiguous_link_warning() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/application-check-ambiguous-links.html");
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        start(
+            "ambiguous-inspection-fixture".into(),
+            JobIdentityId::new("fixture-job").unwrap(),
+            url,
+            serde_json::json!({"email":"alex@example.invalid"}),
+            None,
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some(done) = poll("ambiguous-inspection-fixture").unwrap() {
+                let (driver, preview) = done.result.unwrap();
+                assert!(preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason.contains("Application links are ambiguous")));
+                assert!(preview
+                    .suggestions
+                    .iter()
+                    .any(|mapping| mapping.field_selector == "#email"));
+                assert!(driver
+                    .trace
+                    .iter()
+                    .all(|entry| !entry.contains("submitted")));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "inspection did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 
     #[test]
@@ -541,7 +635,7 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
         let url = url::Url::from_file_path(fixture).unwrap().to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        let form = open_application_page(&mut driver, &url).unwrap();
+        let (form, _) = open_application_page(&mut driver, &url).unwrap();
         assert!(form
             .schema
             .fields
