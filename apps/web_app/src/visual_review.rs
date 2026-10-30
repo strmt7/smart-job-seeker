@@ -232,6 +232,38 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
     json!({"observations":items,"comparisons":comparisons,"observation_limit_reached":items.len() == MAX_OBSERVATIONS})
 }
 
+/// Fields not visible in one segment may appear elsewhere; only a direct
+/// disagreement in this segment can establish a visual review concern here.
+pub fn transcription_mismatch_count(result: &Value) -> usize {
+    result["comparisons"].as_array().map_or(0, |items| {
+        items
+            .iter()
+            .filter(|item| item["status"] == "differs_from_transcription")
+            .count()
+    })
+}
+
+pub const TRANSCRIPTION_MISMATCH_REASON: &str =
+    "A visually transcribed field differs from its reviewed answer";
+
+pub fn flag_transcription_mismatch(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    result: &Value,
+    timestamp: i64,
+) -> Result<bool, String> {
+    if transcription_mismatch_count(result) == 0 {
+        return Ok(false);
+    }
+    ws.mark_manual_review(job, TRANSCRIPTION_MISMATCH_REASON, timestamp)
+        .map_err(|e| {
+            format!(
+                "Visual transcription differs, but its manual-review flag could not be saved: {e}"
+            )
+        })?;
+    Ok(true)
+}
+
 /// A matching transcription alone may be a placeholder rather than an entered
 /// value. Independently check matching fields against the live DOM. This does
 /// not make the vision model's interpretation or the site trustworthy.
@@ -998,6 +1030,24 @@ mod tests {
         assert_eq!(result["comparisons"][2]["status"], "matches_transcription");
         server.join().unwrap();
     }
+    #[test]
+    fn visual_mismatch_marks_manual_review_but_unobserved_does_not() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/visual-fixture","title":"Engineer","employer":"Fixture"}), 1).unwrap();
+        let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let unobserved =
+            json!({"comparisons":[{"status":"unobserved"},{"status":"matches_transcription"}]});
+        assert!(!flag_transcription_mismatch(&ws, &job, &unobserved, 2).unwrap());
+        assert!(ws.manual_review_reasons(&job).unwrap().is_empty());
+        let mismatch = json!({"comparisons":[{"status":"unobserved"},{"status":"differs_from_transcription"}]});
+        assert!(flag_transcription_mismatch(&ws, &job, &mismatch, 3).unwrap());
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|reason| reason.reason == TRANSCRIPTION_MISMATCH_REASON));
+    }
+
     #[test]
     fn compares_only_unambiguous_visible_transcriptions() {
         let observed =

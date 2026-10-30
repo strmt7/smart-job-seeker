@@ -3592,6 +3592,22 @@ fn serve(
                     };
                     result["visual_freshness"] = json!(freshness);
                     result["final_signature_status"] = json!(final_signature_status);
+                    if visual_review::flag_transcription_mismatch(
+                        ws,
+                        &current.job_id,
+                        &result["visual_review"],
+                        now(),
+                    )? {
+                        let reason = visual_review::TRANSCRIPTION_MISMATCH_REASON;
+                        if !current
+                            .preview
+                            .manual_review
+                            .iter()
+                            .any(|item| item == reason)
+                        {
+                            current.preview.manual_review.push(reason.into());
+                        }
+                    }
                     if unconfirmed > 0 {
                         let reason = "A visually transcribed field could not be verified against its live value";
                         ws.mark_manual_review(&current.job_id, reason, now())
