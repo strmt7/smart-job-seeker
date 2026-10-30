@@ -42,5 +42,5 @@ assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 75% · 75
 selects[1].value='exclude';
 selects[2].value='exclude';
 selects[2].listeners.change();
-assert.equal(controls.children.at(-1).textContent,'Temporary estimate unavailable');
+assert.equal(controls.children.at(-1).textContent,'Temporary estimate unavailable (select 1–12 criteria).');
 console.log('Fit badge UI checks passed.');

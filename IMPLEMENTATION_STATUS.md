@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Temporary split of a fit criterion — 2026-10-30
+
+- In the fit review panel, a user can temporarily replace one listing criterion with two non-overlapping exact excerpts from that criterion and choose a separate judgment for each. Both parts inherit the original importance, so splitting changes their combined weight; the revised estimate is a user-exploration scenario, not a saved correction and does not update the job badge. Parts start unknown, and the original judgment is disabled until the split is closed. Splits that are missing, overlap, or are not present in the original excerpt cannot be calculated. The existing 12-criterion limit also applies to the temporary result.
+- Node checks covered the score and split controls. A local Playwright fixture using the actual component functions and CSS exercised invalid input, a valid C/C++ split, a changed judgment, and restoring the original at 1200×900 and 375×850; no page or console errors were observed and the narrow viewport had no horizontal overflow. The first fixture attempt omitted its UTF-8 declaration and failed on text matching; it passed after that fixture was corrected. This did not exercise the full application, persistence, keyboard-only navigation, or a live model. No application was sent.
+
 ## Possible grouped fit requirements — 2026-10-30
 
 - The fit review now flags listing excerpts containing English `and` or `or`, a comma, or an ampersand as possibly grouped requirements. The existing concerns display shows the excerpt and asks for review. The cue does not split criteria or change a score: it can flag a single combined concept and miss groupings expressed in other languages or without those markers. Older assessments become stale through the changed input digest. It is not a substitute for semantic assessment.
