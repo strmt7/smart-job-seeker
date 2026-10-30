@@ -607,3 +607,13 @@ and changing the page limit invalidates the session's schema binding. Fictional
 fake-model tests covered a successful repair, a persistent overrun, emoji and a
 zero-length limit. A real model was not resident for this check; its ability to
 produce a suitable concise answer for arbitrary limits remains unverified.
+
+A local qwen3.5:9b run on 2026-10-30 tested one fictional Python-experience
+question at native limits of 80 and 35 UTF-16 units. The final answers used 51
+and 27 units and cited the supplied fact. The shorter answer omitted the
+original backend and three-year details, illustrating that fitting a limit can
+lose useful information; this is not a general accuracy result. The model was
+reported fully GPU-resident at 4096 context after a free-memory preflight.
+Editable native text answers now show a live UTF-16 counter, including when a
+draft is inserted; the counter warns rather than truncating an overlong edit.
+A local UI fixture checked an emoji boundary and draft provenance retention.

@@ -938,6 +938,40 @@ mod tests {
             .unwrap_err()
             .contains("does not allow"));
     }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_drafts_fit_fictional_form_limits() {
+        let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        for limit in [80, 35] {
+            let input = Inputs {
+                session_id: "fictional".into(),
+                selector: "#experience".into(),
+                digest: "fixture".into(),
+                question: "Summarize your Python backend experience.".into(),
+                listing: "Fictional role requiring Python backend experience.".into(),
+                facts: vec!["Maintained Python backend services for three years.".into()],
+                available_facts: 1,
+                instructions: String::new(),
+                max_length_utf16: Some(limit),
+            };
+            let result = generate_with_selection(&mut model, input).unwrap();
+            println!("fictional limit {limit}: {result}");
+            let text = result["text"].as_str().unwrap();
+            assert!(!text.trim().is_empty());
+            assert!(text.encode_utf16().count() <= limit as usize);
+            assert_eq!(result["length"]["used_utf16"], text.encode_utf16().count());
+            assert!(!result["sources"].as_array().unwrap().is_empty());
+        }
+    }
     impl Inference for RevisionFixture {
         fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
             unreachable!()
