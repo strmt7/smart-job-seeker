@@ -68,8 +68,47 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
     };
     let old_keys = keys(before)?;
     let new_keys = keys(after)?;
+    // Compare criteria by their exact source and excerpt. This deliberately
+    // does not guess that different wording describes the same requirement.
+    let identity = |item: &Value| json!([item["source"], item["excerpt"]]).to_string();
+    let old_items = before["rubric"].as_array()?;
+    let new_items = after["rubric"].as_array()?;
+    for items in [old_items, new_items] {
+        let mut identities: Vec<_> = items.iter().map(identity).collect();
+        identities.sort_unstable();
+        if identities.windows(2).any(|pair| pair[0] == pair[1]) {
+            return None;
+        }
+    }
+    let mut added = 0;
+    let mut removed = 0;
+    let mut changed = 0;
+    for item in old_items {
+        match new_items
+            .iter()
+            .find(|candidate| identity(candidate) == identity(item))
+        {
+            None => removed += 1,
+            Some(candidate)
+                if ["importance", "status", "qualification"]
+                    .iter()
+                    .any(|field| candidate[*field] != item[*field]) =>
+            {
+                changed += 1
+            }
+            Some(_) => {}
+        }
+    }
+    for item in new_items {
+        if !old_items
+            .iter()
+            .any(|candidate| identity(candidate) == identity(item))
+        {
+            added += 1;
+        }
+    }
     Some(
-        json!({"previous_score":old_score,"score_change":new_score-old_score,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len()}),
+        json!({"previous_score":old_score,"score_change":new_score-old_score,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed}),
     )
 }
 
@@ -1343,7 +1382,24 @@ mod tests {
         let comparison = repeatability_comparison(&prior, &current).unwrap();
         assert_eq!(comparison["score_change"], -25);
         assert_eq!(comparison["same_rubric"], false);
+        assert_eq!(comparison["changed_judgments"], 1);
+        assert_eq!(comparison["added_criteria"], 0);
+        assert_eq!(comparison["removed_criteria"], 0);
         assert!(repeatability_comparison(&prior, &prior).unwrap()["same_rubric"] == true);
+        let mut replaced = prior.clone();
+        replaced["assessment"]["rubric"][0]["excerpt"] = json!("SQL");
+        let replacement = repeatability_comparison(&prior, &replaced).unwrap();
+        assert_eq!(replacement["score_change"], 0);
+        assert_eq!(replacement["added_criteria"], 1);
+        assert_eq!(replacement["removed_criteria"], 1);
+        assert_eq!(replacement["changed_judgments"], 0);
+        let mut duplicate = prior.clone();
+        let duplicate_item = duplicate["assessment"]["rubric"][0].clone();
+        duplicate["assessment"]["rubric"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate_item);
+        assert!(repeatability_comparison(&prior, &duplicate).is_none());
         for key in ["input_digest", "model"] {
             let mut different = current.clone();
             different[key] = json!("different");
