@@ -632,3 +632,11 @@ A local two-stage fictional form was also rerun with the resident model. It
 filled and visually checked the name and email on separate pages and left a
 sensitive authorization field empty. The test itself simulated the next-step
 click; it did not verify automatic navigation or use an employer site.
+
+The missing-detail review now receives all bounded qualifications supplied to
+answer drafting, not only the subset cited by the answer. It validates each
+returned quote against the corresponding supplied fact and shows the full fact
+for review. On 2026-10-30, qwen3.5:9b flagged one uncited PostgreSQL fact for a
+fictional backend-and-database question and did not flag an unrelated office
+fact. This single case does not establish reliable relevance judgments; facts
+excluded by selection or the context budget remain outside the check.
