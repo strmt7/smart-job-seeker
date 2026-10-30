@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Fit split in the web interface — 2026-10-30
+
+- A local Playwright fixture served the actual web page, JavaScript and CSS with fictional mocked API responses. It loaded a saved `criteria-v2` assessment, opened its fit review, split the grouped C/C++ criterion, changed one judgment and verified the temporary 75% result while both displayed original AI badges stayed at 100%. The original judgment was disabled while split, and keyboard Enter closed the split and restored the 100% temporary result. Checks ran at 1440×900 and 375×900 with no observed page or console errors or narrow horizontal overflow. The first mock omitted `scoring_version`, so the panel correctly did not render rubric controls; adding the field used by actual assessments fixed the fixture.
+- The Browser plugin was unavailable and the fixture used an existing local Playwright/Edge installation. This was a mocked frontend integration, not a live backend, local-model or third-party-site test; the temporary correction is not persisted. No application was sent.
+
 ## Temporary split of a fit criterion — 2026-10-30
 
 - In the fit review panel, a user can temporarily replace one listing criterion with two non-overlapping exact excerpts from that criterion and choose a separate judgment for each. Both parts inherit the original importance, so splitting changes their combined weight; the revised estimate is a user-exploration scenario, not a saved correction and does not update the job badge. Parts start unknown, and the original judgment is disabled until the split is closed. Splits that are missing, overlap, or are not present in the original excerpt cannot be calculated. The existing 12-criterion limit also applies to the temporary result.
