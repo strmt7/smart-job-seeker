@@ -147,6 +147,7 @@ fn required_attempt_record(
         .ok_or("A disk-backed workspace is required for an application record".into())
 }
 const PROFILE_FIELDS: &[&str] = &[
+    "full_name",
     "first_name",
     "last_name",
     "email",
@@ -4265,6 +4266,7 @@ fn serve(
             };
             if kind == "cv" {
                 for (key, label) in [
+                    ("full_name", "Full name"),
                     ("first_name", "First name"),
                     ("last_name", "Last name"),
                     ("email", "Email"),
@@ -5855,12 +5857,14 @@ mod tests {
         assert!(request(
             "/api/profile",
             "test-token",
-            r#"{"first_name":"Example","instructions":"Remote work"}"#
+            r#"{"full_name":"Example, Avery","first_name":"Avery","instructions":"Remote work"}"#
         )
         .contains("200 OK"));
         assert!(request("/api/profile", "test-token", r#"{"unknown":"x"}"#)
             .contains("unknown profile field"));
         assert!(request("/api/profile", "test-token", r#"{"email":42}"#)
+            .contains("profile fields must be text"));
+        assert!(request("/api/profile", "test-token", r#"{"full_name":42}"#)
             .contains("profile fields must be text"));
     }
 

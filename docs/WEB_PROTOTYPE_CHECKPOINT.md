@@ -507,3 +507,12 @@ page returns to its earlier appearance. A focused test covered the freshness
 decision and the local prefill fixture passed; no employer site was exercised.
 These snapshots still cannot rule out a change between observations or after
 verification.
+
+The profile can now store an optional full name exactly as supplied by the
+candidate, alongside separate first and last names. Form mapping can use the
+explicit value for a full-name label or standard `name` autocomplete hint; it
+does not assemble one when the field is empty. A fictional local-model check
+mapped a nonstandard applicant-name label to that value, and focused tests
+covered profile input, conflicting hints, search-query identifier filtering and
+the profile summary. The model can still misinterpret labels; review remains
+necessary.

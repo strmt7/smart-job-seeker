@@ -115,7 +115,14 @@ pub fn protected_identifiers(profile: &Value) -> Vec<String> {
     if !first.is_empty() && !last.is_empty() {
         values.push(normalized_identifier(&format!("{first} {last}")));
     }
-    for key in ["email", "phone", "address", "linkedin", "website"] {
+    for key in [
+        "full_name",
+        "email",
+        "phone",
+        "address",
+        "linkedin",
+        "website",
+    ] {
         if let Some(value) = profile[key]
             .as_str()
             .filter(|value| !value.trim().is_empty())
@@ -281,6 +288,14 @@ mod tests {
             &facts,
             "",
             &protected
+        )
+        .is_err());
+        let explicit_name = protected_identifiers(&json!({"full_name":"Example, Avery"}));
+        assert!(generate(
+            &mut Fake(json!({"queries":["Example Avery engineer"]})),
+            &facts,
+            "",
+            &explicit_name
         )
         .is_err());
         assert!(generate(

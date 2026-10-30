@@ -56,6 +56,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             .as_deref()
             .and_then(|value| value.split_ascii_whitespace().last())
             .and_then(|token| match token.to_ascii_lowercase().as_str() {
+                "name" => Some("full_name"),
                 "given-name" => Some("first_name"),
                 "family-name" => Some("last_name"),
                 "email" => Some("email"),
@@ -638,6 +639,65 @@ fn validate_suggestions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_model_maps_explicit_full_name() {
+        let model =
+            waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_context_window(4096)
+                .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let mut schema = form();
+        schema.fields.truncate(1);
+        schema.fields[0].label = "Applicant name as it should appear".into();
+        let (mappings, warnings, _) = suggest_with_review(
+            &mut model,
+            &schema,
+            &json!({"full_name":"Example, Avery", "first_name":"Avery", "last_name":"Example"}),
+        )
+        .unwrap();
+        println!("fictional full-name mapping: {mappings:?}; warnings: {warnings:?}");
+        assert!(mappings
+            .iter()
+            .any(|item| item.field_selector == "#candidate"
+                && item.value == PacketValue::Text("Example, Avery".into())));
+    }
+    #[test]
+    fn full_name_uses_the_explicit_profile_value_only() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        schema.fields[0].label = "Full name".into();
+        schema.fields[0].autocomplete = Some("section-person name".into());
+        let explicit = suggest_exact(
+            &schema,
+            &json!({"full_name":"Example, Avery", "first_name":"Avery", "last_name":"Example"}),
+        )
+        .unwrap();
+        assert_eq!(explicit.len(), 1);
+        assert_eq!(
+            explicit[0].value,
+            PacketValue::Text("Example, Avery".into())
+        );
+        assert!(suggest_exact(
+            &schema,
+            &json!({"first_name":"Avery", "last_name":"Example"})
+        )
+        .unwrap()
+        .is_empty());
+        schema.fields[0].label = "First name".into();
+        assert!(suggest_exact(
+            &schema,
+            &json!({"full_name":"Example, Avery", "first_name":"Avery"})
+        )
+        .unwrap()
+        .is_empty());
+    }
+
     use super::*;
     use waypoint_applications::form_mapping::FormField;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
