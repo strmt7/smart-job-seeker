@@ -964,3 +964,9 @@ A version-28 in-memory migration fixture covered preserved reasons, same-timesta
 ## Failed visual-status endpoint check — 2026-10-30
 
 A fictional local HTTP endpoint test now exercises a completed failed visual task after its form session is gone. It verifies that polling returns the failure, adds the failure reason to the task's job and removes that task's pending reason. The fixture injects the failed task directly; it does not run a browser, model, or application submission. The focused endpoint test, web Clippy and formatting passed.
+
+## Local visual placeholder evaluation — 2026-10-30
+
+The fictional placeholder fixture can now run against a selected, already resident local vision model and requires both a confirmed filled name and an unconfirmed empty email field. In one headless-browser run with `gemma3:4b` (digest prefix `c30276f7dffe`, 4,096 context), the model transcribed the placeholder as an entered email; the independent live-value check rejected that match and confirmed the name. An attempted prompt clarification did not change the raw transcription and was discarded. This is one fictional page, not evidence that the model or DOM checks are reliable on other forms.
+
+The strengthened live fixture passed; the visual group passed 18 tests with four live tests ignored, and web Clippy and formatting passed. The pre-load snapshot showed 28.39 GiB free system memory and 6.15 GiB dedicated GPU use; after loading, snapshots showed 25.86 GiB free and 10.06 GiB GPU use. The model was fully GPU-resident; peaks were not measured. No employer site or application submission was involved.

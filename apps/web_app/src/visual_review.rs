@@ -772,9 +772,20 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    #[ignore = "requires one local browser, a preloaded local vision model and resource preflight"]
     fn live_visual_review_does_not_verify_placeholder_as_entered_value() {
         use waypoint_applications::driver::BrowserDriver;
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (_, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some(model.as_str())
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fictional-visual-placeholder.html");
         let url = format!(
@@ -788,14 +799,7 @@ mod tests {
             ("Full name".into(), "Avery Example".into()),
             ("Email".into(), "avery@example.invalid".into()),
         ];
-        let mut result = analyze_with_context(
-            "127.0.0.1:11434".parse().unwrap(),
-            "qwen3.5:9b",
-            &image,
-            &expected,
-            Some(4096),
-        )
-        .unwrap();
+        let mut result = analyze_with_context(addr, &model, &image, &expected, Some(4096)).unwrap();
         let schema = driver.inspect_current().unwrap().schema;
         let preview = crate::form_preview::FormPreview {
             schema,
@@ -824,6 +828,16 @@ mod tests {
         );
         println!("live DOM checks: verified={verified}, unconfirmed={unconfirmed}");
         println!("fictional placeholder comparison: {result}");
+        assert!(
+            result["comparisons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["label"] == "Full name"
+                    && item["status"] == "matches_transcription"
+                    && item["dom_status"] == "matches"),
+            "the entered name was not confirmed: {result}"
+        );
         assert!(
             result["comparisons"]
                 .as_array()
