@@ -12,7 +12,7 @@ const context = {
   visualButton:{disabled:false}, fillButton:null, visualPanel:panel,
   sessionStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},
   element:()=>({}), document:{createElement:()=>({})}, refresh:async()=>{},
-  setTimeout:fn=>fn(), visualComparisonStatus:()=>'',
+  setTimeout:fn=>fn(), visualComparisonStatus:()=>'', visualReviewNeedsQueueRefresh:()=>false,
   api:async(path, body)=>{
     if(path === '/api/form/visual-review-start'){
       calls.push(body);
