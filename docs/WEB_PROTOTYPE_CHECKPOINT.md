@@ -483,3 +483,9 @@ labels for the same destination; a fictional local browser fixture exercised
 that behavior. The filter only covers certain English labels and URL patterns,
 and link extraction is bounded, so it cannot prove that a destination is safe
 or prevent every external side effect. No application was submitted.
+
+Link review now marks the result for manual handling when the browser's
+200-link inventory reaches its limit, since later links may have unobserved
+labels. It also warns when the 10 likely-link or 30 other-link display limits
+are reached. A local browser fixture with 200 links and focused mock tests
+exercised the limit handling; this does not establish coverage on employer sites.

@@ -45,6 +45,9 @@ pub struct PageLink {
     pub label: String,
 }
 
+/// A full inventory at this bound may omit additional links.
+pub const PAGE_LINK_LIMIT: usize = 200;
+
 pub trait BrowserDriver {
     /// Open the destination and describe the live form.
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError>;

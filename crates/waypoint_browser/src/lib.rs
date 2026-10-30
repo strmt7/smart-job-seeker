@@ -258,7 +258,7 @@ impl CdpDriver {
                     .get("href")
                     .filter(|href| !href.trim().is_empty() && href.len() <= 2048)
                 {
-                    if links.len() < 200 {
+                    if links.len() < waypoint_applications::driver::PAGE_LINK_LIMIT {
                         let label: String = anchor_label(node, &attrs, &referenced)
                             .unwrap_or_else(|| "Label unavailable".into())
                             .chars()

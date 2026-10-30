@@ -91,7 +91,16 @@ pub fn links_for_review(
     bool,
 ) {
     let likely = match candidates(driver) {
-        Ok(links) => links,
+        Ok(links) => {
+            if links.len() == 10 {
+                review.push("The likely application-link limit was reached; additional links may be missing".into());
+            }
+            links
+        }
+        Err(error) if error == LINK_SCAN_LIMIT => {
+            review.push("The page link-inspection limit was reached; navigate manually".into());
+            Vec::new()
+        }
         Err(_) => {
             review
                 .push("Likely application links could not be inspected; navigate manually".into());
@@ -99,7 +108,22 @@ pub fn links_for_review(
         }
     };
     let (other, available) = match other_candidates(driver) {
-        Ok(links) => (links, true),
+        Ok(links) => {
+            if links.len() == 30 {
+                review.push(
+                    "The other-link limit was reached; additional links may be missing".into(),
+                );
+            }
+            (links, true)
+        }
+        Err(error) if error == LINK_SCAN_LIMIT => {
+            if !review.iter().any(|reason| {
+                reason == "The page link-inspection limit was reached; navigate manually"
+            }) {
+                review.push("The page link-inspection limit was reached; navigate manually".into());
+            }
+            (Vec::new(), false)
+        }
         Err(_) => {
             review.push("Other page links could not be inspected; navigate manually".into());
             (Vec::new(), false)
@@ -107,6 +131,8 @@ pub fn links_for_review(
     };
     (likely, other, available)
 }
+
+const LINK_SCAN_LIMIT: &str = "The page link-inspection limit was reached";
 
 fn filtered_candidates(
     driver: &mut dyn BrowserDriver,
@@ -116,6 +142,12 @@ fn filtered_candidates(
         .map_err(|_| "Invalid current URL")?;
     let mut result = Vec::new();
     let page_links = driver.page_links().map_err(|e| e.to_string())?;
+    // The browser caps its inventory at 200. At the cap, a later anchor may
+    // share a destination and carry a final-action label we did not observe.
+    // Refuse reviewed navigation instead of presenting an incomplete filter.
+    if page_links.len() >= waypoint_applications::driver::PAGE_LINK_LIMIT {
+        return Err(LINK_SCAN_LIMIT.into());
+    }
     let likely = if other {
         None
     } else {
@@ -133,7 +165,7 @@ fn filtered_candidates(
             .as_ref()
             .is_none_or(|items| items.contains(&link.url))
     });
-    for link in hrefs.into_iter().take(200) {
+    for link in hrefs.take(waypoint_applications::driver::PAGE_LINK_LIMIT) {
         let Ok(url) = current.join(&link.url) else {
             continue;
         };
@@ -569,6 +601,28 @@ mod tests {
         assert_eq!(found[0].label, "Example");
         let mut many = Links((0..80).map(|i| format!("/page/{i}")).collect());
         assert_eq!(other_candidates(&mut many).unwrap().len(), 30);
+        let mut review = Vec::new();
+        let (_, links, available) = links_for_review(&mut many, &mut review);
+        assert!(available);
+        assert_eq!(links.len(), 30);
+        assert!(review
+            .iter()
+            .any(|reason| reason.contains("other-link limit")));
+        assert!(review
+            .iter()
+            .any(|reason| reason.contains("application-link limit")));
+    }
+
+    #[test]
+    fn full_link_inventory_requires_manual_navigation() {
+        let mut driver = Links((0..200).map(|i| format!("/page/{i}")).collect());
+        assert!(candidates(&mut driver).unwrap_err().contains("limit"));
+        assert!(other_candidates(&mut driver).unwrap_err().contains("limit"));
+        let mut review = Vec::new();
+        let (likely, other, available) = links_for_review(&mut driver, &mut review);
+        assert!(likely.is_empty() && other.is_empty() && !available);
+        assert_eq!(review.len(), 1);
+        assert!(review[0].contains("navigate manually"));
     }
 
     #[test]
@@ -642,6 +696,31 @@ mod tests {
         assert!(links
             .iter()
             .any(|link| link.url == "/next" && link.label == "Submit application"));
+    }
+
+    #[test]
+    #[ignore = "starts one headless browser against a local fixture"]
+    fn browser_full_link_inventory_is_reported_for_manual_review() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let path = dir.path().join("many-links.html");
+        let anchors: String = (0..200)
+            .map(|i| format!("<a href='/page/{i}'>Page {i}</a>\n"))
+            .collect();
+        std::fs::write(
+            &path,
+            format!("<!doctype html><html><body>{anchors}</body></html>"),
+        )
+        .unwrap();
+        let url = format!("file:///{}", path.display().to_string().replace('\\', "/"));
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(&url).unwrap();
+        let mut review = Vec::new();
+        let (likely, other, available) = links_for_review(&mut driver, &mut review);
+        assert!(likely.is_empty() && other.is_empty() && !available);
+        assert!(review
+            .iter()
+            .any(|reason| reason.contains("link-inspection limit")));
     }
 
     #[test]
