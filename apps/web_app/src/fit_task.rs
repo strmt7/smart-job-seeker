@@ -974,13 +974,27 @@ fn unique_requirement_context<'a>(listing: &'a str, excerpt: &str) -> Option<&'a
     if excerpt.is_empty() {
         return None;
     }
-    let position = listing.find(excerpt)?;
-    // `match_indices` skips overlapping matches, so advance by one character
-    // before looking for a second occurrence.
-    let next = position + listing[position..].chars().next()?.len_utf8();
-    if listing[next..].contains(excerpt) {
-        return None;
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let first_word = excerpt.chars().next().is_some_and(word);
+    let last_word = excerpt.chars().next_back().is_some_and(word);
+    let mut position = None;
+    // Visit every character boundary to include overlapping matches.
+    for (i, _) in listing.char_indices() {
+        if !listing[i..].starts_with(excerpt) {
+            continue;
+        }
+        let end = i + excerpt.len();
+        if first_word && listing[..i].chars().next_back().is_some_and(word) {
+            continue;
+        }
+        if last_word && listing[end..].chars().next().is_some_and(word) {
+            continue;
+        }
+        if position.replace(i).is_some() {
+            return None;
+        }
     }
+    let position = position?;
     let start = listing.ceil_char_boundary(position.saturating_sub(160));
     let end = listing.floor_char_boundary((position + excerpt.len() + 160).min(listing.len()));
     Some(&listing[start..end])
@@ -1023,6 +1037,7 @@ fn check_qualification_judgments_with_source(
     };
     let mut ambiguous = 0;
     let mut acronym_review = 0;
+    let mut embedded_term_review = 0;
     for item in criteria.iter_mut() {
         let missing_acronym = item["source"] == "listing"
             && item["status"] == "supported"
@@ -1047,6 +1062,35 @@ fn check_qualification_judgments_with_source(
             acronym_review += 1;
             continue;
         }
+        let embedded_only = item["source"] == "listing"
+            && item["status"] == "supported"
+            && item["excerpt"].as_str().is_some_and(|excerpt| {
+                if !(3..=32).contains(&excerpt.len())
+                    || !excerpt.bytes().all(|b| b.is_ascii_alphabetic())
+                {
+                    return false;
+                }
+                item["fact_index"]
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|i| facts.get(i))
+                    .is_some_and(|fact| {
+                        let split = || fact.split(|c: char| !(c.is_alphanumeric() || c == '_'));
+                        !split().any(|word| word.eq_ignore_ascii_case(excerpt))
+                            && split().any(|word| {
+                                word.to_ascii_lowercase()
+                                    .contains(&excerpt.to_ascii_lowercase())
+                            })
+                    })
+            });
+        if embedded_only {
+            item["status"] = json!("unknown");
+            item["fact_index"] = Value::Null;
+            item["explanation"] = json!("The requirement appears only inside a longer term in the cited fact; the terms may differ, so review them manually.");
+            embedded_term_review += 1;
+            continue;
+        }
         if item["source"] == "listing"
             && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
             && item["excerpt"].as_str().is_some_and(|excerpt| {
@@ -1060,7 +1104,7 @@ fn check_qualification_judgments_with_source(
             ambiguous += 1;
         }
     }
-    let mut fallback = if ambiguous + acronym_review > 0 {
+    let mut fallback = if ambiguous + acronym_review + embedded_term_review > 0 {
         match validate(original.clone(), facts, preferences, listing) {
             Ok(value) => value,
             Err(_) => return (original, fallback),
@@ -1080,8 +1124,8 @@ fn check_qualification_judgments_with_source(
         Some(json!({"id": index + 1, "requirement": excerpt, "job_context": context, "fact": fact}))
     }).collect();
     if items.is_empty() {
-        if ambiguous + acronym_review > 0 {
-            fallback["qualification_check"] = json!({"status":if acronym_review > 0 { "review_required" } else { "ambiguous_context" }, "checked":0, "downgraded":ambiguous + acronym_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "reconciled":0});
+        if ambiguous + acronym_review + embedded_term_review > 0 {
+            fallback["qualification_check"] = json!({"status":if acronym_review + embedded_term_review > 0 { "review_required" } else { "ambiguous_context" }, "checked":0, "downgraded":ambiguous + acronym_review + embedded_term_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "embedded_term_review":embedded_term_review, "reconciled":0});
         }
         return (original, fallback);
     }
@@ -1188,7 +1232,7 @@ fn check_qualification_judgments_with_source(
     }
     match validate(original.clone(), facts, preferences, listing) {
         Ok(mut assessment) => {
-            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous + acronym_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "reconciled":confirmed.len()});
+            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous + acronym_review + embedded_term_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "embedded_term_review":embedded_term_review, "reconciled":confirmed.len()});
             (original, assessment)
         }
         Err(_) => (original, fallback),
@@ -2220,6 +2264,10 @@ mod tests {
         assert!(report.is_none());
         assert!(unique_requirement_context("aaaa", "aaa").is_none());
         assert!(unique_requirement_context("ééé", "éé").is_none());
+        assert!(unique_requirement_context("Java and JavaScript", "Java").is_some());
+        assert!(unique_requirement_context("Java and Java", "Java").is_none());
+        assert!(unique_requirement_context("PostgreSQL", "SQL").is_none());
+        assert!(unique_requirement_context("SQL and PostgreSQL", "SQL").is_some());
         let model_listing = "Required: Python.";
         let source_listing = format!(
             "{} {} Another role: Python.",
@@ -2313,6 +2361,91 @@ mod tests {
                 "unrelated experience was credited: {result}"
             );
         }
+    }
+
+    #[test]
+    fn embedded_skill_term_is_not_automatically_supported() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct Fixture;
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    json!({"items":[{"id":2,"status":"supported"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let facts = vec!["Built JavaScript applications".to_owned()];
+        let listing = "Required: Java and JavaScript.";
+        let raw = json!({"summary":"fixture","criteria":[
+            {"source":"listing","excerpt":"Java","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"},
+            {"source":"listing","excerpt":"JavaScript","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"}
+        ]});
+        let initial = validate(raw.clone(), &facts, "", listing).unwrap();
+        let (_, result) =
+            check_qualification_judgments(&mut Fixture, raw, initial, &facts, "", listing);
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["rubric"][1]["status"], "supported");
+        assert_eq!(result["qualification_check"]["embedded_term_review"], 1);
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local model and resource preflight"]
+    fn live_qualification_check_related_skills() {
+        let model_name = std::env::var("WAYPOINT_FIT_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (_, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some(model_name.as_str())
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            model_name,
+            crate::resident_model,
+        );
+        let facts = vec![
+            "Built JavaScript web applications for three years".to_owned(),
+            "Maintained Rust services".to_owned(),
+        ];
+        let listing = "Required: Java, JavaScript, and Python experience.";
+        let raw = json!({"summary":"fixture","criteria":[
+            {"source":"listing","excerpt":"Java","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"},
+            {"source":"listing","excerpt":"JavaScript","importance":"required","status":"supported","fact_index":1,"explanation":"Fixture"},
+            {"source":"listing","excerpt":"Python","importance":"required","status":"supported","fact_index":2,"explanation":"Fixture"}
+        ]});
+        let initial = validate(raw.clone(), &facts, "", listing).unwrap();
+        let (_, result) =
+            check_qualification_judgments(&mut model, raw, initial, &facts, "", listing);
+        println!("fictional related-skills comparison: {result}");
+        assert_eq!(result["qualification_check"]["status"], "completed");
+        let statuses: Vec<_> = result["rubric"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, ["unknown", "supported", "unknown"]);
     }
 
     #[test]
