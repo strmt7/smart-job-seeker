@@ -752,3 +752,7 @@ The local model selects relevant facts as a set; the application now processes e
 ## Fact-selection listing coverage — 2026-10-30
 
 When more than 20 facts require local-model selection, long job listings are now sampled from the beginning, middle and end within the existing 2,400-byte listing budget. Separate passages are identified in the prompt, and the interface reports omitted text. This changes the balance of what is seen: a requirement in an omitted span can still be missed, and this does not establish improved model accuracy. The input version invalidates earlier saved fit assessments. Fictional tests exercised the later listing text, bounds and Unicode boundaries; no local model was resident, so no live-model result is claimed.
+
+## Serialized fact-selection batch limit — 2026-10-30
+
+Fact-selection batches now count JSON escaping, brackets and commas toward their 3,000-byte fact-array budget. A fact that cannot fit alone is omitted without cutting it and is reported for review; fallback selection also excludes and reports such facts. The fit-input version invalidates earlier saved estimates. This bound applies to the fact array only, not the entire prompt, model memory, or the path that supplies at most 20 pooled facts directly. Fictional tests cover escaped text and oversized facts. Ollama had no resident model; a live run was not started because the observed GPU use plus a prior model-load measurement would exceed the evaluation runner's 12 GiB threshold.

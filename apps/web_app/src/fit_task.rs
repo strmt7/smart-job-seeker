@@ -275,16 +275,32 @@ fn select_facts_with_focus(
     let mut chosen = Vec::new();
     let (mut submitted, mut examined, mut batches, mut failed) = (0usize, 0usize, 0usize, 0usize);
     let mut sampled_examined = 0usize;
+    let mut oversized_indices = std::collections::HashSet::new();
+    let mut skipped_submissions = 0usize;
     let mut selection_capped = false;
     while submitted < pool.len() && batches < MAX_BATCHES {
+        // Count the JSON array as sent, including escaping, delimiters and commas.
+        // Never cut a candidate fact: skip one that cannot fit on its own.
+        let first_size = serde_json::to_string(&pool[order[submitted]])
+            .expect("string serialization cannot fail")
+            .len();
+        if first_size + 2 > MAX_BATCH_BYTES {
+            oversized_indices.insert(order[submitted]);
+            skipped_submissions += 1;
+            submitted += 1;
+            continue;
+        }
         let start = submitted;
-        let mut bytes = 0;
+        let mut bytes = 2; // array brackets
         while submitted < pool.len() && submitted - start < 10 {
-            let size = pool[order[submitted]].len();
-            if submitted > start && bytes + size > MAX_BATCH_BYTES {
+            let size = serde_json::to_string(&pool[order[submitted]])
+                .expect("string serialization cannot fail")
+                .len();
+            let separator = usize::from(submitted > start);
+            if bytes + separator + size > MAX_BATCH_BYTES {
                 break;
             }
-            bytes += size;
+            bytes += separator + size;
             submitted += 1;
         }
         let batch: Vec<&String> = order[start..submitted]
@@ -348,11 +364,18 @@ fn select_facts_with_focus(
     // presenting lexical candidates as model-selected facts.
     let semantic_selected = chosen.len();
     if failed > 0 || chosen.is_empty() {
-        for fact in pool.iter().take(20) {
+        for (index, fact) in pool.iter().take(20).enumerate() {
             if chosen.len() == 20 {
                 break;
             }
-            if !chosen.contains(fact) {
+            if serde_json::to_string(fact)
+                .expect("string serialization cannot fail")
+                .len()
+                + 2
+                > MAX_BATCH_BYTES
+            {
+                oversized_indices.insert(index);
+            } else if !chosen.contains(fact) {
                 chosen.push(fact.clone());
             }
         }
@@ -360,7 +383,7 @@ fn select_facts_with_focus(
     let selected = chosen.len();
     (
         chosen,
-        json!({"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":pool.len(),"submitted":submitted,"examined":examined,"sampled_examined":sampled_examined,"selected":selected,"semantic_selected":semantic_selected,"fallback_selected":selected-semantic_selected,"selection_capped":selection_capped,"failed_batches":failed,"budget_truncated":submitted < pool.len(),"listing_truncated":listing.len()>listing_used_bytes,"preferences_truncated":preferences.len()>prefix(preferences,1200).len(),"listing_excerpt_bytes":listing_used_bytes,"listing_excerpt_count":listing_excerpts.len(),"preferences_prefix_bytes":prefix(preferences,1200).len()}),
+        json!({"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":pool.len(),"submitted":submitted-skipped_submissions,"examined":examined,"sampled_examined":sampled_examined,"selected":selected,"semantic_selected":semantic_selected,"fallback_selected":selected-semantic_selected,"selection_capped":selection_capped,"oversized_facts":oversized_indices.len(),"failed_batches":failed,"budget_truncated":submitted < pool.len(),"listing_truncated":listing.len()>listing_used_bytes,"preferences_truncated":preferences.len()>prefix(preferences,1200).len(),"listing_excerpt_bytes":listing_used_bytes,"listing_excerpt_count":listing_excerpts.len(),"preferences_prefix_bytes":prefix(preferences,1200).len()}),
     )
 }
 
@@ -2127,6 +2150,47 @@ mod tests {
         assert_eq!(report["listing_excerpt_count"], 3);
         assert_eq!(report["listing_truncated"], true);
         assert!(report["listing_excerpt_bytes"].as_u64().unwrap() <= 2400);
+    }
+
+    #[test]
+    fn semantic_selection_bounds_json_encoded_batches_and_reports_oversized_facts() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct Fixture {
+            lengths: Vec<usize>,
+        }
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let data = prompt.split_once("Candidate facts: ").unwrap().1;
+                self.lengths.push(data.len());
+                let facts: Vec<String> = serde_json::from_str(data).unwrap();
+                Ok((
+                    json!({"indices":(1..=facts.len()).collect::<Vec<_>>()}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let mut pool: Vec<_> = (0..30)
+            .map(|i| format!("{i}:{}", "\n".repeat(400)))
+            .collect();
+        pool[0] = "\n".repeat(1500);
+        let mut fixture = Fixture { lengths: vec![] };
+        let (selected, report) = select_semantic_facts(&mut fixture, &pool, 30, "", "Role");
+        assert_eq!(report["oversized_facts"], 1);
+        assert!(fixture.lengths.iter().all(|size| *size <= 3000));
+        assert!(!selected.contains(&pool[0]));
+        assert_eq!(report["budget_truncated"], true);
     }
 
     #[test]
