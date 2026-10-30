@@ -6472,6 +6472,45 @@ mod tests {
     }
 
     #[test]
+    fn failed_visual_status_queues_review_without_active_session() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let _guard = visual_review::TEST_TASK_LOCK.lock().unwrap();
+            let mut ws = Workspace::in_memory().unwrap();
+            let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/failed-visual","title":"Role","employer":"Fixture"}), 1).unwrap();
+            let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let revision =
+                visual_review::begin_pending_review(&ws, &job, "fixture-failed-visual", 2).unwrap();
+            visual_review::set_failed_fixture(
+                "fixture-failed-visual",
+                "expired-session",
+                job.as_str(),
+                revision,
+            );
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+            let reasons = ws.manual_review_reasons(&job).unwrap();
+            assert!(reasons
+                .iter()
+                .any(|r| r.reason == visual_review::VISUAL_FAILURE_REASON));
+            assert!(!reasons
+                .iter()
+                .any(|r| r.reason == visual_review::pending_reason("fixture-failed-visual")));
+        });
+        let body = r#"{"task_id":"fixture-failed-visual"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/visual-review-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["error"], "Fictional vision failure");
+        worker.join().unwrap();
+    }
+
+    #[test]
     #[ignore = "starts one headless browser against a local fixture"]
     fn reviewed_prefill_endpoint_fills_fixture_and_returns_screenshot() {
         use waypoint_applications::driver::BrowserDriver;

@@ -38,6 +38,23 @@ pub fn set_completed_fixture(id: &str, session: &str, signature: &str, image: &s
     });
 }
 
+#[cfg(test)]
+pub fn set_failed_fixture(id: &str, session: &str, job_id: &str, revision: i64) {
+    *TASK.lock().unwrap() = Some(Task {
+        id: id.into(),
+        session: session.into(),
+        job_id: job_id.into(),
+        pending_revision: Some(revision),
+        page_signature: "fixture".into(),
+        segment: 0,
+        half: None,
+        screenshot_hash: "fixture".into(),
+        result: Some(Err("Fictional vision failure".into())),
+        completed: Some(std::time::Instant::now()),
+        record_saved: false,
+    });
+}
+
 pub fn page_signature(url: &str, width: f64, height: f64) -> waypoint_domain::Sha256Digest {
     waypoint_domain::Sha256Digest::of(&json!({"url":url,"width":width,"height":height}).to_string())
 }

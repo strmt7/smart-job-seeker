@@ -960,3 +960,7 @@ Fictional tests verified that a pending reason survives closing and reopening an
 Store migration v29 distinguishes an actual manual-review report from an internal queue-summary update. Resolving one reason no longer advances the revision of a different surviving reason, while reporting the same reason again still advances its revision even at the same timestamp. This removes the specific false-pending behavior described in the preceding checkpoint without weakening stale-resolution checks. Existing migration definitions were not changed.
 
 A version-28 in-memory migration fixture covered preserved reasons, same-timestamp re-reporting, stale resolution and independent reason removal. The SQLCipher store suite passed 58 tests, including an older encrypted on-disk migration through v29; the focused pending visual-review tests, ordinary SQLite review tests, web Clippy and formatting also passed. A clean-host upgrade and a version-28 encrypted on-disk fixture were not separately exercised. No employer site or application submission was involved.
+
+## Failed visual-status endpoint check — 2026-10-30
+
+A fictional local HTTP endpoint test now exercises a completed failed visual task after its form session is gone. It verifies that polling returns the failure, adds the failure reason to the task's job and removes that task's pending reason. The fixture injects the failed task directly; it does not run a browser, model, or application submission. The focused endpoint test, web Clippy and formatting passed.
