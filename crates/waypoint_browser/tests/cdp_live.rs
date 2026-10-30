@@ -70,7 +70,21 @@ fn http_error_page_is_not_treated_as_an_application_form() {
                 Ok((mut stream, _)) => {
                     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
                     let mut request = [0u8; 2048];
-                    let _ = stream.read(&mut request);
+                    let mut length = 0;
+                    while length < request.len() {
+                        match stream.read(&mut request[length..]) {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => length += read,
+                        }
+                        if request[..length].contains(&b'\n') {
+                            break;
+                        }
+                    }
+                    // Chromium may open a speculative connection before the
+                    // navigation request. Do not consume the fixture on it.
+                    if !request[..length].starts_with(b"GET /fictional ") {
+                        continue;
+                    }
                     let body = "<html><body><h1>Not found</h1><input name='email'></body></html>";
                     let response = format!("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                     let _ = stream.write_all(response.as_bytes());
@@ -86,7 +100,12 @@ fn http_error_page_is_not_treated_as_an_application_form() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let result = driver.open(&format!("http://127.0.0.1:{port}/fictional"));
     server.join().unwrap();
-    assert!(result.is_err(), "HTTP error page was accepted: {result:?}");
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("HTTP 404")),
+        "Expected the fictional HTTP 404: {result:?}"
+    );
     let reinspected = driver.inspect_current().unwrap();
     assert!(
         reinspected
@@ -431,7 +450,7 @@ fn selects_accessibly_labelled_native_radio_groups() {
     let live = driver
         .open(&file_url("form_radio_accessible.html"))
         .unwrap();
-    assert!(live.walls.is_empty(), "{:?}", live.walls);
+    assert_eq!(live.walls, vec!["an unavailable field needs manual review"]);
     let group = live
         .schema
         .fields
@@ -783,9 +802,18 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
     let page = driver.open(&file_url("form_rich_textbox.html")).unwrap();
     assert_eq!(
         page.schema.fields.len(),
-        3,
-        "unlabelled editor must not be offered"
+        2,
+        "unlabelled and disabled editors must not be offered"
     );
+    assert!(!page
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Disabled editor"));
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == "an unavailable field needs manual review"));
     let field = page
         .schema
         .fields
@@ -835,17 +863,10 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
     driver
         .verify_text_value(&selector, "First\n\nThird")
         .unwrap();
-    for label in ["Unsafe editor", "Disabled editor"] {
-        let selector = &page
-            .schema
-            .fields
-            .iter()
-            .find(|field| field.label == label)
-            .unwrap()
-            .selector;
+    for selector in ["#unsafe", "#disabled"] {
         assert!(driver
             .execute(&BrowserCommand::Fill {
-                selector: selector.clone(),
+                selector: selector.into(),
                 value: PacketValue::Text("must not enter".into())
             })
             .is_err());

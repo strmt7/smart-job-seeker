@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Browser fixture and review assertions — 2026-10-30
+
+- GitHub's browser job on `0132200` failed three local-fixture tests. Two assertions predated the current treatment of unavailable controls: the revised tests require the review warning and verify that disabled rich-text fields cannot be filled. The 404 fixture sometimes accepted an unrelated or empty browser connection and closed before the intended request; it now waits for the expected request and asserts an actual HTTP 404. A full local Edge run passed all 34 browser tests before a subsequent bounded request-reading improvement; the 404 test passed again after that improvement, and browser Clippy and formatting passed. This is local fixture coverage, not live employer-site qualification. No application was sent to an employer.
+- The GitHub build-and-test job passed on `0132200`; the browser and existing supply-chain jobs failed. The supply-chain failure was not investigated in this round. The revised browser fixture has not yet been verified on GitHub.
+
 ## Web UI checks in CI — 2026-10-30
 
 - CI now stops immediately when each of the first six web review checks fails, instead of allowing a later Node command to overwrite the failure exit code. It also runs the fit split and dimension checks. Enabling proper gating exposed a stale export-recovery fixture that did not include the selected-facts rendering helper; the fixture now loads the actual helper. All nine affected Node checks passed locally. This does not prove the hosted workflow or unrelated checks pass.
