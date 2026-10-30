@@ -351,6 +351,8 @@ impl CdpDriver {
         self.cdp
             .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
             .map_err(derr)?;
+        // Allow a short bounded interval for immediate site scroll handlers.
+        self.cdp.pump(Duration::from_millis(150));
         // The document or frame may have changed while the scroll was running.
         if self.node_id(selector)?.is_none() {
             return Err(DriverError(

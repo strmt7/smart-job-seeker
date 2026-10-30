@@ -313,58 +313,64 @@ pub fn apply_reviewed_text_fields(
         completed.push(serde_json::json!({"selector":field.selector,"label":field.label}));
     }
     for mapping in &preview.suggestions {
-        let field = fresh
-            .schema
-            .fields
-            .iter()
-            .find(|field| field.selector == mapping.field_selector)
-            .ok_or("Unknown field")?;
-        let expected = match (&field.field_type, &mapping.value) {
-            (
-                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
-                PacketValue::Text(value),
-            ) => Some(value),
-            (FormFieldType::Date, PacketValue::Date(value)) => Some(value),
-            _ => None,
-        };
-        if let Some(expected) = expected {
-            driver
-                .verify_text_value(&mapping.field_selector, expected)
-                .map_err(|error| format!("After filling, {} needs review: {error}", field.label))?;
-        } else {
-            let command = match (&field.field_type, &mapping.value) {
-                (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
-                    Some(BrowserCommand::SelectOptions {
-                        selector: mapping.field_selector.clone(),
-                        labels: labels.clone(),
-                    })
-                }
-                (FormFieldType::Select { .. }, PacketValue::Text(label)) => {
-                    Some(BrowserCommand::SelectOption {
-                        selector: mapping.field_selector.clone(),
-                        label: label.clone(),
-                    })
-                }
-                (FormFieldType::Radio { .. }, PacketValue::Text(label)) => {
-                    Some(BrowserCommand::SelectRadio {
-                        selector: mapping.field_selector.clone(),
-                        label: label.clone(),
-                    })
-                }
-                (FormFieldType::Checkbox, PacketValue::Bool(value)) => Some(BrowserCommand::Fill {
-                    selector: mapping.field_selector.clone(),
-                    value: PacketValue::Bool(*value),
-                }),
-                _ => None,
-            };
-            if let Some(command) = command {
-                driver.verify_choice(&command).map_err(|error| {
-                    format!("After filling, {} needs review: {error}", field.label)
-                })?;
-            }
-        }
+        verify_filled_field(driver, preview, &mapping.field_selector)
+            .map_err(|error| format!("After filling, {error}"))?;
     }
     Ok(preview.suggestions.len())
+}
+
+/// Confirm a completed answer remains in the current field without changing it.
+pub fn verify_filled_field(
+    driver: &mut dyn BrowserDriver,
+    preview: &FormPreview,
+    selector: &str,
+) -> Result<(), String> {
+    let field = preview
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == selector)
+        .ok_or("Completed field is no longer in the reviewed form")?;
+    let mapping = preview
+        .suggestions
+        .iter()
+        .find(|mapping| mapping.field_selector == selector)
+        .ok_or("Reviewed answer is unavailable")?;
+    let checked = match (&field.field_type, &mapping.value) {
+        (
+            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+            PacketValue::Text(value),
+        )
+        | (FormFieldType::Date, PacketValue::Date(value)) => {
+            driver.verify_text_value(selector, value)
+        }
+        (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
+            driver.verify_choice(&BrowserCommand::SelectOptions {
+                selector: selector.into(),
+                labels: labels.clone(),
+            })
+        }
+        (FormFieldType::Select { .. }, PacketValue::Text(label)) => {
+            driver.verify_choice(&BrowserCommand::SelectOption {
+                selector: selector.into(),
+                label: label.clone(),
+            })
+        }
+        (FormFieldType::Radio { .. }, PacketValue::Text(label)) => {
+            driver.verify_choice(&BrowserCommand::SelectRadio {
+                selector: selector.into(),
+                label: label.clone(),
+            })
+        }
+        (FormFieldType::Checkbox, PacketValue::Bool(value)) => {
+            driver.verify_choice(&BrowserCommand::Fill {
+                selector: selector.into(),
+                value: PacketValue::Bool(*value),
+            })
+        }
+        _ => return Err(format!("{} needs manual verification", field.label)),
+    };
+    checked.map_err(|error| format!("{} needs review: {error}", field.label))
 }
 
 #[cfg(test)]

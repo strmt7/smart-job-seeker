@@ -3502,17 +3502,38 @@ fn serve(
                 .driver
                 .scroll_field_into_view(selector)
                 .map_err(|e| e.to_string())?;
+            let retained =
+                form_preview::verify_filled_field(&mut current.driver, &current.preview, selector)
+                    .is_ok();
+            if !retained {
+                let reason =
+                    "A filled field changed or could not be verified after visual navigation";
+                ws.mark_manual_review(&current.job_id, reason, now())
+                    .map_err(|e| {
+                        format!(
+                            "Field verification failed and the review flag could not be saved: {e}"
+                        )
+                    })?;
+                if !current
+                    .preview
+                    .manual_review
+                    .iter()
+                    .any(|item| item == reason)
+                {
+                    current.preview.manual_review.push(reason.into());
+                }
+            }
             let screenshot = current
                 .driver
                 .screenshot_base64()
                 .map_err(|e| e.to_string())?;
             let saved = current.record.as_mut().is_some_and(|record| {
-                record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"screenshot":format!("screenshots/{name}")}))).is_ok()
+                record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"value_retained":retained,"screenshot":format!("screenshots/{name}")}))).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"screenshot":screenshot,"record_saved":saved}),
+                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":retained}),
             );
         }
         "/api/form/visual-review-start" => {
@@ -4990,7 +5011,12 @@ mod tests {
                 value: PacketValue::Text("Fictional".into()),
             })
             .unwrap();
-        let preview = form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let preview = form_preview::suggest_without_model(
+            live,
+            &json!({"first_name":"Fictional"}),
+            "fixture",
+        )
+        .unwrap();
         let mut session = Some(ReviewSession {
             id: "fixture-session".into(),
             job_id: JobIdentityId::new("fixture-job").unwrap(),
@@ -5012,9 +5038,43 @@ mod tests {
             record: None,
         });
         let mut ws = Workspace::in_memory().unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: JobIdentityId::new("fixture-job").unwrap(),
+            title: "Role".into(),
+            employer: "Fictional".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: None,
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        for (selected, allowed) in [("#other", false), (selector.as_str(), true)] {
+        for (step, (selected, allowed)) in [
+            ("#other", false),
+            (selector.as_str(), true),
+            (selector.as_str(), true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if step == 2 {
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
+                    .execute(&BrowserCommand::Click {
+                        selector: "#arm-change".into(),
+                    })
+                    .unwrap();
+                std::thread::sleep(Duration::from_millis(200));
+            }
             let body = json!({"session_id":"fixture-session","selector":selected}).to_string();
             let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
             write!(client, "POST /api/form/visual-focus HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
@@ -5029,12 +5089,23 @@ mod tests {
             let mut response = String::new();
             client.read_to_string(&mut response).unwrap();
             assert!(response.contains("200 OK") && response.contains("\"screenshot\""));
+            if step == 1 {
+                assert!(response.contains("\"value_retained\":true"));
+            }
+            if step == 2 {
+                assert!(response.contains("\"value_retained\":false"));
+            }
         }
+        assert!(ws
+            .manual_review_reasons(&JobIdentityId::new("fixture-job").unwrap())
+            .unwrap()
+            .iter()
+            .any(|reason| reason.reason.contains("after visual navigation")));
         let current = session.as_mut().unwrap();
-        current
+        assert!(current
             .driver
             .verify_text_value(&selector, "Fictional")
-            .unwrap();
+            .is_err());
         assert!(current
             .driver
             .trace

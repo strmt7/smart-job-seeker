@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Checking answers after visual navigation — 2026-10-30
+
+- After scrolling to a completed field, Waypoint rechecks its live value against the reviewed answer. An unavailable or changed value creates a manual-review reason and is reported alongside the screenshot; this does not guarantee the site will keep the value later. The shared verification path covers supported text, date and native choice fields.
+- A fictional browser and HTTP fixture verified both an unchanged answer and a page that clears the answer on scroll. The web UI checks include the changed-value message. No live employer page or vision model was used.
+
 ## Bringing filled fields into view — 2026-10-30
 
 - After a successful prefill, the review panel offers a list of fields filled in that session. The selected field can be scrolled into view and captured without Waypoint typing into it; the site may react to scrolling; the server checks the current form schema and review walls before scrolling and rejects fields outside the completed set. A fresh visual review can then be run, and captures are saved to the attempt record when available.
