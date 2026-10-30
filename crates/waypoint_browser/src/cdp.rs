@@ -53,13 +53,119 @@ fn candidate_binaries(
         candidates.push(root.join("dependencies/chromium/chrome.exe"));
     }
     candidates.extend(discovered);
-    let mut found = Vec::new();
+    let mut found: Vec<PathBuf> = Vec::new();
     for path in candidates {
-        if path.is_file() && !found.contains(&path) {
+        if path.is_file()
+            && !found
+                .iter()
+                .any(|existing| same_binary_path(existing, &path))
+        {
             found.push(path);
         }
     }
     found
+}
+
+fn same_binary_path(first: &Path, second: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        first.to_string_lossy().replace('/', "\\").to_lowercase()
+            == second.to_string_lossy().replace('/', "\\").to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        first == second
+    }
+}
+
+#[cfg(windows)]
+fn parse_registered_browser(output: &[u8], expected_name: &str) -> Option<PathBuf> {
+    let text = std::str::from_utf8(output).ok()?;
+    let mut candidates = text.lines().filter_map(|line| {
+        let (prefix, value) = line.split_once("REG_SZ")?;
+        if prefix.trim().is_empty() || !value.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let value = value.trim().trim_matches('"');
+        if value.is_empty() || value.chars().any(char::is_control) {
+            return None;
+        }
+        let path = PathBuf::from(value);
+        (path.is_absolute()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(expected_name)))
+        .then_some(path)
+    });
+    let candidate = candidates.next()?;
+    if candidates.next().is_some() {
+        None
+    } else {
+        Some(candidate)
+    }
+}
+
+/// Query only fixed Windows App Paths entries. Each OS process has a short
+/// deadline and a bounded output reader; no shell or browser profile is used.
+#[cfg(windows)]
+fn registered_browsers() -> Vec<PathBuf> {
+    use std::io::Read;
+    use std::os::windows::process::CommandExt;
+    let Some(system_root) = std::env::var_os("SystemRoot") else {
+        return Vec::new();
+    };
+    let reg = PathBuf::from(system_root).join("System32/reg.exe");
+    if !reg.is_file() {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    for hive in ["HKCU", "HKLM"] {
+        for name in ["msedge.exe", "chrome.exe", "chromium.exe"] {
+            let key = format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}");
+            let Ok(mut child) = Command::new(&reg)
+                .args(["query", &key, "/ve"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .creation_flags(0x08000000)
+                .spawn()
+            else {
+                continue;
+            };
+            let Some(stdout) = child.stdout.take() else {
+                let _ = child.kill();
+                continue;
+            };
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let mut data = Vec::new();
+                let result = stdout.take(16 * 1024).read_to_end(&mut data).map(|_| data);
+                let _ = sender.send(result);
+            });
+            let deadline = Instant::now() + Duration::from_millis(800);
+            let success = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.success(),
+                    Ok(None) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    _ => {
+                        let _ = child.kill();
+                        break false;
+                    }
+                }
+            };
+            if success {
+                if let Ok(Ok(data)) = receiver.recv_timeout(Duration::from_millis(100)) {
+                    if let Some(path) = parse_registered_browser(&data, name) {
+                        paths.push(path);
+                    }
+                }
+            }
+        }
+    }
+    paths
 }
 
 /// A browser process owned by us, with a private profile.
@@ -82,6 +188,9 @@ impl BrowserProcess {
             )));
             push(PathBuf::from(format!(
                 "{local}\\Google\\Chrome\\Application\\chrome.exe"
+            )));
+            push(PathBuf::from(format!(
+                "{local}\\Chromium\\Application\\chrome.exe"
             )));
         }
         if let Ok(pf) = std::env::var("PROGRAMFILES") {
@@ -107,6 +216,10 @@ impl BrowserProcess {
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         ] {
             push(PathBuf::from(p));
+        }
+        #[cfg(windows)]
+        for path in registered_browsers() {
+            push(path);
         }
         if let Some(path) = std::env::var_os("PATH") {
             for dir in std::env::split_paths(&path) {
@@ -143,7 +256,8 @@ impl BrowserProcess {
         }
         let deadline = Instant::now() + timeout;
         let mut last_error = None;
-        let candidates = &binaries[..binaries.len().min(5)];
+        let candidates = &binaries[..binaries.len().min(12)];
+        let mut attempted = 0;
         for (index, exe) in candidates.iter().enumerate() {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -154,12 +268,18 @@ impl BrowserProcess {
             } else {
                 (remaining / 2).min(Duration::from_secs(5))
             };
+            attempted += 1;
             match Self::launch_one(exe, budget, visible) {
                 Ok(browser) => return Ok(browser),
                 Err(error) => last_error = Some(error),
             }
         }
-        Err(last_error.unwrap_or_else(|| CdpError("browser startup timed out".into())))
+        let error = last_error.unwrap_or_else(|| CdpError("browser startup timed out".into()));
+        Err(CdpError(format!(
+            "{} (tried {attempted} of {} browser candidates)",
+            error.0,
+            binaries.len()
+        )))
     }
 
     fn launch_one(exe: &Path, timeout: Duration, visible: bool) -> Result<Self, CdpError> {
@@ -474,6 +594,59 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn registered_browser_values_are_bounded_to_matching_absolute_executables() {
+        let valid = b"HKEY_LOCAL_MACHINE\\fixture\r\n    (Default)    REG_SZ    C:\\Custom Browser\\Application\\msedge.exe\r\n";
+        assert_eq!(
+            parse_registered_browser(valid, "msedge.exe"),
+            Some(PathBuf::from(r"C:\Custom Browser\Application\msedge.exe"))
+        );
+        assert!(parse_registered_browser(valid, "chrome.exe").is_none());
+        assert!(parse_registered_browser(
+            b"    (Default)    REG_SZ    relative\\chrome.exe\r\n",
+            "chrome.exe"
+        )
+        .is_none());
+        assert!(parse_registered_browser(
+            b"    (Default)    REG_EXPAND_SZ    %LOCALAPPDATA%\\chrome.exe\r\n",
+            "chrome.exe"
+        )
+        .is_none());
+        assert!(parse_registered_browser(b"    (Default)    REG_SZ    C:\\a\\chrome.exe\r\n    (Default)    REG_SZ    C:\\b\\chrome.exe\r\n", "chrome.exe").is_none());
+        assert!(parse_registered_browser(&[0xff, 0xfe], "chrome.exe").is_none());
+        assert!(same_binary_path(
+            Path::new(r"C:\Browser\CHROME.EXE"),
+            Path::new("c:/browser/chrome.exe")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "reads this Windows host's browser App Paths registry entries"]
+    fn live_registered_browser_discovery_reads_windows_app_paths() {
+        let paths = registered_browsers();
+        println!("Registered browser paths: {paths:?}");
+        assert!(
+            paths.iter().any(|path| path.is_file()),
+            "no existing registered browser on this host"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "starts one registered local browser using a temporary profile"]
+    fn live_registered_browser_starts_with_private_profile() {
+        let paths: Vec<_> = registered_browsers()
+            .into_iter()
+            .filter(|path| path.is_file())
+            .collect();
+        let browser =
+            BrowserProcess::launch_candidates(&paths, Duration::from_secs(20), false).unwrap();
+        assert_ne!(browser.port, 0);
+        assert!(browser.user_data_dir.is_dir());
+    }
 
     #[test]
     #[ignore = "starts a locally installed browser with a temporary profile"]

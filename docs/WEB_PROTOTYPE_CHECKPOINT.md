@@ -439,3 +439,21 @@ tools still require separate setup; this does not finish application installer
 provisioning for Chromium, Ollama or other missing dependencies.
 When changing OpenSSL versions, the build helper replaces an existing runtime
 DLL only when the previous build receipt identifies it, and retains a backup.
+
+Windows browser discovery now checks fixed per-user and machine App Paths for
+Edge, Chrome and Chromium in addition to conventional locations. Registry
+queries run without a visible window, have bounded output and an 800 ms deadline
+each, and accept only absolute executable paths matching the queried browser.
+Windows path duplicates are compared without case or slash differences, and up
+to twelve existing candidates can be tried. An installed registered browser was
+started with a private profile on this host, and a separate local attachment
+fixture passed without submitting. Non-UTF-8 registry output and expandable
+registry values are skipped, and this does not install a browser.
+
+A Chrome-for-Testing archive and a Chromium snapshot were inspected for a
+possible private runtime. The Chrome archive did not contain a standalone
+redistribution license; [Google's general terms](https://policies.google.com/terms?hl=en)
+restrict software redistribution. The Chromium snapshot was unsigned and its
+test launch in the repository directory reported a sandbox access failure. No
+browser was bundled on this evidence. Automatic browser provisioning remains
+open; no third-party application was contacted.
