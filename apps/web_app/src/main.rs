@@ -3775,6 +3775,29 @@ fn serve(
                 }
                 None => None,
             };
+            let lookup = attempt_record::matching_generated_evidence(
+                ws,
+                &current.job_id,
+                document_id,
+                &bytes,
+            )
+            .unwrap_or(attempt_record::GeneratedEvidenceLookup {
+                found: None,
+                incomplete: true,
+            });
+            let provenance_incomplete = lookup.incomplete;
+            let generated_evidence = lookup.found;
+            let context_current = generated_evidence.as_ref().is_some_and(|evidence| {
+                draft_context_digest(ws, &current.job_id, &evidence.kind)
+                    .ok()
+                    .as_deref()
+                    == Some(evidence.context_sha256.as_str())
+            });
+            let mut draft_provenance_status = if provenance_incomplete {
+                "lookup_incomplete"
+            } else {
+                "not_found"
+            };
             if current.record.is_none() {
                 current.record = attempt_record::AttemptRecord::start(
                     ws,
@@ -3795,12 +3818,54 @@ fn serve(
                         .into(),
                 );
             }
+            if provenance_incomplete {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Generated document evidence lookup was incomplete",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+                current.preview.manual_review.push("Generated document evidence lookup was incomplete; inspect the application record manually".into());
+            }
+            if generated_evidence.is_some() && !context_current {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Attached generated document is from an older context",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            if generated_evidence.is_some() && current.record.is_none() {
+                draft_provenance_status = "record_unavailable";
+            }
             if let Some(record) = &mut current.record {
                 if let Some((attempt, review)) = &visual_review {
                     let path = record.document_visual_evidence(attempt, review)?;
                     record.event(json!({"type":"document_visual_review_linked","time":now(),"source_attempt":attempt,"file":path,"note":"Advisory review, not proof of correctness."}))?;
                 } else {
                     record.status("manual_review", now())?;
+                }
+                if let Some(evidence) = &generated_evidence {
+                    let evidence_name = evidence
+                        .evidence
+                        .as_ref()
+                        .map(|bytes| record.material("generated-draft-evidence.json", bytes))
+                        .transpose()?;
+                    let template_name = evidence
+                        .template
+                        .as_ref()
+                        .map(|(name, bytes)| record.material(&format!("original-{name}"), bytes))
+                        .transpose()?;
+                    record.event(json!({"type":"document_draft_evidence_linked","time":now(),"source_attempt":evidence.attempt_id,"selector":selector,"document_id":document_id,"pdf_sha256":waypoint_domain::sha256_hex(&bytes),"evidence":evidence_name,"template":template_name,"context_current":context_current,"lookup_incomplete":provenance_incomplete,"note":"Any draft evidence describes the generated draft; it may not cover later edits and does not prove the file was attached or submitted."}))?;
+                    draft_provenance_status = match (evidence.evidence.is_some(), context_current) {
+                        (true, true) => "linked_current",
+                        (true, false) => "linked_historical",
+                        (false, true) => "template_only_current",
+                        (false, false) => "template_only_historical",
+                    };
+                    if !context_current {
+                        current.preview.manual_review.push("Attached generated document is from an older context; review the document and qualifications".into());
+                    }
                 }
                 let stored = record.material(&doc.name, &bytes)?;
                 record.event(json!({"type":"document_requested","time":now(),"selector":selector,"name":doc.name,"attachment_name":name,"material":stored}))?;
@@ -3869,7 +3934,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"ok":true,"name":doc.name,"attachment_name":name,"manual_review":current.preview.manual_review}),
+                json!({"ok":true,"name":doc.name,"attachment_name":name,"draft_provenance":draft_provenance_status,"provenance_lookup_incomplete":provenance_incomplete,"manual_review":current.preview.manual_review}),
             );
         }
         "/api/form/session-status" => {
@@ -5785,14 +5850,30 @@ mod tests {
                 posted_at: None,
             })
             .unwrap();
-            let profile = json!({"first_name":"Synthetic","country":"Germany"});
+            let profile = json!({"first_name":"Synthetic","country":"Germany","cv_template_id":"fixture-template"});
             ws.save_candidate_profile(&profile.to_string()).unwrap();
             ws.add_fact("Fictional research experience", FactOrigin::UserAttested)
                 .unwrap();
+            ws.add_document(
+                "fixture-template",
+                "fictional-template.docx",
+                b"fictional template",
+                1,
+            )
+            .unwrap();
             let doc_name = format!("{}.pdf", "x".repeat(251));
             let staged_name = attempt_record::attachment_filename(&doc_name);
             ws.add_document("fictional-doc", &doc_name, b"%PDF-fictional resume", 1)
                 .unwrap();
+            let draft_context = draft_context_digest(&ws, &id, "cv").unwrap();
+            letter_export::record_generated_fixture(
+                &ws,
+                &id,
+                "fictional-doc",
+                b"%PDF-fictional resume",
+                &draft_context,
+            )
+            .unwrap();
             let review_attempt = "0123456789abcdef0123456789abcdef";
             let pdf = b"%PDF-fictional resume";
             let mut review_record =
@@ -6320,6 +6401,31 @@ mod tests {
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect();
+            let draft_link = event_values
+                .iter()
+                .find(|event| event["type"] == "document_draft_evidence_linked")
+                .unwrap();
+            assert_eq!(draft_link["document_id"], "fictional-doc");
+            assert_eq!(draft_link["context_current"], true);
+            let linked_draft: Value = serde_json::from_slice(
+                &std::fs::read(
+                    record
+                        .join("materials")
+                        .join(draft_link["evidence"].as_str().unwrap()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(linked_draft["draft"]["facts"][0], "Fictional qualification");
+            assert_eq!(
+                std::fs::read(
+                    record
+                        .join("materials")
+                        .join(draft_link["template"].as_str().unwrap())
+                )
+                .unwrap(),
+                b"fictional template"
+            );
             let requested = event_values
                 .iter()
                 .find(|event| {

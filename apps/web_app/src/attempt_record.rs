@@ -409,6 +409,181 @@ pub fn matching_document_reviews(
     )
 }
 
+pub struct GeneratedEvidence {
+    pub attempt_id: String,
+    pub kind: String,
+    pub context_sha256: String,
+    pub evidence: Option<Vec<u8>>,
+    pub template: Option<(String, Vec<u8>)>,
+}
+
+pub struct GeneratedEvidenceLookup {
+    pub found: Option<GeneratedEvidence>,
+    pub incomplete: bool,
+}
+
+/// Find evidence only for the exact saved document and bytes in this job's
+/// bounded attempt listing. Missing receipts are normal for user-supplied PDFs.
+pub fn matching_generated_evidence(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    document_id: &str,
+    pdf: &[u8],
+) -> Result<GeneratedEvidenceLookup, String> {
+    let listing = list(ws, job)?;
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|path| path.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let pdf_hash = waypoint_domain::sha256_hex(pdf);
+    let mut found = None;
+    let mut incomplete =
+        listing["truncated"] == true || listing["unreadable"].as_u64().unwrap_or(0) > 0;
+    let read = |path: &std::path::Path, limit: u64| -> Result<Vec<u8>, String> {
+        let meta = fs::symlink_metadata(path).map_err(|_| "Evidence file unavailable")?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > limit {
+            return Err("Invalid evidence file".into());
+        }
+        fs::read(path).map_err(|_| "Cannot read evidence file".into())
+    };
+    let component = |value: &Value| -> Result<String, String> {
+        let name = value.as_str().ok_or("Missing material name")?;
+        let path = std::path::Path::new(name);
+        if path.components().count() != 1
+            || !matches!(
+                path.components().next(),
+                Some(std::path::Component::Normal(_))
+            )
+        {
+            return Err("Invalid material name".into());
+        }
+        Ok(name.to_owned())
+    };
+    for item in listing["attempts"]
+        .as_array()
+        .ok_or("Invalid application record listing")?
+    {
+        let Some(attempt) = item["attempt_id"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            incomplete = true;
+            continue;
+        };
+        let dir = root
+            .join("application-records")
+            .join(format!("{}-{attempt}", &hash.as_str()[..16]));
+        let receipt_path = dir.join("document-export.json");
+        if let Err(error) = fs::symlink_metadata(&receipt_path) {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                continue;
+            }
+            incomplete = true;
+            continue;
+        }
+        let candidate = (|| -> Result<Option<GeneratedEvidence>, String> {
+            let dir_meta = fs::symlink_metadata(&dir).map_err(|_| "Invalid record")?;
+            if !dir_meta.is_dir() || dir_meta.file_type().is_symlink() {
+                return Err("Invalid record".into());
+            }
+            let info: Value = serde_json::from_slice(&read(&dir.join("attempt.json"), 65536)?)
+                .map_err(|_| "Invalid record metadata")?;
+            if info["job_id"].as_str() != Some(job.as_str())
+                || info["attempt_id"].as_str() != Some(attempt)
+            {
+                return Err("Wrong record identity".into());
+            }
+            let receipt: Value = serde_json::from_slice(&read(&receipt_path, 65536)?)
+                .map_err(|_| "Invalid export receipt")?;
+            if receipt["document_id"].as_str() != Some(document_id) {
+                return Ok(None);
+            }
+            if receipt["pdf_sha256"].as_str() != Some(pdf_hash.as_str()) {
+                return Err("Document changed since export".into());
+            }
+            let kind = receipt["kind"]
+                .as_str()
+                .filter(|kind| matches!(*kind, "cv" | "cover_letter"))
+                .ok_or("Invalid document kind")?;
+            let context = receipt["context_sha256"]
+                .as_str()
+                .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+                .ok_or("Invalid context digest")?;
+            let materials = dir.join("materials");
+            let meta = fs::symlink_metadata(&materials).map_err(|_| "Invalid materials folder")?;
+            if !meta.is_dir() || meta.file_type().is_symlink() {
+                return Err("Invalid materials folder".into());
+            }
+            let source_pdf = read(
+                &materials.join(component(&receipt["pdf"])?),
+                10 * 1024 * 1024,
+            )?;
+            if waypoint_domain::sha256_hex(&source_pdf) != pdf_hash {
+                return Err("Saved PDF changed".into());
+            }
+            let evidence = if receipt["evidence"].is_null() {
+                if !receipt["evidence_sha256"].is_null() {
+                    return Err("Invalid draft evidence receipt".into());
+                }
+                None
+            } else {
+                let bytes = read(
+                    &materials.join(component(&receipt["evidence"])?),
+                    128 * 1024,
+                )?;
+                if receipt["evidence_sha256"].as_str()
+                    != Some(waypoint_domain::sha256_hex(&bytes).as_str())
+                    || serde_json::from_slice::<Value>(&bytes).is_err()
+                {
+                    return Err("Saved draft evidence changed".into());
+                }
+                Some(bytes)
+            };
+            let template = if receipt["template"].is_null() {
+                None
+            } else {
+                let original = receipt["template_original_name"]
+                    .as_str()
+                    .filter(|s| !s.is_empty() && s.len() <= 2000)
+                    .ok_or("Invalid template name")?;
+                let bytes = read(
+                    &materials.join(component(&receipt["template"])?),
+                    10 * 1024 * 1024,
+                )?;
+                if receipt["template_sha256"].as_str()
+                    != Some(waypoint_domain::sha256_hex(&bytes).as_str())
+                {
+                    return Err("Saved template changed".into());
+                }
+                Some((original.to_owned(), bytes))
+            };
+            if evidence.is_none() && template.is_none() {
+                return Err("Export receipt has no retained evidence or template".into());
+            }
+            Ok(Some(GeneratedEvidence {
+                attempt_id: attempt.to_owned(),
+                kind: kind.to_owned(),
+                context_sha256: context.to_owned(),
+                evidence,
+                template,
+            }))
+        })();
+        match candidate {
+            Ok(Some(value)) if found.is_none() => found = Some(value),
+            Ok(Some(_)) => {
+                found = None;
+                incomplete = true;
+                break;
+            }
+            Ok(None) => {}
+            Err(_) => incomplete = true,
+        }
+    }
+    Ok(GeneratedEvidenceLookup { found, incomplete })
+}
+
 pub struct AttemptRecord {
     dir: PathBuf,
     sequence: u32,
@@ -688,6 +863,19 @@ impl AttemptRecord {
             return Err("Gmail review exceeds size limit".into());
         }
         fs::write(self.dir.join("gmail-review.json"), bytes).map_err(|e| e.to_string())
+    }
+    pub fn document_export_receipt(&mut self, receipt: &Value) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(receipt).map_err(|e| e.to_string())?;
+        if bytes.len() > 65536 {
+            return Err("Document export receipt exceeds limit".into());
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.dir.join("document-export.json"))
+            .map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())
     }
     pub fn document_visual_evidence(
         &mut self,

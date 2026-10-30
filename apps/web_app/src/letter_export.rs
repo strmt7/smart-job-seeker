@@ -149,11 +149,14 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
                     let record = record_generated(
                         ws,
                         &job_id,
-                        &task.kind,
-                        &task.reviewed_text,
-                        &pdf,
-                        &task.digest,
-                        task.draft_provenance.as_ref(),
+                        ExportRecord {
+                            document_id: &doc_id,
+                            kind: &task.kind,
+                            text: &task.reviewed_text,
+                            pdf: &pdf,
+                            context_digest: &task.digest,
+                            draft_provenance: task.draft_provenance.as_ref(),
+                        },
                     );
                     let record_saved = record.is_ok();
                     let record_error = record.err();
@@ -175,15 +178,28 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
         }
     }
 }
+struct ExportRecord<'a> {
+    document_id: &'a str,
+    kind: &'a str,
+    text: &'a str,
+    pdf: &'a [u8],
+    context_digest: &'a str,
+    draft_provenance: Option<&'a Value>,
+}
+
 fn record_generated(
     ws: &Workspace,
     job_id: &JobIdentityId,
-    kind: &str,
-    text: &str,
-    pdf: &[u8],
-    context_digest: &str,
-    draft_provenance: Option<&Value>,
+    export: ExportRecord<'_>,
 ) -> Result<(), String> {
+    let ExportRecord {
+        document_id,
+        kind,
+        text,
+        pdf,
+        context_digest,
+        draft_provenance,
+    } = export;
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(profile) => serde_json::from_str(&profile).map_err(|_| "Stored profile is invalid")?,
         None => json!({}),
@@ -228,9 +244,41 @@ fn record_generated(
                 .and_then(|bytes| record.material("generated-draft-evidence.json", &bytes))
         })
         .transpose()?;
+    if draft_provenance.is_some() || template.is_some() {
+        let evidence_sha = draft_provenance
+            .map(|value| {
+                serde_json::to_vec_pretty(value).map(|bytes| waypoint_domain::sha256_hex(&bytes))
+            })
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        record.document_export_receipt(&json!({"document_id":document_id,"kind":kind,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"evidence":provenance_name,"evidence_sha256":evidence_sha,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"template_original_name":template.as_ref().map(|(name, _)| name)}))?;
+    }
     record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"draft_provenance":provenance_name,"draft_edited":draft_provenance.map(|value| value["edited"].clone()),"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
     record.status("manual_review", crate::now())?;
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn record_generated_fixture(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    document_id: &str,
+    pdf: &[u8],
+    context: &str,
+) -> Result<(), String> {
+    let evidence = json!({"edited":false,"draft":{"facts":["Fictional qualification"],"evidence_check":{"status":"completed"}}});
+    record_generated(
+        ws,
+        job,
+        ExportRecord {
+            document_id,
+            kind: "cv",
+            text: "Fictional reviewed CV",
+            pdf,
+            context_digest: context,
+            draft_provenance: Some(&evidence),
+        },
+    )
 }
 
 fn build_docx(text: &str) -> Result<Vec<u8>, String> {
@@ -407,14 +455,18 @@ mod tests {
         ws.save_candidate_profile(&serde_json::json!({"cv_template_id":"template"}).to_string())
             .unwrap();
         let provenance = serde_json::json!({"draft_id":"fictional-task","edited":true,"draft":{"facts":["Fictional evidence"],"evidence_check":{"status":"completed"}}});
+        let context = waypoint_domain::Sha256Digest::of("fictional context");
         super::record_generated(
             &ws,
             &id,
-            "cv",
-            "Reviewed fictional text",
-            b"%PDF-fictional",
-            "context",
-            Some(&provenance),
+            super::ExportRecord {
+                document_id: "fictional-doc",
+                kind: "cv",
+                text: "Reviewed fictional text",
+                pdf: b"%PDF-fictional",
+                context_digest: context.as_str(),
+                draft_provenance: Some(&provenance),
+            },
         )
         .unwrap();
         let dir = std::fs::read_dir(root.path().join("application-records"))
@@ -436,6 +488,84 @@ mod tests {
         )
         .unwrap();
         assert_eq!(evidence, provenance);
+        let matched = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"%PDF-fictional",
+        )
+        .unwrap();
+        let linked = matched.found.unwrap();
+        assert!(!matched.incomplete);
+        assert_eq!(linked.kind, "cv");
+        assert_eq!(linked.context_sha256, context.as_str());
+        assert_eq!(linked.template.unwrap().1, b"fictional-template");
+        assert!(crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "other-doc",
+            b"%PDF-fictional"
+        )
+        .unwrap()
+        .found
+        .is_none());
+        let other_job = waypoint_domain::JobIdentityId::new("other-fictional-job").unwrap();
+        assert!(crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &other_job,
+            "fictional-doc",
+            b"%PDF-fictional"
+        )
+        .unwrap()
+        .found
+        .is_none());
+        let saved_pdf = dir.join("materials").join(event["pdf"].as_str().unwrap());
+        std::fs::write(&saved_pdf, b"changed saved pdf").unwrap();
+        let changed_pdf = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"%PDF-fictional",
+        )
+        .unwrap();
+        assert!(changed_pdf.found.is_none() && changed_pdf.incomplete);
+        std::fs::write(&saved_pdf, b"%PDF-fictional").unwrap();
+        let saved_template = dir
+            .join("materials")
+            .join(event["template"].as_str().unwrap());
+        std::fs::write(&saved_template, b"changed template").unwrap();
+        let changed_template = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"%PDF-fictional",
+        )
+        .unwrap();
+        assert!(changed_template.found.is_none() && changed_template.incomplete);
+        std::fs::write(&saved_template, b"fictional-template").unwrap();
+        assert!(crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"different pdf"
+        )
+        .unwrap()
+        .found
+        .is_none());
+        std::fs::write(
+            dir.join("materials")
+                .join(event["draft_provenance"].as_str().unwrap()),
+            b"tampered",
+        )
+        .unwrap();
+        let tampered = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"%PDF-fictional",
+        )
+        .unwrap();
+        assert!(tampered.found.is_none() && tampered.incomplete);
         for (key, expected) in [
             ("template", b"fictional-template".as_slice()),
             ("reviewed_text", b"Reviewed fictional text".as_slice()),
@@ -450,6 +580,30 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.join("attempt.json")).unwrap()).unwrap();
         assert_eq!(metadata["status"], "manual_review");
         assert_eq!(metadata["submitted_by_waypoint"], false);
+        super::record_generated(
+            &ws,
+            &id,
+            super::ExportRecord {
+                document_id: "template-only",
+                kind: "cv",
+                text: "Reviewed",
+                pdf: b"%PDF-template-only",
+                context_digest: context.as_str(),
+                draft_provenance: None,
+            },
+        )
+        .unwrap();
+        let template_only = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "template-only",
+            b"%PDF-template-only",
+        )
+        .unwrap()
+        .found
+        .unwrap();
+        assert!(template_only.evidence.is_none());
+        assert_eq!(template_only.template.unwrap().1, b"fictional-template");
     }
 
     #[test]
