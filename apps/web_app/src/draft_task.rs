@@ -11,6 +11,10 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) fn set_completed_fixture(id: &str, result: Value) {
+    *COMPLETED.lock().unwrap() = Some((id.to_owned(), result, std::time::Instant::now()));
+}
 pub fn pending() -> Result<Option<(String, String)>, String> {
     Ok(TASK
         .lock()
@@ -187,6 +191,64 @@ pub fn poll(id: &str) -> Result<Value, String> {
     *tasks = None;
     Ok(output)
 }
+
+/// Bind retained draft evidence to the same job, kind and context. The check
+/// describes the generated paragraphs; user edits are identified separately.
+pub fn export_provenance(
+    cached: &Value,
+    draft_id: &str,
+    job_id: &str,
+    kind: &str,
+    digest: &str,
+    reviewed_text: &str,
+) -> Result<Value, String> {
+    if cached["status"] != "complete"
+        || cached["job_id"].as_str() != Some(job_id)
+        || cached["kind"].as_str() != Some(kind)
+        || cached["digest"].as_str() != Some(digest)
+    {
+        return Err("The selected draft does not match this job and document context".into());
+    }
+    let draft = &cached["draft"];
+    let paragraphs = draft["paragraphs"]
+        .as_array()
+        .filter(|items| !items.is_empty() && items.len() <= 8)
+        .ok_or("Stored draft is invalid")?;
+    let mut pieces = Vec::new();
+    if let Some(opening) = draft["framing"]["opening"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+    {
+        pieces.push(opening);
+    }
+    for paragraph in paragraphs {
+        pieces.push(
+            paragraph["text"]
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .ok_or("Stored draft is invalid")?,
+        );
+    }
+    if let Some(closing) = draft["framing"]["closing"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+    {
+        pieces.push(closing);
+    }
+    let generated = pieces
+        .join("\n\n")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let result = json!({"draft_id":draft_id,"generated_text_sha256":waypoint_domain::sha256_hex(generated.as_bytes()),"reviewed_text_sha256":waypoint_domain::sha256_hex(reviewed_text.as_bytes()),"edited":generated != reviewed_text,"draft":draft,"note":"Evidence checks apply only to the generated paragraphs, not later edits or generated opening and closing."});
+    if serde_json::to_vec(&result)
+        .map_err(|_| "Could not serialize draft provenance")?
+        .len()
+        > 128 * 1024
+    {
+        return Err("Draft provenance exceeds the record limit".into());
+    }
+    Ok(result)
+}
 fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     let paragraphs = value
         .get("paragraphs")
@@ -353,6 +415,45 @@ fn letter_framing(job: &Value) -> Value {
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn export_provenance_binds_context_and_distinguishes_reviewed_edits() {
+        let cached = json!({"status":"complete","job_id":"job","kind":"cover_letter","digest":"context","draft":{"framing":{"opening":"Hello","closing":"Thanks"},"paragraphs":[{"text":"Worked\r\ncarefully","facts":[1]}],"facts":["Fictional experience"],"evidence_check":{"status":"completed","items":[{"id":1,"status":"uncertain","explanation":"Review"}]}}});
+        let unchanged = export_provenance(
+            &cached,
+            "task",
+            "job",
+            "cover_letter",
+            "context",
+            "Hello\n\nWorked\ncarefully\n\nThanks",
+        )
+        .unwrap();
+        assert_eq!(unchanged["edited"], false);
+        assert_eq!(
+            unchanged["draft"]["evidence_check"]["items"][0]["status"],
+            "uncertain"
+        );
+        let edited =
+            export_provenance(&cached, "task", "job", "cover_letter", "context", "Edited").unwrap();
+        assert_eq!(edited["edited"], true);
+        assert_ne!(
+            edited["generated_text_sha256"],
+            edited["reviewed_text_sha256"]
+        );
+        assert!(export_provenance(
+            &cached,
+            "task",
+            "other",
+            "cover_letter",
+            "context",
+            "Edited"
+        )
+        .is_err());
+        assert!(export_provenance(&cached, "task", "job", "cv", "context", "Edited").is_err());
+        assert!(
+            export_provenance(&cached, "task", "job", "cover_letter", "changed", "Edited").is_err()
+        );
+    }
 
     #[test]
     fn document_evidence_requires_one_valid_judgment_for_each_paragraph() {

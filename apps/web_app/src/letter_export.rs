@@ -12,6 +12,7 @@ struct Task {
     kind: String,
     digest: String,
     reviewed_text: String,
+    draft_provenance: Option<Value>,
     result: Option<Result<Vec<u8>, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -29,6 +30,7 @@ pub fn start(
     kind: String,
     text: String,
     digest: String,
+    draft_provenance: Option<Value>,
 ) -> Result<(), String> {
     if !matches!(kind.as_str(), "cv" | "cover_letter") {
         return Err("Unknown document type".into());
@@ -52,6 +54,7 @@ pub fn start(
         kind,
         digest,
         reviewed_text: text.clone(),
+        draft_provenance,
         result: None,
     });
     drop(task);
@@ -150,12 +153,13 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
                         &task.reviewed_text,
                         &pdf,
                         &task.digest,
+                        task.draft_provenance.as_ref(),
                     );
                     let record_saved = record.is_ok();
                     let record_error = record.err();
                     let job = task.job_id.clone();
                     let kind = task.kind.clone();
-                    let output = json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error});
+                    let output = json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error,"draft_provenance_saved":record_saved && task.draft_provenance.is_some()});
                     *COMPLETED.lock().map_err(|_| "Export state unavailable")? =
                         Some((id.to_owned(), output.clone()));
                     *tasks = None;
@@ -178,6 +182,7 @@ fn record_generated(
     text: &str,
     pdf: &[u8],
     context_digest: &str,
+    draft_provenance: Option<&Value>,
 ) -> Result<(), String> {
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(profile) => serde_json::from_str(&profile).map_err(|_| "Stored profile is invalid")?,
@@ -216,7 +221,14 @@ fn record_generated(
         .transpose()?;
     let text_name = record.material(&format!("reviewed-{kind}.txt"), text.as_bytes())?;
     let pdf_name = record.material(&format!("reviewed-{kind}.pdf"), pdf)?;
-    record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
+    let provenance_name = draft_provenance
+        .map(|value| {
+            serde_json::to_vec_pretty(value)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| record.material("generated-draft-evidence.json", &bytes))
+        })
+        .transpose()?;
+    record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"draft_provenance":provenance_name,"draft_edited":draft_provenance.map(|value| value["edited"].clone()),"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
     record.status("manual_review", crate::now())?;
     Ok(())
 }
@@ -259,6 +271,7 @@ mod tests {
             kind: "cv".into(),
             digest: "fixture".into(),
             reviewed_text: "Fictional text".into(),
+            draft_provenance: None,
             result: Some(Err("Fictional conversion error".into())),
         });
         let error = super::start(
@@ -267,6 +280,7 @@ mod tests {
             "cv".into(),
             "Fictional text".into(),
             "fixture".into(),
+            None,
         )
         .unwrap_err();
         assert!(error.contains("awaiting its result"));
@@ -311,6 +325,7 @@ mod tests {
             kind: "cv".into(),
             digest,
             reviewed_text: "Fictional text".into(),
+            draft_provenance: None,
             result: Some(Ok(b"%PDF-fictional".to_vec())),
         });
         ws.add_fact(
@@ -352,6 +367,7 @@ mod tests {
             kind: "cv".into(),
             digest,
             reviewed_text: "Fictional text".into(),
+            draft_provenance: None,
             result: Some(Ok(b"%PDF-fictional".to_vec())),
         });
         let first = super::poll("replay", &ws).unwrap();
@@ -390,6 +406,7 @@ mod tests {
             .unwrap();
         ws.save_candidate_profile(&serde_json::json!({"cv_template_id":"template"}).to_string())
             .unwrap();
+        let provenance = serde_json::json!({"draft_id":"fictional-task","edited":true,"draft":{"facts":["Fictional evidence"],"evidence_check":{"status":"completed"}}});
         super::record_generated(
             &ws,
             &id,
@@ -397,6 +414,7 @@ mod tests {
             "Reviewed fictional text",
             b"%PDF-fictional",
             "context",
+            Some(&provenance),
         )
         .unwrap();
         let dir = std::fs::read_dir(root.path().join("application-records"))
@@ -408,6 +426,16 @@ mod tests {
         let event: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.join("events.jsonl")).unwrap()).unwrap();
         assert_eq!(event["type"], "draft_exported");
+        assert_eq!(event["draft_edited"], true);
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                dir.join("materials")
+                    .join(event["draft_provenance"].as_str().unwrap()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(evidence, provenance);
         for (key, expected) in [
             ("template", b"fictional-template".as_slice()),
             ("reviewed_text", b"Reviewed fictional text".as_slice()),
@@ -422,6 +450,101 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.join("attempt.json")).unwrap()).unwrap();
         assert_eq!(metadata["status"], "manual_review");
         assert_eq!(metadata["submitted_by_waypoint"], false);
+    }
+
+    #[test]
+    #[ignore = "runs a local LibreOffice conversion of fictional text"]
+    fn export_endpoint_records_original_draft_evidence_and_reviewed_edit() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = waypoint_workspace::Workspace::open(root.path()).unwrap();
+        let job = JobIdentityId::new("fictional-provenance-export").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: job.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional posting"),
+        )
+        .unwrap();
+        let digest = crate::draft_context_digest(&ws, &job, "cv").unwrap();
+        let draft = serde_json::json!({"paragraphs":[{"text":"Original fictional experience","facts":[1]}],"facts":["Fictional fact"],"evidence_check":{"status":"completed","items":[{"id":1,"status":"uncertain","explanation":"Review"}]}});
+        crate::draft_task::set_completed_fixture(
+            "draft-fixture",
+            serde_json::json!({"status":"complete","job_id":job.as_str(),"kind":"cv","digest":digest,"draft":draft}),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = serde_json::json!({"id":job.as_str(),"kind":"cv","text":"Reviewed edited text","context_digest":digest,"draft_id":"draft-fixture","reviewed":true}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/letter/export-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let started: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(started["provenance_available"], true);
+        let id = started["task_id"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let result = loop {
+            let result = super::poll(id, &ws).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(result["status"], "complete", "{result}");
+        assert_eq!(result["draft_provenance_saved"], true);
+        let record = std::fs::read_dir(root.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let event: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(record.join("events.jsonl")).unwrap()).unwrap();
+        assert_eq!(event["draft_edited"], true);
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                record
+                    .join("materials")
+                    .join(event["draft_provenance"].as_str().unwrap()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(evidence["draft"]["facts"][0], "Fictional fact");
+        assert_eq!(
+            evidence["draft"]["evidence_check"]["items"][0]["status"],
+            "uncertain"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                record
+                    .join("materials")
+                    .join(event["reviewed_text"].as_str().unwrap())
+            )
+            .unwrap(),
+            "Reviewed edited text"
+        );
     }
     #[test]
     fn document_preserves_unicode_and_xml_characters() {
@@ -454,7 +577,7 @@ mod tests {
         })
         .unwrap();
         let digest = crate::draft_context_digest(&ws, &id, "cv").unwrap();
-        super::start("test-task".into(),id.as_str().into(),"cv".into(),"Fictional Candidate\n\nExperience\nBuilt reliable systems and worked with colleagues to improve software.\n\nSkills\nRust and SQL".into(), digest).unwrap();
+        super::start("test-task".into(),id.as_str().into(),"cv".into(),"Fictional Candidate\n\nExperience\nBuilt reliable systems and worked with colleagues to improve software.\n\nSkills\nRust and SQL".into(), digest, None).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
         let result = loop {
             let result = super::poll("test-task", &ws).unwrap();

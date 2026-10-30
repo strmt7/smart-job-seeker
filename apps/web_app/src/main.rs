@@ -3937,6 +3937,28 @@ fn serve(
                         .into(),
                 );
             }
+            let draft_provenance = match body.get("draft_id") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(draft_id)) if !draft_id.is_empty() && draft_id.len() <= 128 => {
+                    match draft_task::poll(draft_id) {
+                        Ok(cached) if cached["status"] == "complete" => {
+                            Some(draft_task::export_provenance(
+                                &cached,
+                                draft_id,
+                                id.as_str(),
+                                kind,
+                                digest,
+                                &text,
+                            )?)
+                        }
+                        Ok(_) => None,
+                        Err(error) if error == "Draft task not found" => None,
+                        Err(error) => return Err(error),
+                    }
+                }
+                _ => return Err("Invalid draft identifier".into()),
+            };
+            let provenance_available = draft_provenance.is_some();
             let task_id = random_id()?;
             letter_export::start(
                 task_id.clone(),
@@ -3944,8 +3966,13 @@ fn serve(
                 kind.to_owned(),
                 text,
                 digest.to_owned(),
+                draft_provenance,
             )?;
-            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":task_id,"provenance_available":provenance_available}),
+            );
         }
         "/api/letter/export-pending" => {
             let pending = letter_export::pending()?;
