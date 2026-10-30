@@ -663,13 +663,14 @@ fn assess_with_source(
                         let initial_assessment = assessment.clone();
                         let (value, recovery) =
                             find_unknown_qualification_evidence(model, value, facts, listing);
-                        let (value, assessment) = check_qualification_judgments(
+                        let (value, assessment) = check_qualification_judgments_with_source(
                             model,
                             value,
                             assessment,
                             facts,
                             instructions,
                             listing,
+                            verification_text,
                         );
                         let (value, mut assessment) = if recovery
                             .as_ref()
@@ -988,13 +989,34 @@ fn unique_requirement_context<'a>(listing: &'a str, excerpt: &str) -> Option<&'a
 /// Reassess cited qualifications without showing the original judgment. A
 /// second model call is not proof of correctness; disagreements and failures
 /// are downgraded to unknown instead of being counted as supported or opposed.
+#[cfg(test)]
 fn check_qualification_judgments(
+    model: &mut dyn Inference,
+    original: Value,
+    fallback: Value,
+    facts: &[String],
+    preferences: &str,
+    listing: &str,
+) -> (Value, Value) {
+    check_qualification_judgments_with_source(
+        model,
+        original,
+        fallback,
+        facts,
+        preferences,
+        listing,
+        Some(listing),
+    )
+}
+
+fn check_qualification_judgments_with_source(
     model: &mut dyn Inference,
     mut original: Value,
     fallback: Value,
     facts: &[String],
     preferences: &str,
     listing: &str,
+    verification_text: Option<&str>,
 ) -> (Value, Value) {
     let Some(criteria) = original["criteria"].as_array_mut() else {
         return (original, fallback);
@@ -1003,13 +1025,14 @@ fn check_qualification_judgments(
     for item in criteria.iter_mut() {
         if item["source"] == "listing"
             && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
-            && item["excerpt"]
-                .as_str()
-                .is_some_and(|excerpt| unique_requirement_context(listing, excerpt).is_none())
+            && item["excerpt"].as_str().is_some_and(|excerpt| {
+                verification_text
+                    .is_none_or(|source| unique_requirement_context(source, excerpt).is_none())
+            })
         {
             item["status"] = json!("unknown");
             item["fact_index"] = Value::Null;
-            item["explanation"] = json!("The quoted requirement occurs more than once or cannot be located uniquely; review the original listing.");
+            item["explanation"] = json!("The quoted requirement could not be verified as unique in the original listing; review it manually.");
             ambiguous += 1;
         }
     }
@@ -1029,7 +1052,7 @@ fn check_qualification_judgments(
         let fact_index = item["fact_index"].as_u64()? as usize;
         let fact = facts.get(fact_index.checked_sub(1)?)?;
         let excerpt = item["excerpt"].as_str()?;
-        let context = unique_requirement_context(listing, excerpt)?;
+        let context = unique_requirement_context(verification_text?, excerpt)?;
         Some(json!({"id": index + 1, "requirement": excerpt, "job_context": context, "fact": fact}))
     }).collect();
     if items.is_empty() {
@@ -2104,6 +2127,27 @@ mod tests {
         assert!(report.is_none());
         assert!(unique_requirement_context("aaaa", "aaa").is_none());
         assert!(unique_requirement_context("ééé", "éé").is_none());
+        let model_listing = "Required: Python.";
+        let source_listing = format!(
+            "{} {} Another role: Python.",
+            model_listing,
+            "x".repeat(8100)
+        );
+        for source in [Some(source_listing.as_str()), None] {
+            let candidate = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"Python","importance":"required","status":"supported","fact_index":1,"explanation":"Experience"}]});
+            let baseline = validate(candidate.clone(), &facts, "", model_listing).unwrap();
+            let (_, result) = check_qualification_judgments_with_source(
+                &mut NoCalls,
+                candidate,
+                baseline,
+                &facts,
+                "",
+                model_listing,
+                source,
+            );
+            assert_eq!(result["rubric"][0]["status"], "unknown");
+            assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+        }
     }
 
     #[test]
