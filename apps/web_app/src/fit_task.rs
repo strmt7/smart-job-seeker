@@ -893,15 +893,24 @@ fn compare_preferences(
         let preference = original["criteria"][id - 1]["excerpt"]
             .as_str()
             .unwrap_or("");
+        // A repeated quote cannot identify which occurrence the model used.
+        // Different occurrences may describe different offers or contexts.
+        let ambiguous_quote = matches!(status, "supported" | "contradicted")
+            && quote
+                .as_str()
+                .is_some_and(|text| unique_requirement_context(listing_excerpt, text).is_none());
         let numerical_review = matches!(status, "supported" | "contradicted")
             && quote
                 .as_str()
                 .is_some_and(|text| interval_requires_review(preference, text, listing_excerpt));
+        let needs_review = ambiguous_quote || numerical_review;
         updates.push((
             id - 1,
-            if numerical_review { "unknown" } else { status }.to_owned(),
-            if numerical_review || status == "unknown" { Value::Null } else { quote.clone() },
-            if numerical_review {
+            if needs_review { "unknown" } else { status }.to_owned(),
+            if needs_review || status == "unknown" { Value::Null } else { quote.clone() },
+            if ambiguous_quote {
+                "The cited listing text occurs more than once; review the full context before deciding whether this preference is met.".to_owned()
+            } else if numerical_review {
                 "A numeric interval in or near the cited text crosses the preference's stated number; check the bounds and units manually.".to_owned()
             } else {
                 explanation.to_owned()
@@ -2681,6 +2690,52 @@ mod tests {
         ));
         let long = format!("{}\n{listing}\n{}", "é".repeat(150), "é".repeat(150));
         assert!(interval_requires_review(preference, "EUR 80,000", &long));
+    }
+
+    #[test]
+    fn preference_comparison_does_not_accept_an_ambiguous_quote() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct Fixture(&'static str);
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    json!({"items":[{"id":1,"status":self.0,"quote":"EUR 80,000","explanation":"Fixture"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let listing = "Salary: EUR 60,000 to EUR 80,000. Bonus limit EUR 80,000.";
+        let preference = "Minimum EUR 80,000 per year";
+        let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        for status in ["supported", "contradicted"] {
+            let fallback = validate(raw.clone(), &[], preference, listing).unwrap();
+            let result = compare_preferences(
+                &mut Fixture(status),
+                raw.clone(),
+                fallback,
+                &[],
+                preference,
+                listing,
+            );
+            assert_eq!(result["rubric"][0]["status"], "unknown");
+            assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+            assert!(result["rubric"][0]["explanation"]
+                .as_str()
+                .unwrap()
+                .contains("more than once"));
+        }
     }
 
     #[test]
