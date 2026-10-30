@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Embedded controls and reviewed prefill — 2026-10-30
+
+- Hidden or inaccessible frames no longer consume the four-document inspection allowance. Frame discovery stores identifiers instead of copying every embedded tree, and a time budget bounds inspection. Dropdown labels no longer absorb the text of their options when the label wraps the control.
+- A fictional local browser fixture fills and verifies text, date, dropdown, checkbox, radio and file controls in a visible frame preceded by five hidden frames. A second local test exercises the web app's reviewed prefill grant and verifies the embedded value. The frame still requires manual review; this does not establish live-site or model-vision coverage.
+
 ## Embedded form fields — 2026-10-30
 
 - Accessible visible first-level frames can now contribute fields to the reviewed form. Frame-scoped selectors bind the embedding element and its document identity, and are refused after the document changes or the frame becomes inaccessible or hidden. Up to four frame documents are inspected and the existing review warning remains. Inaccessible and nested frames still require manual handling. The protocol limits individual messages to 16 MiB; oversized DOM responses fail rather than being treated as complete.

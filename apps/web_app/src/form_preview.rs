@@ -1917,6 +1917,85 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn reviewed_prefill_reaches_a_visible_embedded_form_after_hidden_frames() {
+        use waypoint_domain::GrantId;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_iframe_controls.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview =
+            suggest_without_model(live, &json!({"first_name":"Fictional"}), "No model").unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        let selector = preview.suggestions[0].field_selector.clone();
+        assert!(selector.starts_with("waypoint-frame:"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("embedded-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("embedded-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("embedded-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        assert_eq!(
+            apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                url.as_str(),
+                &preview,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1,
+                    completed: &mut completed
+                }
+            )
+            .unwrap(),
+            1
+        );
+        driver.verify_text_value(&selector, "Fictional").unwrap();
+        assert!(grant.consumed);
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts a local browser with a fictional profile and does not submit"]
     fn model_radio_suggestion_can_be_reviewed_and_filled() {
         use waypoint_domain::GrantId;

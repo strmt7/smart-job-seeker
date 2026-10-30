@@ -709,48 +709,68 @@ impl CdpDriver {
         let mut frames = Vec::new();
         walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
             let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
-            if !hidden
-                && frames.len() < 4
-                && (tag.eq_ignore_ascii_case("iframe") || tag.eq_ignore_ascii_case("frame"))
+            if !hidden && (tag.eq_ignore_ascii_case("iframe") || tag.eq_ignore_ascii_case("frame"))
             {
-                frames.push(node.clone());
+                if let (Some(id), Some(backend)) = (
+                    node.get("nodeId").and_then(Value::as_u64),
+                    node.get("backendNodeId").and_then(Value::as_u64),
+                ) {
+                    frames.push((id, backend));
+                }
             }
             true
         });
-        // Bound both the number of documents and total fields. Remaining frames
-        // retain the existing manual-review warning from the main inspection.
-        for frame in frames.into_iter().take(4) {
-            let Some(frame_id) = frame.get("nodeId").and_then(Value::as_u64) else {
-                continue;
-            };
-            let Some(frame_backend) = frame.get("backendNodeId").and_then(Value::as_u64) else {
-                continue;
-            };
-            let Some(child) = frame.get("contentDocument") else {
-                continue;
-            };
-            let Some(document_backend) = child.get("backendNodeId").and_then(Value::as_u64) else {
-                continue;
-            };
-            if !self.accessible_visible_frame(frame_id)? {
-                continue;
+        // Hidden and inaccessible frames do not use the document allowance.
+        // Keep only IDs during discovery so uninspected frame trees are not cloned.
+        let started = Instant::now();
+        let previous_timeout = self.cdp.timeout;
+        self.cdp.timeout = Duration::from_secs(1);
+        let inspected = (|| -> Result<(), DriverError> {
+            let mut inspected_count = 0;
+            for (frame_id, frame_backend) in frames {
+                if inspected_count >= 4 {
+                    break;
+                }
+                if started.elapsed() > Duration::from_secs(8) {
+                    return Err(DriverError("Embedded form inspection exceeded its time budget; manual review is needed".into()));
+                }
+                if !self.accessible_visible_frame(frame_id)? {
+                    continue;
+                }
+                let mut child = None;
+                walk(&root, false, &mut |node, _| {
+                    if node.get("backendNodeId").and_then(Value::as_u64) == Some(frame_backend) {
+                        child = node.get("contentDocument").cloned();
+                    }
+                    true
+                });
+                let Some(child) = child else { continue };
+                let Some(document_backend) = child.get("backendNodeId").and_then(Value::as_u64)
+                else {
+                    continue;
+                };
+                inspected_count += 1;
+                let (mut embedded, mut embedded_walls) = self.read_form_document(url, &child)?;
+                if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
+                    return Err(DriverError(
+                        "Form has too many controls for one inspection; manual review is needed"
+                            .into(),
+                    ));
+                }
+                for field in &mut embedded.fields {
+                    field.selector = format!(
+                        "waypoint-frame:{frame_backend}:{document_backend}:{}",
+                        field.selector
+                    );
+                }
+                schema.fields.extend(embedded.fields);
+                schema.multi_step |= embedded.multi_step;
+                walls.append(&mut embedded_walls);
             }
-            let (mut embedded, mut embedded_walls) = self.read_form_document(url, child)?;
-            if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
-                return Err(DriverError(
-                    "Form has too many controls for one inspection; manual review is needed".into(),
-                ));
-            }
-            for field in &mut embedded.fields {
-                field.selector = format!(
-                    "waypoint-frame:{frame_backend}:{document_backend}:{}",
-                    field.selector
-                );
-            }
-            schema.fields.extend(embedded.fields);
-            schema.multi_step |= embedded.multi_step;
-            walls.append(&mut embedded_walls);
-        }
+            Ok(())
+        })();
+        self.cdp.timeout = previous_timeout;
+        inspected?;
         walls.sort();
         walls.dedup();
         Ok((schema, walls))
@@ -918,7 +938,22 @@ impl CdpDriver {
             }
             if tag == "label" {
                 let mut label_text = String::new();
-                collect_text(node, false, &mut label_text);
+                walk(node, false, &mut |child, inside_control| {
+                    let tag = child.get("nodeName").and_then(Value::as_str).unwrap_or("");
+                    if ["script", "style", "template", "noscript"]
+                        .iter()
+                        .any(|name| tag.eq_ignore_ascii_case(name))
+                    {
+                        return false;
+                    }
+                    if tag == "#text" && !inside_control {
+                        if let Some(text) = child.get("nodeValue").and_then(Value::as_str) {
+                            label_text.push_str(text);
+                            label_text.push(' ');
+                        }
+                    }
+                    true
+                });
                 let label_text = label_text.split_whitespace().collect::<Vec<_>>().join(" ");
                 if let Some(for_id) = attrs.get("for") {
                     labels

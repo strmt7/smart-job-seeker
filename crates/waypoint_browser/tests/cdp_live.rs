@@ -978,6 +978,81 @@ fn visible_embedded_form_can_be_filled_with_review_and_rejects_stale_scope() {
 }
 
 #[test]
+#[ignore = "launches a real browser against fictional embedded controls"]
+fn embedded_controls_after_hidden_frames_can_be_filled_and_verified() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_iframe_controls.html")).unwrap();
+    let selector = |label: &str| {
+        page.schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing embedded field {label}; fields: {:?}",
+                    page.schema
+                        .fields
+                        .iter()
+                        .map(|field| &field.label)
+                        .collect::<Vec<_>>()
+                )
+            })
+            .selector
+            .clone()
+    };
+    let name = selector("Name");
+    let date = selector("Start date");
+    let place = selector("Location");
+    let updates = selector("Updates");
+    let schedule = selector("Schedule");
+    let attachment = selector("Attachment");
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: name.clone(),
+            value: PacketValue::Text("Fictional".into()),
+        })
+        .unwrap();
+    driver.verify_text_value(&name, "Fictional").unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: date.clone(),
+            value: PacketValue::Date("2026-11-01".into()),
+        })
+        .unwrap();
+    driver.verify_text_value(&date, "2026-11-01").unwrap();
+    for choice in [
+        BrowserCommand::SelectOption {
+            selector: place,
+            label: "Remote".into(),
+        },
+        BrowserCommand::Fill {
+            selector: updates,
+            value: PacketValue::Bool(true),
+        },
+        BrowserCommand::SelectRadio {
+            selector: schedule,
+            label: "Part time".into(),
+        },
+    ] {
+        driver.execute(&choice).unwrap();
+        driver.verify_choice(&choice).unwrap();
+    }
+    let file = upload_dir().join("fictional-embedded.pdf");
+    std::fs::write(&file, b"fictional local fixture").unwrap();
+    driver.attach_local_file(&attachment, &file).unwrap();
+    driver.verify_local_file(&attachment, &file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser with a fictional autocomplete fixture"]
 fn autocomplete_choices_are_not_mistaken_for_selected_text_fields() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
