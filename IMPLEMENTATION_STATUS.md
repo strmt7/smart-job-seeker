@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Small-model fit repeatability check — 2026-10-30
+
+- In the existing three-run fictional repeatability test, local `gemma3:4b` (digest `c30276f7dffec93a536d283e15088990454b8d21cf180a3d6eea4959e4147291`, 4,096 context) returned no valid assessments after the bounded repair. Its responses included a Python fact as supposed SQL evidence, candidate facts as listing criteria, and non-null fact references for unknown judgments. Validation withheld every score. An experimental prompt that numbered facts and emphasized source rules also produced zero valid assessments in three runs and was discarded; this single case does not establish general model performance or test the overlap-specific repair.
+- The test used fictional data and one fully GPU-resident model. Snapshots showed 28.11 GiB free system memory and 6.19 GiB maximum adapter usage before loading, 25.52 GiB and 10.10 GiB before the first test, and 25.49 GiB and 10.14 GiB after the second. These are snapshots, not peaks; the model was left to its normal expiry. No application was sent. Raw local test output was retained under `target/model-eval/`.
+
 ## Fit overlap repair feedback — 2026-10-30
 
 - When a model-selected rubric contains overlapping excerpts, the single bounded repair request now identifies the conflicting excerpts as JSON strings, limited to 120 characters each. The input digest version changed so earlier assessments become stale. A controlled fixture confirms the repair request and a valid second response; it does not show whether a local model can repair the rubric or whether the resulting score is accurate.
