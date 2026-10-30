@@ -368,3 +368,11 @@ also makes the old assessment stale. Existing assessments are invalidated by
 the input version change. The percentage remains a deterministic calculation
 over a model-generated rubric, not a calibrated probability; its displayed
 range does not account for omitted text or model interpretation errors.
+
+The bounded qualification-selection pass now alternates lexical candidates and
+sampled facts before batching. This allows sampled facts to be examined when
+longer facts exhaust the six-batch budget. The assessment reports how many
+sampled facts were evaluated and keeps the same limits on calls, bytes and
+selected facts. A fictional local-model check with long facts selected a sampled
+accessibility paraphrase; this single case does not establish general recall or
+calibration. The revised input version invalidates older assessments.
