@@ -557,7 +557,7 @@ mod tests {
                 let request = std::str::from_utf8(&request[..len]).unwrap();
                 assert!(request.contains(if n == 0 { "first" } else { "second" }));
                 let mut results: Vec<Value> = (0..70)
-                    .map(|i| json!({"title":"Repeated", "url":format!("https://example.org/{i}")}))
+                    .map(|i| json!({"title":"Repeated", "url":format!("https://example.org/{i}"),"engine":if n == 0 {"engine-a"} else {"engine-b"}}))
                     .collect();
                 if n == 1 {
                     results.push(json!({"title":"New result", "url":"https://example.org/new"}));
@@ -598,6 +598,18 @@ mod tests {
         assert_eq!(batches[1]["data"]["results"].as_array().unwrap().len(), 1);
         assert_eq!(batches[1]["data"]["results"][0]["title"], "New result");
         assert_eq!(batches[1]["data"]["previously_seen"], 70);
+        assert_eq!(
+            batches[1]["data"]["repeated_references"]
+                .as_array()
+                .unwrap()
+                .len(),
+            10
+        );
+        assert_eq!(
+            batches[1]["data"]["repeated_references"][0]["engines"],
+            json!(["engine-b"])
+        );
+        assert_eq!(batches[1]["data"]["repeated_references_omitted"], 60);
         assert_eq!(batches[1]["data"]["results_examined"], 71);
         provider.join().unwrap();
     }

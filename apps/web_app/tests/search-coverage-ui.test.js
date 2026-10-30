@@ -18,4 +18,14 @@ const mixed = batchSummary({status:'complete',processed:3,total:5,coverage:{succ
 assert.match(mixed, /3 of 5 pages attempted.*2 succeeded, 1 failed, 2 not attempted/);
 assert.match(mixed, /1 page had limited results.*1 page reported unavailable engines.*1 page did not report engine availability/);
 assert.match(batchSummary({status:'complete',processed:0,total:2,cancelled:true,coverage:{succeeded_pages:0,failed_pages:0,unattempted_pages:2}}), /stopped.*0 succeeded, 0 failed, 2 not attempted/);
+const repeatedLine = source.split('\n').find(line=>line.startsWith('function repeatedCandidateDetails('));
+assert.ok(repeatedLine);
+const make = (tag,text='')=>({tag,text,children:[],append(...items){this.children.push(...items);}});
+const repeated = vm.runInNewContext(`(${repeatedLine})`,{element:make});
+const references = Array.from({length:12},(_,index)=>({title:`Role ${index}`,url:`https://example.org/${index}`,engines:['fictional engine']}));
+const details = repeated({previously_seen:15,repeated_references:references});
+assert.equal(details.children[0].text,'Repeated results: showing 10 of 15');
+assert.match(details.children[2].text,/Role 0.*https:\/\/example.org\/0.*fictional engine/);
+assert.equal(details.children.length,12);
+assert.equal(repeated({previously_seen:1}),null);
 console.log('Search coverage UI checks passed.');

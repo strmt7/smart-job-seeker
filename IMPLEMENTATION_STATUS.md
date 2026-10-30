@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Repeated search-result provenance — 2026-10-30
+
+- A batch search now retains up to ten references per page for exact URLs seen on earlier pages, including the later provider-reported title, engine labels and publication text. The page reports the total repeated count and omitted-reference count, and the web interface exposes the retained references without adding them as new candidate entries. These references are bounded and unverified; this is exact-URL provenance, not detection of similar vacancies across different URLs or proof of job identity.
+- A fictional local provider test checked that repeated URLs were not added as candidates and that later engine attribution and omitted counts survived. The web suite passed (290 passed, 118 ignored); web Clippy, formatting and search UI checks passed. A Playwright component fixture at 1200×900 and 375×850 checked expansion, keyboard closure and a long URL without horizontal overflow; the Browser plugin was unavailable. No live provider, local model or employer site was exercised for this change, and no application was sent.
+
 ## Cancelled batch-search worker — 2026-10-30
 
 - When batch search is cancelled while a completed page occupies the one-slot result channel, the worker now stops waiting to send its completion message. The buffered page remains available to a later poll, which reports cancellation and unattempted pages after the worker disconnects. The task itself remains available until the client polls it; this change does not add automatic job import or expand provider coverage.

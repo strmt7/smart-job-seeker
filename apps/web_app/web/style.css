@@ -171,3 +171,4 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 .fit-split { margin: .5rem 0 1rem; padding: .7rem; border: 1px solid #d7e1ed; border-radius: .5rem; }
 .fit-split summary { cursor: pointer; font-weight: 600; }
 .fit-split label { margin-top: .6rem; overflow-wrap: anywhere; }
+.repeated-search-results p { overflow-wrap: anywhere; }

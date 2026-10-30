@@ -83,6 +83,7 @@ pub(crate) fn parse_excluding(
         .and_then(Value::as_array)
         .ok_or("Provider returned no results array")?;
     let mut links = Vec::new();
+    let mut repeated = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut examined = 0;
     let mut previously_seen = 0;
@@ -115,10 +116,6 @@ pub(crate) fn parse_excluding(
             .take(200)
             .collect();
         if title.trim().is_empty() || !seen.insert(url.to_string()) {
-            continue;
-        }
-        if excluded.contains(url.as_str()) {
-            previously_seen += 1;
             continue;
         }
         let snippet: String = item
@@ -156,6 +153,13 @@ pub(crate) fn parse_excluding(
             .filter(|c| !c.is_control())
             .take(80)
             .collect();
+        if excluded.contains(url.as_str()) {
+            previously_seen += 1;
+            if repeated.len() < 10 {
+                repeated.push(json!({"url":url.as_str(),"title":title,"engines":engines,"published_date":published_date.trim()}));
+            }
+            continue;
+        }
         links.push(json!({"url":url.as_str(),"title":title,"snippet":snippet,"engines":engines,"published_date":published_date.trim()}));
         if links.len() == 100 {
             break;
@@ -166,7 +170,7 @@ pub(crate) fn parse_excluding(
         .and_then(Value::as_array)
         .map(|v| v.len());
     Ok(
-        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable,"limited":examined < results.len(),"previously_seen":previously_seen}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable,"limited":examined < results.len(),"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
     )
 }
 
@@ -323,6 +327,36 @@ mod tests {
         let bounded = parse(&json!({"results":invalid}).to_string()).unwrap();
         assert_eq!(bounded["results_examined"], 100);
         assert_eq!(bounded["limited"], true);
+    }
+
+    #[test]
+    fn repeated_urls_keep_bounded_search_provenance_without_new_candidates() {
+        let excluded: std::collections::HashSet<String> = (0..15)
+            .map(|index| format!("https://example.org/job/{index}"))
+            .collect();
+        let rows: Vec<Value> = (0..15)
+            .map(|index| {
+                json!({
+                    "title":format!("Fictional role {index}"),
+                    "url":format!("https://example.org/job/{index}"),
+                    "engines":["fictional engine"],
+                    "publishedDate":"2026-10-30"
+                })
+            })
+            .collect();
+        let result = parse_excluding(&json!({"results":rows}).to_string(), &excluded).unwrap();
+        assert_eq!(result["results"].as_array().unwrap().len(), 0);
+        assert_eq!(result["previously_seen"], 15);
+        assert_eq!(result["repeated_references"].as_array().unwrap().len(), 10);
+        assert_eq!(result["repeated_references_omitted"], 5);
+        assert_eq!(
+            result["repeated_references"][0]["engines"],
+            json!(["fictional engine"])
+        );
+        assert_eq!(
+            result["repeated_references"][0]["url"],
+            "https://example.org/job/0"
+        );
     }
 
     #[test]
