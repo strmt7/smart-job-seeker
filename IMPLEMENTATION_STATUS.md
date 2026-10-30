@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Fit overlap repair feedback — 2026-10-30
+
+- When a model-selected rubric contains overlapping excerpts, the single bounded repair request now identifies the conflicting excerpts as JSON strings, limited to 120 characters each. The input digest version changed so earlier assessments become stale. A controlled fixture confirms the repair request and a valid second response; it does not show whether a local model can repair the rubric or whether the resulting score is accurate.
+- The web suite passed (286 passed, 117 ignored), as did web Clippy and formatting, using one Cargo build job. No model was resident, and the host's basic GPU query did not provide a reliable free-VRAM reading, so no live-model run was started. Peak resource use was not measured.
+
 ## Overlapping fit evidence — 2026-10-30
 
 - Fit validation rejects two excerpts from the same source when every possible occurrence overlaps, including partial overlaps where neither excerpt contains the other. Separate occurrences remain eligible. Existing assessments become stale because the input digest version changed. This prevents one identifiable form of double counting, but can also reject distinct criteria phrased in overlapping passages; a revised rubric may be needed. Separate or semantically equivalent passages can still describe the same consideration, and model judgments remain unverified.

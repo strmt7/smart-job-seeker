@@ -1637,7 +1637,7 @@ fn validate(
             return Err("Criterion excerpt is absent from its source".into());
         }
         let normalized = excerpt.to_lowercase();
-        if seen.iter().any(|(previous_source, previous)| {
+        if let Some((_, previous)) = seen.iter().find(|(previous_source, previous)| {
             if previous_source != source {
                 return false;
             }
@@ -1659,7 +1659,14 @@ fn validate(
                     .zip(previous_last)
                     .is_some_and(|(a, b)| a + excerpt.len() <= b)
         }) {
-            return Err("Duplicate or overlapping criterion excerpt".into());
+            // Keep the feedback bounded and encode excerpts as data. The
+            // complete source remains available in the original prompt.
+            let prefix = |text: &str| text.chars().take(120).collect::<String>();
+            return Err(format!(
+                "Duplicate or overlapping criterion excerpts (JSON strings): {} and {}",
+                json!(prefix(previous)),
+                json!(prefix(&excerpt))
+            ));
         }
         seen.push((source.to_owned(), excerpt.clone()));
         let importance = item["importance"]
@@ -4741,6 +4748,60 @@ mod tests {
         let separate = "Python and SQL; SQL and Rust";
         let result = validate(criteria, &[], "", separate).unwrap();
         assert_eq!(result["scoring_basis"]["total_weight"], 6);
+    }
+
+    #[test]
+    fn overlap_repair_identifies_the_conflicting_excerpts() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct Fixture {
+            requests: Vec<String>,
+        }
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                if task != "job_fit" {
+                    return Err(InferenceError::RuntimeUnreachable("fixture".into()));
+                }
+                self.requests.push(prompt.to_owned());
+                let excerpts = if self.requests.len() == 1 {
+                    ["Python and SQL", "SQL and Rust"]
+                } else {
+                    ["Python", "SQL"]
+                };
+                let criteria: Vec<Value> = excerpts
+                    .iter()
+                    .map(|excerpt| {
+                        json!({
+                            "source":"listing", "excerpt":excerpt, "importance":"required",
+                            "status":"unknown", "fact_index":null, "explanation":"Review"
+                        })
+                    })
+                    .collect();
+                Ok((
+                    json!({"summary":"Review", "criteria":criteria}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let mut model = Fixture {
+            requests: Vec::new(),
+        };
+        let result = assess(&mut model, &[], "", "Python and SQL and Rust").unwrap();
+        assert_eq!(model.requests.len(), 2);
+        assert!(model.requests[1].contains("\"Python and SQL\" and \"SQL and Rust\""));
+        assert_eq!(result["rubric"].as_array().unwrap().len(), 2);
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
     }
 
     #[test]
