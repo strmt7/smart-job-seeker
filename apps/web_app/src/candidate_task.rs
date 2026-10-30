@@ -291,7 +291,8 @@ fn extract_page_text(
 
 fn capture_listing(
     browser: &mut waypoint_browser::CdpDriver,
-    url: &str,
+    requested_url: &str,
+    source_url: &str,
     scripts: &[String],
 ) -> ListingCapture {
     let mut segments = Vec::new();
@@ -341,7 +342,7 @@ fn capture_listing(
         Err(e) => error = Some(e.to_string()),
     }
     let full = dimensions.is_some_and(|(w, h)| w <= 1600.0 && h <= 8000.0) && error.is_none();
-    let mut metadata = json!({"source_url":url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
+    let mut metadata = json!({"requested_url":requested_url,"source_url":source_url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
     let raw_size: usize = scripts.iter().map(String::len).sum();
     if scripts.is_empty() {
         metadata["structured_source_status"] = json!("unavailable");
@@ -419,7 +420,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 job["page_text_truncated"]=json!(truncated);
                 job
             };
-            let capture=capture_listing(&mut browser,&current,&scripts);
+            let capture=capture_listing(&mut browser,&url,&current,&scripts);
             Ok(InspectedListing { job, capture })
         })
         .unwrap_or_else(|_| Err("Listing inspection stopped unexpectedly".into()));
@@ -612,13 +613,22 @@ mod tests {
         let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         browser.open(&url).unwrap();
         let scripts = browser.structured_data_scripts().unwrap();
-        let capture = capture_listing(&mut browser, &url, &scripts);
+        let capture = capture_listing(
+            &mut browser,
+            "https://example.org/requested",
+            &url,
+            &scripts,
+        );
         assert!(!capture.segments.is_empty());
         assert!(capture
             .segments
             .iter()
             .all(|png| png.starts_with(b"\x89PNG\r\n\x1a\n")));
         assert_eq!(capture.metadata["source_url"], url);
+        assert_eq!(
+            capture.metadata["requested_url"],
+            "https://example.org/requested"
+        );
         assert_eq!(capture.metadata["structured_source_status"], "captured");
         assert_eq!(capture.metadata["structured_source_scripts"][0], scripts[0]);
         assert_eq!(capture.metadata["page_text_status"], "captured");
@@ -627,6 +637,61 @@ mod tests {
             capture.metadata["segments"].as_u64(),
             Some(capture.segments.len() as u64)
         );
+    }
+
+    #[test]
+    #[ignore = "starts one browser and a fictional loopback redirect server"]
+    fn listing_capture_preserves_requested_and_reached_urls() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !flag.load(Ordering::Acquire) && Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                        let mut request = [0u8; 2048];
+                        let mut length = 0;
+                        while length < request.len() {
+                            match stream.read(&mut request[length..]) {
+                                Ok(0) | Err(_) => break,
+                                Ok(read) => length += read,
+                            }
+                            if request[..length].contains(&b'\n') {
+                                break;
+                            }
+                        }
+                        if request[..length].starts_with(b"GET /first ") {
+                            let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        } else if request[..length].starts_with(b"GET /final ") {
+                            let body = "<html><body>Fictional job listing</body></html>";
+                            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{body}", body.len());
+                            let _ = stream.write_all(response.as_bytes());
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let requested = format!("http://127.0.0.1:{port}/first");
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(&requested).unwrap();
+        let reached = browser.current_url().unwrap();
+        assert_eq!(reached, format!("http://127.0.0.1:{port}/final"));
+        let capture = capture_listing(&mut browser, &requested, &reached, &[]);
+        assert_eq!(capture.metadata["requested_url"], requested);
+        assert_eq!(capture.metadata["source_url"], reached);
+        stop.store(true, Ordering::Release);
+        server.join().unwrap();
     }
     #[test]
     fn extracts_single_job_and_rejects_ambiguous_pages() {

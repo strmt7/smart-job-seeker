@@ -709,6 +709,15 @@ impl AttemptRecord {
         let description = ws.job_description(id).map_err(|e| e.to_string())?;
         let captured = ws.job_capture(id).map_err(|e| e.to_string())?;
         let source_only = ws.job_source_only(id).map_err(|e| e.to_string())?;
+        let requested_url = |metadata: &[u8]| {
+            serde_json::from_slice::<Value>(metadata)
+                .ok()
+                .and_then(|capture| capture["requested_url"].as_str().map(str::to_owned))
+        };
+        let capture_requested_url = captured
+            .as_ref()
+            .and_then(|(metadata, _)| requested_url(metadata));
+        let source_only_requested_url = source_only.as_deref().and_then(requested_url);
         let capture_source_url = captured.as_ref().and_then(|(metadata, _)| {
             serde_json::from_slice::<Value>(metadata)
                 .ok()
@@ -741,6 +750,8 @@ impl AttemptRecord {
             "location": job.location,
             "source": job.source,
             "source_url": job.canonical_url,
+            "page_capture_requested_url": capture_requested_url,
+            "source_only_requested_url": source_only_requested_url,
             "requisition_id": job.requisition_id,
             "posted_at": job.posted_at,
             "first_seen": job.first_seen,
@@ -1648,10 +1659,10 @@ mod tests {
         .unwrap();
         #[cfg(windows)]
         {
-            let first_source = br#"{"source_url":"https://example.org/jobs/1","segments":0}"#;
+            let first_source = br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0}"#;
             assert!(ws.save_job_source_only(&id, first_source).unwrap());
             let png = b"\x89PNG\r\n\x1a\nfictional-data".to_vec();
-            let metadata=json!({"source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
+            let metadata=json!({"requested_url":"https://example.org/redirect/2","source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
             assert!(ws
                 .save_job_capture(&id, metadata.as_bytes(), std::slice::from_ref(&png))
                 .unwrap());
@@ -1677,8 +1688,16 @@ mod tests {
         {
             assert_eq!(listing["source_only_metadata_available"], true);
             assert_eq!(
+                listing["page_capture_requested_url"],
+                "https://example.org/redirect/2"
+            );
+            assert_eq!(
+                listing["source_only_requested_url"],
+                "https://example.org/redirect/1"
+            );
+            assert_eq!(
                 fs::read(record.dir.join("original-job-source-metadata.json")).unwrap(),
-                br#"{"source_url":"https://example.org/jobs/1","segments":0}"#
+                br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0}"#
             );
             assert_eq!(listing["page_capture_available"], true);
             assert_eq!(listing["page_capture_matches_current_url"], true);

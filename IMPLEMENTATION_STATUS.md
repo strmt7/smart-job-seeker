@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Listing redirect provenance — 2026-10-30
+
+- New listing captures retain both the URL requested for inspection and the final captured URL after an allowed same-origin redirect. Application `original-job.json` records the requested URLs from screenshot capture and source-only metadata separately, because those records may come from different captures. Older captures without that field report it as unknown; no historical URL is invented. The saved job still uses the reached URL, and cross-origin redirects still require manual review.
+- A fictional loopback redirect and real local browser verified the two capture URLs; a separate archive fixture checked that two independently saved source records keep their requested URLs distinct. The web suite passed (290 passed, 119 ignored), web Clippy and formatting passed with one Cargo build job. No live job board or employer site was exercised, and no application was sent.
+
 ## Repeated search-result provenance — 2026-10-30
 
 - A batch search now retains up to ten references per page for exact URLs seen on earlier pages, including the later provider-reported title, engine labels and publication text. The page reports the total repeated count and omitted-reference count, and the web interface exposes the retained references without adding them as new candidate entries. These references are bounded and unverified; this is exact-URL provenance, not detection of similar vacancies across different URLs or proof of job identity.
