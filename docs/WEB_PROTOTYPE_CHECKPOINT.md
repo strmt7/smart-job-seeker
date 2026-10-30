@@ -617,3 +617,18 @@ reported fully GPU-resident at 4096 context after a free-memory preflight.
 Editable native text answers now show a live UTF-16 counter, including when a
 draft is inserted; the counter warns rather than truncating an overlong edit.
 A local UI fixture checked an emoji boundary and draft provenance retention.
+
+Length-limited application drafts now receive a separate advisory local-model
+check for potentially omitted details in their cited candidate facts. Returned
+quotes and source indices are validated; invalid or unavailable checks are
+reported, and an empty result is not proof of completeness. On 2026-10-30,
+qwen3.5:9b identified the omitted three-year duration in one fictional short
+answer and returned no omissions when the answer reproduced the complete fact.
+It also flagged that duration in the 35-unit drafting fixture; these small cases
+are not a general accuracy measurement. The check adds one bounded local model
+call for a length-limited answer.
+
+A local two-stage fictional form was also rerun with the resident model. It
+filled and visually checked the name and email on separate pages and left a
+sensitive authorization field empty. The test itself simulated the next-step
+click; it did not verify automatic navigation or use an employer site.
