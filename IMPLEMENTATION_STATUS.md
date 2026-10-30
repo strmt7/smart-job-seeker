@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Embedded form fields — 2026-10-30
+
+- Accessible visible first-level frames can now contribute fields to the reviewed form. Frame-scoped selectors bind the embedding element and its document identity, and are refused after the document changes or the frame becomes inaccessible or hidden. Up to four frame documents are inspected and the existing review warning remains. Inaccessible and nested frames still require manual handling. The protocol limits individual messages to 16 MiB; oversized DOM responses fail rather than being treated as complete.
+- A fictional local-browser fixture checks same-origin text fill and retention, isolation, document replacement and hidden-frame refusal. This is not evidence of live-site coverage or visual-model inspection.
+
 ## Preserve an embedded application page — 2026-10-30
 
 - Form inspection and application checking now stay on the current page when it has both main-page fields and an uninspected visible frame, instead of following a separate application-looking link automatically. Form inspection reports that the page should be reviewed before navigating. This is a structural safeguard, not proof the current page is an application; unrelated fields and decorative frames can require extra review. A page with no detected main fields can still follow a single permitted link.

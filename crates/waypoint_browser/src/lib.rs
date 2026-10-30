@@ -513,9 +513,16 @@ impl CdpDriver {
     /* ------------------------------ page reading --------------------------- */
 
     fn document(&mut self) -> Result<Value, DriverError> {
+        self.document_with_frames(false)
+    }
+
+    fn document_with_frames(&mut self, include_frames: bool) -> Result<Value, DriverError> {
         let doc = self
             .cdp
-            .call("DOM.getDocument", json!({ "depth": -1, "pierce": false }))
+            .call(
+                "DOM.getDocument",
+                json!({ "depth": -1, "pierce": include_frames }),
+            )
             .map_err(derr)?;
         let root = doc.get("root").cloned().unwrap_or(Value::Null);
         self.root_node = root.get("nodeId").and_then(|v| v.as_u64());
@@ -523,11 +530,48 @@ impl CdpDriver {
     }
 
     fn node_id(&mut self, selector: &str) -> Result<Option<u64>, DriverError> {
-        let root = self.document()?;
+        let root = self.document_with_frames(selector.starts_with("waypoint-frame:"))?;
         let root_id = root
             .get("nodeId")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| DriverError("page has no root node".into()))?;
+        let (root_id, selector) = if let Some(scope) = selector.strip_prefix("waypoint-frame:") {
+            let mut parts = scope.splitn(3, ':');
+            let frame = parts.next().and_then(|s| s.parse::<u64>().ok());
+            let document = parts.next().and_then(|s| s.parse::<u64>().ok());
+            let inner = parts.next().filter(|s| !s.is_empty());
+            let (Some(frame), Some(document), Some(inner)) = (frame, document, inner) else {
+                return Err(DriverError("Invalid embedded field selector".into()));
+            };
+            let mut candidate = None;
+            walk(&root, false, &mut |node, _| {
+                if node.get("backendNodeId").and_then(Value::as_u64) == Some(frame) {
+                    candidate = Some(node.clone());
+                }
+                true
+            });
+            let Some(frame_node) = candidate else {
+                return Ok(None);
+            };
+            let Some(child) = frame_node.get("contentDocument") else {
+                return Ok(None);
+            };
+            if child.get("backendNodeId").and_then(Value::as_u64) != Some(document) {
+                return Ok(None);
+            }
+            let Some(frame_id) = frame_node.get("nodeId").and_then(Value::as_u64) else {
+                return Ok(None);
+            };
+            if !self.accessible_visible_frame(frame_id)? {
+                return Ok(None);
+            }
+            let Some(child_id) = child.get("nodeId").and_then(Value::as_u64) else {
+                return Ok(None);
+            };
+            (child_id, inner)
+        } else {
+            (root_id, selector)
+        };
         let found = self
             .cdp
             .call(
@@ -613,12 +657,110 @@ impl CdpDriver {
         Ok((visible, path.to_owned(), available))
     }
 
-    /// Read the form as it exists right now.
+    /// Whether the embedding document can access this frame and it is rendered.
+    fn accessible_visible_frame(&mut self, node: u64) -> Result<bool, DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Ok(false);
+        }
+        let model = self
+            .cdp
+            .call("DOM.getBoxModel", json!({"nodeId":node}))
+            .map_err(derr)?;
+        if model
+            .pointer("/model/width")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            <= 0.0
+            || model
+                .pointer("/model/height")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                <= 0.0
+        {
+            return Ok(false);
+        }
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Embedded frame disappeared; manual review is needed".into())
+            })?
+            .to_owned();
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { try { return this.isConnected && this.contentDocument !== null; } catch (_) { return false; } }","returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result.pointer("/result/value").and_then(Value::as_bool) == Some(true))
+    }
+
+    /// Read the main document and a bounded number of accessible embedded documents.
     fn read_form(
         &mut self,
         url: &str,
     ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
-        let root = self.document()?;
+        let root = self.document_with_frames(true)?;
+        let (mut schema, mut walls) = self.read_form_document(url, &root)?;
+        let mut frames = Vec::new();
+        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            if !hidden
+                && frames.len() < 4
+                && (tag.eq_ignore_ascii_case("iframe") || tag.eq_ignore_ascii_case("frame"))
+            {
+                frames.push(node.clone());
+            }
+            true
+        });
+        // Bound both the number of documents and total fields. Remaining frames
+        // retain the existing manual-review warning from the main inspection.
+        for frame in frames.into_iter().take(4) {
+            let Some(frame_id) = frame.get("nodeId").and_then(Value::as_u64) else {
+                continue;
+            };
+            let Some(frame_backend) = frame.get("backendNodeId").and_then(Value::as_u64) else {
+                continue;
+            };
+            let Some(child) = frame.get("contentDocument") else {
+                continue;
+            };
+            let Some(document_backend) = child.get("backendNodeId").and_then(Value::as_u64) else {
+                continue;
+            };
+            if !self.accessible_visible_frame(frame_id)? {
+                continue;
+            }
+            let (mut embedded, mut embedded_walls) = self.read_form_document(url, child)?;
+            if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
+                return Err(DriverError(
+                    "Form has too many controls for one inspection; manual review is needed".into(),
+                ));
+            }
+            for field in &mut embedded.fields {
+                field.selector = format!(
+                    "waypoint-frame:{frame_backend}:{document_backend}:{}",
+                    field.selector
+                );
+            }
+            schema.fields.extend(embedded.fields);
+            schema.multi_step |= embedded.multi_step;
+            walls.append(&mut embedded_walls);
+        }
+        walls.sort();
+        walls.dedup();
+        Ok((schema, walls))
+    }
+
+    fn read_form_document(
+        &mut self,
+        url: &str,
+        root: &Value,
+    ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
         let mut controls = vec![];
         let mut hidden_selectors = std::collections::HashSet::new();
         let mut labels: HashMap<String, String> = HashMap::new();
@@ -631,7 +773,7 @@ impl CdpDriver {
         let mut frame_nodes = Vec::new();
         let mut text = String::new();
         let mut possible_next_step = false;
-        walk_with_visibility(&root, false, false, &mut |node, in_control, hidden| {
+        walk_with_visibility(root, false, false, &mut |node, in_control, hidden| {
             let tag = node
                 .get("nodeName")
                 .and_then(|v| v.as_str())
@@ -913,7 +1055,7 @@ impl CdpDriver {
                 }
             }
         }
-        walk(&root, false, &mut |node, _| {
+        walk(root, false, &mut |node, _| {
             let attrs = attributes(node);
             if let Some(id) = attrs.get("id").filter(|id| wanted_next.contains(*id)) {
                 if next_labels.contains_key(id) {
@@ -1109,7 +1251,7 @@ impl CdpDriver {
             }
         }
         let mut referenced: HashMap<String, Option<String>> = HashMap::new();
-        walk(&root, false, &mut |node, _| {
+        walk(root, false, &mut |node, _| {
             let attrs = attributes(node);
             if let Some(id) = attrs.get("id").filter(|id| wanted.contains(*id)) {
                 if referenced.contains_key(id) {

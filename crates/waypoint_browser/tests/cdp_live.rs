@@ -900,7 +900,7 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
 
 #[test]
 #[ignore = "launches a real browser against a fictional embedded form"]
-fn visible_embedded_form_is_flagged_without_hiding_main_fields() {
+fn visible_embedded_form_can_be_filled_with_review_and_rejects_stale_scope() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let page = driver.open(&file_url("form_iframe.html")).unwrap();
     assert!(page
@@ -912,11 +912,40 @@ fn visible_embedded_form_is_flagged_without_hiding_main_fields() {
         .fields
         .iter()
         .any(|field| field.selector == "#candidate"));
+    let embedded = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label.contains("Question"))
+        .expect("same-origin embedded question")
+        .selector
+        .clone();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: embedded.clone(),
+            value: PacketValue::Text("Fictional embedded answer".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value(&embedded, "Fictional embedded answer")
+        .unwrap();
     assert!(!page
         .schema
         .fields
         .iter()
-        .any(|field| field.label.contains("Question")));
+        .any(|field| field.label.contains("Secret question")));
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#replace-frame".into(),
+        })
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: embedded.clone(),
+            value: PacketValue::Text("Must not reach replacement".into()),
+        })
+        .is_err());
     driver
         .execute(&BrowserCommand::Fill {
             selector: "#candidate".into(),
@@ -931,6 +960,12 @@ fn visible_embedded_form_is_flagged_without_hiding_main_fields() {
             selector: "#hide-frame".into(),
         })
         .unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: embedded,
+            value: PacketValue::Text("Must not be typed".into()),
+        })
+        .is_err());
     let after = driver.inspect_current().unwrap();
     assert!(
         !after
