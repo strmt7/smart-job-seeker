@@ -4225,6 +4225,79 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a preloaded local model and resource preflight"]
+    fn live_preference_held_out_cases() {
+        struct Recording<T>(T);
+        impl<T: Inference> Inference for Recording<T> {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                let result = self.0.generate_structured(schema, prompt, max);
+                println!("fictional held-out response: {result:?}");
+                result
+            }
+        }
+        let model_name = std::env::var("WAYPOINT_FIT_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (_, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some(model_name.as_str())
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let model = crate::resident_inference::ResidentInference::new(
+            model,
+            model_name,
+            crate::resident_model,
+        );
+        let mut model = Recording(model);
+        let cases = [
+            ("Fully remote work is required", "Hybrid schedule: employees spend three days per week in the office.", "contradicted"),
+            ("Visa sponsorship is required", "Applicants must already have unrestricted work authorization; visa sponsorship is not available.", "contradicted"),
+            ("I prefer no on-call duties", "The team shares an on-call rota for production incidents.", "contradicted"),
+            ("I want to manage people", "This is an individual contributor role with no direct reports.", "contradicted"),
+            ("At least 25 days of paid leave are required", "Benefits include paid leave; the number of days is not specified.", "unknown"),
+            ("I prefer building climate software", "Develop climate modeling software for renewable energy customers.", "supported"),
+            ("At least EUR 70000 gross per year is required", "Annual gross salary ranges from EUR 75000 to EUR 95000.", "supported"),
+            ("I require relocation assistance", "The listing describes a Berlin office but says nothing about relocation benefits.", "unknown"),
+        ];
+        let mut passed = 0;
+        for (preference, listing, expected) in cases {
+            let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+            let baseline = validate(raw.clone(), &[], preference, listing).unwrap();
+            let result = compare_preferences(&mut model, raw, baseline, &[], preference, listing);
+            let status = result["rubric"][0]["status"].as_str().unwrap();
+            let completed = result["preference_comparison"]["status"] == "completed";
+            println!("preference={preference:?}; expected={expected}; actual={status}; completed={completed}; result={result}");
+            if completed && status == expected {
+                passed += 1;
+            }
+        }
+        println!(
+            "correct completed held-out comparisons: {passed}/{}",
+            cases.len()
+        );
+        assert_eq!(
+            passed,
+            cases.len(),
+            "local model failed the held-out benchmark"
+        );
+    }
+
+    #[test]
     fn overlapping_preference_evidence_is_flagged_without_changing_score() {
         let listing = "The role is remote within Germany.";
         let preferences = "Remote work is required";
