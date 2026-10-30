@@ -26,6 +26,10 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "fit_preference_comparison",
+        r#"{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":12},"status":{"type":"string","enum":["supported","contradicted","unknown"]},"quote":{"type":["string","null"]},"explanation":{"type":"string","minLength":1,"maxLength":800}},"required":["id","status","quote","explanation"],"additionalProperties":false},"minItems":1,"maxItems":6}},"required":["items"],"additionalProperties":false}"#,
+    ),
+    (
         "document_evidence_check",
         r#"{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":8},"status":{"type":"string","enum":["supported","unsupported","uncertain"]},"explanation":{"type":"string","minLength":1,"maxLength":500}},"required":["id","status","explanation"],"additionalProperties":false},"minItems":1,"maxItems":8}},"required":["items"],"additionalProperties":false}"#,
     ),
