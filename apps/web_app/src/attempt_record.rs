@@ -431,6 +431,16 @@ pub fn matching_generated_evidence(
     pdf: &[u8],
 ) -> Result<GeneratedEvidenceLookup, String> {
     let listing = list(ws, job)?;
+    matching_generated_evidence_in_listing(ws, job, document_id, pdf, &listing)
+}
+
+pub fn matching_generated_evidence_in_listing(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    document_id: &str,
+    pdf: &[u8],
+    listing: &Value,
+) -> Result<GeneratedEvidenceLookup, String> {
     let root = ws
         .db_path
         .as_ref()

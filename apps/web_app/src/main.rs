@@ -722,6 +722,39 @@ fn attach_answer_provenance(
     Ok(())
 }
 
+struct GeneratedEvidenceLink<'a> {
+    document_id: &'a str,
+    document_name: &'a str,
+    selector: Option<&'a str>,
+    pdf: &'a [u8],
+    context_current: bool,
+    lookup_incomplete: bool,
+}
+
+fn record_generated_evidence(
+    record: &mut attempt_record::AttemptRecord,
+    evidence: &attempt_record::GeneratedEvidence,
+    link: GeneratedEvidenceLink<'_>,
+) -> Result<&'static str, String> {
+    let evidence_name = evidence
+        .evidence
+        .as_ref()
+        .map(|bytes| record.material("generated-draft-evidence.json", bytes))
+        .transpose()?;
+    let template_name = evidence
+        .template
+        .as_ref()
+        .map(|(name, bytes)| record.material(&format!("original-{name}"), bytes))
+        .transpose()?;
+    record.event(json!({"type":"document_draft_evidence_linked","time":now(),"source_attempt":evidence.attempt_id,"selector":link.selector,"document":link.document_name,"document_id":link.document_id,"pdf_sha256":waypoint_domain::sha256_hex(link.pdf),"evidence":evidence_name,"template":template_name,"context_current":link.context_current,"lookup_incomplete":link.lookup_incomplete,"note":"Any draft evidence describes the generated draft; it may not cover later edits and does not prove the file was attached or submitted."}))?;
+    Ok(match (evidence.evidence.is_some(), link.context_current) {
+        (true, true) => "linked_current",
+        (true, false) => "linked_historical",
+        (false, true) => "template_only_current",
+        (false, false) => "template_only_historical",
+    })
+}
+
 fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task::Inputs, String> {
     let job = ws
         .job(id)
@@ -1136,6 +1169,12 @@ fn json_reply(stream: &mut TcpStream, status: &str, value: Value) {
 
 fn document_reply(stream: &mut TcpStream, body: &[u8]) {
     let header = format!("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", body.len());
+    let _ = stream.write_all(header.as_bytes());
+    let _ = stream.write_all(body);
+}
+
+fn email_document_reply(stream: &mut TcpStream, body: &[u8], evidence_status: &'static str) {
+    let header = format!("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Waypoint-Document-Evidence: {evidence_status}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
@@ -2204,10 +2243,15 @@ fn serve(
             } else {
                 email_draft::build(recipient, subject, text, &pairs, &attempt_id)?
             };
+            // Reuse one bounded listing for all selected files; do not rescan
+            // the workspace separately for each attachment.
+            let evidence_listing = (!attachments.is_empty()).then(|| attempt_record::list(ws, &id));
             let mut record = attempt_record::AttemptRecord::start(ws, &id, &attempt_id, now())?
                 .ok_or("Email draft requires a disk-backed workspace")?;
             let mut saved_materials = Vec::new();
             let mut missing_visual = false;
+            let (mut evidence_incomplete, mut evidence_historical, mut evidence_linked) =
+                (false, false, false);
             for (doc_id, name, bytes) in &attachments {
                 let visual_review_file = if let Some((attempt, review)) = linked.get(doc_id) {
                     let file = record.document_visual_evidence(attempt, review)?;
@@ -2217,6 +2261,40 @@ fn serve(
                     missing_visual = true;
                     None
                 };
+                let lookup = match evidence_listing.as_ref() {
+                    Some(Ok(listing)) => attempt_record::matching_generated_evidence_in_listing(
+                        ws, &id, doc_id, bytes, listing,
+                    )
+                    .unwrap_or(attempt_record::GeneratedEvidenceLookup {
+                        found: None,
+                        incomplete: true,
+                    }),
+                    _ => attempt_record::GeneratedEvidenceLookup {
+                        found: None,
+                        incomplete: true,
+                    },
+                };
+                evidence_incomplete |= lookup.incomplete;
+                if let Some(evidence) = lookup.found {
+                    let current = draft_context_digest(ws, &id, &evidence.kind)
+                        .ok()
+                        .as_deref()
+                        == Some(evidence.context_sha256.as_str());
+                    evidence_historical |= !current;
+                    record_generated_evidence(
+                        &mut record,
+                        &evidence,
+                        GeneratedEvidenceLink {
+                            document_id: doc_id,
+                            document_name: name,
+                            selector: None,
+                            pdf: bytes,
+                            context_current: current,
+                            lookup_incomplete: lookup.incomplete,
+                        },
+                    )?;
+                    evidence_linked = true;
+                }
                 let stored_name = record.material(name, bytes)?;
                 saved_materials.push(attempt_record::GmailReviewAttachment {
                     name: name.clone(),
@@ -2229,6 +2307,17 @@ fn serve(
                 ws.mark_manual_review(&id, "Email attachment needs visual review", now())
                     .map_err(|e| e.to_string())?;
                 record.event(json!({"type":"document_visual_review_missing","time":now(),"note":"At least one email attachment has no linked visual review."}))?;
+            }
+            if evidence_incomplete || evidence_historical {
+                record.status("manual_review", now())?;
+                let reason = if evidence_incomplete {
+                    "Email attachment draft evidence lookup was incomplete"
+                } else {
+                    "Email attachment draft evidence is from an older context"
+                };
+                ws.mark_manual_review(&id, reason, now())
+                    .map_err(|e| e.to_string())?;
+                record.event(json!({"type":"document_draft_evidence_review_needed","time":now(),"lookup_incomplete":evidence_incomplete,"historical":evidence_historical,"note":"Review document provenance and current qualifications manually."}))?;
             }
             record.email_draft(&draft)?;
             if let Some(sender) = gmail_sender.as_ref() {
@@ -2244,7 +2333,15 @@ fn serve(
                 })?;
             }
             record.event(json!({"type":"email_draft_created", "time":now(), "sender":gmail_sender, "recipient":recipient, "subject":subject, "attachments":attachments.len(), "mime_sha256":waypoint_domain::sha256_hex(&draft), "sent":false}))?;
-            document_reply(stream, &draft);
+            let evidence_status = match (evidence_incomplete, evidence_historical, evidence_linked)
+            {
+                (true, true, _) => "incomplete-historical",
+                (true, false, _) => "incomplete",
+                (false, true, _) => "historical",
+                (false, false, true) => "linked",
+                (false, false, false) => "none",
+            };
+            email_document_reply(stream, &draft, evidence_status);
         }
         "/api/gmail/review-application" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
@@ -3846,23 +3943,18 @@ fn serve(
                     record.status("manual_review", now())?;
                 }
                 if let Some(evidence) = &generated_evidence {
-                    let evidence_name = evidence
-                        .evidence
-                        .as_ref()
-                        .map(|bytes| record.material("generated-draft-evidence.json", bytes))
-                        .transpose()?;
-                    let template_name = evidence
-                        .template
-                        .as_ref()
-                        .map(|(name, bytes)| record.material(&format!("original-{name}"), bytes))
-                        .transpose()?;
-                    record.event(json!({"type":"document_draft_evidence_linked","time":now(),"source_attempt":evidence.attempt_id,"selector":selector,"document_id":document_id,"pdf_sha256":waypoint_domain::sha256_hex(&bytes),"evidence":evidence_name,"template":template_name,"context_current":context_current,"lookup_incomplete":provenance_incomplete,"note":"Any draft evidence describes the generated draft; it may not cover later edits and does not prove the file was attached or submitted."}))?;
-                    draft_provenance_status = match (evidence.evidence.is_some(), context_current) {
-                        (true, true) => "linked_current",
-                        (true, false) => "linked_historical",
-                        (false, true) => "template_only_current",
-                        (false, false) => "template_only_historical",
-                    };
+                    draft_provenance_status = record_generated_evidence(
+                        record,
+                        evidence,
+                        GeneratedEvidenceLink {
+                            document_id,
+                            document_name: &doc.name,
+                            selector: Some(selector),
+                            pdf: &bytes,
+                            context_current,
+                            lookup_incomplete: provenance_incomplete,
+                        },
+                    )?;
                     if !context_current {
                         current.preview.manual_review.push("Attached generated document is from an older context; review the document and qualifications".into());
                     }
@@ -5125,8 +5217,26 @@ mod tests {
             .unwrap();
             ws.add_document("fixture-pdf", "resume.pdf", b"%PDF-fictional", 1)
                 .unwrap();
+            ws.add_document(
+                "fixture-template",
+                "template.docx",
+                b"fictional template",
+                1,
+            )
+            .unwrap();
+            ws.save_candidate_profile(&json!({"cv_template_id":"fixture-template"}).to_string())
+                .unwrap();
             ws.save_gmail_credentials(&serde_json::to_vec(&json!({"auth_type":"app_password","email":"fictional@gmail.com","password":"abcdefghijklmnop"})).unwrap()).unwrap();
             ws.index_next_duplicate_job("").unwrap();
+            let context = draft_context_digest(&ws, &id, "cv").unwrap();
+            letter_export::record_generated_fixture(
+                &ws,
+                &id,
+                "fixture-pdf",
+                b"%PDF-fictional",
+                &context,
+            )
+            .unwrap();
             let review_id = "0123456789abcdef0123456789abcdef";
             let mut review = attempt_record::AttemptRecord::start(&ws, &id, review_id, 1)
                 .unwrap()
@@ -5162,6 +5272,8 @@ mod tests {
             .position(|part| part == b"\r\n\r\n")
             .unwrap();
         assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(String::from_utf8_lossy(&response[..split])
+            .contains("X-Waypoint-Document-Evidence: linked"));
         let mime = &response[split + 4..];
         assert!(mime.starts_with(b"From: fictional@gmail.com\r\n"));
         let records = directory.path().join("application-records");
@@ -5175,8 +5287,18 @@ mod tests {
             std::fs::read(attempt.join("email-draft.eml")).unwrap(),
             mime
         );
+        let gmail_review: Value =
+            serde_json::from_slice(&std::fs::read(attempt.join("gmail-review.json")).unwrap())
+                .unwrap();
         assert_eq!(
-            std::fs::read(attempt.join("materials").join("0002-resume.pdf")).unwrap(),
+            std::fs::read(
+                attempt.join("materials").join(
+                    gmail_review["attachments"][0]["stored_name"]
+                        .as_str()
+                        .unwrap()
+                )
+            )
+            .unwrap(),
             b"%PDF-fictional"
         );
         assert!(attempt.join("original-job.json").exists());
@@ -5184,6 +5306,32 @@ mod tests {
         assert!(events.contains(&waypoint_domain::sha256_hex(mime)));
         assert!(events.contains("\"sent\":false"));
         assert!(events.contains("document_visual_review_linked"));
+        let draft_link = events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|event| event["type"] == "document_draft_evidence_linked")
+            .unwrap();
+        assert_eq!(draft_link["document_id"], "fixture-pdf");
+        assert_eq!(draft_link["context_current"], true);
+        let evidence: Value = serde_json::from_slice(
+            &std::fs::read(
+                attempt
+                    .join("materials")
+                    .join(draft_link["evidence"].as_str().unwrap()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(evidence["draft"]["facts"][0], "Fictional qualification");
+        assert_eq!(
+            std::fs::read(
+                attempt
+                    .join("materials")
+                    .join(draft_link["template"].as_str().unwrap())
+            )
+            .unwrap(),
+            b"fictional template"
+        );
         assert!(attempt.join("document-visual-0001.json").exists());
         let meta: Value =
             serde_json::from_slice(&std::fs::read(attempt.join("attempt.json")).unwrap()).unwrap();
@@ -5258,11 +5406,116 @@ mod tests {
         )
         .is_err());
         std::fs::write(
-            attempt.join("materials").join("0002-resume.pdf"),
+            attempt.join("materials").join(
+                gmail_review["attachments"][0]["stored_name"]
+                    .as_str()
+                    .unwrap(),
+            ),
             b"%PDF-changed",
         )
         .unwrap();
         assert!(attempt_record::gmail_review(&ws, &job, attempt_id).is_err());
+    }
+
+    #[test]
+    fn email_draft_reports_historical_generated_evidence_without_sending() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let job = JobIdentityId::new("fictional-historical-email").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: None,
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "fixture".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        ws.add_document("pdf", "resume.pdf", b"%PDF-fictional", 1)
+            .unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        let context = draft_context_digest(&ws, &job, "cv").unwrap();
+        letter_export::record_generated_fixture(&ws, &job, "pdf", b"%PDF-fictional", &context)
+            .unwrap();
+        ws.add_fact("New fictional qualification", FactOrigin::UserAttested)
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body=json!({"id":job.as_str(),"recipient":"hiring@example.invalid","subject":"Role","message":"Hello","documents":["pdf"]}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/email-draft HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "test-token", port).unwrap();
+        drop(server);
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        let end = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap();
+        assert!(String::from_utf8_lossy(&response[..end])
+            .contains("X-Waypoint-Document-Evidence: historical"));
+        let attempt = std::fs::read_dir(directory.path().join("application-records"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.join("email-draft.eml").exists())
+            .unwrap();
+        let events = std::fs::read_to_string(attempt.join("events.jsonl")).unwrap();
+        let link: Value = events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|event| event["type"] == "document_draft_evidence_linked")
+            .unwrap();
+        assert_eq!(link["context_current"], false);
+        assert!(events.contains("document_draft_evidence_review_needed"));
+        assert!(events.contains("\"sent\":false"));
+        assert!(ws
+            .manual_reviews()
+            .unwrap()
+            .iter()
+            .any(|review| review.reason.contains("older context")));
+        let source = std::fs::read_dir(directory.path().join("application-records"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.join("document-export.json").exists())
+            .unwrap();
+        let receipt: Value =
+            serde_json::from_slice(&std::fs::read(source.join("document-export.json")).unwrap())
+                .unwrap();
+        std::fs::write(
+            source
+                .join("materials")
+                .join(receipt["evidence"].as_str().unwrap()),
+            b"tampered",
+        )
+        .unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/email-draft HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "test-token", port).unwrap();
+        drop(server);
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        let end = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap();
+        assert!(String::from_utf8_lossy(&response[..end])
+            .contains("X-Waypoint-Document-Evidence: incomplete"));
+        assert!(ws
+            .manual_reviews()
+            .unwrap()
+            .iter()
+            .any(|review| review.reason.contains("lookup was incomplete")));
     }
 
     #[test]
