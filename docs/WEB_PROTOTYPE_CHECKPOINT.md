@@ -466,3 +466,12 @@ The [evaluation record](g1/FORM_MAPPING_LAYOUT_2026-10-30.md) also describes a
 short-form regression seen when applying indented formatting everywhere and the
 limited safety checks run on the revised path. These results are not evidence of
 general form accuracy; uncertain fields still need review.
+
+Batch listing inspection now stores application-check results in the same
+shape as individual checks, so a current result is no longer shown as stale
+solely because it came from a batch. The selected-job panel also displays the
+check outcome; a changed URL or stale result remains explicitly marked for
+review. Mocked local UI fixtures checked current and stale outcomes at desktop
+and narrow widths. Results in the jobs panel remain in memory for the current
+page session, and an application check remains advisory rather than proof that
+an application can be completed. No employer page was contacted in this check.
