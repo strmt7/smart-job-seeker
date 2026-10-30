@@ -241,12 +241,22 @@ pub struct EvidenceMatcher<'a> {
 }
 impl<'a> EvidenceMatcher<'a> {
     pub fn new(profile_skills: &'a [String]) -> Self {
+        let mut skills = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for skill in profile_skills {
+            let normalized = skill
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            if !normalized.is_empty() && seen.insert(normalized.clone()) {
+                skills.push((skill.as_str(), normalized));
+            }
+        }
+        let denominator = skills.len();
         Self {
-            skills: profile_skills
-                .iter()
-                .map(|skill| (skill.as_str(), skill.trim().to_lowercase()))
-                .collect(),
-            denominator: profile_skills.len(),
+            skills,
+            denominator,
         }
     }
     pub fn score(&self, text: &str) -> (f32, Vec<String>) {
@@ -264,7 +274,14 @@ impl<'a> EvidenceMatcher<'a> {
                 continue;
             }
             let hit = if skill.contains(' ') {
-                hay.contains(skill.as_str())
+                let parts: Vec<&str> = skill.split_whitespace().collect();
+                tokens.windows(parts.len()).any(|window| {
+                    window.iter().zip(&parts).all(|(token, part)| {
+                        *token == *part
+                            || token.trim_end_matches('.') == *part
+                            || token.trim_start_matches('.') == *part
+                    })
+                })
             } else {
                 tokens.iter().any(|token| {
                     *token == skill
@@ -394,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn reusable_evidence_matcher_preserves_literal_token_and_denominator_behavior() {
+    fn reusable_evidence_matcher_deduplicates_and_ignores_empty_skills() {
         let skills: Vec<String> = [
             "C",
             "R",
@@ -415,19 +432,18 @@ mod tests {
             matcher.score("Seeking an élève research engineer with C++, C#, .NET and Rust.");
         assert_eq!(
             matched,
-            [
-                "C++",
-                "C#",
-                ".NET",
-                "Rust",
-                "  Rust  ",
-                "élève",
-                "research engineer"
-            ]
+            ["C++", "C#", ".NET", "Rust", "élève", "research engineer"]
         );
-        assert_eq!(score, 0.7);
+        assert_eq!(score, 6.0 / 8.0);
         assert_eq!(matcher.score("Customer relations"), (0.0, vec![]));
         assert_eq!(EvidenceMatcher::new(&[]).score("anything"), (0.0, vec![]));
+    }
+    #[test]
+    fn phrase_matching_respects_token_boundaries_and_whitespace() {
+        let skills = vec!["data science".into(), "machine   learning".into()];
+        let matcher = EvidenceMatcher::new(&skills);
+        assert_eq!(matcher.score("metadata science fictional"), (0.0, vec![]));
+        assert_eq!(matcher.score("data science and machine learning.").0, 1.0);
     }
     #[test]
     fn lexical_overlap_reports_missing() {
