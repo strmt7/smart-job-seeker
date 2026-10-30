@@ -1340,9 +1340,36 @@ fn validate(
     // The percentage-point effect of moving one criterion from contradicted
     // to supported, before rounding the two resulting scores separately.
     let largest_criterion_share = round(largest_weight, total);
+    // Report how much of the estimate comes from each kind of criterion.
+    // These groups overlap (for example, a required preference belongs to
+    // both groups); they are views of the same rubric, not independent scores.
+    let dimension = |field: &str, value: &str| {
+        let mut group_total = 0u32;
+        let mut group_supported = 0u32;
+        let mut group_unknown = 0u32;
+        let mut count = 0u32;
+        for item in &rubric {
+            if item[field] != value {
+                continue;
+            }
+            let weight = item["weight"].as_u64().unwrap_or(0) as u32;
+            group_total += weight;
+            count += 1;
+            match item["status"].as_str() {
+                Some("supported") => group_supported += weight,
+                Some("unknown") => group_unknown += weight,
+                _ => {}
+            }
+        }
+        if group_total == 0 {
+            return Value::Null;
+        }
+        json!({"criteria":count,"total_weight":group_total,"supported_weight":group_supported,"unknown_weight":group_unknown,"contradicted_weight":group_total-group_supported-group_unknown,"score":round(group_supported*2+group_unknown,group_total*2),"score_range":{"lower":round(group_supported,group_total),"upper":round(group_supported+group_unknown,group_total)}})
+    };
+    let dimensions = json!({"job_requirements":dimension("source", "listing"),"user_preferences":dimension("source", "preference"),"required":dimension("importance", "required"),"preferred":dimension("importance", "preferred")});
     let summary = format!("{supported_count} supported, {unknown_count} unknown, {contradicted_count} contradicted criteria in the model's rubric.");
     Ok(
-        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"scoring_basis":{"supported_weight":supported,"unknown_weight":unknown,"contradicted_weight":total-supported-unknown,"total_weight":total,"largest_criterion_share_percent":largest_criterion_share},"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v2","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
+        json!({"score":score,"score_range":{"lower":lower,"upper":upper},"scoring_basis":{"supported_weight":supported,"unknown_weight":unknown,"contradicted_weight":total-supported-unknown,"total_weight":total,"largest_criterion_share_percent":largest_criterion_share},"dimensions":dimensions,"criteria_limit_reached":criteria_limit_reached,"scoring_version":"criteria-v2","summary":summary,"rubric":rubric,"evidence":evidence,"concerns":concerns}),
     )
 }
 
@@ -3252,6 +3279,16 @@ mod tests {
             json!({"supported_weight":3,"unknown_weight":3,"contradicted_weight":1,"total_weight":7,"largest_criterion_share_percent":43})
         );
         assert_eq!(a["scoring_basis"], reversed["scoring_basis"]);
+        assert_eq!(a["dimensions"], reversed["dimensions"]);
+        assert_eq!(a["dimensions"]["user_preferences"], Value::Null);
+        assert_eq!(
+            a["dimensions"]["required"],
+            json!({"criteria":2,"total_weight":6,"supported_weight":3,"unknown_weight":3,"contradicted_weight":0,"score":75,"score_range":{"lower":50,"upper":100}})
+        );
+        assert_eq!(
+            a["dimensions"]["preferred"],
+            json!({"criteria":1,"total_weight":1,"supported_weight":0,"unknown_weight":0,"contradicted_weight":1,"score":0,"score_range":{"lower":0,"upper":0}})
+        );
         let mut with_placeholder = criteria.clone();
         with_placeholder["criteria"]
             .as_array_mut()
@@ -3267,6 +3304,29 @@ mod tests {
         let mut empty = criteria;
         empty["criteria"] = json!([]);
         assert!(validate(empty, &facts, "", listing).is_err());
+    }
+
+    #[test]
+    fn fit_dimensions_distinguish_listing_and_user_preference() {
+        let criteria = json!({"summary":"Fixture","criteria":[
+            {"source":"listing","excerpt":"Python","importance":"required","status":"supported","fact_index":1,"explanation":"Experience"},
+            {"source":"preference","excerpt":"remote","importance":"required","status":"unknown","fact_index":null,"explanation":"Not stated"}
+        ]});
+        let result = validate(
+            criteria,
+            &["Python experience".into()],
+            "remote",
+            "Python required",
+        )
+        .unwrap();
+        assert_eq!(result["score"], 75);
+        assert_eq!(result["dimensions"]["job_requirements"]["score"], 100);
+        assert_eq!(
+            result["dimensions"]["user_preferences"]["score_range"],
+            json!({"lower":0,"upper":100})
+        );
+        assert_eq!(result["dimensions"]["required"]["criteria"], 2);
+        assert_eq!(result["dimensions"]["preferred"], Value::Null);
     }
 
     #[test]

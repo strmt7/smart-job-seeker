@@ -569,3 +569,12 @@ produced the same cited rubric and 83% estimate, with a 67–100% uncertainty
 range. Each also flagged a possible overlap between a remote-work preference and
 a listing criterion. This single repeated fixture does not establish accuracy,
 calibration or repeatability across other jobs, profiles or model versions.
+
+Fit assessments now include deterministic breakdowns of the existing weighted
+rubric by listing criteria versus user preferences and required versus preferred
+criteria. Each nonempty group reports its criterion count, evidence weights,
+estimate and unknown-evidence range; empty groups are explicitly unavailable.
+The groups overlap and do not constitute independent probabilities. The overall
+score formula and its model-generated criteria have not changed, and older
+saved assessments do not acquire breakdowns until reassessed. Fictional tests
+checked group separation, empty groups, unknowns, contradictions and ordering.

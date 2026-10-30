@@ -1,0 +1,18 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('if(a.dimensions){');
+const end = source.indexOf('if(a.repeatability)', start);
+assert.ok(start >= 0 && end > start);
+const render = vm.runInNewContext(`(function(a,output,element){${source.slice(start,end)}})`);
+const output = {nodes:[], append(node){this.nodes.push(node);}};
+render({dimensions:{job_requirements:{criteria:1,score:100,score_range:{lower:100,upper:100}},user_preferences:{criteria:2,score:50,score_range:{lower:0,upper:100}},required:null,preferred:null}}, output, (tag,text)=>({tag,text}));
+assert.match(output.nodes[0].text, /Job criteria: 100%.*1 model-selected criterion\./);
+assert.match(output.nodes[1].text, /Your preferences: 50%.*0–100%.*2 model-selected criteria\./);
+assert.match(output.nodes[2].text, /before temporary exclusions/);
+assert.equal(output.nodes.length, 3);
+const old = {nodes:[], append(node){this.nodes.push(node);}};
+render({}, old, (tag,text)=>({tag,text}));
+assert.equal(old.nodes.length, 0);
+console.log('Fit dimensions UI checks passed.');
