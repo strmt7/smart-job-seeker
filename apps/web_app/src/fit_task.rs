@@ -1761,6 +1761,25 @@ fn validate(
     if total == 0 {
         return Err("Assessment contains no usable criteria".into());
     }
+    // This is only a review cue, not a claim that a conjunction always joins
+    // independently satisfiable requirements. It does not alter the score.
+    // English conjunctions and punctuation are incomplete across languages.
+    for item in &rubric {
+        if item["source"] != "listing" {
+            continue;
+        }
+        if let Some(excerpt) = item["excerpt"].as_str() {
+            let lower = excerpt.to_lowercase();
+            if lower
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == "and" || word == "or")
+                || excerpt.contains(',')
+                || excerpt.contains('&')
+            {
+                concerns.push(format!("Possible grouped requirement: {excerpt} — check whether it combines separate qualifications. This cue is not a semantic judgment and does not change the score."));
+            }
+        }
+    }
     // A job criterion and a preference may draw on the same job text. This
     // can double-count one consideration, but matching text alone cannot prove
     // they mean the same thing. Flag it for review without changing the score.
@@ -4748,6 +4767,28 @@ mod tests {
         let separate = "Python and SQL; SQL and Rust";
         let result = validate(criteria, &[], "", separate).unwrap();
         assert_eq!(result["scoring_basis"]["total_weight"], 6);
+    }
+
+    #[test]
+    fn grouped_requirement_cue_preserves_score_and_identifies_excerpt() {
+        let listing = "C and C++ programming. Five years of experience. Android development.";
+        let criteria = json!({"summary":"Review","criteria":[
+            {"source":"listing","excerpt":"C and C++ programming","importance":"required","status":"supported","fact_index":1,"explanation":"Review"},
+            {"source":"listing","excerpt":"Five years of experience","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"},
+            {"source":"listing","excerpt":"Android development","importance":"preferred","status":"unknown","fact_index":null,"explanation":"Review"}
+        ]});
+        let result = validate(criteria, &["C and C++ programming".into()], "", listing).unwrap();
+        assert_eq!(result["score"], 71);
+        assert_eq!(result["score_range"], json!({"lower":43,"upper":100}));
+        let concerns = result["concerns"].as_array().unwrap();
+        let grouped: Vec<_> = concerns
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|text| text.starts_with("Possible grouped requirement:"))
+            .collect();
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].contains("C and C++ programming"));
+        assert!(grouped[0].contains("does not change the score"));
     }
 
     #[test]

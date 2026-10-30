@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Possible grouped fit requirements — 2026-10-30
+
+- The fit review now flags listing excerpts containing English `and` or `or`, a comma, or an ampersand as possibly grouped requirements. The existing concerns display shows the excerpt and asks for review. The cue does not split criteria or change a score: it can flag a single combined concept and miss groupings expressed in other languages or without those markers. Older assessments become stale through the changed input digest. It is not a substitute for semantic assessment.
+- The web suite passed (287 passed, 117 ignored), as did web Clippy and formatting with one Cargo build job. A fictional test checked the cue, a word-boundary counterexample and unchanged scoring arithmetic. No live-model or browser-UI test was run for this change; the display uses the existing concerns path. No application was sent.
+
 ## Atomic fit criteria probes — 2026-10-30
 
 - Four fictional listing-only probes with resident `gemma3:4b` extracted a nursing license and experience duration independently, but grouped German with English and C with C++. Adding explicit instructions and examples to split independent qualifications produced the same grouped output on those four inputs. A separate four-item review returned IDs 2 and 4 (the individual duration and license) rather than IDs 1 and 3 (the grouped languages and programming languages). These are small, single-run probes; grouped wording can sometimes describe one combined requirement, and this does not establish general model accuracy. No automatic splitting, score change, or model-review feature was added on this evidence. Fictional prompt and response receipts are under `target/model-eval/`.
