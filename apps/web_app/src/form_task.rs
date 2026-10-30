@@ -16,6 +16,16 @@ pub(crate) fn has_upload_control(
     })
 }
 
+pub(crate) fn has_main_fields_and_embedded_content(
+    live: &waypoint_applications::driver::LiveForm,
+) -> bool {
+    !live.schema.fields.is_empty()
+        && live
+            .walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW)
+}
+
 /// Open the listing, then at most one unambiguous same-origin application link.
 /// No field action or submit action is issued here.
 fn open_application_page(
@@ -43,6 +53,9 @@ fn open_application_page(
     // this is not proof that the page accepts applications.
     if has_upload_control(&live.schema.fields) {
         return Ok((live, None));
+    }
+    if has_main_fields_and_embedded_content(&live) {
+        return Ok((live, Some("The current page has visible fields and embedded content; review it before navigating away.".into())));
     }
     let links = match driver.application_links() {
         Ok(links) => links,
@@ -582,6 +595,79 @@ mod tests {
         fn commit(&mut self) -> Result<SiteAck, DriverError> {
             panic!("inspection must not submit")
         }
+    }
+
+    struct EmbeddedDriver(FakeDriver);
+    impl BrowserDriver for EmbeddedDriver {
+        fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
+            let mut page = self.0.open(url)?;
+            page.walls
+                .push(waypoint_browser::UNINSPECTED_FRAME_REVIEW.into());
+            Ok(page)
+        }
+        fn current_url(&mut self) -> Result<String, DriverError> {
+            self.0.current_url()
+        }
+        fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+            self.0.application_links()
+        }
+        fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+            panic!("inspection must not execute actions")
+        }
+        fn commit(&mut self) -> Result<SiteAck, DriverError> {
+            panic!("inspection must not submit")
+        }
+    }
+
+    #[test]
+    fn embedded_form_with_main_fields_stays_on_current_page() {
+        let mut driver = EmbeddedDriver(FakeDriver {
+            current: String::new(),
+            links: vec!["/other/apply".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: false,
+        });
+        let (page, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/form").unwrap();
+        assert_eq!(driver.0.opened, ["https://jobs.example.org/form"]);
+        assert!(has_main_fields_and_embedded_content(&page));
+        assert!(warning.unwrap().contains("review it before navigating"));
+
+        let mut listing = EmbeddedDriver(FakeDriver {
+            current: String::new(),
+            links: vec!["/role/apply".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: false,
+        });
+        let (page, _) =
+            open_application_page(&mut listing, "https://jobs.example.org/role").unwrap();
+        assert_eq!(
+            listing.0.opened,
+            [
+                "https://jobs.example.org/role",
+                "https://jobs.example.org/role/apply"
+            ]
+        );
+        assert!(has_main_fields_and_embedded_content(&page));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional embedded form"]
+    fn embedded_form_inspection_does_not_follow_another_link() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-embedded-listing.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let (page, warning) = open_application_page(&mut driver, &url).unwrap();
+        assert_eq!(driver.current_url().unwrap(), url);
+        assert!(has_main_fields_and_embedded_content(&page));
+        assert!(warning.unwrap().contains("review it before navigating"));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
     }
 
     #[test]

@@ -382,10 +382,11 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 .current_url()
                 .ok()
                 .and_then(|current| displayable_inspected_url(&url, &current));
-            if page
-                .walls
-                .iter()
-                .all(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW)
+            if !crate::form_task::has_main_fields_and_embedded_content(&page)
+                && page
+                    .walls
+                    .iter()
+                    .all(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW)
             {
                 let current = browser
                     .current_url()
@@ -1412,5 +1413,36 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one browser using a fictional embedded form"]
+    fn application_check_keeps_current_embedded_form_for_review() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-embedded-listing.html");
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        super::start(
+            "fixture-embedded".into(),
+            "fictional-job".into(),
+            url,
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some((_, _, message, review)) = poll("fixture-embedded").unwrap() {
+                assert!(review);
+                assert!(message.contains("embedded content"), "{message}");
+                assert!(
+                    !message.contains("after opening an application link"),
+                    "{message}"
+                );
+                acknowledge("fixture-embedded").unwrap();
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 }

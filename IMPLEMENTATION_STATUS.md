@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Preserve an embedded application page — 2026-10-30
+
+- Form inspection and application checking now stay on the current page when it has both main-page fields and an uninspected visible frame, instead of following a separate application-looking link automatically. Form inspection reports that the page should be reviewed before navigating. This is a structural safeguard, not proof the current page is an application; unrelated fields and decorative frames can require extra review. A page with no detected main fields can still follow a single permitted link.
+- Two fictional local-browser tests checked both inspection paths, and a fake-driver test checked the no-main-fields case. The web suite passed (292 passed, 121 ignored); web Clippy and formatting passed. Embedded contents are still not read or filled, and no live employer site or local model was exercised. No application was sent.
+
 ## Embedded-frame review — 2026-10-30
 
 - Form inspection now flags a rendered, nonzero embedded frame as potentially containing uninspected application content. Hidden and zero-sized frames do not trigger this cue in the tested fixture. The cue is a manual-review obligation; separately visible main-page fields can still be suggested and filled after user review, while a changed set of review walls requires reinspection. Listing inspection can retain a listing with this cue and records an extraction warning. CAPTCHA and other blocking walls remain blocking.
