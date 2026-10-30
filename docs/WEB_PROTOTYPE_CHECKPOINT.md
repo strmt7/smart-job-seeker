@@ -516,3 +516,12 @@ mapped a nonstandard applicant-name label to that value, and focused tests
 covered profile input, conflicting hints, search-query identifier filtering and
 the profile summary. The model can still misinterpret labels; review remains
 necessary.
+
+When the document evidence-check prompt exceeds its 8,000-byte limit, the app
+now checks individual paragraphs sequentially (at most eight) rather than
+skipping all of them. It reports unchecked paragraphs and stops further calls
+if the model is unavailable. A fictional local `qwen3.5:9b` test completed
+three separate checks and marked an invented management claim unsupported;
+fixture tests also covered partial failure and the interface message. This is
+not proof of factual accuracy, and edits after generation remain outside the
+check.

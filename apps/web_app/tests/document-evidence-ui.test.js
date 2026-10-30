@@ -1,1 +1,12 @@
-const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');const src=fs.readFileSync('apps/web_app/web/app.js','utf8');const line=src.split('\n').find(x=>x.startsWith('function showDocumentEvidence('));assert.ok(line);const element=(tag,text,cls)=>({tag,textContent:text,className:cls});const show=vm.runInNewContext(`(${line})`,{element});const panel=()=>({items:[],append(x){this.items.push(x)}});const missing=panel();show(missing,{});assert.match(missing.items[0].textContent,/unavailable or incomplete/);const result=panel();show(result,{evidence_check:{status:'completed',items:[{id:2,status:'unsupported',explanation:'No cited experience'}]}});assert.match(result.items[0].textContent,/not later edits/);assert.match(result.items[1].textContent,/Paragraph 2: unsupported/);assert.ok(src.includes('showDocumentEvidence(panel,draft)'));console.log('Document evidence UI checks passed.');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function showDocumentEvidence('));
+assert.ok(line);
+const show = vm.runInNewContext(`(${line})`, {element: (tag,text) => ({tag,text})});
+const panel = {children:[], append(...nodes){this.children.push(...nodes);}};
+show(panel, {evidence_check:{status:'partial',items:[{id:1,status:'supported',explanation:'Fixture'}],unchecked:[{id:2,reason:'unavailable'}]}});
+assert.ok(panel.children.some(item => item.text.includes('2 (unavailable)')));
+assert.ok(panel.children.some(item => item.text.includes('Paragraph 1: supported')));
+console.log('Document evidence UI checks passed.');
