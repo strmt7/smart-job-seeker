@@ -327,7 +327,7 @@ def main():
                 for index,path in enumerate(files): add(path,f'app/licenses/crates/{name}-{version}/{index}-{path.name}')
                 inventory.append({'name':name,'version':version,'license':license_expr,'files':len(files)})
             archive.writestr('app/licenses/dependencies.json',json.dumps(inventory,indent=2))
-            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'python_files':runtime_hashes,'libreoffice_files':office_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
+            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
             office_note = 'LibreOffice is bundled.' if office_hashes else 'LibreOffice is not bundled and needs separate setup for document conversion.'
             archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} Microsoft Visual C++ runtime, a Chromium browser, and Ollama may need separate installation. See app/README.md.\n')
     except BaseException:

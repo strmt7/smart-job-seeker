@@ -4,6 +4,7 @@ param(
     [switch]$Release,
     [switch]$Test,
     [switch]$Clippy,
+    [switch]$StaticCrt,
     [switch]$Ignored,
     [string]$TestFilter
 )
@@ -56,6 +57,13 @@ function Set-PreferredSearchPath([string]$Current, [string]$Preferred) {
     if (-not $Current) { return $Preferred }
     return (@($Preferred) + $remaining) -join $separator
 }
+function Get-StaticCrtFlags([string]$Encoded, [string]$Plain) {
+    if ($Encoded) {
+        return @{ Encoded = $Encoded + ([char]0x1f).ToString() + '-Ctarget-feature=+crt-static'; Plain = $Plain }
+    }
+    if ($Plain) { return @{ Encoded = $Encoded; Plain = $Plain + ' -C target-feature=+crt-static' } }
+    return @{ Encoded = $Encoded; Plain = '-C target-feature=+crt-static' }
+}
 function Install-OpenSslRuntime([string]$Source, [string]$Destination, [string]$ReceiptPath, [string]$Profile) {
     $newHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
     if (-not (Test-Path -LiteralPath $Destination)) {
@@ -81,6 +89,23 @@ function Install-OpenSslRuntime([string]$Source, [string]$Destination, [string]$
 $env:LIB = Set-PreferredSearchPath $env:LIB $lib
 $env:PATH = Set-PreferredSearchPath $env:PATH (Join-Path $root 'bin')
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '1' }
+$previousRustFlags = $env:RUSTFLAGS
+$previousEncodedRustFlags = $env:CARGO_ENCODED_RUSTFLAGS
+$hadRustFlags = Test-Path Env:RUSTFLAGS
+$hadEncodedRustFlags = Test-Path Env:CARGO_ENCODED_RUSTFLAGS
+if ($StaticCrt) {
+    # Cargo gives encoded flags precedence. Preserve the caller's flags and
+    # append the requested CRT setting in the representation Cargo will use.
+    $staticFlags = Get-StaticCrtFlags $previousEncodedRustFlags $previousRustFlags
+    if ($previousEncodedRustFlags) {
+        $env:CARGO_ENCODED_RUSTFLAGS = $staticFlags.Encoded
+    } else {
+        # Cargo treats a present empty encoded variable as an override of
+        # RUSTFLAGS, so remove it temporarily when using plain flags.
+        Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
+        $env:RUSTFLAGS = $staticFlags.Plain
+    }
+}
 Push-Location $repo
 try {
     $operation = if ($Test) { 'test' } elseif ($Clippy) { 'clippy' } else { 'build' }
@@ -99,6 +124,7 @@ try {
     $buildReceipt = @{
         profile = $profile
         sqlcipher = $true
+        static_crt_requested = [bool]$StaticCrt
         openssl_root = $root
         executable_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo "target/$profile/waypoint_web.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
         openssl_dll = $dlls[0].Name
@@ -107,4 +133,10 @@ try {
     }
     $buildReceipt | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $repo "target/$profile/waypoint-build.json")
     Write-Host "Built target/$profile/waypoint_web.exe with SQLCipher; its OpenSSL runtime is beside it."
-} finally { Pop-Location }
+} finally {
+    Pop-Location
+    if ($StaticCrt) {
+        if ($hadRustFlags) { $env:RUSTFLAGS = $previousRustFlags } else { Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue }
+        if ($hadEncodedRustFlags) { $env:CARGO_ENCODED_RUSTFLAGS = $previousEncodedRustFlags } else { Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue }
+    }
+}
