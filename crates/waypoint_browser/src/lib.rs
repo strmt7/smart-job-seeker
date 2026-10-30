@@ -546,7 +546,10 @@ impl CdpDriver {
     }
 
     /// Inspect rendered visibility and derive a structural selector without changing the page.
-    fn control_visibility_and_path(&mut self, node: u64) -> Result<(bool, String), DriverError> {
+    fn control_visibility_and_path(
+        &mut self,
+        node: u64,
+    ) -> Result<(bool, String, bool), DriverError> {
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -573,7 +576,8 @@ impl CdpDriver {
                 current = current.parentElement;
             }
             const path = parts.join(' > ');
-            return path.length <= 4096 ? {visible, path} : null;
+            const available = !this.matches(':disabled') && this.readOnly !== true && !this.closest('[aria-disabled="true" i], [aria-readonly="true" i]');
+            return path.length <= 4096 ? {visible, path, available} : null;
         }"#,"returnByValue":true}));
         let released = self
             .cdp
@@ -596,7 +600,13 @@ impl CdpDriver {
             .ok_or_else(|| {
                 DriverError("Field selector is unavailable; manual review is needed".into())
             })?;
-        Ok((visible, path.to_owned()))
+        let available = value
+            .get("available")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                DriverError("Field availability is unavailable; manual review is needed".into())
+            })?;
+        Ok((visible, path.to_owned(), available))
     }
 
     /// Read the form as it exists right now.
@@ -969,11 +979,24 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                let (rendered, path) = self.control_visibility_and_path(control.node_id)?;
-                if rendered {
+                let (rendered, path, available) =
+                    self.control_visibility_and_path(control.node_id)?;
+                if rendered && available {
                     css_paths.insert(control.node_id, path);
                     visible.push(control);
                 } else {
+                    if rendered && !available {
+                        let required = control.attrs.contains_key("required")
+                            || control
+                                .attrs
+                                .get("aria-required")
+                                .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+                        wall_flags.push(if required {
+                            "a required field is disabled or read-only".into()
+                        } else {
+                            "an unavailable field needs manual review".into()
+                        });
+                    }
                     add_hidden_selectors(&mut hidden_selectors, &control);
                 }
             }

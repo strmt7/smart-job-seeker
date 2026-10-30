@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fictional form</title></head><body>
 <div id="controls">
-<label>Name <input id="name" type="text"></label>
+<label>Name <input id="name" type="text" required></label>
 <label>Available from <input id="date" type="date"></label>
 <label>Option <select id="single"><option>A</option><option>B</option><option aria-disabled="true">C</option><option id="d-single">D</option><optgroup aria-disabled="true" label="Unavailable"><option>E</option></optgroup></select></label>
 <label>Options <select id="multiple" multiple><option>A</option><option>B</option><option aria-disabled="true">C</option></select></label>
@@ -8,5 +8,6 @@
 <label>Attachment <input id="file" type="file"></label>
 <div id="editor" role="textbox" aria-label="Notes" contenteditable="true"></div>
 </div>
+<label>Option state <select id="option-lock" onchange="document.getElementById('d-single').setAttribute('aria-disabled','true')"><option>Open</option><option>Lock option</option></select></label>
 <label>State <select id="lock" onchange="document.getElementById('controls').setAttribute('aria-disabled','TRUE');document.getElementById('d-single').setAttribute('aria-disabled','true')"><option>Open</option><option>Lock</option></select></label>
 </body></html>

@@ -55,7 +55,8 @@ impl FormPreview {
 
 // Unsupported custom questions remain review obligations; other walls block.
 pub(crate) fn is_custom_review(reason: &str) -> bool {
-    reason == "a required custom control needs manual review"
+    reason == "an unavailable field needs manual review"
+        || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
         || reason == "a custom control needs manual review"
         || reason.starts_with("a custom control needs manual review: ")
@@ -520,6 +521,10 @@ mod tests {
         assert!(is_custom_review("a custom control needs manual review"));
         assert!(is_custom_review(
             "a custom control needs manual review: City"
+        ));
+        assert!(is_custom_review("an unavailable field needs manual review"));
+        assert!(!is_custom_review(
+            "a required field is disabled or read-only"
         ));
         assert!(!is_custom_review("captcha present"));
     }

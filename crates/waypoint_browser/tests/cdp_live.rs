@@ -621,24 +621,47 @@ fn controls_reject_an_aria_disabled_ancestor_after_inspection() {
     driver.attach_local_file("#file", &file).unwrap();
     driver
         .execute(&BrowserCommand::SelectOption {
+            selector: "#option-lock".into(),
+            label: "Lock option".into(),
+        })
+        .unwrap();
+    let option_changed = driver.inspect_current().unwrap();
+    assert_eq!(
+        option_changed
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == "#single")
+            .unwrap()
+            .field_type,
+        FormFieldType::Select {
+            options: vec!["A".into(), "B".into()]
+        }
+    );
+    assert_ne!(
+        live.schema.schema_hash_input(),
+        option_changed.schema.schema_hash_input()
+    );
+    driver
+        .execute(&BrowserCommand::SelectOption {
             selector: "#lock".into(),
             label: "Lock".into(),
         })
         .unwrap();
     let updated = driver.inspect_current().unwrap();
-    let options = &updated
+    assert!(updated
         .schema
         .fields
         .iter()
-        .find(|field| field.selector == "#single")
-        .unwrap()
-        .field_type;
-    assert_eq!(
-        options,
-        &FormFieldType::Select {
-            options: vec!["A".into(), "B".into()]
-        }
-    );
+        .all(|field| field.selector != "#single"));
+    assert!(updated
+        .walls
+        .iter()
+        .any(|wall| wall == "an unavailable field needs manual review"));
+    assert!(updated
+        .walls
+        .iter()
+        .any(|wall| wall == "a required field is disabled or read-only"));
     assert_ne!(
         live.schema.schema_hash_input(),
         updated.schema.schema_hash_input()

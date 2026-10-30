@@ -776,3 +776,7 @@ Text, date, checkbox, single-select, multi-select, editable text and file attach
 ## Available options in reviewed schemas — 2026-10-30
 
 Native select inspection now excludes options and option groups marked `aria-disabled` or `aria-readonly`, matching the driver's live selection checks. A fictional local-browser fixture verified exclusion and that changing an option's state changes the review schema; the existing grouped-select fixture also passed. The availability of controls inside ARIA-disabled containers can still be discovered during inspection and is checked again at action time. No employer site or application submission was involved.
+
+## Unavailable controls during inspection — 2026-10-30
+
+Rendered native controls and supported editable text fields now have their live disabled and read-only ancestry checked during the existing bounded visibility inspection. Unavailable controls are omitted from the review schema. A required unavailable control retains the blocking review warning; an optional one adds a non-blocking review obligation so other fields can still be prepared. The browser fixture covered a container becoming disabled, preservation of the changed-option schema check, and both warnings; a web-app unit test checked warning classification. Custom controls and live employer pages remain outside this fixture.
