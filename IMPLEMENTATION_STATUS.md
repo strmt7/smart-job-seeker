@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Windows package copy verification — 2026-10-30
+
+- The per-user installer includes hidden files when copying and verifies the installed executable, OpenSSL DLL and inventoried Python and LibreOffice files before creating a shortcut or reporting success. The additional hash pass increases installation time. A fictional Windows installer fixture reproduced the previous hidden-file omission and passed after the change; it also simulated post-copy dependency corruption and confirmed that installation fails instead of reporting success. A complete package on a clean Windows host was not exercised.
+
 ## Fit split in the web interface — 2026-10-30
 
 - A local Playwright fixture served the actual web page, JavaScript and CSS with fictional mocked API responses. It loaded a saved `criteria-v2` assessment, opened its fit review, split the grouped C/C++ criterion, changed one judgment and verified the temporary 75% result while both displayed original AI badges stayed at 100%. The original judgment was disabled while split, and keyboard Enter closed the split and restored the 100% temporary result. Checks ran at 1440×900 and 375×900 with no observed page or console errors or narrow horizontal overflow. The first mock omitted `scoring_version`, so the panel correctly did not render rubric controls; adding the field used by actual assessments fixed the fixture.

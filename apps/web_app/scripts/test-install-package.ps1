@@ -13,6 +13,12 @@ try {
         New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
         [IO.File]::WriteAllText($file, "fictional fixture: $name")
     }
+    $hiddenRuntime = Join-Path $app 'dependencies/libreoffice/program/hidden.dll'
+    [IO.File]::WriteAllText($hiddenRuntime, 'fictional hidden runtime')
+    (Get-Item -LiteralPath $hiddenRuntime -Force).Attributes = [IO.FileAttributes]::Hidden
+    $hiddenTop = Join-Path $app 'hidden-top.txt'
+    [IO.File]::WriteAllText($hiddenTop, 'fictional hidden package file')
+    (Get-Item -LiteralPath $hiddenTop -Force).Attributes = [IO.FileAttributes]::Hidden
     function Hash([string]$name) { (Get-FileHash -LiteralPath (Join-Path $app $name) -Algorithm SHA256).Hash.ToLowerInvariant() }
     $manifest = @{
         executable_sha256 = Hash 'waypoint_web.exe'
@@ -21,6 +27,7 @@ try {
         python_files = @{ 'dependencies/python/python.exe' = (Hash 'dependencies/python/python.exe') }
         libreoffice_files = @{
             'dependencies/libreoffice/program/soffice.com' = (Hash 'dependencies/libreoffice/program/soffice.com')
+            'dependencies/libreoffice/program/hidden.dll' = (Hash 'dependencies/libreoffice/program/hidden.dll')
             'dependencies/libreoffice/LICENSE.html' = (Hash 'dependencies/libreoffice/LICENSE.html')
         }
     }
@@ -83,6 +90,8 @@ try {
     $installed = Join-Path $testRoot 'installed'
     & $installer -InstallDirectory $installed -NoShortcut
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/soffice.com') -PathType Leaf)) { throw 'Bundled converter was not copied.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/hidden.dll') -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $installed 'hidden-top.txt') -PathType Leaf)) { throw 'Hidden package files were not copied.' }
     $licenseHash = $manifest.libreoffice_files['dependencies/libreoffice/LICENSE.html']
     $manifest.libreoffice_files.Remove('dependencies/libreoffice/LICENSE.html')
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
@@ -110,6 +119,26 @@ try {
     $withoutOffice = Join-Path $testRoot 'without-office'
     & $installer -InstallDirectory $withoutOffice -NoShortcut
     if (-not (Test-Path -LiteralPath (Join-Path $withoutOffice 'waypoint_web.exe') -PathType Leaf)) { throw 'Package without the optional converter did not install.' }
+    # Simulate corruption after copying, before the installer reports success.
+    function Copy-Item {
+        [CmdletBinding()]
+        param([string]$LiteralPath, [string]$Destination, [switch]$Recurse, [switch]$Force)
+        Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
+        if ([IO.Path]::GetFileName($LiteralPath) -eq 'dependencies') {
+            [IO.File]::WriteAllText((Join-Path $Destination 'dependencies/python/python.exe'), 'fictional copy damage')
+        }
+    }
+    try {
+        $copyDamage = Join-Path $testRoot 'copy-damaged'
+        $rejected = $false
+        try { & $installer -InstallDirectory $copyDamage -NoShortcut } catch {
+            if ($_.Exception.Message -notmatch 'Installed dependency file is missing or damaged') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'Installed dependency corruption was not detected.' }
+    } finally {
+        Remove-Item Function:\Copy-Item
+    }
     Write-Host 'Fictional installer copy, damaged converter and optional converter checks passed.'
 } finally {
     if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }

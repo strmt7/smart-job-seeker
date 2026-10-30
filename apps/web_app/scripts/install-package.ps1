@@ -121,7 +121,28 @@ $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Waypoi
 if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcut)) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null
 try {
-    Copy-Item -Path (Join-Path $source '*') -Destination $InstallDirectory -Recurse -ErrorAction Stop
+    # Enumerate with Force: wildcard expansion otherwise omits hidden package
+    # entries, including dependencies that were verified above.
+    foreach ($item in @(Get-ChildItem -LiteralPath $source -Force -ErrorAction Stop)) {
+        Copy-Item -LiteralPath $item.FullName -Destination $InstallDirectory -Recurse -Force -ErrorAction Stop
+    }
+    # Confirm the actual installed files, not only the extracted source, before
+    # creating a shortcut or reporting that installation completed.
+    foreach ($entry in @(
+        @{ Name = 'waypoint_web.exe'; Hash = $manifest.executable_sha256 },
+        @{ Name = $manifest.openssl_dll; Hash = $manifest.openssl_sha256 }
+    )) {
+        $file = Join-Path $InstallDirectory $entry.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Hash) {
+            throw "Installed package file is missing or damaged: $($entry.Name)."
+        }
+    }
+    foreach ($entry in (@($pythonFiles) + @($officeFiles))) {
+        $file = Join-Path $InstallDirectory $entry.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+            throw "Installed dependency file is missing or damaged: $($entry.Name)."
+        }
+    }
     if (-not $NoShortcut) {
         $shell = New-Object -ComObject WScript.Shell
         $link = $shell.CreateShortcut($shortcut)
