@@ -748,3 +748,7 @@ A fit assessment now reports the lowest and highest scores obtained by removing 
 ## Stable fact-selection order — 2026-10-30
 
 The local model selects relevant facts as a set; the application now processes each valid set in its original deterministic batch order. Previously a permutation of the same response could change which facts survived the 20-fact limit. The fit-input version changes so existing saved assessments are marked stale. A fictional fixture covers both fit and application-answer selection at the cap; this does not establish that the model chooses the same facts across runs or that its judgments are correct. No model was resident during this change, so no new live-model result is claimed.
+
+## Fact-selection listing coverage — 2026-10-30
+
+When more than 20 facts require local-model selection, long job listings are now sampled from the beginning, middle and end within the existing 2,400-byte listing budget. Separate passages are identified in the prompt, and the interface reports omitted text. This changes the balance of what is seen: a requirement in an omitted span can still be missed, and this does not establish improved model accuracy. The input version invalidates earlier saved fit assessments. Fictional tests exercised the later listing text, bounds and Unicode boundaries; no local model was resident, so no live-model result is claimed.
