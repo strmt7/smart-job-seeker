@@ -1280,14 +1280,15 @@ fn compare_preferences_with_source(
             prompt.clone()
         } else {
             retried = true;
-            format!("{prompt} Your previous response was invalid. Return every ID exactly once. For supported or contradicted, copy the quote character-for-character from the listing, without paraphrasing; if you cannot provide an exact quote, return unknown with null quote.")
+            format!("Compare the preferences against the job text below. Return JSON only: {{\"items\":[{{\"id\":1,\"status\":\"supported\" or \"contradicted\" or \"unknown\",\"quote\": exact job text or null,\"explanation\":\"brief explanation\"}}]}}. Include each ID once. For supported or contradicted copy an exact contiguous quote from JOB TEXT, not from the preference. If the job text does not explicitly support or contradict the preference, use unknown and null. JOB TEXT: {}. PREFERENCES: {}.", json!(listing_excerpt), json!(items))
         };
         match model.generate_structured("fit_preference_comparison", &request, 900) {
             Ok((value, _)) if response_valid(&value) => {
                 response = Some(value);
                 break;
             }
-            Ok(_) | Err(InferenceError::StructuredOutputFailed(_)) => {}
+            Ok(_) => {}
+            Err(InferenceError::StructuredOutputFailed(_)) => {}
             Err(_) => return fallback,
         }
     }
