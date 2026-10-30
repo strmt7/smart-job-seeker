@@ -3040,7 +3040,22 @@ fn serve(
             };
             interrupt_session(ws, session, "Another application was opened")?;
             let task_id = random_id()?;
-            form_task::start(task_id.clone(), id, url, profile, model, visible)?;
+            let pending_revision = form_task::begin_pending(ws, &id, &task_id, now())?;
+            if let Err(error) = form_task::start(
+                task_id.clone(),
+                id.clone(),
+                url,
+                profile,
+                model,
+                visible,
+                pending_revision,
+            ) {
+                if let Err(cleanup) = form_task::finish_pending(ws, &id, &task_id, pending_revision)
+                {
+                    return Err(format!("{error}; {cleanup}"));
+                }
+                return Err(error);
+            }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/form/inspect-status" => {
@@ -3055,6 +3070,7 @@ fn serve(
             };
             let form_task::Finished {
                 job_id,
+                pending_revision,
                 url,
                 profile_digest,
                 visible,
@@ -3065,6 +3081,7 @@ fn serve(
                 Err(error) => {
                     ws.mark_manual_review(&job_id, &inspection_failure_reason(&error), now())
                         .map_err(|e| e.to_string())?;
+                    form_task::finish_pending(ws, &job_id, task_id, pending_revision)?;
                     let record_error = match random_id().and_then(|id| {
                         attempt_record::AttemptRecord::start(ws, &job_id, &id, now())
                     }) {
@@ -3148,6 +3165,7 @@ fn serve(
                 ws.mark_manual_review(&job_id, "Application needs manual review", now())
                     .map_err(|e| e.to_string())?;
             }
+            form_task::finish_pending(ws, &job_id, task_id, pending_revision)?;
             json_reply(
                 stream,
                 "200 OK",

@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Interrupted initial form inspection — 2026-10-30
+
+- Starting a form inspection now saves a task-specific pending review reason before launching the worker. It remains visible after a workspace reopen if the process stops during inspection. Once a failure has a durable review reason, or a successful result has been processed, the matching pending reason is cleared by revision; unrelated or newer reasons are preserved. A failed worker start attempts to clear its own marker and reports a cleanup failure if that fails. A crash after inspection completion can still interrupt the separate in-memory browser session; this change does not make that session persistent.
+- A fictional workspace-reopen test checked persistence and revision-specific clearing; the existing disconnected-worker handler test now also checks replacement of the pending reason with a failure reason. The web suite passed (288 passed, 117 ignored), web Clippy and formatting passed with one Cargo build job. A separate worker test opened a fictional local form in a headless browser without filling it. No live employer form or forced process crash was tested, and no application was sent.
+
 ## Browser fixture and review assertions — 2026-10-30
 
 - GitHub's browser job on `0132200` failed three local-fixture tests. Two assertions predated the current treatment of unavailable controls: the revised tests require the review warning and verify that disabled rich-text fields cannot be filled. The 404 fixture sometimes accepted an unrelated or empty browser connection and closed before the intended request; it now waits for the expected request and asserts an actual HTTP 404. A full local Edge run passed all 34 browser tests before a subsequent bounded request-reading improvement; the 404 test passed again after that improvement, and browser Clippy and formatting passed. This is local fixture coverage, not live employer-site qualification. No application was sent to an employer.

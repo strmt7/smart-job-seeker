@@ -70,6 +70,7 @@ fn open_application_page(
 
 pub struct Finished {
     pub job_id: JobIdentityId,
+    pub pending_revision: i64,
     pub url: String,
     pub profile_digest: Sha256Digest,
     pub visible: bool,
@@ -79,6 +80,7 @@ struct Task {
     id: String,
     receiver: mpsc::Receiver<Finished>,
     job_id: JobIdentityId,
+    pending_revision: i64,
     url: String,
     profile_digest: Sha256Digest,
     visible: bool,
@@ -86,6 +88,37 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED_FAILURE: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+fn pending_reason(task_id: &str) -> String {
+    format!("Application inspection pending: {task_id}")
+}
+
+pub fn begin_pending(
+    ws: &waypoint_workspace::Workspace,
+    job: &JobIdentityId,
+    task_id: &str,
+    timestamp: i64,
+) -> Result<i64, String> {
+    let reason = pending_reason(task_id);
+    ws.mark_manual_review(job, &reason, timestamp)
+        .map_err(|e| format!("Could not save pending inspection: {e}"))?;
+    ws.manual_review_reasons(job)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|entry| entry.reason == reason)
+        .map(|entry| entry.revision)
+        .ok_or_else(|| "Pending inspection was not found after saving".into())
+}
+
+pub fn finish_pending(
+    ws: &waypoint_workspace::Workspace,
+    job: &JobIdentityId,
+    task_id: &str,
+    revision: i64,
+) -> Result<bool, String> {
+    ws.clear_manual_review_reason(job, &pending_reason(task_id), revision)
+        .map_err(|e| format!("Could not clear pending inspection: {e}"))
+}
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
@@ -105,6 +138,7 @@ pub fn start(
     profile: serde_json::Value,
     model: Option<String>,
     visible: bool,
+    pending_revision: i64,
 ) -> Result<(), String> {
     let (model, lease, no_model_reason) = match model {
         Some(model) => match doc_suggest::lease() {
@@ -123,6 +157,7 @@ pub fn start(
         id,
         receiver,
         job_id: job_id.clone(),
+        pending_revision,
         url: url.clone(),
         profile_digest: profile_digest.clone(),
         visible,
@@ -156,6 +191,7 @@ pub fn start(
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
         let _ = sender.send(Finished {
             job_id,
+            pending_revision,
             url,
             profile_digest,
             visible,
@@ -174,6 +210,7 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
     if let Some(error) = &task.failure {
         return Ok(Some(Finished {
             job_id: task.job_id.clone(),
+            pending_revision: task.pending_revision,
             url: task.url.clone(),
             profile_digest: task.profile_digest.clone(),
             visible: task.visible,
@@ -193,6 +230,7 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
         Err(mpsc::TryRecvError::Disconnected) => {
             let failed = Finished {
                 job_id: task.job_id.clone(),
+                pending_revision: task.pending_revision,
                 url: task.url.clone(),
                 profile_digest: task.profile_digest.clone(),
                 visible: task.visible,
@@ -240,6 +278,32 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
+    fn pending_inspection_survives_reopen_and_preserves_other_reasons() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let (job, revision) = {
+            let mut ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
+            let added = crate::manual_job::add(&mut ws, &serde_json::json!({"url":"https://example.org/inspection-fixture","title":"Role","employer":"Fixture"}), 1).unwrap();
+            let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let revision = begin_pending(&ws, &job, "inspection-task", 2).unwrap();
+            ws.mark_manual_review(&job, "Another review issue", 3)
+                .unwrap();
+            (job, revision)
+        };
+        let ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == pending_reason("inspection-task")));
+        assert!(!finish_pending(&ws, &job, "inspection-task", revision + 1).unwrap());
+        assert!(finish_pending(&ws, &job, "inspection-task", revision).unwrap());
+        let reasons = ws.manual_review_reasons(&job).unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].reason, "Another review issue");
+    }
+
+    #[test]
     fn inspection_failure_survives_review_flag_error() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
@@ -255,6 +319,7 @@ mod tests {
             id: "fixture-write-error".into(),
             receiver,
             job_id: job_id.clone(),
+            pending_revision: 0,
             url: "https://example.org/temporary".into(),
             profile_digest: Sha256Digest::of("fixture"),
             visible: false,
@@ -321,12 +386,14 @@ mod tests {
         )
         .unwrap();
         let job_id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let pending_revision = begin_pending(&ws, &job_id, "fictional-task", 2).unwrap();
         let (sender, receiver) = mpsc::channel();
         drop(sender);
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-task".into(),
             receiver,
             job_id: job_id.clone(),
+            pending_revision,
             url: "https://example.org/job".into(),
             profile_digest: Sha256Digest::of("fictional-profile"),
             visible: false,
@@ -418,6 +485,7 @@ mod tests {
             serde_json::json!({"country":"Germany"}),
             Some("fictional-model".into()),
             false,
+            0,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -634,6 +702,7 @@ mod tests {
             serde_json::json!({"email":"alex@example.invalid"}),
             None,
             false,
+            0,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -680,6 +749,7 @@ mod tests {
             serde_json::json!({"email":"alex@example.invalid"}),
             Some("qwen3.5:9b".into()),
             false,
+            0,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
@@ -760,6 +830,7 @@ mod tests {
             serde_json::json!({}),
             None,
             false,
+            0,
         )
         .unwrap();
         assert!(busy());
