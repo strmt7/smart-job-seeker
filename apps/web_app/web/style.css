@@ -161,3 +161,10 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 #model-inventory-info .review-label{margin:0!important}
 
 .attachment-name{min-width:0;max-width:100%;overflow-wrap:anywhere}
+
+/* Keep the optional qualification picker readable inside the action row. */
+.selected-actions .draft-priority{flex:1 0 100%;min-width:0;border:1px solid #dce5e8;border-radius:6px;padding:10px 12px;background:#f8fbfa}
+.draft-priority summary{cursor:pointer;color:#17525e;font-size:13px;font-weight:600}
+.draft-priority>div{display:grid;gap:8px;max-height:240px;overflow:auto;margin-top:10px}
+.draft-priority label{display:flex;align-items:flex-start;gap:8px;min-width:0;margin:0;overflow-wrap:anywhere}
+.draft-priority label input[type="checkbox"]{width:16px;height:16px;flex:none;margin:1px 0 0;padding:0}
