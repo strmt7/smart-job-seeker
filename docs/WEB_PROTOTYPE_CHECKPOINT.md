@@ -489,3 +489,13 @@ Link review now marks the result for manual handling when the browser's
 labels. It also warns when the 10 likely-link or 30 other-link display limits
 are reached. A local browser fixture with 200 links and focused mock tests
 exercised the limit handling; this does not establish coverage on employer sites.
+
+A fictional local-browser and `qwen3.5:9b` vision check exposed a placeholder
+failure: the model transcribed an empty email field's placeholder as if it were
+an entered value. The result path now independently rechecks visually matching
+values against the current DOM, downgrades unconfirmed values and marks the job
+for manual review. The local fixture subsequently reported the filled name as
+confirmed and the placeholder email as unconfirmed. The vision model's raw
+transcription is still saved as an observation; a separate event records the
+live-value comparisons. Both checks can be wrong or become stale, and this does
+not establish correctness on real employer sites.

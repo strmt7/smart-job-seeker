@@ -3427,6 +3427,25 @@ fn serve(
                         fresh_screenshot.as_deref(),
                     );
                     result["visual_freshness"] = json!(freshness);
+                    let (verified, unconfirmed) = visual_review::crosscheck_live_values(
+                        &mut current.driver,
+                        &current.preview,
+                        &current.completed_selectors,
+                        &mut result["visual_review"],
+                    );
+                    if unconfirmed > 0 {
+                        let reason = "A visually transcribed field could not be verified against its live value";
+                        ws.mark_manual_review(&current.job_id, reason, now())
+                            .map_err(|e| format!("Live field verification needs review, but its flag could not be saved: {e}"))?;
+                        if !current
+                            .preview
+                            .manual_review
+                            .iter()
+                            .any(|item| item == reason)
+                        {
+                            current.preview.manual_review.push(reason.into());
+                        }
+                    }
                     if freshness != "same" {
                         let reason = if freshness == "changed" {
                             "Form changed during visual review"
@@ -3444,11 +3463,12 @@ fn serve(
                             current.preview.manual_review.push(reason.into());
                         }
                     }
-                    let freshness_key = visual_review::freshness_record_key(
+                    let image_key = visual_review::freshness_record_key(
                         id,
                         freshness,
                         fresh_screenshot.as_deref(),
                     );
+                    let freshness_key = Sha256Digest::of(&json!({"image_key":image_key,"comparisons":result["visual_review"]["comparisons"]}).to_string()).as_str().to_owned();
                     if current.last_visual_freshness_key.as_deref() != Some(freshness_key.as_str())
                     {
                         let saved = current.record.as_mut().is_some_and(|record| {
@@ -3456,7 +3476,7 @@ fn serve(
                                 fresh_screenshot.as_deref().and_then(|image| record.screenshot_with_name(image).ok())
                             } else { None };
                             if freshness == "changed" && captured.is_none() { return false; }
-                            record.event(json!({"type":"visual_freshness_checked","time":now(),"task_id":id,"status":freshness,"screenshot":captured.map(|name| format!("screenshots/{name}")),"note":"Image differences can include animation; matching images do not prove correctness."})).is_ok()
+                            record.event(json!({"type":"visual_freshness_checked","time":now(),"task_id":id,"status":freshness,"screenshot":captured.map(|name| format!("screenshots/{name}")),"live_values_verified":verified,"live_values_unconfirmed":unconfirmed,"comparisons":result["visual_review"]["comparisons"],"note":"Image and live-value checks do not prove correctness; values can change."})).is_ok()
                         });
                         if saved {
                             current.last_visual_freshness_key = Some(freshness_key);

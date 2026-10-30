@@ -214,6 +214,90 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
     json!({"observations":items,"comparisons":comparisons,"observation_limit_reached":items.len() == MAX_OBSERVATIONS})
 }
 
+/// A matching transcription alone may be a placeholder rather than an entered
+/// value. Independently check matching fields against the live DOM. This does
+/// not make the vision model's interpretation or the site trustworthy.
+pub fn crosscheck_live_values(
+    driver: &mut dyn waypoint_applications::driver::BrowserDriver,
+    preview: &crate::form_preview::FormPreview,
+    completed: &[String],
+    result: &mut Value,
+) -> (usize, usize) {
+    use waypoint_applications::form_mapping::{BrowserCommand, FormFieldType, PacketValue};
+    let Some(comparisons) = result["comparisons"].as_array_mut() else {
+        return (0, 0);
+    };
+    let (mut verified, mut unconfirmed) = (0, 0);
+    let mut stop = false;
+    for item in comparisons {
+        if item["status"] != "matches_transcription" {
+            continue;
+        }
+        let label = item["label"].as_str().unwrap_or("");
+        let matching: Vec<_> = preview
+            .schema
+            .fields
+            .iter()
+            .filter(|field| normalized_label(&field.label) == normalized_label(label))
+            .collect();
+        let check = if !stop && matching.len() == 1 {
+            let field = matching[0];
+            let mapping = preview.suggestions.iter().find(|mapping| {
+                mapping.field_selector == field.selector
+                    && completed.contains(&field.selector)
+                    && expected_value(&mapping.value).as_deref() == item["expected"].as_str()
+            });
+            match mapping.map(|mapping| (&field.field_type, &mapping.value)) {
+                Some((
+                    FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+                    PacketValue::Text(value),
+                )) => driver.verify_text_value(&field.selector, value),
+                Some((FormFieldType::Date, PacketValue::Date(value))) => {
+                    driver.verify_text_value(&field.selector, value)
+                }
+                Some((FormFieldType::Checkbox, PacketValue::Bool(value))) => {
+                    driver.verify_choice(&BrowserCommand::Fill {
+                        selector: field.selector.clone(),
+                        value: PacketValue::Bool(*value),
+                    })
+                }
+                Some((FormFieldType::Select { .. }, PacketValue::Text(value))) => driver
+                    .verify_choice(&BrowserCommand::SelectOption {
+                        selector: field.selector.clone(),
+                        label: value.clone(),
+                    }),
+                Some((FormFieldType::Radio { .. }, PacketValue::Text(value))) => driver
+                    .verify_choice(&BrowserCommand::SelectRadio {
+                        selector: field.selector.clone(),
+                        label: value.clone(),
+                    }),
+                Some((FormFieldType::MultiSelect { .. }, PacketValue::TextList(value))) => driver
+                    .verify_choice(&BrowserCommand::SelectOptions {
+                        selector: field.selector.clone(),
+                        labels: value.clone(),
+                    }),
+                _ => Err(waypoint_applications::driver::DriverError(
+                    "Live value unavailable".into(),
+                )),
+            }
+            .is_ok()
+        } else {
+            false
+        };
+        if check {
+            item["dom_status"] = json!("matches");
+            verified += 1;
+        } else {
+            item["dom_status"] = json!("unconfirmed");
+            item["status"] = json!("unobserved");
+            unconfirmed += 1;
+            // A disconnected browser or stale page can make every call slow.
+            stop = true;
+        }
+    }
+    (verified, unconfirmed)
+}
+
 /// Derive one bounded clip without scrolling or clicking. Larger pages are explicitly incomplete.
 pub fn segment_geometry(
     width: f64,
@@ -443,6 +527,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn live_value_check_downgrades_false_visual_matches_and_stops_after_failure() {
+        use waypoint_applications::driver::{BrowserDriver, DriverError, LiveForm, SiteAck};
+        use waypoint_applications::form_mapping::{
+            BrowserCommand, FormField, FormFieldType, FormSchema, PacketValue, ProposedMapping,
+        };
+        struct Driver {
+            calls: usize,
+        }
+        impl BrowserDriver for Driver {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                unreachable!()
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                unreachable!()
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                unreachable!()
+            }
+            fn verify_text_value(&mut self, _: &str, _: &str) -> Result<(), DriverError> {
+                self.calls += 1;
+                Err(DriverError("field changed".into()))
+            }
+        }
+        let fields = ["Email", "Name"]
+            .iter()
+            .map(|name| FormField {
+                selector: format!("#{name}"),
+                label: (*name).into(),
+                field_type: FormFieldType::Text,
+                required: true,
+                sensitive: false,
+                autocomplete: None,
+            })
+            .collect();
+        let suggestions = ["Email", "Name"]
+            .iter()
+            .map(|name| ProposedMapping {
+                field_selector: format!("#{name}"),
+                value: PacketValue::Text("fixture".into()),
+            })
+            .collect();
+        let preview = crate::form_preview::FormPreview {
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions,
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut result = json!({"comparisons":[{"label":"Email","expected":"fixture","status":"matches_transcription"},{"label":"Name","expected":"fixture","status":"matches_transcription"}]});
+        let mut driver = Driver { calls: 0 };
+        assert_eq!(
+            crosscheck_live_values(
+                &mut driver,
+                &preview,
+                &["#Email".into(), "#Name".into()],
+                &mut result
+            ),
+            (0, 2)
+        );
+        assert_eq!(driver.calls, 1);
+        assert_eq!(result["comparisons"][0]["dom_status"], "unconfirmed");
+        assert_eq!(result["comparisons"][1]["status"], "unobserved");
+    }
+
+    #[test]
     fn freshness_record_identity_tracks_the_actual_recapture() {
         let original = freshness_record_key("task", "same", Some("image-a"));
         assert_eq!(
@@ -462,6 +615,69 @@ mod tests {
             freshness_record_key("another-task", "same", Some("image-a"))
         );
         assert_ne!(original, freshness_record_key("task", "unavailable", None));
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_visual_review_does_not_verify_placeholder_as_entered_value() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fictional-visual-placeholder.html");
+        let url = format!(
+            "file:///{}",
+            fixture.display().to_string().replace('\\', "/")
+        );
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(&url).unwrap();
+        let image = driver.screenshot_base64().unwrap();
+        let expected = vec![
+            ("Full name".into(), "Avery Example".into()),
+            ("Email".into(), "avery@example.invalid".into()),
+        ];
+        let mut result = analyze_with_context(
+            "127.0.0.1:11434".parse().unwrap(),
+            "qwen3.5:9b",
+            &image,
+            &expected,
+            Some(4096),
+        )
+        .unwrap();
+        let schema = driver.inspect_current().unwrap().schema;
+        let preview = crate::form_preview::FormPreview {
+            schema,
+            suggestions: vec![
+                waypoint_applications::form_mapping::ProposedMapping {
+                    field_selector: "#name".into(),
+                    value: waypoint_applications::form_mapping::PacketValue::Text(
+                        "Avery Example".into(),
+                    ),
+                },
+                waypoint_applications::form_mapping::ProposedMapping {
+                    field_selector: "#email".into(),
+                    value: waypoint_applications::form_mapping::PacketValue::Text(
+                        "avery@example.invalid".into(),
+                    ),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let (verified, unconfirmed) = crosscheck_live_values(
+            &mut driver,
+            &preview,
+            &["#name".into(), "#email".into()],
+            &mut result,
+        );
+        println!("live DOM checks: verified={verified}, unconfirmed={unconfirmed}");
+        println!("fictional placeholder comparison: {result}");
+        assert!(
+            result["comparisons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["label"] == "Email" && item["status"] != "matches_transcription"),
+            "placeholder must not verify an entered value: {result}"
+        );
     }
 
     #[test]

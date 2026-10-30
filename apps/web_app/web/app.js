@@ -71,8 +71,9 @@ function showFitBadge(badge,text){badge.textContent=text;badge.hidden=false;if(b
 function visualComparisonStatus(item,expected,observations,allFresh){
  if(!allFresh)return 'capture changed or freshness could not be confirmed';
  if(item.ambiguous===true)return 'not uniquely observed';
+ if(item.dom_status==='unconfirmed')return 'live field value not confirmed';
  const normalize=label=>label.replace(/[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g,' ').replace(/^ | $/g,'').toLowerCase(),label=normalize(item.label),same=expected.filter(other=>normalize(other.label)===label),matches=observations.filter(other=>normalize(other.label)===label);
- return same.length!==1 || matches.length!==1?'not uniquely observed':matches[0].visible_value===item.expected?'transcription matches reviewed answer':'transcription differs from reviewed answer';
+ return same.length!==1 || matches.length!==1?'not uniquely observed':matches[0].visible_value===item.expected?(item.dom_status==='matches'?'transcription and live value match reviewed answer':'live field value not confirmed'):'transcription differs from reviewed answer';
 }
 function showAutomaticFit(job,result){const badge=fitBadges.get(job),score=result.assessment?.score;if(badge && Number.isInteger(score)){badge.dataset.updated='1';showFitBadge(badge,fitBadgeLabel(score,result.assessment?.score_range));}}
 function loadFitBadges(entries,generation){
