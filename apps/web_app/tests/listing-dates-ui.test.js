@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(s=>s.startsWith('function showListingDateEvidence('));
+assert.ok(line);
+const element=(tag,text,cls)=>({tag,textContent:text,className:cls});
+const show=vm.runInNewContext(`(${line})`,{element,Date,Number});
+const panel={items:[],append(item){this.items.push(item);}};
+show(panel,{salary_evidence:null,posting_date_evidence:'2026-10-01',valid_through_evidence:'2026-11-30T23:59:00+01:00',matches_current_url:false,captured_at:1750000000});
+assert.match(panel.items[0].textContent,/different URL/);
+assert.match(panel.items[1].textContent,/posting date: 2026-10-01/);
+assert.match(panel.items[2].textContent,/2026-11-30T23:59:00\+01:00/);
+assert.match(panel.items[3].textContent,/not proof that the role is open or closed/);
+const empty={items:[],append(item){this.items.push(item);}};show(empty,{});assert.equal(empty.items.length,0);
+console.log('Listing date evidence UI checks passed.');

@@ -640,3 +640,12 @@ for review. On 2026-10-30, qwen3.5:9b flagged one uncited PostgreSQL fact for a
 fictional backend-and-database question and did not flag an unrelated office
 fact. This single case does not establish reliable relevance judgments; facts
 excluded by selection or the context budget remain outside the check.
+
+Structured job captures now expose the listing's original datePosted and
+validThrough values alongside salary evidence, including capture date and a
+warning when the capture URL differs from the current job URL. The app does
+not infer that a listing is open or closed, interpret ambiguous timezones, or
+change hard constraints from these strings. A fictional browser DOM fixture,
+source-parser and endpoint tests, and a mocked UI check covered the dates and
+provenance; no external listing was used. Dates remain unavailable when the
+site does not provide a usable structured JobPosting capture.

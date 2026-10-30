@@ -1835,8 +1835,8 @@ fn serve(
                 Some(source) => Some(source),
                 None => ws.job_capture_metadata(&id).map_err(|e| e.to_string())?,
             };
-            let (salary, captured_at, matches_current_url) = if let Some(metadata) = metadata {
-                let salary = candidate_task::captured_salary_evidence(&metadata)?;
+            let (evidence, captured_at, matches_current_url) = if let Some(metadata) = metadata {
+                let evidence = candidate_task::captured_posting_evidence(&metadata)?;
                 let capture: Value = serde_json::from_slice(&metadata)
                     .map_err(|_| "Saved listing metadata is invalid")?;
                 let captured_at = capture["captured_at"]
@@ -1846,14 +1846,14 @@ fn serve(
                 let matches_current_url = source_url
                     .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
                     .map(|(source, current)| source == current);
-                (salary, captured_at, matches_current_url)
+                (evidence, captured_at, matches_current_url)
             } else {
                 (None, None, None)
             };
             json_reply(
                 stream,
                 "200 OK",
-                json!({"salary_evidence":salary,"captured_at":captured_at,"matches_current_url":matches_current_url}),
+                json!({"salary_evidence":evidence.as_ref().map(|v| &v["salary_evidence"]),"posting_date_evidence":evidence.as_ref().map(|v| &v["posting_date_evidence"]),"valid_through_evidence":evidence.as_ref().map(|v| &v["valid_through_evidence"]),"captured_at":captured_at,"matches_current_url":matches_current_url}),
             );
         }
         "/api/listing-inspect/discard" => {
@@ -4683,7 +4683,7 @@ mod tests {
         )
         .unwrap();
         let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
-        let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}}}).to_string();
+        let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}},"datePosted":"2026-10-01","validThrough":"2026-11-30T23:59:00+01:00"}).to_string();
         let metadata = json!({"source_url":"https://example.test/older-job","captured_at":1750000000,"structured_source_status":"captured","structured_source_scripts":[posting]}).to_string();
         assert!(ws.save_job_source_only(&id, metadata.as_bytes()).unwrap());
         let later = json!({"source_url":"https://example.test/job","captured_at":1750000100,"structured_source_status":"unavailable"}).to_string();
@@ -4707,6 +4707,11 @@ mod tests {
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(result["salary_evidence"]["currency"], "EUR");
         assert_eq!(result["salary_evidence"]["value"]["minValue"], 60000);
+        assert_eq!(result["posting_date_evidence"], "2026-10-01");
+        assert_eq!(
+            result["valid_through_evidence"],
+            "2026-11-30T23:59:00+01:00"
+        );
         assert_eq!(result["captured_at"], 1750000000);
         assert_eq!(result["matches_current_url"], false);
     }
