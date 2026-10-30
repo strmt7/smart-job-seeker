@@ -16,16 +16,16 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 
-struct RankReport {
-    links: Vec<PageLink>,
-    total: usize,
-    examined: usize,
-    failed_batches: usize,
-    nominated: usize,
-    finalists: usize,
-    global_ranking: &'static str,
-    query_redacted: bool,
-    details_limited: bool,
+pub(crate) struct RankReport {
+    pub(crate) links: Vec<PageLink>,
+    pub(crate) total: usize,
+    pub(crate) examined: usize,
+    pub(crate) failed_batches: usize,
+    pub(crate) nominated: usize,
+    pub(crate) finalists: usize,
+    pub(crate) global_ranking: &'static str,
+    pub(crate) query_redacted: bool,
+    pub(crate) details_limited: bool,
 }
 
 #[derive(Clone)]
@@ -213,7 +213,7 @@ fn model_url(text: &str) -> String {
 
 /// Evaluate bounded groups in sequence and, when necessary, rank finalists.
 /// A failed group never makes unexamined links appear evaluated.
-fn rank_batched(
+pub(crate) fn rank_batched(
     inference: &mut dyn Inference,
     links: &[PageLink],
     context: &PageContext,

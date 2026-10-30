@@ -134,6 +134,69 @@ fn inspect_page_with_local_vision(
     visual_page_advice(&output, &page_text, truncated, second.as_ref())
 }
 
+fn rank_page_link_labels(
+    model: &mut dyn Inference,
+    links: &[waypoint_applications::driver::PageLink],
+    context: &crate::link_rank::PageContext,
+) -> Result<String, String> {
+    let bounded = &links[..links.len().min(10)];
+    let report = crate::link_rank::rank_batched(model, bounded, context)?;
+    let labels: Vec<String> = report
+        .links
+        .iter()
+        .take(3)
+        .map(|link| {
+            let label: String = link
+                .label
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .take(100)
+                .collect();
+            let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+            if label.is_empty() {
+                "Unlabelled link".into()
+            } else {
+                label
+            }
+        })
+        .collect();
+    let shown = if labels.is_empty() {
+        "No likely links were suggested".into()
+    } else {
+        format!(
+            "Possible link labels: {}",
+            labels
+                .iter()
+                .map(|label| format!("\"{label}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    Ok(format!("Local link suggestion: {shown}. Examined {} of {} additional permitted links{}{}{}; at most three suggested labels are shown. The list is limited to 30 links from the first 200 page anchors. Labels are unverified, may be duplicated, and no suggested link was opened.", report.examined, links.len(), if report.failed_batches>0 { "; a batch failed" } else { "" }, if report.global_ranking=="unavailable" { "; final ranking unavailable" } else { "" }, if report.details_limited || report.query_redacted { "; some details were omitted from model input" } else { "" }))
+}
+
+/// Read and rank only already-observed links; never navigate. The exact page
+/// snapshot is rechecked before displaying potentially stale suggestions.
+fn suggest_page_links(browser: &mut waypoint_browser::CdpDriver) -> Result<String, String> {
+    let (context, links, before) = crate::link_rank::snapshot(browser)?;
+    if links.is_empty() {
+        return Ok("No additional permitted links were available for local suggestion.".into());
+    }
+    let _lease = crate::doc_suggest::lease()?;
+    let model = crate::resident_model()?.ok_or("No eligible resident local model")?;
+    let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+        .map_err(|e| e.to_string())?
+        .with_resident_context();
+    let mut llm =
+        crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+    let advice = rank_page_link_labels(&mut llm, &links, &context)?;
+    let (_, _, after) = crate::link_rank::snapshot(browser)?;
+    if before != after {
+        return Err("The page changed during link suggestion".into());
+    }
+    Ok(advice)
+}
+
 // Follow only one unambiguous same-origin link. In particular, never navigate
 // a URL that looks like a final submit action or contains query parameters.
 pub(crate) fn application_destination(current: &str, links: &[String]) -> Option<String> {
@@ -324,6 +387,17 @@ pub fn start(id: String, job_id: String, url: String) -> Result<(), String> {
                     Err(_) => message.push_str(
                         " Local visual assessment unavailable; inspect the page manually.",
                     ),
+                }
+                if page.schema.fields.is_empty() {
+                    match suggest_page_links(&mut browser) {
+                        Ok(advice) => {
+                            message.push(' ');
+                            message.push_str(&advice);
+                        }
+                        Err(_) => message.push_str(
+                            " Local link suggestions unavailable; inspect links manually.",
+                        ),
+                    }
                 }
             }
             Ok((report_inspected_page(message, inspected_url), review))
@@ -572,6 +646,145 @@ mod tests {
         );
         assert!(result.contains("Local vision"), "{result}");
         acknowledge("ambiguous-fixture").unwrap();
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and requires preloaded qwen3.5:9b and resource preflight"]
+    fn unfamiliar_link_is_suggested_without_opening_it() {
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let html = include_bytes!("../tests/application-check-unfamiliar-links.html");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+            while !flag.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                        let mut request = [0u8; 2048];
+                        let _ = stream.read(&mut request);
+                        let header = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", html.len());
+                        let _ = stream.write_all(header.as_bytes());
+                        let _ = stream.write_all(html);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(25))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        super::start(
+            "unfamiliar-fixture".into(),
+            "fictional-job".into(),
+            format!("http://127.0.0.1:{port}/fixture"),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("unfamiliar-fixture").unwrap() {
+                break done;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "application check did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        acknowledge("unfamiliar-fixture").unwrap();
+        println!("fictional unfamiliar-link check: {result}");
+        assert!(review);
+        assert!(result.contains("Continue as a candidate"), "{result}");
+        assert!(result.contains("no suggested link was opened"), "{result}");
+    }
+
+    #[test]
+    fn link_advice_is_bounded_and_never_displays_url_queries() {
+        use waypoint_inference::{CapabilityReport, Inference, InferenceError, UsageReport};
+        struct Fake;
+        impl Inference for Fake {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(serde_json::Value, UsageReport), InferenceError> {
+                assert!(!prompt.contains("private-token"));
+                Ok((
+                    serde_json::json!({"indices":[0]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let links: Vec<_> = (0..12)
+            .map(|i| waypoint_applications::driver::PageLink {
+                url: format!("https://example.org/{i}?token=private-token"),
+                label: format!("Candidate path {i}\nReview"),
+            })
+            .collect();
+        let context = crate::link_rank::PageContext {
+            origin: "https://example.org".into(),
+            field_labels: vec![],
+            multi_step: false,
+        };
+        let result = super::rank_page_link_labels(&mut Fake, &links, &context).unwrap();
+        assert!(result.contains("Examined 10 of 12"));
+        assert!(result.contains("Candidate path 0 Review"));
+        assert!(result.contains("some details were omitted"));
+        assert!(result.contains("no suggested link was opened"));
+        assert!(!result.contains("private-token"));
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn local_model_suggests_fictional_nonstandard_application_label() {
+        let model =
+            waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_context_window(4096)
+                .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let links = [
+            ("Company news", "news"),
+            ("Continue as a candidate", "candidate"),
+            ("Our products", "products"),
+        ]
+        .into_iter()
+        .map(|(label, path)| waypoint_applications::driver::PageLink {
+            url: format!("https://example.org/{path}"),
+            label: label.into(),
+        })
+        .collect::<Vec<_>>();
+        let context = crate::link_rank::PageContext {
+            origin: "https://example.org".into(),
+            field_labels: vec![],
+            multi_step: false,
+        };
+        let result = super::rank_page_link_labels(&mut model, &links, &context).unwrap();
+        println!("fictional nonstandard link advice: {result}");
+        assert!(result.contains("Continue as a candidate"), "{result}");
+        assert!(result.contains("no suggested link was opened"));
     }
     #[test]
     fn inspected_page_is_only_reported_when_it_is_safe_and_unambiguous() {
