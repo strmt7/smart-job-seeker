@@ -499,3 +499,11 @@ confirmed and the placeholder email as unconfirmed. The vision model's raw
 transcription is still saved as an observation; a separate event records the
 live-value comparisons. Both checks can be wrong or become stale, and this does
 not establish correctness on real employer sites.
+
+Visual form freshness now compares captures taken before and after live-value
+verification, and rechecks the page URL and dimensions afterward when fields
+were checked. A change in either capture remains a changed result even if the
+page returns to its earlier appearance. A focused test covered the freshness
+decision and the local prefill fixture passed; no employer site was exercised.
+These snapshots still cannot rule out a change between observations or after
+verification.

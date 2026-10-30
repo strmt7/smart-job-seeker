@@ -50,6 +50,24 @@ pub fn image_freshness(original_hash: Option<&str>, fresh_image: Option<&str>) -
     }
 }
 
+/// Check captures on both sides of live-value verification. An observed change
+/// remains a change even if the page later returns to its original appearance.
+pub fn interval_freshness(
+    original_hash: Option<&str>,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> &'static str {
+    let first = image_freshness(original_hash, before);
+    let last = image_freshness(original_hash, after);
+    if first == "changed" || last == "changed" {
+        "changed"
+    } else if first == "same" && last == "same" {
+        "same"
+    } else {
+        "unavailable"
+    }
+}
+
 /// Identify an observed freshness state without storing screenshot bytes here.
 /// Re-polling the same task after another visual change must create a new
 /// record, while an identical recapture need not duplicate it.
@@ -525,6 +543,35 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn freshness_spans_the_live_value_checks() {
+        let hash = waypoint_domain::Sha256Digest::of("original");
+        assert_eq!(
+            interval_freshness(Some(hash.as_str()), Some("original"), Some("original")),
+            "same"
+        );
+        assert_eq!(
+            interval_freshness(Some(hash.as_str()), Some("changed"), Some("original")),
+            "changed"
+        );
+        assert_eq!(
+            interval_freshness(Some(hash.as_str()), Some("original"), Some("changed")),
+            "changed"
+        );
+        assert_eq!(
+            interval_freshness(Some(hash.as_str()), Some("changed"), None),
+            "changed"
+        );
+        assert_eq!(
+            interval_freshness(Some(hash.as_str()), Some("original"), None),
+            "unavailable"
+        );
+        assert_eq!(
+            interval_freshness(None, Some("original"), Some("original")),
+            "unavailable"
+        );
+    }
 
     #[test]
     fn live_value_check_downgrades_false_visual_matches_and_stops_after_failure() {

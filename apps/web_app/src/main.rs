@@ -3422,17 +3422,76 @@ fn serve(
                             .screenshot_segment(clip_width, y, clip_height)
                             .ok()
                     });
-                    let freshness = visual_review::image_freshness(
-                        result["screenshot_hash"].as_str(),
-                        fresh_screenshot.as_deref(),
-                    );
-                    result["visual_freshness"] = json!(freshness);
                     let (verified, unconfirmed) = visual_review::crosscheck_live_values(
                         &mut current.driver,
                         &current.preview,
                         &current.completed_selectors,
                         &mut result["visual_review"],
                     );
+                    let final_screenshot = if verified + unconfirmed == 0 {
+                        fresh_screenshot.clone()
+                    } else {
+                        result["segment"].as_u64().and_then(|segment| {
+                            let (clip_width, y, clip_height, _, _) =
+                                visual_review::segment_half_geometry(
+                                    width,
+                                    height,
+                                    segment as usize,
+                                    result["half"]
+                                        .as_u64()
+                                        .and_then(|h| usize::try_from(h).ok()),
+                                )
+                                .ok()?;
+                            current
+                                .driver
+                                .screenshot_segment(clip_width, y, clip_height)
+                                .ok()
+                        })
+                    };
+                    let mut freshness = visual_review::interval_freshness(
+                        result["screenshot_hash"].as_str(),
+                        fresh_screenshot.as_deref(),
+                        final_screenshot.as_deref(),
+                    );
+                    let mut final_signature_status = "not_rechecked";
+                    if verified + unconfirmed > 0 && freshness != "changed" {
+                        let final_signature = current.driver.current_url().ok().and_then(|url| {
+                            current
+                                .driver
+                                .page_dimensions()
+                                .ok()
+                                .map(|(width, height)| {
+                                    visual_review::page_signature(&url, width, height)
+                                })
+                        });
+                        final_signature_status = match final_signature {
+                            Some(signature)
+                                if Some(signature.as_str())
+                                    == result["page_signature"].as_str() =>
+                            {
+                                "same"
+                            }
+                            Some(_) => "changed",
+                            None => "unavailable",
+                        };
+                        if final_signature_status == "changed" {
+                            freshness = "changed";
+                        }
+                        if final_signature_status == "unavailable" {
+                            freshness = "unavailable";
+                        }
+                    }
+                    let changed_image = if visual_review::image_freshness(
+                        result["screenshot_hash"].as_str(),
+                        final_screenshot.as_deref(),
+                    ) == "changed"
+                    {
+                        final_screenshot.as_deref()
+                    } else {
+                        fresh_screenshot.as_deref()
+                    };
+                    result["visual_freshness"] = json!(freshness);
+                    result["final_signature_status"] = json!(final_signature_status);
                     if unconfirmed > 0 {
                         let reason = "A visually transcribed field could not be verified against its live value";
                         ws.mark_manual_review(&current.job_id, reason, now())
@@ -3466,17 +3525,21 @@ fn serve(
                     let image_key = visual_review::freshness_record_key(
                         id,
                         freshness,
-                        fresh_screenshot.as_deref(),
+                        if freshness == "changed" {
+                            changed_image
+                        } else {
+                            final_screenshot.as_deref()
+                        },
                     );
-                    let freshness_key = Sha256Digest::of(&json!({"image_key":image_key,"comparisons":result["visual_review"]["comparisons"]}).to_string()).as_str().to_owned();
+                    let freshness_key = Sha256Digest::of(&json!({"image_key":image_key,"final_signature_status":final_signature_status,"comparisons":result["visual_review"]["comparisons"]}).to_string()).as_str().to_owned();
                     if current.last_visual_freshness_key.as_deref() != Some(freshness_key.as_str())
                     {
                         let saved = current.record.as_mut().is_some_and(|record| {
                             let captured = if freshness == "changed" {
-                                fresh_screenshot.as_deref().and_then(|image| record.screenshot_with_name(image).ok())
+                                changed_image.and_then(|image| record.screenshot_with_name(image).ok())
                             } else { None };
                             if freshness == "changed" && captured.is_none() { return false; }
-                            record.event(json!({"type":"visual_freshness_checked","time":now(),"task_id":id,"status":freshness,"screenshot":captured.map(|name| format!("screenshots/{name}")),"live_values_verified":verified,"live_values_unconfirmed":unconfirmed,"comparisons":result["visual_review"]["comparisons"],"note":"Image and live-value checks do not prove correctness; values can change."})).is_ok()
+                            record.event(json!({"type":"visual_freshness_checked","time":now(),"task_id":id,"status":freshness,"final_signature_status":final_signature_status,"screenshot":captured.map(|name| format!("screenshots/{name}")),"live_values_verified":verified,"live_values_unconfirmed":unconfirmed,"comparisons":result["visual_review"]["comparisons"],"note":"Image and live-value checks do not prove correctness; values can change."})).is_ok()
                         });
                         if saved {
                             current.last_visual_freshness_key = Some(freshness_key);
