@@ -22,12 +22,19 @@ static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 pub static TEST_TASK_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
-pub fn set_completed_fixture(id: &str, session: &str, signature: &str, image: &str) {
+pub fn set_completed_fixture(
+    id: &str,
+    session: &str,
+    job_id: &str,
+    pending_revision: Option<i64>,
+    signature: &str,
+    image: &str,
+) {
     *TASK.lock().unwrap() = Some(Task {
         id: id.into(),
         session: session.into(),
-        job_id: "fixture-job".into(),
-        pending_revision: None,
+        job_id: job_id.into(),
+        pending_revision,
         page_signature: signature.into(),
         segment: 0,
         half: None,

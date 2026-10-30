@@ -6989,9 +6989,13 @@ mod tests {
                 .unwrap();
             let current_url = current.driver.current_url().unwrap();
             let signature = visual_review::page_signature(&current_url, width, height);
+            let pending_revision =
+                visual_review::begin_pending_review(&ws, &id, "fixture-vision", now()).unwrap();
             visual_review::set_completed_fixture(
                 "fixture-vision",
                 &current.id,
+                id.as_str(),
+                Some(pending_revision),
                 signature.as_str(),
                 &image,
             );
@@ -7014,6 +7018,11 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|reason| reason.reason == "Form changed during visual review"));
+            assert!(!ws
+                .manual_review_reasons(&id)
+                .unwrap()
+                .iter()
+                .any(|reason| reason.reason == visual_review::pending_reason("fixture-vision")));
             drop(stream);
             session
                 .as_mut()
@@ -7030,6 +7039,8 @@ mod tests {
             visual_review::set_completed_fixture(
                 "fixture-vision-stale",
                 "test-session",
+                id.as_str(),
+                None,
                 "fictional-old-signature",
                 &image,
             );
