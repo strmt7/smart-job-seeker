@@ -3019,8 +3019,28 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    #[ignore = "requires a preloaded local model and resource preflight"]
     fn live_job_fit_repeatability_on_fictional_candidate() {
+        struct Recording<T>(T);
+        impl<T: Inference> Inference for Recording<T> {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                let result = self.0.generate_structured(schema, prompt, max);
+                if schema == "job_fit" {
+                    println!("fictional assessment response: {result:?}");
+                }
+                result
+            }
+        }
+        let model_name = std::env::var("WAYPOINT_FIT_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
         let addr = "127.0.0.1:11434".parse().unwrap();
         let (status, bytes) =
             waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
@@ -3028,18 +3048,19 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(
             crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some("qwen3.5:9b")
+            Some(model_name.as_str())
         );
         assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
-        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+        let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
             .unwrap()
             .with_context_window(4096)
             .unwrap();
-        let mut model = crate::resident_inference::ResidentInference::new(
+        let model = crate::resident_inference::ResidentInference::new(
             model,
-            "qwen3.5:9b".into(),
+            model_name,
             crate::resident_model,
         );
+        let mut model = Recording(model);
         let facts = vec![
             "Built accessible web interfaces for screen-reader users".into(),
             "Maintained backend services in Python for three years".into(),
