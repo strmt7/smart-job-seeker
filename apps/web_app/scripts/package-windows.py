@@ -342,6 +342,13 @@ def main():
         # .cargo_vcs_info.json revision 14011d08c42a7cd368698fe28f77eb4cd0b65bf0.
         if (name, version) == ('mutants', '0.0.4') and not files:
             files.add((REPO / 'docs/MUTANTS_LICENSE.txt').resolve())
+        # The 0.1.1 crate omits license files. This MIT license is from the
+        # repository commit recorded in its .cargo_vcs_info.json.
+        if (name, version) == ('gpuviewer-core', '0.1.1') and not files:
+            fallback = (REPO / 'docs/GPUVIEWER_CORE_LICENSE.txt').resolve()
+            if hashlib.sha256(fallback.read_bytes().replace(b'\r\n', b'\n')).hexdigest() != 'd82bb4454c3439167bdb64d9dd598d391978133cac416d2f417e6ef9450ab398':
+                raise ValueError('The gpuviewer-core license does not match its upstream revision')
+            files.add(fallback)
         if package.get('license-file'):
             license_file = (root / package['license-file']).resolve()
             if not license_file.is_relative_to(root.resolve()) or not license_file.is_file(): raise ValueError(f'Invalid license file for {name} {version}')
