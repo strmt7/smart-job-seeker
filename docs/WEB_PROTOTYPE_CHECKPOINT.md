@@ -1074,3 +1074,9 @@ Synthetic UI tests covered later-segment matches, conflicting live checks, misma
 After converting UTF-8 text or Markdown as plain text, the background worker compares the source with selectable PDF text, ignoring whitespace differences. The result is advisory: a match does not check layout, reading order in an ATS, or visual correctness. A difference or unavailable extractor is reported without discarding the PDF. Sources over 200,000 bytes are not compared; DOCX and image conversions are not compared. The result panel remains visible in the current page and links to the PDF preview; it is not persisted across reloads.
 
 A fictional Unicode text document was converted with the locally installed office and PDF runtimes and its extracted text matched. Unit tests covered differences, missing extraction, the size limit and conversion result recovery; a simulated UI test covered the result messages and preview action. No local model or employer system was tested.
+
+## DOCX conversion comparison — 2026-11-01
+
+DOCX-to-PDF conversion now compares locally extracted DOCX text with selectable PDF text after whitespace normalization. The DOCX extractor covers body, header and footer text but may miss other content; repeated headers, fields and layout changes can also cause differences. A match is not a visual or ATS compatibility check. Extraction failures leave the saved PDF available and report the comparison as unavailable. Images remain outside this comparison.
+
+A fictional styled DOCX was converted with local runtimes and produced a comparison result; the conversion tests, simulated UI checks and web lint passed. The result panel is not persisted across reloads. No employer site or local model was used.

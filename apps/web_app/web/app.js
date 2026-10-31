@@ -149,7 +149,23 @@ void recoverPendingLetterExport(document.querySelector('#packet')).catch(error=>
 function showPacket(job, packet){setWorkspaceView('applications');const panel=document.querySelector('#packet');panel.replaceChildren(element('h3',`${job.title} · ${job.employer}`),element('p',`Draft from profile revision ${packet.profile_revision}. Supported passages: ${packet.supported_spans}.`));if(packet.invalidated_at)panel.append(element('p','This draft is stale because a supporting fact changed.'));for(const issue of packet.unsupported)panel.append(element('p',issue));const text=element('pre',packet.body);panel.append(text);}
 let conversionFollowing=false;
 function updateConversionControl(){const button=document.querySelector('#resume-conversion');button.hidden=!sessionStorage.getItem('waypoint-conversion');button.disabled=conversionFollowing;}
-async function followConversion(id){if(conversionFollowing)return;conversionFollowing=true;updateConversionControl();try{let result;do{await new Promise(resolve=>setTimeout(resolve,1000));result=await api('/api/documents/convert-pdf-status',{task_id:id});}while(result.status==='running');sessionStorage.removeItem('waypoint-conversion');if(result.status!=='complete')throw new Error(result.error || 'Conversion failed');await refresh();const check=result.text_check?.status,detail=check==='matches'?' Selectable text matches the source after whitespace normalization.':check==='differs'?' Selectable text differs from the source; inspect it carefully.':check==='unavailable'?' Selectable text could not be compared; inspect it carefully.':' Selectable text was not compared.';const summary=`${result.name} saved.${detail} Review its layout before use.`;let report=document.querySelector('#conversion-result');if(!report){report=element('div');report.id='conversion-result';document.querySelector('#resume-conversion').after(report);}const preview=element('button','Preview converted PDF');preview.type='button';preview.addEventListener('click',()=>previewPdf({id:result.id,name:result.name}));report.replaceChildren(element('p',summary,'review-label'),preview);notify('PDF conversion completed.');}finally{conversionFollowing=false;updateConversionControl();}}
+async function followConversion(id){
+ if(conversionFollowing)return;
+ conversionFollowing=true;updateConversionControl();
+ try{
+  let result;do{await new Promise(resolve=>setTimeout(resolve,1000));result=await api('/api/documents/convert-pdf-status',{task_id:id});}while(result.status==='running');
+  sessionStorage.removeItem('waypoint-conversion');
+  if(result.status!=='complete')throw new Error(result.error || 'Conversion failed');
+  await refresh();
+  const check=result.text_check?.status,docx=result.text_check?.scope==='docx_extract',source=docx?'extracted DOCX text':'source text';
+  const detail=check==='matches'?` Selectable PDF text matches the ${source} after whitespace normalization.`:check==='differs'?` Selectable PDF text differs from the ${source}; inspect it carefully.`:check==='unavailable'?' Selectable text could not be compared; inspect it carefully.':' Selectable text was not compared.';
+  const summary=`${result.name} saved.${detail} Review its layout before use.${docx?' DOCX extraction can miss content; inspect both documents.':''}`;
+  let report=document.querySelector('#conversion-result');
+  if(!report){report=element('div');report.id='conversion-result';document.querySelector('#resume-conversion').after(report);}
+  const preview=element('button','Preview converted PDF');preview.type='button';preview.addEventListener('click',()=>previewPdf({id:result.id,name:result.name}));
+  report.replaceChildren(element('p',summary,'review-label'),preview);notify('PDF conversion completed.');
+ }finally{conversionFollowing=false;updateConversionControl();}
+}
 function conversionError(error){if(error.message==='Conversion not found')sessionStorage.removeItem('waypoint-conversion');updateConversionControl();notify(`${error.message}${sessionStorage.getItem('waypoint-conversion')?' · Resume the pending conversion to retry.':''}`);}
 async function recoverPendingConversion(){if(conversionFollowing)return;const active=await api('/api/documents/convert-pdf-pending',{});if(active.active && typeof active.task_id==='string')sessionStorage.setItem('waypoint-conversion',active.task_id);updateConversionControl();const pending=sessionStorage.getItem('waypoint-conversion');if(pending)await followConversion(pending);}
 document.querySelector('#resume-conversion').addEventListener('click',()=>{const pending=sessionStorage.getItem('waypoint-conversion');if(pending)followConversion(pending).catch(conversionError);});

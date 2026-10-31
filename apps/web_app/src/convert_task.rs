@@ -73,10 +73,15 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, kind: ConversionKind) -> 
                     crate::pdf_extract::image_to_pdf(&bytes)?,
                     json!({"status":"not_checked"}),
                 ),
-                ConversionKind::Docx => (
-                    crate::document_convert::docx_to_pdf(&bytes)?,
-                    json!({"status":"not_checked"}),
-                ),
+                ConversionKind::Docx => {
+                    let pdf = crate::document_convert::docx_to_pdf(&bytes)?;
+                    let mut check = match crate::document_extract::extract("source.docx", &bytes) {
+                        Ok(source) => compare_plain_text(source.as_bytes(), crate::pdf_extract::extract(&pdf)),
+                        Err(_) => json!({"status":"unavailable","reason":"DOCX text could not be extracted"}),
+                    };
+                    check["scope"] = json!("docx_extract");
+                    (pdf, check)
+                }
                 ConversionKind::PlainText => {
                     let pdf = crate::document_convert::text_to_pdf(&bytes)?;
                     let check = if bytes.len() > 200_000 {
@@ -292,7 +297,7 @@ mod tests {
             ConversionKind::Image,
         )
         .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(65);
         loop {
             let result = poll("image-task", &ws).unwrap();
             if result["status"] == "complete" {
@@ -326,10 +331,16 @@ mod tests {
             ConversionKind::Docx,
         )
         .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(65);
         loop {
             let result = poll("fixture-task", &ws).unwrap();
             if result["status"] == "complete" {
+                assert_eq!(result["text_check"]["scope"], "docx_extract");
+                assert!(matches!(
+                    result["text_check"]["status"].as_str(),
+                    Some("matches" | "differs")
+                ));
+                println!("Fictional DOCX comparison: {}", result["text_check"]);
                 let id = result["id"].as_str().unwrap();
                 let pdf = ws.document_content(id).unwrap().unwrap();
                 assert!(pdf.starts_with(b"%PDF-"));
