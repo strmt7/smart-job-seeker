@@ -1022,3 +1022,9 @@ A fictional 3,000-by-2,400-pixel local page produced four positioned PNG segment
 New application-record folders with saved listing images now contain `original-job-page/view.html`. It positions captures with valid tile coordinates and warns when coverage is incomplete; captures without usable coordinates display up to five separate images. The view embeds no captured page text or URLs as markup and does not fetch remote content. Existing application-record folders are not backfilled.
 
 A fictional browser fixture opened the local view and checked tile positioning. Metadata tests covered missing, overlapping and untrusted data; the attempt-record group and web Clippy passed. The view cannot reveal content that was not captured.
+
+## Existing text before autofill — 2026-10-31
+
+Before consuming a prefill approval, Waypoint now checks supported text, email, date, textarea and editable-text fields for existing values. An empty field or an exact match can proceed; a different or uninspectable value stops the batch for manual review. Each such field is checked again immediately before its command, so a later change can stop a partially completed batch. This does not inspect every custom control or eliminate races, and it does not authorize or submit an application.
+
+A fictional local-browser fixture checked empty, matching, conflicting, textarea and editable-text values and confirmed that an existing conflict stopped the batch before its first command or approval consumption. A separate empty-field autofill fixture, the focused form-preview tests and web Clippy passed. No employer site or local model was used.

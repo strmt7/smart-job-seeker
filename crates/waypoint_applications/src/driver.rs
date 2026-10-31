@@ -73,6 +73,16 @@ pub trait BrowserDriver {
     fn verify_text_value(&mut self, _selector: &str, _expected: &str) -> Result<(), DriverError> {
         Err(DriverError("Post-fill verification is unavailable".into()))
     }
+    /// Refuse to replace an existing, different text value without manual review.
+    fn ensure_text_replaceable(
+        &mut self,
+        _selector: &str,
+        _expected: &str,
+    ) -> Result<(), DriverError> {
+        Err(DriverError(
+            "Existing field value cannot be inspected".into(),
+        ))
+    }
     /// Verify a supported choice without changing it.
     fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
         Err(DriverError("Choice verification is unavailable".into()))

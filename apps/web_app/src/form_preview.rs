@@ -175,6 +175,23 @@ pub struct FillContext<'a> {
     pub completed: &'a mut Vec<Value>,
 }
 
+fn check_existing_text(
+    driver: &mut dyn BrowserDriver,
+    field: &waypoint_applications::form_mapping::FormField,
+    value: &PacketValue,
+) -> Result<(), String> {
+    match (&field.field_type, value) {
+        (
+            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+            PacketValue::Text(text),
+        )
+        | (FormFieldType::Date, PacketValue::Date(text)) => driver
+            .ensure_text_replaceable(&field.selector, text)
+            .map_err(|error| format!("{} needs manual review: {error}", field.label)),
+        _ => Ok(()),
+    }
+}
+
 /// Apply only the exact reviewed mappings, using one prefill grant. This path
 /// has no submit or arbitrary click operation. The caller must keep the same
 /// browser session and acquire permission for the actual destination first.
@@ -257,6 +274,7 @@ pub fn apply_reviewed_text_fields(
         if field.sensitive || preview.model_review_selectors.contains(&field.selector) || !valid {
             return Err("Field requires manual handling".into());
         }
+        check_existing_text(driver, field, &mapping.value)?;
     }
     let payload = serde_json::to_string(&preview.suggestions).map_err(|e| e.to_string())?;
     let payload_digest = Sha256Digest::of(&payload);
@@ -289,6 +307,7 @@ pub fn apply_reviewed_text_fields(
             .iter()
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
+        check_existing_text(driver, field, &mapping.value)?;
         let command = match (&field.field_type, &mapping.value) {
             (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
                 BrowserCommand::SelectOptions {
@@ -587,6 +606,116 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional prefilled form"]
+    fn conflicting_existing_text_stops_before_any_field_is_changed() {
+        use waypoint_domain::GrantId;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-existing-value.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        assert!(driver
+            .ensure_text_replaceable("#first", "New response")
+            .is_ok());
+        assert!(driver
+            .ensure_text_replaceable("#second", "Existing answer")
+            .is_ok());
+        assert!(driver
+            .ensure_text_replaceable("#second", "Different answer")
+            .is_err());
+        assert!(driver
+            .ensure_text_replaceable("#additional", "New response")
+            .is_ok());
+        assert!(driver
+            .ensure_text_replaceable("#editable", "Existing note")
+            .is_ok());
+        assert!(driver
+            .ensure_text_replaceable("#editable", "Different note")
+            .is_err());
+        let preview = FormPreview {
+            schema: live.schema,
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#first".into(),
+                    value: PacketValue::Text("New response".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#second".into(),
+                    value: PacketValue::Text("Different answer".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut ws = Workspace::in_memory().unwrap();
+        let job = JobIdentityId::new("existing-value-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job.clone(),
+            title: "Fictional role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("existing-value-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("existing-value-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fictional".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        let error = apply_reviewed_text_fields(
+            &mut ws,
+            &job,
+            &mut driver,
+            &url,
+            &preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("different value"), "{error}");
+        assert!(!grant.consumed);
+        assert!(completed.is_empty());
+        assert!(driver.ensure_text_replaceable("#first", "").is_ok());
+        driver
+            .verify_text_value("#second", "Existing answer")
+            .unwrap();
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
 
     #[test]
     fn completed_field_check_reports_budget_and_stops_after_failure() {

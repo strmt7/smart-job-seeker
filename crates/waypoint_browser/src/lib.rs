@@ -2564,6 +2564,31 @@ impl BrowserDriver for CdpDriver {
         })
     }
 
+    fn ensure_text_replaceable(
+        &mut self,
+        selector: &str,
+        expected: &str,
+    ) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Field is no longer present".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Existing field value cannot be inspected".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(expected) { if (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) return false; const editable = (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]'); if (editable) return this.innerText === '' || this.innerText === expected; if (!(this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) || this.matches(':disabled') || this.readOnly || this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) return false; return this.value === '' || this.value === expected; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError("Field already contains a different value or cannot be inspected; review it in the browser".into()));
+        }
+        Ok(())
+    }
+
     fn verify_text_value(&mut self, selector: &str, expected: &str) -> Result<(), DriverError> {
         let node = self
             .node_id(selector)?
