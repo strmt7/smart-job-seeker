@@ -1062,3 +1062,9 @@ Fictional local browser and endpoint tests covered matching and conflicting choi
 ## Existing-answer review layout — 2026-10-31
 
 The acknowledgment checkbox is aligned with its label in the existing-answer review. A fictional mocked-backend browser fixture exercised checkbox and multi-select replacement approvals and the no-fill retry path at 1,200, 800 and 390 pixels wide; no horizontal page overflow or unexpected browser errors were observed. The single HTTP 400 was deliberately returned by the fixture to exercise retry. This did not use a live backend, model or employer site, and did not submit an application.
+
+## Visual comparison across segments — 2026-10-31
+
+The form-review summary now combines live-value checks from the segments that actually observed a field. A field first seen on a later segment can therefore show a matching transcription and live value; any unconfirmed check, ambiguous label, duplicate observation or stale capture remains unconfirmed. Segment captures can still change between checks, and the model's transcription can be wrong.
+
+Synthetic UI tests covered later-segment matches, conflicting live checks, mismatched expectations and changed captures. A fictional mocked-backend browser fixture rendered the later-segment match with no browser errors. No local model, live employer site or application submission was used.
