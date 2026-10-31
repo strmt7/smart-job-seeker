@@ -956,7 +956,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    #[ignore = "requires a preloaded local vision model and resource preflight"]
     fn live_visual_review_dense_form_checks_late_mismatches() {
         use base64::Engine;
         let addr = "127.0.0.1:11434".parse().unwrap();
@@ -964,9 +964,11 @@ mod tests {
             waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
         let ps: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status, 200);
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
         assert_eq!(
             crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some("qwen3.5:9b")
+            Some(model.as_str())
         );
         assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
         let image = base64::engine::general_purpose::STANDARD
@@ -981,7 +983,7 @@ mod tests {
                 (format!("Question {i:02}"), value)
             })
             .collect();
-        let result = analyze(addr, "qwen3.5:9b", &image, &expected).unwrap();
+        let result = analyze(addr, &model, &image, &expected).unwrap();
         println!("fictional dense visual result: {result}");
         let comparisons = result["comparisons"].as_array().unwrap();
         assert_eq!(comparisons.len(), 16);
@@ -1001,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    #[ignore = "requires a preloaded local vision model and resource preflight"]
     fn live_visual_review_detects_a_fictional_mismatch() {
         use base64::Engine;
         let addr = "127.0.0.1:11434".parse().unwrap();
@@ -1009,9 +1011,11 @@ mod tests {
             waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
         let ps: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status, 200);
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
         assert_eq!(
             crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some("qwen3.5:9b")
+            Some(model.as_str())
         );
         assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
         let image = base64::engine::general_purpose::STANDARD
@@ -1022,8 +1026,7 @@ mod tests {
             ("Location".into(), "Berlin".into()),
             ("Available to travel".into(), "checked".into()),
         ];
-        let result =
-            analyze_with_context(addr, "qwen3.5:9b", &image, &expected, Some(4096)).unwrap();
+        let result = analyze_with_context(addr, &model, &image, &expected, Some(4096)).unwrap();
         println!("fictional visual result: {result}");
         let comparisons = result["comparisons"].as_array().unwrap();
         for label in ["Full name", "Location", "Available to travel"] {

@@ -921,12 +921,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "starts one local browser and requires preloaded qwen3.5:9b and resource preflight"]
+    #[ignore = "starts one local browser and requires a preloaded local model and resource preflight"]
     fn local_model_inspects_form_with_ambiguous_links() {
         let _guard = TEST_LOCK.lock().unwrap();
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
         assert_eq!(
             crate::resident_model().unwrap().as_deref(),
-            Some("qwen3.5:9b")
+            Some(model.as_str())
         );
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/form-ambiguous-contact.html");
@@ -936,7 +938,7 @@ mod tests {
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({"email":"alex@example.invalid"}),
-            Some("qwen3.5:9b".into()),
+            Some(model),
             false,
             0,
         )
@@ -973,6 +975,27 @@ mod tests {
                         .any(|reason| reason
                             .contains("Where should our recruiting team send updates?")),
                     "the ambiguous field must be reported for review"
+                );
+                assert!(
+                    !preview
+                        .suggestions
+                        .iter()
+                        .any(|mapping| mapping.field_selector == "#reach"),
+                    "a second ambiguous contact field must not be guessed"
+                );
+                assert!(
+                    preview
+                        .manual_review
+                        .iter()
+                        .any(|reason| reason.contains("How can we reach you?")),
+                    "the second ambiguous field must be reported"
+                );
+                assert!(
+                    preview
+                        .suggestions
+                        .iter()
+                        .any(|mapping| mapping.field_selector == "#email"),
+                    "an explicitly identified email field should remain usable"
                 );
                 assert!(driver
                     .trace
