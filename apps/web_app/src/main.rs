@@ -4168,6 +4168,24 @@ fn serve(
             }
             current.preview.suggestions = prepared.suggestions;
             form_preview::refresh_required_review(&mut current.preview);
+            if let Err(error) =
+                form_preview::preflight_existing_text(&mut current.driver, &current.preview)
+            {
+                let review_error = ws
+                    .mark_manual_review(
+                        &current.job_id,
+                        "Existing form value needs manual review",
+                        now(),
+                    )
+                    .err();
+                current.preview = original_preview;
+                current.created = Instant::now();
+                *session = Some(current);
+                let note = review_error
+                    .map(|e| format!(" The manual-review flag could not be saved: {e}."))
+                    .unwrap_or_default();
+                return Err(format!("No fields were filled because an existing value needs review: {error}. Unselect that field or inspect the browser, then retry.{note}"));
+            }
             if current.record.is_none() {
                 match required_attempt_record(ws, &current.job_id) {
                     Ok(record) => current.record = Some(record),
@@ -7216,6 +7234,109 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a local browser against a fictional prefilled form"]
+    fn existing_value_preflight_preserves_session_for_reviewed_retry() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{PacketValue, ProposedMapping};
+        use waypoint_store::StoredJob;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-existing-value.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let job = JobIdentityId::new("existing-value-endpoint").unwrap();
+        ws.import_job(StoredJob {
+            id: job.clone(),
+            title: "Fictional role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let profile = json!({});
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#first".into(),
+                    value: PacketValue::Text("First answer".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#second".into(),
+                    value: PacketValue::Text("Different answer".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut session = Some(ReviewSession {
+            id: "existing-session".into(),
+            job_id: job.clone(),
+            inspection_task_id: "inspection".into(),
+            inspection_pending_revision: 0,
+            url,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: false,
+            completed_selectors: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut request = |selectors: Value| {
+            let body = json!({"session_id":"existing-session","reviewed":true,"selectors":selectors,"answers":[]}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            serve(&mut server, &mut ws, &mut session, "test-token", port)
+        };
+        let error = request(json!(["#first", "#second"])).unwrap_err();
+        assert!(
+            error.starts_with("No fields were filled because an existing value needs review:"),
+            "{error}"
+        );
+        assert!(request(json!(["#first"])).is_ok());
+        drop(request);
+        let current = session.as_mut().unwrap();
+        assert!(current.filled);
+        current
+            .driver
+            .verify_text_value("#first", "First answer")
+            .unwrap();
+        current
+            .driver
+            .verify_text_value("#second", "Existing answer")
+            .unwrap();
+        assert!(current
+            .driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts one headless browser against a local fixture"]
     fn reviewed_prefill_endpoint_fills_fixture_and_returns_screenshot() {
         use waypoint_applications::driver::BrowserDriver;
@@ -7229,9 +7350,19 @@ mod tests {
             let mut ws = Workspace::open(workspace_dir.path()).unwrap();
             let fixture =
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+            // This fixture tests record failures and a later page mutation;
+            // existing-value conflicts have their own dedicated endpoint test.
+            let fixture_copy = workspace_dir.path().join("form-preview-fixture.html");
+            let fixture_html = std::fs::read_to_string(&fixture).unwrap();
+            assert!(fixture_html.contains("value=\"Old value\""));
+            std::fs::write(
+                &fixture_copy,
+                fixture_html.replace("value=\"Old value\"", "value=\"\""),
+            )
+            .unwrap();
             let url = format!(
                 "file:///{}",
-                fixture.display().to_string().replace('\\', "/")
+                fixture_copy.display().to_string().replace('\\', "/")
             );
             let id = JobIdentityId::new("fixture-web").unwrap();
             ws.import_job(StoredJob {

@@ -192,6 +192,23 @@ fn check_existing_text(
     }
 }
 
+/// Check the chosen text answers before any fill command or approval consumption.
+pub fn preflight_existing_text(
+    driver: &mut dyn BrowserDriver,
+    preview: &FormPreview,
+) -> Result<(), String> {
+    for mapping in &preview.suggestions {
+        let field = preview
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == mapping.field_selector)
+            .ok_or("Reviewed field is unavailable")?;
+        check_existing_text(driver, field, &mapping.value)?;
+    }
+    Ok(())
+}
+
 /// Apply only the exact reviewed mappings, using one prefill grant. This path
 /// has no submit or arbitrary click operation. The caller must keep the same
 /// browser session and acquire permission for the actual destination first.

@@ -32,6 +32,11 @@ async function exercise(message, visionFails=false){
   assert.ok(recordFailure.events.every(event=>event[0]!=='inspect'));
   assert.equal(recordFailure.fill.disabled,false);
   assert.equal(recordFailure.context.fillCompleted,false);
+  const existingValue = await exercise('No fields were filled because an existing value needs review: fixture. Unselect that field or inspect the browser, then retry.');
+  assert.ok(existingValue.events.every(event=>event[0]!=='inspect'));
+  assert.ok(existingValue.events.some(event=>event[0]==='message' && event[1].includes('Unselect that field')));
+  assert.equal(existingValue.fill.disabled,false);
+  assert.equal(existingValue.context.fillCompleted,false);
   const uncertain = await exercise('Connection interrupted');
   assert.ok(uncertain.events.some(event=>event[0]==='inspect'));
   const failedVision = await exercise('Connection interrupted',true);

@@ -325,8 +325,8 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  }
  async function reviewAfterFillFailure(error,fill){
   notify(error.message);
-  const noFieldsFilled=/^No fields were filled because the attempt record could not be (?:created|written):/.test(error.message);
-  if(noFieldsFilled){visualPanel.replaceChildren(element('p','No fields were filled. Resolve the record problem, then retry.','review-label'));await refresh().catch(()=>{});fill.disabled=false;return;}
+  const noFieldsFilled=/^No fields were filled because (?:the attempt record could not be (?:created|written)|an existing value needs review):/.test(error.message);
+  if(noFieldsFilled){visualPanel.replaceChildren(element('p',`${error.message} The review session remains open.`, 'review-label'));await refresh().catch(()=>{});fill.disabled=false;return;}
   panel.append(element('p','Fill did not complete. Fields may have changed; inspect the browser before continuing.','review-label'));
   fillCompleted=true;fillInProgress=false;visualButton.disabled=false;
   try{await inspectVisual();}catch(e){visualPanel.append(element('p',`Visual review could not start: ${e.message}. Inspect the live form manually.`,'review-label'));}

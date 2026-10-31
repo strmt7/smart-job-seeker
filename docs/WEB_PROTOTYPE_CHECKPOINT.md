@@ -1028,3 +1028,9 @@ A fictional browser fixture opened the local view and checked tile positioning. 
 Before consuming a prefill approval, Waypoint now checks supported text, email, date, textarea and editable-text fields for existing values. An empty field or an exact match can proceed; a different or uninspectable value stops the batch for manual review. Each such field is checked again immediately before its command, so a later change can stop a partially completed batch. This does not inspect every custom control or eliminate races, and it does not authorize or submit an application.
 
 A fictional local-browser fixture checked empty, matching, conflicting, textarea and editable-text values and confirmed that an existing conflict stopped the batch before its first command or approval consumption. A separate empty-field autofill fixture, the focused form-preview tests and web Clippy passed. No employer site or local model was used.
+
+## Retry after an existing-value conflict — 2026-10-31
+
+The fill endpoint now checks selected text fields before creating the attempt record or consuming approval. When that check finds a different or uninspectable value, it keeps the review session open, marks the job for manual review and lets the user unselect the field or inspect the browser before retrying. A later failure after commands begin remains a partial-fill case requiring inspection; the existing per-command checks remain in place.
+
+A fictional local HTTP and browser test first encountered a conflicting field, then retried the same session with that field unselected and verified the original value remained unchanged. The existing endpoint partial-fill fixture, UI failure-handling check and web Clippy passed. No employer application was submitted.
