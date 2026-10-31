@@ -61,6 +61,18 @@ pub const EMBEDDED_SCOPE_LIMIT_REVIEW: &str =
 pub const NATIVE_DATALIST_REVIEW: &str =
     "A suggested datalist value needs manual review on the application page";
 
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct PageControl {
+    pub label: String,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct PageControls {
+    pub controls: Vec<PageControl>,
+    pub incomplete: bool,
+}
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -306,6 +318,91 @@ impl CdpDriver {
             true
         });
         Ok(links)
+    }
+    /// Inventory a bounded set of rendered button-like controls for advisory
+    /// review. This does not expose a click operation or determine side effects.
+    pub fn page_controls(&mut self) -> Result<PageControls, DriverError> {
+        let root = self.document()?;
+        let references = button_references(&root);
+        let mut candidates = Vec::new();
+        let mut incomplete = false;
+        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
+            let tag = node
+                .get("nodeName")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let attrs = attributes(node);
+            let button = tag == "button"
+                || attrs
+                    .get("role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("button"))
+                || (tag == "input"
+                    && attrs.get("type").is_some_and(|kind| {
+                        matches!(
+                            kind.to_ascii_lowercase().as_str(),
+                            "button" | "submit" | "image"
+                        )
+                    }));
+            if button && !hidden {
+                if candidates.len() >= 30 {
+                    incomplete = true;
+                    return true;
+                }
+                let Some(id) = node.get("nodeId").and_then(Value::as_u64) else {
+                    incomplete = true;
+                    return true;
+                };
+                let label = if tag == "input"
+                    && !attrs.contains_key("aria-label")
+                    && !attrs.contains_key("aria-labelledby")
+                {
+                    attrs.get("value").cloned().unwrap_or_default()
+                } else {
+                    anchor_label(node, &attrs, &references).unwrap_or_default()
+                };
+                let label = if label.trim().is_empty() {
+                    incomplete = true;
+                    "Unlabelled control".to_owned()
+                } else {
+                    if label.chars().count() > 200 {
+                        incomplete = true;
+                    }
+                    label.chars().take(200).collect()
+                };
+                let disabled = attrs.contains_key("disabled")
+                    || attrs
+                        .get("aria-disabled")
+                        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+                candidates.push((id, PageControl { label, disabled }));
+            }
+            true
+        });
+        let started = Instant::now();
+        let mut controls = Vec::new();
+        for (id, control) in candidates {
+            if started.elapsed() >= Duration::from_secs(4) {
+                incomplete = true;
+                break;
+            }
+            match self.with_review_timeout(|driver| driver.control_visibility_and_path(id)) {
+                Ok((true, _, available)) => {
+                    controls.push(PageControl {
+                        disabled: control.disabled || !available,
+                        ..control
+                    });
+                }
+                Ok(_) => (),
+                Err(_) => {
+                    incomplete = true;
+                    break;
+                }
+            }
+        }
+        Ok(PageControls {
+            controls,
+            incomplete,
+        })
     }
     pub fn launch(upload_dirs: Vec<PathBuf>) -> Result<Self, DriverError> {
         Self::launch_with_mode(upload_dirs, false)
@@ -3001,14 +3098,26 @@ fn attributes(node: &Value) -> HashMap<String, String> {
 }
 
 fn anchor_references(root: &Value) -> HashMap<String, Option<String>> {
+    control_references(root, false)
+}
+fn button_references(root: &Value) -> HashMap<String, Option<String>> {
+    control_references(root, true)
+}
+fn control_references(root: &Value, buttons: bool) -> HashMap<String, Option<String>> {
     let mut wanted = std::collections::HashSet::new();
     walk(root, false, &mut |node, _| {
-        if node
-            .get("nodeName")
-            .and_then(Value::as_str)
-            .is_some_and(|tag| tag.eq_ignore_ascii_case("a"))
-        {
-            let attrs = attributes(node);
+        let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+        let attrs = attributes(node);
+        let wanted_control = if buttons {
+            tag.eq_ignore_ascii_case("button")
+                || attrs
+                    .get("role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("button"))
+                || tag.eq_ignore_ascii_case("input")
+        } else {
+            tag.eq_ignore_ascii_case("a")
+        };
+        if wanted_control {
             if let Some(ids) = attrs.get("aria-labelledby").filter(|ids| ids.len() <= 512) {
                 for id in ids.split_whitespace().take(16) {
                     if wanted.len() < 160 {
