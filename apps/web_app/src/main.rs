@@ -3710,7 +3710,7 @@ fn serve(
                 .driver
                 .page_dimensions()
                 .map_err(|e| e.to_string())?;
-            let (clip_width, y, clip_height, total, page_coverage_complete) =
+            let (x, clip_width, y, clip_height, total, page_coverage_complete) =
                 visual_review::segment_half_geometry(width, height, segment as usize, half)?;
             let coverage_complete = target.is_none()
                 && page_coverage_complete
@@ -3725,7 +3725,7 @@ fn serve(
             } else {
                 current
                     .driver
-                    .screenshot_segment(clip_width, y, clip_height)
+                    .screenshot_tile(x, y, clip_width, clip_height)
             }
             .map_err(|e| e.to_string())?;
             let task_id = random_id()?;
@@ -3767,7 +3767,7 @@ fn serve(
             }
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
-                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"clip":if target.is_none() { json!({"x":x,"y":y,"width":clip_width,"height":clip_height}) } else { Value::Null },"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
                 }).is_ok()
             });
             json_reply(
@@ -3858,7 +3858,7 @@ fn serve(
                             driver.screenshot_field_context(selector).ok()
                         } else {
                             let segment = capture_segment?;
-                            let (clip_width, y, clip_height, _, _) =
+                            let (x, clip_width, y, clip_height, _, _) =
                                 visual_review::segment_half_geometry(
                                     width,
                                     height,
@@ -3866,7 +3866,7 @@ fn serve(
                                     capture_half,
                                 )
                                 .ok()?;
-                            driver.screenshot_segment(clip_width, y, clip_height).ok()
+                            driver.screenshot_tile(x, y, clip_width, clip_height).ok()
                         }
                     };
                     let fresh_screenshot = capture(&mut current.driver);
@@ -7695,11 +7695,11 @@ mod tests {
                 })
                 .unwrap();
             let (width, height) = current.driver.page_dimensions().unwrap();
-            let (clip_width, y, clip_height, _, _) =
+            let (x, clip_width, y, clip_height, _, _) =
                 visual_review::segment_geometry(width, height, 0).unwrap();
             let image = current
                 .driver
-                .screenshot_segment(clip_width, y, clip_height)
+                .screenshot_tile(x, y, clip_width, clip_height)
                 .unwrap();
             let current_url = current.driver.current_url().unwrap();
             let signature = visual_review::page_signature(&current_url, width, height);

@@ -466,22 +466,27 @@ pub fn segment_geometry(
     width: f64,
     height: f64,
     index: usize,
-) -> Result<(f64, f64, f64, usize, bool), String> {
+) -> Result<(f64, f64, f64, f64, usize, bool), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return Err("Invalid page dimensions".into());
     }
+    let capped_width = width.min(4096.0);
     let capped_height = height.min(12000.0);
-    let total = (capped_height / 2000.0).ceil() as usize;
+    let columns = (capped_width / 2048.0).ceil() as usize;
+    let rows = (capped_height / 2000.0).ceil() as usize;
+    let total = (columns * rows).min(6);
     if index >= total {
         return Err("Visual segment is outside the page".into());
     }
-    let y = (index as f64) * 2000.0;
+    let x = ((index % columns) as f64) * 2048.0;
+    let y = ((index / columns) as f64) * 2000.0;
     Ok((
-        width.min(2048.0),
+        x,
+        (capped_width - x).min(2048.0),
         y,
         (capped_height - y).min(2000.0),
         total,
-        width <= 2048.0 && height <= 12000.0,
+        width <= 4096.0 && height <= 12000.0 && columns * rows <= 6,
     ))
 }
 
@@ -491,12 +496,12 @@ pub fn segment_half_geometry(
     height: f64,
     index: usize,
     half: Option<usize>,
-) -> Result<(f64, f64, f64, usize, bool), String> {
-    let (width, y, height, total, complete) = segment_geometry(width, height, index)?;
+) -> Result<(f64, f64, f64, f64, usize, bool), String> {
+    let (x, width, y, height, total, complete) = segment_geometry(width, height, index)?;
     match half {
-        None => Ok((width, y, height, total, complete)),
-        Some(0) => Ok((width, y, height / 2.0, total, complete)),
-        Some(1) => Ok((width, y + height / 2.0, height / 2.0, total, complete)),
+        None => Ok((x, width, y, height, total, complete)),
+        Some(0) => Ok((x, width, y, height / 2.0, total, complete)),
+        Some(1) => Ok((x, width, y + height / 2.0, height / 2.0, total, complete)),
         _ => Err("Invalid visual segment subdivision".into()),
     }
 }
@@ -1193,30 +1198,62 @@ mod tests {
     fn segments_cover_bounded_pages_and_report_limits() {
         assert_eq!(
             segment_geometry(1200.0, 2600.0, 0).unwrap(),
-            (1200.0, 0.0, 2000.0, 2, true)
+            (0.0, 1200.0, 0.0, 2000.0, 2, true)
         );
         assert_eq!(
             segment_geometry(1200.0, 2600.0, 1).unwrap(),
-            (1200.0, 2000.0, 600.0, 2, true)
+            (0.0, 1200.0, 2000.0, 600.0, 2, true)
         );
         assert!(segment_geometry(1200.0, 2600.0, 2).is_err());
         assert_eq!(
             segment_geometry(3000.0, 15000.0, 5).unwrap(),
-            (2048.0, 10000.0, 2000.0, 6, false)
+            (2048.0, 952.0, 4000.0, 2000.0, 6, false)
         );
+        assert_eq!(
+            segment_geometry(3000.0, 2400.0, 3).unwrap(),
+            (2048.0, 952.0, 2000.0, 400.0, 4, true)
+        );
+        assert!(segment_geometry(3000.0, 15000.0, 6).is_err());
         assert!(segment_geometry(f64::NAN, 1.0, 0).is_err());
+    }
+    #[test]
+    #[ignore = "starts a local browser against a fictional wide form"]
+    fn wide_visual_segments_retain_tile_coordinates_for_recapture() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-wide-capture.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let (width, height) = driver.page_dimensions().unwrap();
+        let (x, w, y, h, total, complete) = segment_geometry(width, height, 3).unwrap();
+        assert_eq!((x, y, total, complete), (2048.0, 2000.0, 4, true));
+        let first = driver.screenshot_tile(x, y, w, h).unwrap();
+        let again = driver.screenshot_tile(x, y, w, h).unwrap();
+        assert!(!first.is_empty());
+        assert_eq!(first, again);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
     }
     #[test]
     fn dense_segment_halves_cover_the_original_without_overlap() {
         assert_eq!(
             segment_half_geometry(1200.0, 2600.0, 1, Some(0)).unwrap(),
-            (1200.0, 2000.0, 300.0, 2, true)
+            (0.0, 1200.0, 2000.0, 300.0, 2, true)
         );
         assert_eq!(
             segment_half_geometry(1200.0, 2600.0, 1, Some(1)).unwrap(),
-            (1200.0, 2300.0, 300.0, 2, true)
+            (0.0, 1200.0, 2300.0, 300.0, 2, true)
         );
         assert!(segment_half_geometry(1200.0, 2600.0, 1, Some(2)).is_err());
+        assert_eq!(
+            segment_half_geometry(3000.0, 2400.0, 3, Some(1)).unwrap(),
+            (2048.0, 952.0, 2200.0, 200.0, 4, true)
+        );
     }
     #[test]
     fn sends_image_to_a_local_vision_fixture_and_compares_observations() {

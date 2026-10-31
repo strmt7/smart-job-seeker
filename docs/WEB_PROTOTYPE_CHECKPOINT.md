@@ -1004,3 +1004,9 @@ A fictional local browser fixture with two required controls and another applica
 Application records can now capture wide pages in horizontal and vertical tiles, preserving the existing six-segment budget. A page up to 4,096 pixels wide can be captured when its height also fits within that budget; larger or more complex dimensions are explicitly marked incomplete. This does not establish capture of hidden content or nested scroll areas.
 
 A headless browser captured a fictional 3,000-by-2,400-pixel page in four bounded tiles, including the tile covering the far-right field. The existing off-screen capture and collision fixture, tile-planning test and web Clippy passed. No application was submitted.
+
+## Wide-page visual review — 2026-10-31
+
+Form vision review now segments wide pages horizontally as well as vertically, using at most six captures. Freshness checks recapture the same tile, and application-record events include its coordinates. If the page exceeds the width, height or six-tile budget, coverage remains explicitly incomplete. Hidden content, nested scrollers, inaccessible frames and errors in the model remain possible.
+
+A headless browser captured and recaptured the far-right tile of a fictional wide form. Geometry tests covered the six-tile limit and subdivisions; 20 visual-review tests and web Clippy passed. No local vision model or employer site was used in this check, and no application was submitted.
