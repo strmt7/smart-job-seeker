@@ -387,7 +387,8 @@ impl Store {
         )
     }
 
-    /// Gather bounded, undecided neighbors sharing employer tokens; no title threshold.
+    /// Gather bounded, undecided neighbors sharing employer tokens. Reserve some
+    /// slots for employer-ranked candidates even when titles differ completely.
     pub fn duplicate_neighbors(&self, id: &str) -> rusqlite::Result<(Vec<StoredJob>, bool)> {
         let mut tokens = self.conn.prepare("SELECT token FROM job_employer_tokens WHERE job_id=?1 ORDER BY length(token) DESC,token LIMIT 8")?;
         let tokens = tokens
@@ -410,14 +411,35 @@ impl Store {
         let mut ranked: Vec<_> = counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         truncated |= ranked.len() > 12;
+        let source_title = match waypoint_domain::JobIdentityId::new(id) {
+            Ok(id) => self.get_job(&id)?.map(|job| job.title).unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+        let prioritize = ranked.len() > 12;
         let mut result = Vec::new();
-        for (candidate, _) in ranked.into_iter().take(12) {
+        let mut candidates = Vec::new();
+        for (candidate, count) in ranked {
             if let Ok(id) = waypoint_domain::JobIdentityId::new(&candidate) {
                 if let Some(job) = self.get_job(&id)? {
-                    result.push(job);
+                    if !prioritize || result.len() < 4 {
+                        result.push(job);
+                        continue;
+                    }
+                    let title = title_score(&source_title, &job.title);
+                    candidates.push((job, count, title));
+                    candidates.sort_by(|(a, a_count, a_title), (b, b_count, b_title)| {
+                        b_title
+                            .cmp(a_title)
+                            .then_with(|| b_count.cmp(a_count))
+                            .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+                    });
+                    candidates.truncate(8);
                 }
             }
         }
+        // Preserve a small set selected only by employer evidence, so title
+        // changes cannot exclude all semantically equivalent roles.
+        result.extend(candidates.into_iter().map(|(job, _, _)| job));
         Ok((result, truncated))
     }
 
@@ -851,6 +873,48 @@ mod tests {
             0
         );
         assert!(!store.has_duplicate_hold("a").unwrap());
+    }
+    #[test]
+    fn bounded_neighbors_prioritize_similar_titles_and_keep_employer_only_slots() {
+        let mut store = Store::in_memory().unwrap();
+        let source = job("source", "Senior Platform Engineer", "Acme Research", None);
+        store.upsert_job(&source).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                [source.id.as_str()],
+            )
+            .unwrap();
+        for index in 0..20 {
+            let id = format!("candidate-{index:02}");
+            let title = if index == 19 {
+                "Sr Platform Developer"
+            } else {
+                "Unrelated vacancy"
+            };
+            let candidate = job(&id, title, "Acme Research", None);
+            store.upsert_job(&candidate).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                    [candidate.id.as_str()],
+                )
+                .unwrap();
+        }
+        let (neighbors, truncated) = store.duplicate_neighbors("source").unwrap();
+        assert!(truncated);
+        assert_eq!(neighbors.len(), 12);
+        assert!(neighbors
+            .iter()
+            .any(|job| job.id.as_str() == "candidate-19"));
+        for index in 0..4 {
+            assert!(neighbors
+                .iter()
+                .any(|job| job.id.as_str() == format!("candidate-{index:02}")));
+        }
+        assert!(store.possible_duplicates().unwrap().is_empty());
     }
     #[test]
     fn fuzzy_title_overlap_is_bounded() {

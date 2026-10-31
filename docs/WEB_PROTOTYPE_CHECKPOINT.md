@@ -1096,3 +1096,9 @@ When a headless form inspection reports any manual-review reason, the interface 
 New assessment comparisons require identical saved inputs, model name, reported 64-character model digest, context length and scoring version. The model identity is sampled before and after each assessment; if either sample is unavailable or differs, the assessment can still be saved but is not compared. The runtime or model could change between samples. Existing saved name-only comparisons retain an explicit older-comparison warning, and older assessments without identity data cannot be compared under the new rule.
 
 Focused scoring and model-status tests passed. A resource-gated local model reported a 64-character digest and 4,096-token context; it was unloaded afterward. This did not run the complete fit assessment against the model or establish score accuracy.
+
+## Duplicate candidate ordering — 2026-11-01
+
+When more than twelve undecided employer-neighbor candidates are found, the model-search shortlist now reserves four places for the existing employer-token ordering and ranks the remaining eight by title overlap. This can bring a similar title ahead of unrelated roles without excluding all differently named roles. Selection still examines at most 100 indexed neighbors per employer token and at most eight tokens; it retains only the selected job records during ranking. It can miss matches beyond those limits or prioritize the wrong candidates, and no jobs are automatically merged.
+
+Thirteen focused duplicate-store tests passed, including a fictional crowded-employer case with a similarly named role late in ID order; web lint passed. This is not a measured duplicate-recall improvement on real postings and did not use the local model.
