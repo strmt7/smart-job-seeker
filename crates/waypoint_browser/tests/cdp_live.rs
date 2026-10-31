@@ -1389,6 +1389,30 @@ fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
 
 #[test]
 #[ignore = "launches a real browser against a fictional scrollable form"]
+fn visual_capture_requires_the_target_in_the_viewport() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_visual_viewport.html")).unwrap();
+    assert!(driver
+        .screenshot_field_context("#clipped")
+        .unwrap_err()
+        .to_string()
+        .contains("outside the visible viewport"));
+    let selector = "#candidate-name";
+    let error = driver.screenshot_field_context(selector).unwrap_err();
+    assert!(error.to_string().contains("outside the visible viewport"));
+    driver.scroll_field_into_view(selector).unwrap();
+    assert!(!driver
+        .screenshot_field_context(selector)
+        .unwrap()
+        .is_empty());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted") && !event.contains("click")));
+}
+
+#[test]
+#[ignore = "launches a real browser against a fictional scrollable form"]
 fn scroll_to_embedded_field_reveals_it_without_changing_the_answer() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let page = driver.open(&file_url("form_iframe_scroll.html")).unwrap();

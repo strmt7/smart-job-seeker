@@ -535,9 +535,19 @@ impl CdpDriver {
             .get("pageY")
             .and_then(Value::as_f64)
             .ok_or_else(|| DriverError("Viewport position unavailable".into()))?;
+        let viewport_width = viewport
+            .get("clientWidth")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or_else(|| DriverError("Viewport width unavailable".into()))?;
+        let viewport_height = viewport
+            .get("clientHeight")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or_else(|| DriverError("Viewport height unavailable".into()))?;
+        let viewport_right = page_x + viewport_width;
+        let viewport_bottom = page_y + viewport_height;
         let (page_width, page_height) = self.page_dimensions()?;
-        let left = (x + page_x - 120.0).max(0.0).min(page_width);
-        let top = (y + page_y - 70.0).max(0.0).min(page_height);
         let right = numbers
             .iter()
             .step_by(2)
@@ -551,12 +561,27 @@ impl CdpDriver {
             .copied()
             .fold(f64::NEG_INFINITY, f64::max)
             + page_y;
+        if !page_x.is_finite()
+            || !page_y.is_finite()
+            || x < 0.0
+            || y < 0.0
+            || right > viewport_right
+            || bottom > viewport_bottom
+            || right <= x + page_x
+            || bottom <= y + page_y
+        {
+            return Err(DriverError("Control is outside the visible viewport; scroll it into view before visual capture".into()));
+        }
+        let left = (x + page_x - 120.0).max(page_x).max(0.0).min(page_width);
+        let top = (y + page_y - 70.0).max(page_y).max(0.0).min(page_height);
         let width = (right + 60.0 - left)
             .clamp(220.0, 720.0)
-            .min(page_width - left);
+            .min(page_width - left)
+            .min(viewport_right - left);
         let height = (bottom + 60.0 - top)
             .clamp(80.0, 400.0)
-            .min(page_height - top);
+            .min(page_height - top)
+            .min(viewport_bottom - top);
         if right > left + width || bottom > top + height {
             return Err(DriverError(
                 "Field is too large for one visual capture".into(),
