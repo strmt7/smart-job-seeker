@@ -1010,3 +1010,9 @@ A headless browser captured a fictional 3,000-by-2,400-pixel page in four bounde
 Form vision review now segments wide pages horizontally as well as vertically, using at most six captures. Freshness checks recapture the same tile, and application-record events include its coordinates. If the page exceeds the width, height or six-tile budget, coverage remains explicitly incomplete. Hidden content, nested scrollers, inaccessible frames and errors in the model remain possible.
 
 A headless browser captured and recaptured the far-right tile of a fictional wide form. Geometry tests covered the six-tile limit and subdivisions; 20 visual-review tests and web Clippy passed. No local vision model or employer site was used in this check, and no application was submitted.
+
+## Wide job-ad captures — 2026-10-31
+
+Saved job-ad screenshots now use horizontal and vertical tiles, with each captured image's coordinates stored in metadata. The existing five-image and six-MiB total byte limits remain. Captures exceeding the tile or dimension limits are marked incomplete; a complete dimensional capture can still omit hidden content, nested scrollers or dynamic changes.
+
+A fictional 3,000-by-2,400-pixel local page produced four positioned PNG segments; the existing listing-capture fixture, tile-budget test and web Clippy passed. No employer site or application submission was involved.

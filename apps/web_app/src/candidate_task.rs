@@ -289,6 +289,28 @@ fn extract_page_text(
     )
 }
 
+/// Plan a bounded, row-major capture without assuming the listing fits one column.
+fn listing_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
+    let capped_width = width.min(3200.0);
+    let capped_height = height.min(8000.0);
+    let mut tiles = Vec::new();
+    let mut y = 0.0;
+    while y < capped_height {
+        let tile_height = (capped_height - y).min(1600.0);
+        let mut x = 0.0;
+        while x < capped_width {
+            if tiles.len() == 5 {
+                return (tiles, false);
+            }
+            let tile_width = (capped_width - x).min(1600.0);
+            tiles.push((x, y, tile_width, tile_height));
+            x += tile_width;
+        }
+        y += tile_height;
+    }
+    (tiles, width <= 3200.0 && height <= 8000.0)
+}
+
 fn capture_listing(
     browser: &mut waypoint_browser::CdpDriver,
     requested_url: &str,
@@ -298,15 +320,16 @@ fn capture_listing(
     let mut segments = Vec::new();
     let mut error = None;
     let mut dimensions = None;
+    let mut rectangles = Vec::new();
+    let mut full = false;
     match browser.page_dimensions() {
         Ok((width, height)) => {
             dimensions = Some((width, height));
-            let mut y = 0.0;
+            let (tiles, within_limits) = listing_tiles(width, height);
             let mut bytes = 0usize;
-            while y < height.min(8000.0) && segments.len() < 5 {
-                let part = (height.min(8000.0) - y).min(1600.0);
+            for (x, y, tile_width, tile_height) in tiles {
                 let image = browser
-                    .screenshot_segment(width.min(1600.0), y, part)
+                    .screenshot_tile(x, y, tile_width, tile_height)
                     .and_then(|encoded| {
                         if encoded.len() > 3 * 1024 * 1024 {
                             return Err(waypoint_applications::driver::DriverError(
@@ -326,7 +349,8 @@ fn capture_listing(
                     {
                         bytes += image.len();
                         segments.push(image);
-                        y += part;
+                        rectangles
+                            .push(json!({"x":x,"y":y,"width":tile_width,"height":tile_height}));
                     }
                     Ok(_) => {
                         error = Some("Listing capture exceeded the byte limit".to_owned());
@@ -338,11 +362,11 @@ fn capture_listing(
                     }
                 }
             }
+            full = within_limits && error.is_none();
         }
         Err(e) => error = Some(e.to_string()),
     }
-    let full = dimensions.is_some_and(|(w, h)| w <= 1600.0 && h <= 8000.0) && error.is_none();
-    let mut metadata = json!({"requested_url":requested_url,"source_url":source_url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
+    let mut metadata = json!({"requested_url":requested_url,"source_url":source_url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"segment_rectangles":rectangles,"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
     let raw_size: usize = scripts.iter().map(String::len).sum();
     if scripts.is_empty() {
         metadata["structured_source_status"] = json!("unavailable");
@@ -502,6 +526,54 @@ pub fn complete(id: &str, value: Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn listing_tile_plan_limits_work_and_exposes_incomplete_coverage() {
+        let (tiles, complete) = super::listing_tiles(3000.0, 2400.0);
+        assert!(complete);
+        assert_eq!(tiles.len(), 4);
+        assert_eq!(tiles[3], (1600.0, 1600.0, 1400.0, 800.0));
+        assert!(super::listing_tiles(1600.0, 8000.0).1);
+        let (tiles, complete) = super::listing_tiles(3200.0, 8000.0);
+        assert_eq!(tiles.len(), 5);
+        assert!(!complete);
+        assert!(!super::listing_tiles(3201.0, 100.0).1);
+    }
+    #[test]
+    #[ignore = "starts a local browser against a fictional wide listing"]
+    fn captures_wide_listing_with_positioned_segments() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-wide-capture.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(url.as_str()).unwrap();
+        let capture = super::capture_listing(
+            &mut browser,
+            "https://example.invalid/job",
+            url.as_str(),
+            &[],
+        );
+        assert_eq!(capture.segments.len(), 4);
+        assert_eq!(capture.metadata["full_dimensions_captured"], true);
+        assert_eq!(
+            capture.metadata["segment_rectangles"][3]["x"].as_f64(),
+            Some(1600.0)
+        );
+        assert_eq!(
+            capture.metadata["segment_rectangles"][3]["y"].as_f64(),
+            Some(1600.0)
+        );
+        assert!(capture
+            .segments
+            .iter()
+            .all(|png| png.starts_with(b"\x89PNG\r\n\x1a\n")));
+        assert!(browser
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
     #[test]
     fn listing_keeps_embedded_warnings_but_stops_on_captcha() {
         let walls = vec![
