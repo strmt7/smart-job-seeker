@@ -267,6 +267,73 @@ def add_ollama_runtime(archive, local_archives=None, *, specs=OLLAMA_ARCHIVES, l
     return hashes
 
 
+def add_ollama_from_package(archive, package_path, expected_hash):
+    """Reuse a caller-pinned package while rechecking every runtime file."""
+    if not re.fullmatch(r'[a-fA-F0-9]{64}', expected_hash or ''):
+        raise ValueError('A SHA-256 is required to reuse an Ollama package')
+    package_path = Path(package_path)
+    with package_path.open('rb') as source:
+        digest = hashlib.sha256()
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+        if digest.hexdigest() != expected_hash.lower():
+            raise ValueError('The previous package does not match the specified SHA-256')
+        source.seek(0)
+        with zipfile.ZipFile(source) as previous:
+            try:
+                manifest_info = previous.getinfo('app/package-manifest.json')
+            except KeyError as error:
+                raise ValueError('The previous package manifest is missing') from error
+            if manifest_info.file_size > 8 * 1024 * 1024:
+                raise ValueError('The previous package manifest exceeds the size limit')
+            manifest = json.loads(previous.read(manifest_info))
+            if not isinstance(manifest, dict):
+                raise ValueError('The previous package manifest is invalid')
+            files = manifest.get('ollama_files')
+            if not isinstance(files, dict) or not 1 <= len(files) <= 50000:
+                raise ValueError('The previous package lacks a bounded Ollama inventory')
+            seen = set()
+            for name, value in files.items():
+                if not isinstance(name, str) or not name.startswith('dependencies/ollama/') or not isinstance(value, str) or not re.fullmatch(r'[a-fA-F0-9]{64}', value):
+                    raise ValueError('The previous Ollama inventory is invalid')
+                relative = name.removeprefix('dependencies/ollama/')
+                parts = relative.split('/')
+                if (not relative or '\\' in relative or any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in parts)
+                    or any(re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in parts)
+                    or re.search(r'[\x00-\x1f:*?"<>|]', relative) or relative.casefold() in seen):
+                    raise ValueError('The previous Ollama inventory contains an invalid path')
+                seen.add(relative.casefold())
+            required = {'ollama.exe', 'license', 'lib/ollama/llama_cpp_license', 'lib/ollama/vulkan/ggml-vulkan.dll', 'lib/ollama/rocm_v7_1/ggml-hip.dll'}
+            if not required.issubset(seen):
+                raise ValueError('The previous Ollama inventory is incomplete')
+            if files.get('dependencies/ollama/LICENSE', '').lower() != OLLAMA_LICENSE_SHA256:
+                raise ValueError('The previous package has an unexpected Ollama license')
+            prefix = 'app/dependencies/ollama/'
+            entries = [item for item in previous.infolist() if item.filename.startswith(prefix) and not item.is_dir()]
+            names = [item.filename.removeprefix('app/') for item in entries]
+            if len(entries) != len(files) or len(set(name.casefold() for name in names)) != len(entries) or set(names) != set(files):
+                raise ValueError('The previous Ollama files do not match its inventory')
+            if sum(item.file_size for item in entries) > 6 * 1024**3:
+                raise ValueError('The previous Ollama runtime exceeds the size limit')
+            for item, name in zip(entries, names):
+                if item.flag_bits & 1 or ((item.external_attr >> 16) & 0o170000) == 0o120000:
+                    raise ValueError('The previous Ollama runtime contains an unsupported entry')
+                sha = hashlib.sha256()
+                with previous.open(item) as src, archive.open('app/' + name, 'w', force_zip64=True) as dest:
+                    while chunk := src.read(1024 * 1024):
+                        sha.update(chunk)
+                        dest.write(chunk)
+                if sha.hexdigest() != files[name].lower():
+                    raise ValueError('A previous Ollama runtime file does not match its inventory')
+        source.seek(0)
+        final_digest = hashlib.sha256()
+        while chunk := source.read(1024 * 1024):
+            final_digest.update(chunk)
+        if final_digest.hexdigest() != expected_hash.lower():
+            raise ValueError('The previous package changed while it was being copied')
+        return files
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, help='New ZIP path inside this repository')
@@ -277,12 +344,16 @@ def main():
     ollama = parser.add_mutually_exclusive_group()
     ollama.add_argument('--ollama-archive-dir', help='Optional directory of pinned Ollama archives for offline packaging')
     ollama.add_argument('--no-ollama', action='store_true', help='Do not bundle the local model runtime')
+    ollama.add_argument('--ollama-from-package', help='Reuse the local runtime from a previously verified package')
+    parser.add_argument('--ollama-package-sha256', help='Required SHA-256 of the previous package')
     office = parser.add_mutually_exclusive_group()
     office.add_argument('--libreoffice-dir', help='Bundle this complete LibreOffice distribution for PDF conversion')
     office.add_argument('--libreoffice-msi', help='Use a local copy of the pinned LibreOffice MSI for offline provisioning')
     office.add_argument('--no-libreoffice', action='store_true', help='Do not automatically bundle an installed LibreOffice distribution')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
+    if bool(args.ollama_from_package) != bool(args.ollama_package_sha256):
+        raise ValueError('--ollama-from-package and --ollama-package-sha256 must be used together')
     if not args.no_ollama:
         target_dir = REPO / 'target'
         target_dir.mkdir(exist_ok=True)
@@ -384,7 +455,12 @@ def main():
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
             office_hashes = add_libreoffice(archive, office_root) if office_root else {}
-            ollama_hashes = {} if args.no_ollama else add_ollama_runtime(archive, args.ollama_archive_dir)
+            if args.no_ollama:
+                ollama_hashes = {}
+            elif args.ollama_from_package:
+                ollama_hashes = add_ollama_from_package(archive, args.ollama_from_package, args.ollama_package_sha256)
+            else:
+                ollama_hashes = add_ollama_runtime(archive, args.ollama_archive_dir)
             runtime_hashes = {}
             for info in archive.infolist():
                 if info.filename.startswith('app/dependencies/python/'):

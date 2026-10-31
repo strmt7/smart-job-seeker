@@ -156,4 +156,77 @@ with tempfile.TemporaryDirectory(prefix='waypoint-ollama-fixture-', dir=target) 
         assert 'license' in str(error)
     else:
         raise AssertionError('An unreviewed runtime license was accepted')
+    make_archive(rocm, [('lib/ollama/rocm_v7_1/ggml-hip.dll', b'rocm')])
+    previous = root / 'previous.zip'
+    with zipfile.ZipFile(previous, 'w') as archive:
+        inventory = packager.add_ollama_runtime(archive, root, specs=(archive_spec(base), archive_spec(rocm)))
+        archive.writestr('app/package-manifest.json', __import__('json').dumps({'ollama_files': inventory}))
+    previous_hash = hashlib.sha256(previous.read_bytes()).hexdigest()
+    with zipfile.ZipFile(root / 'reused.zip', 'w') as archive:
+        reused = packager.add_ollama_from_package(archive, previous, previous_hash)
+    assert reused == inventory
+    try:
+        with zipfile.ZipFile(root / 'wrong-source.zip', 'w') as archive:
+            packager.add_ollama_from_package(archive, previous, '0' * 64)
+    except ValueError as error:
+        assert 'SHA-256' in str(error)
+    else:
+        raise AssertionError('A previous package with the wrong hash was accepted')
+    invalid_manifest = root / 'invalid-manifest.zip'
+    with zipfile.ZipFile(invalid_manifest, 'w') as archive:
+        archive.writestr('app/package-manifest.json', '[]')
+    try:
+        with zipfile.ZipFile(root / 'invalid-manifest-copy.zip', 'w') as archive:
+            packager.add_ollama_from_package(archive, invalid_manifest, hashlib.sha256(invalid_manifest.read_bytes()).hexdigest())
+    except ValueError as error:
+        assert 'manifest is invalid' in str(error)
+    else:
+        raise AssertionError('An invalid prior manifest was accepted')
+    changed_during_copy = root / 'changed-during-copy.zip'
+    changed_during_copy.write_bytes(previous.read_bytes())
+    class MutatingArchive:
+        def __init__(self, wrapped): self.wrapped, self.changed = wrapped, False
+        def open(self, *args, **kwargs):
+            inner = self.wrapped.open(*args, **kwargs)
+            outer = self
+            class FileContext:
+                def __enter__(self): return inner.__enter__()
+                def __exit__(self, *exc):
+                    result = inner.__exit__(*exc)
+                    if not outer.changed:
+                        with changed_during_copy.open('ab') as source: source.write(b'changed')
+                        outer.changed = True
+                    return result
+            return FileContext()
+    try:
+        with zipfile.ZipFile(root / 'changed-copy.zip', 'w') as archive:
+            packager.add_ollama_from_package(MutatingArchive(archive), changed_during_copy, hashlib.sha256(changed_during_copy.read_bytes()).hexdigest())
+    except ValueError as error:
+        assert 'changed while' in str(error)
+    else:
+        raise AssertionError('A package changed during copying was accepted')
+    unlisted = root / 'unlisted-previous.zip'
+    with zipfile.ZipFile(previous) as source, zipfile.ZipFile(unlisted, 'w') as dest:
+        for entry in source.infolist(): dest.writestr(entry.filename, source.read(entry))
+        dest.writestr('app/dependencies/ollama/unlisted.dll', b'extra')
+    try:
+        with zipfile.ZipFile(root / 'unlisted-copy.zip', 'w') as archive:
+            packager.add_ollama_from_package(archive, unlisted, hashlib.sha256(unlisted.read_bytes()).hexdigest())
+    except ValueError as error:
+        assert 'do not match its inventory' in str(error)
+    else:
+        raise AssertionError('An unlisted previous runtime file was accepted')
+    corrupted = root / 'corrupt-previous.zip'
+    with zipfile.ZipFile(previous) as source, zipfile.ZipFile(corrupted, 'w') as dest:
+        for entry in source.infolist():
+            value = source.read(entry)
+            if entry.filename == 'app/dependencies/ollama/ollama.exe': value = b'altered'
+            dest.writestr(entry.filename, value)
+    try:
+        with zipfile.ZipFile(root / 'corrupt-copy.zip', 'w') as archive:
+            packager.add_ollama_from_package(archive, corrupted, hashlib.sha256(corrupted.read_bytes()).hexdigest())
+    except ValueError as error:
+        assert 'does not match its inventory' in str(error)
+    else:
+        raise AssertionError('A damaged previous runtime was accepted')
 print('Fictional Ollama bundle integrity checks passed.')
