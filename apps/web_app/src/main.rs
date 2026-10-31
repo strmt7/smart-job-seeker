@@ -4094,6 +4094,45 @@ fn serve(
             }
             json_reply(stream, "200 OK", result);
         }
+        "/api/form/selection-snapshot" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"].as_str().ok_or("missing field")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && !s.filled && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired or already filled")?;
+            let field = current
+                .preview
+                .schema
+                .fields
+                .iter()
+                .find(|f| f.selector == selector)
+                .ok_or("Field is no longer present")?;
+            if field.sensitive
+                || current.preview.model_review_selectors.contains(selector)
+                || !matches!(
+                    field.field_type,
+                    waypoint_applications::form_mapping::FormFieldType::Select { .. }
+                )
+            {
+                return Err("This field requires manual handling".into());
+            }
+            check_answer_page(current)?;
+            let snapshot = current
+                .driver
+                .selected_option_snapshot(selector)
+                .map_err(|e| e.to_string())?;
+            let digest = form_preview::selection_snapshot_digest(
+                &format!("prefill-{}", current.id),
+                selector,
+                &snapshot,
+            );
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"selection":snapshot,"digest":digest}),
+            );
+        }
         "/api/form/fill" => {
             if body["reviewed"].as_bool() != Some(true) {
                 return Err("Explicit review is required".into());
@@ -4128,17 +4167,61 @@ fn serve(
                 return Err("Profile changed; inspect the current page again".into());
             }
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
+            let mut replacements = form_preview::ReviewedReplacements::new();
+            if let Some(items) = body.get("reviewed_replacements") {
+                let items = items
+                    .as_array()
+                    .filter(|v| v.len() <= 20)
+                    .ok_or("Invalid replacement approvals")?;
+                for item in items {
+                    let selector = item["selector"]
+                        .as_str()
+                        .ok_or("Invalid replacement field")?;
+                    let digest = item["digest"]
+                        .as_str()
+                        .filter(|v| {
+                            v.len() == 64
+                                && v.bytes()
+                                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                        })
+                        .ok_or("Invalid replacement digest")?;
+                    let field = prepared
+                        .schema
+                        .fields
+                        .iter()
+                        .find(|f| f.selector == selector)
+                        .ok_or("Unknown replacement field")?;
+                    if item["reviewed"].as_bool() != Some(true)
+                        || field.sensitive
+                        || prepared.model_review_selectors.contains(selector)
+                        || !matches!(
+                            field.field_type,
+                            waypoint_applications::form_mapping::FormFieldType::Select { .. }
+                        )
+                        || !prepared
+                            .suggestions
+                            .iter()
+                            .any(|m| m.field_selector == selector)
+                        || replacements
+                            .insert(selector.to_owned(), digest.to_owned())
+                            .is_some()
+                    {
+                        return Err(
+                            "Replacement approval must identify a reviewed, selected dropdown"
+                                .into(),
+                        );
+                    }
+                }
+            }
             let mut requested_fields = form_preview::requested_field_records(&prepared)?;
             attach_answer_provenance(ws, current, &body, &mut requested_fields)?;
             let intent =
                 IntentId::new(format!("prefill-{}", current.id)).map_err(|e| e.to_string())?;
             let grant_id = GrantId::new(random_id()?).map_err(|e| e.to_string())?;
-            let payload =
-                serde_json::to_string(&prepared.suggestions).map_err(|e| e.to_string())?;
             let mut grant = ApprovalGrant {
                 id: grant_id,
                 intent_id: IntentId::new(intent.as_str()).map_err(|e| e.to_string())?,
-                bound_payload_sha256: Sha256Digest::of(&payload),
+                bound_payload_sha256: form_preview::fill_payload_digest(&prepared, &replacements)?,
                 profile_revision: 0,
                 packet_sha256: Sha256Digest::of(&profile.to_string()),
                 form_schema_sha256: Sha256Digest::of(&current.preview.schema.schema_hash_input()),
@@ -4168,9 +4251,12 @@ fn serve(
             }
             current.preview.suggestions = prepared.suggestions;
             form_preview::refresh_required_review(&mut current.preview);
-            if let Err(error) =
-                form_preview::preflight_existing_values(&mut current.driver, &current.preview)
-            {
+            if let Err(error) = form_preview::preflight_existing_values(
+                &mut current.driver,
+                &current.preview,
+                intent.as_str(),
+                &replacements,
+            ) {
                 let review_error = ws
                     .mark_manual_review(
                         &current.job_id,
@@ -4184,7 +4270,7 @@ fn serve(
                 let note = review_error
                     .map(|e| format!(" The manual-review flag could not be saved: {e}."))
                     .unwrap_or_default();
-                return Err(format!("No fields were filled because an existing value needs review: {error}. Unselect that field or inspect the browser, then retry.{note}"));
+                return Err(format!("No fields were filled because an existing value needs review: {error}. Unselect that field or inspect the browser. For dropdowns, you can review a replacement in this panel, then retry.{note}"));
             }
             if current.record.is_none() {
                 match required_attempt_record(ws, &current.job_id) {
@@ -4207,7 +4293,7 @@ fn serve(
                 }
             }
             if let Some(record) = &mut current.record {
-                if let Err(error) = record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions,"fields":requested_fields,"note":"These are requested answers, not proof that the fields were filled or submitted."})) {
+                if let Err(error) = record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions,"reviewed_replacements":replacements,"fields":requested_fields,"note":"These are requested answers, not proof that the fields were filled or submitted."})) {
                     let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written; no fields were filled", now()).err();
                     current.preview = original_preview;
                     *session = Some(current);
@@ -4217,12 +4303,12 @@ fn serve(
             }
             current.filled = true;
             let mut completed = Vec::new();
-            let result = form_preview::apply_reviewed_text_fields(
+            let result = form_preview::apply_reviewed_text_fields_with_replacements(
                 ws,
                 &current.job_id,
                 &mut current.driver,
                 &current.url,
-                &current.preview,
+                (&current.preview, &replacements),
                 &mut grant,
                 form_preview::FillContext {
                     intent: &intent,
@@ -7309,25 +7395,96 @@ mod tests {
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let mut request = |selectors: Value| {
-            let body = json!({"session_id":"existing-session","reviewed":true,"selectors":selectors,"answers":[]}).to_string();
+        let request = |ws: &mut Workspace,
+                       session: &mut Option<ReviewSession>,
+                       path: &str,
+                       body: Value|
+         -> Result<Value, String> {
+            let body = body.to_string();
             let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            write!(client,"POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            write!(client,"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
             let (mut server, _) = listener.accept().unwrap();
-            serve(&mut server, &mut ws, &mut session, "test-token", port)
+            serve(&mut server, ws, session, "test-token", port)?;
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1)
+                .map_err(|e| e.to_string())
         };
-        let error = request(json!(["#first", "#second"])).unwrap_err();
+        let fill = |selectors: Value, replacements: Value| json!({"session_id":"existing-session","reviewed":true,"selectors":selectors,"answers":[],"reviewed_replacements":replacements});
+        let error = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first", "#second"]), json!([])),
+        )
+        .unwrap_err();
         assert!(
             error.starts_with("No fields were filled because an existing value needs review:"),
             "{error}"
         );
-        let choice_error = request(json!(["#first", "#existing-choice"])).unwrap_err();
+        let choice_error = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first", "#existing-choice"]), json!([])),
+        )
+        .unwrap_err();
         assert!(
             choice_error.contains("different selection"),
             "{choice_error}"
         );
-        assert!(request(json!(["#first"])).is_ok());
-        drop(request);
+        let snapshot = request(
+            &mut ws,
+            &mut session,
+            "/api/form/selection-snapshot",
+            json!({"session_id":"existing-session","selector":"#existing-choice"}),
+        )
+        .unwrap();
+        assert_eq!(snapshot["selection"]["label"], "Alpha");
+        let approvals =
+            json!([{"selector":"#existing-choice","digest":snapshot["digest"],"reviewed":true}]);
+        let not_reviewed =
+            json!([{"selector":"#existing-choice","digest":snapshot["digest"],"reviewed":false}]);
+        assert!(request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first", "#existing-choice"]), not_reviewed)
+        )
+        .is_err());
+        let command =
+            |label: &str| waypoint_applications::form_mapping::BrowserCommand::SelectOption {
+                selector: "#existing-choice".into(),
+                label: label.into(),
+            };
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&command("Beta"))
+            .unwrap();
+        let stale = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first", "#existing-choice"]), approvals.clone()),
+        )
+        .unwrap_err();
+        assert!(stale.contains("changed since"), "{stale}");
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&command("Alpha"))
+            .unwrap();
+        assert!(request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first", "#existing-choice"]), approvals)
+        )
+        .is_ok());
         let current = session.as_mut().unwrap();
         assert!(current.filled);
         current
@@ -7343,7 +7500,7 @@ mod tests {
             .verify_choice(
                 &waypoint_applications::form_mapping::BrowserCommand::SelectOption {
                     selector: "#existing-choice".into(),
-                    label: "Alpha".into(),
+                    label: "Beta".into(),
                 },
             )
             .unwrap();

@@ -1040,3 +1040,9 @@ A fictional local HTTP and browser test first encountered a conflicting field, t
 The existing-value preflight now also checks supported native selects, multi-selects, radio groups, datalists and checkboxes. A matching selection can proceed; a different existing selection stops the batch for review. An empty select value, no multi-select or radio selection, and an unchecked checkbox are treated as unselected. Some sites use empty or unchecked states as meaningful answers, so these checks cannot establish user intent; custom controls still require review. A default nonempty selection may also cause a conservative stop. The user can exclude the field or inspect the browser and retry.
 
 Fictional browser tests covered empty, matching and conflicting controls. A local endpoint test confirmed that a selected-option conflict leaves the form unchanged and the session available for retry; the existing autofill endpoint fixture and web Clippy passed. No employer site, local model or application submission was used.
+
+## Reviewed dropdown replacement — 2026-10-31
+
+A form review can now display a supported native dropdown's current label and value and let the user explicitly approve replacing that specific selection with their reviewed answer. The approval is bound to the session, field and selection snapshot; the one-use prefill grant also binds the replacement approval and requested answers. A changed selection or edited replacement answer requires review again. Other existing-value conflicts still use the manual-review path, and native dropdown support does not cover datalists or custom controls.
+
+A fictional local browser and endpoint test rejected an unreviewed replacement and a changed selection, then filled after a valid review. Focused UI tests covered acknowledgment and changes during snapshot retrieval; ordinary prefill tests and web Clippy passed. No model or employer site was used, and no application was submitted.

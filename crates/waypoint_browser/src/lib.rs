@@ -2612,6 +2612,52 @@ impl BrowserDriver for CdpDriver {
         Ok(())
     }
 
+    fn selected_option_snapshot(
+        &mut self,
+        selector: &str,
+    ) -> Result<waypoint_applications::driver::SelectSnapshot, DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Select field is no longer present".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Existing selection cannot be inspected".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!(this instanceof HTMLSelectElement) || this.multiple || !this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]') || this.options.length > 1000 || this.selectedOptions.length !== 1 || this.selectedIndex < 0) return null;
+            const o = this.selectedOptions[0];
+            if (o.label.length > 500 || o.value.length > 500) return null;
+            return {index:this.selectedIndex, label:o.label, value:o.value};
+        }"#,"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some() {
+            return Err(DriverError("Existing selection cannot be inspected".into()));
+        }
+        let value = result
+            .pointer("/result/value")
+            .ok_or_else(|| DriverError("Existing selection cannot be inspected".into()))?;
+        let index = value["index"]
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n < 1000)
+            .ok_or_else(|| DriverError("Existing selection cannot be inspected".into()))?;
+        let read = |key: &str| {
+            value[key]
+                .as_str()
+                .filter(|v| v.len() <= 2000 && !v.chars().any(char::is_control))
+                .map(str::to_owned)
+                .ok_or_else(|| DriverError("Existing selection cannot be displayed".into()))
+        };
+        Ok(waypoint_applications::driver::SelectSnapshot {
+            index,
+            label: read("label")?,
+            value: read("value")?,
+        })
+    }
+
     fn ensure_choice_replaceable(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
         let (selector, kind) = match command {
             BrowserCommand::SelectOption { selector, .. } => (selector, "select"),

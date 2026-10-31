@@ -175,11 +175,57 @@ pub struct FillContext<'a> {
     pub completed: &'a mut Vec<Value>,
 }
 
+pub type ReviewedReplacements = std::collections::BTreeMap<String, String>;
+
+pub fn selection_snapshot_digest(
+    scope: &str,
+    selector: &str,
+    snapshot: &waypoint_applications::driver::SelectSnapshot,
+) -> String {
+    Sha256Digest::of(
+        &serde_json::json!({"scope":scope,"selector":selector,"selection":snapshot}).to_string(),
+    )
+    .as_str()
+    .to_owned()
+}
+
+pub fn fill_payload_digest(
+    preview: &FormPreview,
+    replacements: &ReviewedReplacements,
+) -> Result<Sha256Digest, String> {
+    let payload = if replacements.is_empty() {
+        serde_json::to_string(&preview.suggestions)
+    } else {
+        serde_json::to_string(&serde_json::json!({"suggestions":preview.suggestions,"reviewed_replacements":replacements}))
+    }.map_err(|e| e.to_string())?;
+    Ok(Sha256Digest::of(&payload))
+}
+
 fn check_existing_value(
     driver: &mut dyn BrowserDriver,
     field: &waypoint_applications::form_mapping::FormField,
     value: &PacketValue,
+    scope: &str,
+    replacements: &ReviewedReplacements,
 ) -> Result<(), String> {
+    if let Some(expected) = replacements.get(&field.selector) {
+        if !matches!(
+            (&field.field_type, value),
+            (FormFieldType::Select { .. }, PacketValue::Text(_))
+        ) {
+            return Err("Replacement approval does not apply to this field".into());
+        }
+        let snapshot = driver
+            .selected_option_snapshot(&field.selector)
+            .map_err(|error| error.to_string())?;
+        if selection_snapshot_digest(scope, &field.selector, &snapshot) != *expected {
+            return Err(format!(
+                "{} changed since the existing selection was reviewed",
+                field.label
+            ));
+        }
+        return Ok(());
+    }
     match (&field.field_type, value) {
         (
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
@@ -220,6 +266,8 @@ fn check_existing_value(
 pub fn preflight_existing_values(
     driver: &mut dyn BrowserDriver,
     preview: &FormPreview,
+    scope: &str,
+    replacements: &ReviewedReplacements,
 ) -> Result<(), String> {
     for mapping in &preview.suggestions {
         let field = preview
@@ -228,7 +276,7 @@ pub fn preflight_existing_values(
             .iter()
             .find(|field| field.selector == mapping.field_selector)
             .ok_or("Reviewed field is unavailable")?;
-        check_existing_value(driver, field, &mapping.value)?;
+        check_existing_value(driver, field, &mapping.value, scope, replacements)?;
     }
     Ok(())
 }
@@ -236,6 +284,7 @@ pub fn preflight_existing_values(
 /// Apply only the exact reviewed mappings, using one prefill grant. This path
 /// has no submit or arbitrary click operation. The caller must keep the same
 /// browser session and acquire permission for the actual destination first.
+#[cfg(test)]
 pub fn apply_reviewed_text_fields(
     ws: &mut Workspace,
     job_id: &JobIdentityId,
@@ -245,6 +294,27 @@ pub fn apply_reviewed_text_fields(
     grant: &mut ApprovalGrant,
     context: FillContext<'_>,
 ) -> Result<usize, String> {
+    apply_reviewed_text_fields_with_replacements(
+        ws,
+        job_id,
+        driver,
+        url,
+        (preview, &ReviewedReplacements::new()),
+        grant,
+        context,
+    )
+}
+
+pub fn apply_reviewed_text_fields_with_replacements(
+    ws: &mut Workspace,
+    job_id: &JobIdentityId,
+    driver: &mut dyn BrowserDriver,
+    url: &str,
+    review: (&FormPreview, &ReviewedReplacements),
+    grant: &mut ApprovalGrant,
+    context: FillContext<'_>,
+) -> Result<usize, String> {
+    let (preview, replacements) = review;
     let FillContext {
         intent,
         packet_digest,
@@ -315,10 +385,9 @@ pub fn apply_reviewed_text_fields(
         if field.sensitive || preview.model_review_selectors.contains(&field.selector) || !valid {
             return Err("Field requires manual handling".into());
         }
-        check_existing_value(driver, field, &mapping.value)?;
+        check_existing_value(driver, field, &mapping.value, intent.as_str(), replacements)?;
     }
-    let payload = serde_json::to_string(&preview.suggestions).map_err(|e| e.to_string())?;
-    let payload_digest = Sha256Digest::of(&payload);
+    let payload_digest = fill_payload_digest(preview, replacements)?;
     let schema_digest = Sha256Digest::of(&fresh.schema.schema_hash_input());
     grant
         .authorize(
@@ -348,7 +417,7 @@ pub fn apply_reviewed_text_fields(
             .iter()
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
-        check_existing_value(driver, field, &mapping.value)?;
+        check_existing_value(driver, field, &mapping.value, intent.as_str(), replacements)?;
         let command = match (&field.field_type, &mapping.value) {
             (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
                 BrowserCommand::SelectOptions {
@@ -647,6 +716,45 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn replacement_approval_binds_session_selection_and_fill_payload() {
+        let snapshot = waypoint_applications::driver::SelectSnapshot {
+            index: 1,
+            label: "Alpha".into(),
+            value: "a".into(),
+        };
+        let digest = selection_snapshot_digest("prefill-session-a", "#choice", &snapshot);
+        assert_ne!(
+            digest,
+            selection_snapshot_digest("prefill-session-b", "#choice", &snapshot)
+        );
+        assert_ne!(
+            digest,
+            selection_snapshot_digest("prefill-session-a", "#other", &snapshot)
+        );
+        let preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![ProposedMapping {
+                field_selector: "#choice".into(),
+                value: PacketValue::Text("Beta".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let plain = fill_payload_digest(&preview, &ReviewedReplacements::new()).unwrap();
+        let mut approved = ReviewedReplacements::new();
+        approved.insert("#choice".into(), digest);
+        let bound = fill_payload_digest(&preview, &approved).unwrap();
+        assert_ne!(plain, bound);
+        approved.insert("#choice".into(), "0".repeat(64));
+        assert_ne!(bound, fill_payload_digest(&preview, &approved).unwrap());
+    }
 
     #[test]
     #[ignore = "starts a local browser against fictional preselected choices"]

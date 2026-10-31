@@ -48,6 +48,14 @@ pub struct PageLink {
 /// A full inventory at this bound may omit additional links.
 pub const PAGE_LINK_LIMIT: usize = 200;
 
+/// The bounded current selection shown to the user before a replacement.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SelectSnapshot {
+    pub index: usize,
+    pub label: String,
+    pub value: String,
+}
+
 pub trait BrowserDriver {
     /// Open the destination and describe the live form.
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError>;
@@ -86,6 +94,9 @@ pub trait BrowserDriver {
     /// Refuse to replace a different existing choice without manual review.
     fn ensure_choice_replaceable(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
         Err(DriverError("Existing choice cannot be inspected".into()))
+    }
+    fn selected_option_snapshot(&mut self, _selector: &str) -> Result<SelectSnapshot, DriverError> {
+        Err(DriverError("Existing selection cannot be inspected".into()))
     }
     /// Verify a supported choice without changing it.
     fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
