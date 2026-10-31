@@ -300,10 +300,12 @@ pub fn suggest_with_review(
                 let mut record_review = |output: &Value| {
                     let reviews = output.get("manual_review").and_then(Value::as_array);
                     let valid = reviews.is_some_and(|items| {
+                        let mut seen = HashSet::new();
                         items.len() <= chunk.len()
                             && items.iter().all(|item| {
                                 item.as_str().is_some_and(|selector| {
-                                    chunk.iter().any(|field| field.selector == selector)
+                                    seen.insert(selector)
+                                        && chunk.iter().any(|field| field.selector == selector)
                                 })
                             })
                     });
@@ -1573,6 +1575,36 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("did not provide a valid")));
+        assert!(invalid.0.is_empty());
+    }
+
+    #[test]
+    fn duplicate_review_entries_require_repair_and_keep_original_flags() {
+        let mut schema = form();
+        let mut other = schema.fields[0].clone();
+        other.selector = "#other".into();
+        schema.fields.push(other);
+        let profile = json!({"first_name":"Avery"});
+        let duplicate = json!({"mappings":[],"manual_review":["#candidate", "#candidate"]});
+        let mut repaired = SequenceInference(vec![duplicate.clone(), json!({"manual_review":[]})]);
+        let (_, warnings, flags) = suggest_with_review(&mut repaired, &schema, &profile).unwrap();
+        assert!(flags.contains("#candidate"));
+        assert!(!warnings
+            .iter()
+            .any(|w| w.contains("did not provide a valid")));
+        assert!(repaired.0.is_empty());
+
+        let mut invalid = SequenceInference(vec![
+            duplicate,
+            json!({"manual_review":["#other", "#other"]}),
+        ]);
+        let (mappings, warnings, flags) =
+            suggest_with_review(&mut invalid, &schema, &profile).unwrap();
+        assert!(mappings.is_empty());
+        assert!(flags.contains("#candidate") && flags.contains("#other"));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("did not provide a valid")));
         assert!(invalid.0.is_empty());
     }
 
