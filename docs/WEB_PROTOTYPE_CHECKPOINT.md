@@ -1068,3 +1068,9 @@ The acknowledgment checkbox is aligned with its label in the existing-answer rev
 The form-review summary now combines live-value checks from the segments that actually observed a field. A field first seen on a later segment can therefore show a matching transcription and live value; any unconfirmed check, ambiguous label, duplicate observation or stale capture remains unconfirmed. Segment captures can still change between checks, and the model's transcription can be wrong.
 
 Synthetic UI tests covered later-segment matches, conflicting live checks, mismatched expectations and changed captures. A fictional mocked-backend browser fixture rendered the later-segment match with no browser errors. No local model, live employer site or application submission was used.
+
+## Converted text comparison — 2026-11-01
+
+After converting UTF-8 text or Markdown as plain text, the background worker compares the source with selectable PDF text, ignoring whitespace differences. The result is advisory: a match does not check layout, reading order in an ATS, or visual correctness. A difference or unavailable extractor is reported without discarding the PDF. Sources over 200,000 bytes are not compared; DOCX and image conversions are not compared. The result panel remains visible in the current page and links to the PDF preview; it is not persisted across reloads.
+
+A fictional Unicode text document was converted with the locally installed office and PDF runtimes and its extracted text matched. Unit tests covered differences, missing extraction, the size limit and conversion result recovery; a simulated UI test covered the result messages and preview action. No local model or employer system was tested.
