@@ -1,0 +1,5 @@
+# Document vision qualification, 2026-10-31
+
+A fictional two-page PDF fixture has clean text on page one and deliberately overprinted text on page two. The packaged PDF worker rendered both pages in a local test. The ignored `live_model_detects_overlapping_document_text` test uses the production page renderer, prompt and vision adapter, and requires an eligible model already resident in the local runtime. It checks that page two receives a layout or legibility finding describing the defect. Set `WAYPOINT_PDF_PYTHON` to the installed PDF worker and `WAYPOINT_VISION_BENCHMARK_MODEL` to the resident model before running the test.
+
+The live vision test was not run: the resource-gated startup of `gemma4:12b-it-qat` refused to load it because observed available GPU memory was below the conservative estimate. At that time the runtime reported no resident models, system free memory was approximately 26.1 GiB, and total dedicated GPU usage was approximately 5.8 GiB. These are point-in-time observations, not peak measurements. The fixture and rendering check do not establish that the model can detect document defects or that visually inspected documents are correct.
