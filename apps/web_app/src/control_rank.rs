@@ -556,6 +556,11 @@ mod tests {
             json!({"task_id":id,"index":0}),
         );
         let vision_id = vision["task_id"].as_str().unwrap();
+        assert!(ws
+            .manual_review_reasons(&job_id)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == format!("Control visual review pending: {vision_id}")));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         let observed = loop {
             let value = call(
@@ -575,6 +580,11 @@ mod tests {
             observed["status"], observed["comparison"], observed["buttons"]
         );
         assert_eq!(observed["status"], "complete");
+        assert!(!ws
+            .manual_review_reasons(&job_id)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == format!("Control visual review pending: {vision_id}")));
         assert!(observed["screenshot"]
             .as_str()
             .is_some_and(|image| !image.is_empty()));

@@ -3670,10 +3670,13 @@ fn serve(
             )?;
             let task_id = random_id()?;
             let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"control_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory crop; no control was clicked."}))).is_ok());
-            control_vision::start(control_vision::Request {
+            let pending_revision =
+                control_vision::begin_pending(ws, &current.job_id, &task_id, now())?;
+            if let Err(error) = control_vision::start(control_vision::Request {
                 id: task_id.clone(),
                 session: current.id.clone(),
                 job_id: current.job_id.as_str().to_owned(),
+                pending_revision,
                 model,
                 selector,
                 digest,
@@ -3681,7 +3684,10 @@ fn serve(
                 label,
                 ambiguous,
                 capture_saved,
-            })?;
+            }) {
+                control_vision::finish_pending(ws, &current.job_id, &task_id, pending_revision)?;
+                return Err(error);
+            }
             current.created = Instant::now();
             json_reply(
                 stream,
@@ -3744,7 +3750,7 @@ fn serve(
                         }
                     }
                 } else if result["status"] == "complete" {
-                    result = json!({"status":"failed","session_id":result["session_id"],"job_id":result["job_id"],"error":"The review session ended; inspect the page manually"});
+                    result = json!({"status":"failed","session_id":result["session_id"],"job_id":result["job_id"],"pending_revision":result["pending_revision"],"error":"The review session ended; inspect the page manually"});
                 } else {
                     result["session_unavailable"] = json!(true);
                 }
@@ -3769,6 +3775,16 @@ fn serve(
                 result["failure_recorded"] = json!(true);
             }
             if result["status"] != "running" {
+                if result["pending_finished"].is_null() {
+                    let job =
+                        JobIdentityId::new(result["job_id"].as_str().ok_or("missing review job")?)
+                            .map_err(|e| e.to_string())?;
+                    let revision = result["pending_revision"]
+                        .as_i64()
+                        .ok_or("missing pending review revision")?;
+                    control_vision::finish_pending(ws, &job, id, revision)?;
+                    result["pending_finished"] = json!(true);
+                }
                 control_vision::complete(id, result.clone())?;
             }
             if let Some(object) = result.as_object_mut() {

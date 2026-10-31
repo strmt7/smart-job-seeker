@@ -6,6 +6,7 @@ struct Task {
     id: String,
     session: String,
     job_id: String,
+    pending_revision: i64,
     selector: String,
     digest: String,
     image_hash: String,
@@ -78,6 +79,7 @@ pub struct Request {
     pub id: String,
     pub session: String,
     pub job_id: String,
+    pub pending_revision: i64,
     pub model: String,
     pub selector: String,
     pub digest: String,
@@ -106,6 +108,7 @@ pub fn start(request: Request) -> Result<(), String> {
         id,
         session,
         job_id,
+        pending_revision,
         model,
         selector,
         digest,
@@ -118,6 +121,7 @@ pub fn start(request: Request) -> Result<(), String> {
         id: id.clone(),
         session,
         job_id,
+        pending_revision,
         selector,
         digest,
         image_hash: waypoint_domain::Sha256Digest::of(&image).as_str().into(),
@@ -170,10 +174,10 @@ pub fn poll(id: &str) -> Result<Value, String> {
     Ok(match &task.result {
         None => json!({"status":"running","session_id":task.session}),
         Some(Err(error)) => {
-            json!({"status":"failed","session_id":task.session,"job_id":task.job_id,"error":error})
+            json!({"status":"failed","session_id":task.session,"job_id":task.job_id,"pending_revision":task.pending_revision,"error":error})
         }
         Some(Ok(items)) => {
-            json!({"status":"complete","session_id":task.session,"job_id":task.job_id,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":comparison(&task.label,task.ambiguous,items)})
+            json!({"status":"complete","session_id":task.session,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":comparison(&task.label,task.ambiguous,items)})
         }
     })
 }
@@ -201,12 +205,43 @@ pub fn collect_orphaned(active: Option<&str>) -> Result<(), String> {
     {
         *COMPLETED.lock().map_err(|_| "Control vision unavailable")? = Some((
             orphan.id.clone(),
-            json!({"status":"failed","session_id":orphan.session,"job_id":orphan.job_id,"error":"The review session ended; inspect the page again"}),
+            json!({"status":"failed","session_id":orphan.session,"job_id":orphan.job_id,"pending_revision":orphan.pending_revision,"error":"The review session ended; inspect the page again"}),
             std::time::Instant::now(),
         ));
         *task = None;
     }
     Ok(())
+}
+
+fn pending_reason(task_id: &str) -> String {
+    format!("Control visual review pending: {task_id}")
+}
+
+pub fn begin_pending(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    task_id: &str,
+    timestamp: i64,
+) -> Result<i64, String> {
+    let reason = pending_reason(task_id);
+    ws.mark_manual_review(job, &reason, timestamp)
+        .map_err(|e| e.to_string())?;
+    ws.manual_review_reasons(job)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|entry| entry.reason == reason)
+        .map(|entry| entry.revision)
+        .ok_or_else(|| "Pending control review was not found after saving".into())
+}
+
+pub fn finish_pending(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    task_id: &str,
+    revision: i64,
+) -> Result<bool, String> {
+    ws.clear_manual_review_reason(job, &pending_reason(task_id), revision)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -234,5 +269,55 @@ mod tests {
             comparison("Continue", true, &["Continue".into()]),
             "ambiguous"
         );
+    }
+
+    #[test]
+    fn pending_review_survives_restart_and_preserves_newer_review() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let (job, revision) = {
+            let mut ws = waypoint_workspace::Workspace::open(directory.path()).unwrap();
+            let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/control-pending","title":"Engineer","employer":"Fixture"}), 1).unwrap();
+            let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let revision = begin_pending(&ws, &job, "fixture-task", 2).unwrap();
+            (job, revision)
+        };
+        let ws = waypoint_workspace::Workspace::open(directory.path()).unwrap();
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.reason == pending_reason("fixture-task")));
+        let newer = begin_pending(&ws, &job, "fixture-task", 3).unwrap();
+        assert_ne!(revision, newer);
+        assert!(!finish_pending(&ws, &job, "fixture-task", revision).unwrap());
+        assert!(finish_pending(&ws, &job, "fixture-task", newer).unwrap());
+        assert!(ws.manual_review_reasons(&job).unwrap().is_empty());
+    }
+
+    #[test]
+    fn orphaned_result_preserves_identity_and_revision_for_recovery() {
+        *TASK.lock().unwrap() = Some(Task {
+            id: "orphan-task".into(),
+            session: "old-session".into(),
+            job_id: "fixture-job".into(),
+            pending_revision: 42,
+            selector: "button".into(),
+            digest: "digest".into(),
+            image_hash: "hash".into(),
+            image: "image".into(),
+            label: "Next".into(),
+            ambiguous: false,
+            capture_saved: false,
+            result: Some(Err("model stopped".into())),
+            finished: Some(std::time::Instant::now()),
+        });
+        collect_orphaned(None).unwrap();
+        let result = poll("orphan-task").unwrap();
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["job_id"], "fixture-job");
+        assert_eq!(result["pending_revision"], 42);
+        *COMPLETED.lock().unwrap() = None;
     }
 }
