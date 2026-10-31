@@ -13,3 +13,9 @@ In two runs of a fictional 20-field fixture, the model flagged a Portuguese work
 With the same resource-gated `qwen3.5:9b` model and 4,096-token context, a fictional English ambiguous-contact / Spanish eligibility / French email fixture passed three sequential runs. A separate fictional Spanish ambiguous-contact / French sponsorship / English email fixture passed two sequential runs. Both deliberately attach an email autocomplete hint to the eligibility or sponsorship question; the production suggestion path left that question and the ambiguous contact question for manual review while mapping the ordinary email. This is a small deterministic-prompt sample, not an accuracy estimate, and the earlier German false positive remains unresolved.
 
 Before loading, the host reported approximately 25.6 GiB free system memory. While the model was resident, one sample showed approximately 20.2 GiB free memory and 12.3 GiB dedicated GPU use; these are snapshots, not peaks. The model was unloaded after the checks. No candidate data, employer site or application submission was involved.
+
+## Live fit worker identity check — 2026-11-01
+
+The resource-gated `qwen3.5:9b` worker completed repeated assessments of a fictional Rust role and fictional qualification. In one captured pair, both assessments produced the same single-criterion rubric and a 100% midpoint; this is one simple example, not an accuracy or repeatability estimate. The comparison recorded matching digest/context snapshots. A separate run deliberately supplied a different digest; the assessment completed but its model identity remained unverified and no repeatability comparison was produced.
+
+One sample during the run showed approximately 19.8 GiB free system memory and 12.3 GiB dedicated GPU use, not peak measurements. The model was unloaded after testing. No candidate data, employer site or application submission was involved.

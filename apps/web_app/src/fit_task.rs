@@ -2356,6 +2356,101 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a resource-gated resident local model"]
+    fn live_fit_worker_compares_reported_model_identity() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let status = crate::resident_model_status().unwrap();
+        let name = status["model"].as_str().unwrap().to_owned();
+        let digest = status["model_digest"].as_str().unwrap().to_owned();
+        let context = status["context_length"].as_u64().unwrap();
+        let listing = "Fictional role. Required: Rust programming experience.";
+        let mut results = Vec::new();
+        for index in 0..2 {
+            let id = format!("fictional-live-fit-{index}");
+            start(
+                id.clone(),
+                FitModel {
+                    name: name.clone(),
+                    digest: Some(digest.clone()),
+                    context_length: Some(context),
+                },
+                "fictional-job".into(),
+                "fictional-input".into(),
+                FactPool {
+                    facts: vec!["Built software using Rust".into()],
+                    available: 1,
+                },
+                String::new(),
+                FitListing {
+                    model_text: listing.into(),
+                    verification_text: Some(listing.into()),
+                },
+            )
+            .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+            let result = loop {
+                let result = poll(&id).unwrap();
+                if result["status"] != "running" {
+                    break result;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Live fit worker timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            };
+            assert_eq!(result["status"], "complete", "{result}");
+            assert_eq!(result["model_digest"], digest);
+            assert_eq!(result["context_length"], context);
+            assert_eq!(result["assessment"]["model_identity_verified"], true);
+            complete(&id, result.clone()).unwrap();
+            results.push(result);
+        }
+        let comparison = repeatability_comparison(&results[0], &results[1])
+            .expect("matching identity permits a comparison");
+        println!("Fictional live worker comparison: {comparison}");
+        assert_eq!(comparison["identity_basis"], "digest_context_snapshots");
+        let stale_id = "fictional-stale-model";
+        start(
+            stale_id.into(),
+            FitModel {
+                name,
+                digest: Some("0".repeat(64)),
+                context_length: Some(context),
+            },
+            "fictional-job".into(),
+            "fictional-input".into(),
+            FactPool {
+                facts: vec!["Built software using Rust".into()],
+                available: 1,
+            },
+            String::new(),
+            FitListing {
+                model_text: listing.into(),
+                verification_text: Some(listing.into()),
+            },
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        let stale = loop {
+            let result = poll(stale_id).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Live fit worker timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        assert_eq!(stale["status"], "complete", "{stale}");
+        assert_eq!(stale["assessment"]["model_identity_verified"], false);
+        assert!(stale["model_digest"].is_null());
+        assert!(repeatability_comparison(&results[1], &stale).is_none());
+        complete(stale_id, stale).unwrap();
+    }
+
+    #[test]
     fn comparison_requires_same_inputs_model_and_scoring_version() {
         let item = json!({"source":"listing","excerpt":"Python","importance":"required","status":"supported","qualification":"Used Python"});
         let prior = json!({"input_digest":"abc","model":"local","model_digest":"fixture-digest","context_length":4096,"assessment":{"score":75,"scoring_version":"criteria-v1","rubric":[item]}});
