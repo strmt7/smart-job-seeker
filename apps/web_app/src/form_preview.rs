@@ -1579,6 +1579,26 @@ mod tests {
     fn exercise_local_model_form_pipeline(altered: bool, multilingual: bool) {
         use base64::Engine;
         use waypoint_domain::GrantId;
+        struct FictionalTrace<I>(I);
+        impl<I: Inference> Inference for FictionalTrace<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                println!("fictional model prompt ({schema}): {prompt}");
+                let result = self.0.generate_structured(schema, prompt, max);
+                match &result {
+                    Ok((value, _)) => println!("fictional model response ({schema}): {value}"),
+                    Err(error) => println!("fictional model response ({schema}) failed: {error}"),
+                }
+                result
+            }
+        }
         let addr = "127.0.0.1:11434".parse().unwrap();
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".into());
@@ -1600,11 +1620,12 @@ mod tests {
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm = crate::resident_inference::ResidentInference::new(
+        let llm = crate::resident_inference::ResidentInference::new(
             llm,
             model.clone(),
             crate::resident_model,
         );
+        let mut llm = FictionalTrace(llm);
         let preview = inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery", "email":"avery@example.invalid", "work_authorization":"unknown"})).unwrap();
         let given_selector = if multilingual { "#first" } else { "#given" };
         let given_label = if multilingual {
