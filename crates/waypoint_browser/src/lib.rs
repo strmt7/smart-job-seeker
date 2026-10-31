@@ -65,6 +65,7 @@ pub const NATIVE_DATALIST_REVIEW: &str =
 pub struct PageControl {
     pub label: String,
     pub disabled: bool,
+    pub selector: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
@@ -374,22 +375,23 @@ impl CdpDriver {
                     || attrs
                         .get("aria-disabled")
                         .is_some_and(|v| v.eq_ignore_ascii_case("true"));
-                candidates.push((id, PageControl { label, disabled }));
+                candidates.push((id, label, disabled));
             }
             true
         });
         let started = Instant::now();
         let mut controls = Vec::new();
-        for (id, control) in candidates {
+        for (id, label, disabled) in candidates {
             if started.elapsed() >= Duration::from_secs(4) {
                 incomplete = true;
                 break;
             }
             match self.with_review_timeout(|driver| driver.control_visibility_and_path(id)) {
-                Ok((true, _, available)) => {
+                Ok((true, selector, available)) => {
                     controls.push(PageControl {
-                        disabled: control.disabled || !available,
-                        ..control
+                        label,
+                        disabled: disabled || !available,
+                        selector,
                     });
                 }
                 Ok(_) => (),

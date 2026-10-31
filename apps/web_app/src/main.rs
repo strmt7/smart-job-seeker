@@ -3449,6 +3449,145 @@ fn serve(
             }
             json_reply(stream, "200 OK", result);
         }
+        "/api/form/control-focus" => {
+            let task_id = body["task_id"].as_str().ok_or("missing task id")?;
+            let index = body["index"]
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value < 30)
+                .ok_or("Invalid control index")?;
+            let advice = control_rank::poll(task_id)?;
+            if advice["status"] != "complete" {
+                return Err("Control advice is not available; inspect the page again".into());
+            }
+            let current = session
+                .as_mut()
+                .filter(|s| {
+                    Some(s.id.as_str()) == advice["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                })
+                .ok_or("Form session expired")?;
+            let selector = advice["controls"]["controls"][index]["selector"]
+                .as_str()
+                .filter(|selector| !selector.is_empty() && selector.len() <= 4096)
+                .ok_or("Control is unavailable; inspect again")?
+                .to_owned();
+            let digest = advice["snapshot_digest"]
+                .as_str()
+                .ok_or("Control snapshot is unavailable")?;
+            let current_snapshot = control_rank::snapshot(&mut current.driver);
+            if current_snapshot
+                .as_ref()
+                .ok()
+                .map(|(_, value)| value.as_str())
+                != Some(digest)
+            {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Application page changed before locating a control",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+                current
+                    .preview
+                    .manual_review
+                    .push("Application page changed before locating a control".into());
+                return Err("The page changed or could not be rechecked; inspect it again".into());
+            }
+            if let Err(error) = current.driver.scroll_field_into_view(&selector) {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Control location failed; inspect the form manually",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+                current
+                    .preview
+                    .manual_review
+                    .push("Control location failed; inspect the form manually".into());
+                return Err(format!(
+                    "Could not locate the control; inspect the live form: {error}"
+                ));
+            }
+            let check = current.completed_selectors.first().map(|first| {
+                current.driver.with_review_timeout(|driver| {
+                    form_preview::verify_completed_fields(
+                        driver,
+                        &current.preview,
+                        &current.completed_selectors,
+                        first,
+                    )
+                })
+            });
+            let relevant = current
+                .attachments
+                .iter()
+                .filter(|(_, _, inspection)| inspection == &current.id);
+            let total_attachments = relevant.clone().count();
+            let (mut checked_attachments, mut failed_attachments) = (0usize, 0usize);
+            let started = Instant::now();
+            for (selector, path, _) in relevant.take(8) {
+                if started.elapsed() >= Duration::from_secs(4) {
+                    break;
+                }
+                checked_attachments += 1;
+                if current
+                    .driver
+                    .with_review_timeout(|driver| driver.verify_local_file(selector, path))
+                    .is_err()
+                {
+                    failed_attachments += 1;
+                }
+            }
+            let unverified_attachments = total_attachments.saturating_sub(checked_attachments);
+            let screenshot = match current
+                .driver
+                .with_review_timeout(|driver| driver.screenshot_base64())
+            {
+                Ok(image) => image,
+                Err(error) => {
+                    ws.mark_manual_review(
+                        &current.job_id,
+                        "Control location screenshot unavailable",
+                        now(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                    current
+                        .preview
+                        .manual_review
+                        .push("Control location screenshot unavailable".into());
+                    return Err(format!("The control was scrolled, but the screenshot failed; inspect the live form: {error}"));
+                }
+            };
+            let after = control_rank::snapshot(&mut current.driver);
+            let same = after.as_ref().ok().map(|(_, value)| value.as_str()) == Some(digest);
+            let needs_review = !same
+                || failed_attachments > 0
+                || unverified_attachments > 0
+                || check
+                    .as_ref()
+                    .is_some_and(|value| !value.failed_labels.is_empty() || value.unverified > 0);
+            if needs_review {
+                let reason = "Application changed or filled fields could not be verified after locating a control";
+                ws.mark_manual_review(&current.job_id, reason, now())
+                    .map_err(|e| e.to_string())?;
+                if !current
+                    .preview
+                    .manual_review
+                    .iter()
+                    .any(|item| item == reason)
+                {
+                    current.preview.manual_review.push(reason.into());
+                }
+            }
+            let saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"control_focus_capture","time":now(),"task_id":task_id,"index":index,"page_unchanged":same,"filled_verified":check.as_ref().map(|value| value.verified),"filled_unverified":check.as_ref().map(|value| value.unverified),"failed_fields":check.as_ref().map(|value| &value.failed_labels),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments,"screenshot":format!("screenshots/{name}"),"note":"Scrolled only; no control was clicked."}))).is_ok());
+            current.created = Instant::now();
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"screenshot":screenshot,"record_saved":saved,"page_unchanged":same,"verified_count":check.as_ref().map_or(0, |value| value.verified),"unverified_count":check.as_ref().map_or(0, |value| value.unverified),"failed_fields":check.as_ref().map_or_else(Vec::new, |value| value.failed_labels.clone()),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments}),
+            );
+        }
         "/api/form/link-rank-start" => {
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let current = session

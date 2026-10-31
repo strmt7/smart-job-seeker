@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><title>Fictional application</title>
-<body><h1>Fictional application section</h1><label>Name <input name="name"></label>
+<body onscroll="if(window.scrollY&gt;100)document.querySelector('input').value='' "><h1>Fictional application section</h1><label>First name <input id="first" name="first" autocomplete="given-name"></label><div style="height:1200px">Fictional application content</div>
 <span id="step-label">Continue to questions</span><button type="button" aria-labelledby="step-label">Next</button>
 <button type="submit">Submit application</button><button disabled>Review</button><div aria-disabled="true"><button>Restricted</button></div>
 <button hidden>Hidden control</button></body></html>

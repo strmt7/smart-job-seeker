@@ -230,10 +230,12 @@ mod tests {
                 waypoint_browser::PageControl {
                     label: "Continue".into(),
                     disabled: false,
+                    selector: "fictional".into(),
                 },
                 waypoint_browser::PageControl {
                     label: "Disabled".into(),
                     disabled: true,
+                    selector: "fictional".into(),
                 },
             ],
             incomplete: false,
@@ -295,8 +297,26 @@ mod tests {
         let mut url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(url.as_str()).unwrap();
-        let preview =
-            crate::form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "First name")
+            .unwrap()
+            .selector
+            .clone();
+        driver
+            .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                selector: field.clone(),
+                value: waypoint_applications::form_mapping::PacketValue::Text("Avery".into()),
+            })
+            .unwrap();
+        let preview = crate::form_preview::suggest_without_model(
+            live,
+            &json!({"first_name":"Avery"}),
+            "fixture",
+        )
+        .unwrap();
         let (controls, digest) = snapshot(&mut driver).unwrap();
         *TASK.lock().unwrap() = Some(Task {
             id: "fixture-stale".into(),
@@ -306,8 +326,6 @@ mod tests {
             result: Some(Ok(vec![0])),
             completed: Some(std::time::Instant::now()),
         });
-        url.set_fragment(Some("changed"));
-        driver.open(url.as_str()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
         let job = crate::manual_job::add(
@@ -329,7 +347,7 @@ mod tests {
             created: std::time::Instant::now(),
             ttl: std::time::Duration::from_secs(120),
             filled: false,
-            completed_selectors: vec![],
+            completed_selectors: vec![field],
             answer_drafts: Default::default(),
             visible: false,
             staged_files: vec![],
@@ -342,6 +360,50 @@ mod tests {
                 .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let locate_body = json!({"task_id":"fixture-stale","index":0}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/form/control-focus HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{locate_body}",locate_body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let located: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(located["page_unchanged"], true);
+        assert_eq!(located["record_saved"], true);
+        assert_eq!(located["failed_fields"][0], "First name");
+        assert!(ws
+            .manual_review_reasons(&job_id)
+            .unwrap()
+            .iter()
+            .any(|item| item.reason.contains("after locating a control")));
+        assert!(located["screenshot"]
+            .as_str()
+            .is_some_and(|image| !image.is_empty()));
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("click") && !event.contains("submitted")));
+        url.set_fragment(Some("changed"));
+        session.as_mut().unwrap().driver.open(url.as_str()).unwrap();
+        let mut stale_client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stale_client,"POST /api/form/control-focus HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{locate_body}",locate_body.len()).unwrap();
+        let (mut stale_server, _) = listener.accept().unwrap();
+        let error = crate::serve(
+            &mut stale_server,
+            &mut ws,
+            &mut session,
+            "fixture-token",
+            port,
+        )
+        .unwrap_err();
+        assert!(error.contains("page changed"));
+        drop(stale_server);
+        drop(stale_client);
         let body = json!({"task_id":"fixture-stale"}).to_string();
         let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(client,"POST /api/form/control-rank-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
@@ -371,6 +433,14 @@ mod tests {
         assert!(std::fs::read_to_string(record.join("events.jsonl"))
             .unwrap()
             .contains("control_advice_stale"));
+        let events = std::fs::read_to_string(record.join("events.jsonl")).unwrap();
+        let focus = events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|value| value["type"] == "control_focus_capture")
+            .unwrap();
+        assert_eq!(focus["failed_fields"][0], "First name");
+        assert!(record.join(focus["screenshot"].as_str().unwrap()).is_file());
         assert_eq!(poll("fixture-stale").unwrap(), value);
     }
 
@@ -469,6 +539,16 @@ mod tests {
             ),
             result
         );
+        let focused = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-focus",
+            json!({"task_id":id,"index":0}),
+        );
+        assert_eq!(focused["page_unchanged"], true);
+        assert!(focused["screenshot"]
+            .as_str()
+            .is_some_and(|image| !image.is_empty()));
         url.set_fragment(Some("changed"));
         session.as_mut().unwrap().driver.open(url.as_str()).unwrap();
         let stale = call(
@@ -528,14 +608,17 @@ mod tests {
                 waypoint_browser::PageControl {
                     label: "Weiter zur Berufserfahrung".into(),
                     disabled: false,
+                    selector: "fictional".into(),
                 },
                 waypoint_browser::PageControl {
                     label: "Bewerbung absenden".into(),
                     disabled: false,
+                    selector: "fictional".into(),
                 },
                 waypoint_browser::PageControl {
                     label: "Cancelar".into(),
                     disabled: false,
+                    selector: "fictional".into(),
                 },
             ],
             incomplete: false,
