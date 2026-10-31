@@ -6,9 +6,14 @@ use waypoint_domain::Sha256Digest;
 
 struct Task {
     id: String,
+    document: String,
+    job: String,
     result: Option<Result<Value, String>>,
+    completed: Option<std::time::Instant>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
+const RETENTION: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
@@ -174,18 +179,29 @@ fn report(name: &str, bytes: &[u8], listing: &str, facts: &[String]) -> Result<V
 }
 pub fn start(
     id: String,
+    document: String,
+    job: String,
     name: String,
     bytes: Vec<u8>,
     listing: String,
     facts: Vec<String>,
 ) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "CV check unavailable")?;
-    if task.as_ref().is_some_and(|t| t.result.is_none()) {
-        return Err("A CV check is already running".into());
+    if task
+        .as_ref()
+        .is_some_and(|t| t.completed.is_some_and(|time| time.elapsed() > RETENTION))
+    {
+        *task = None;
+    }
+    if task.is_some() {
+        return Err("A CV check is running or awaiting its result".into());
     }
     *task = Some(Task {
         id: id.clone(),
+        document,
+        job,
         result: None,
+        completed: None,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -194,29 +210,114 @@ pub fn start(
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut().filter(|t| t.id == id) {
                 task.result = Some(result);
+                task.completed = Some(std::time::Instant::now());
             }
         }
     });
     Ok(())
 }
+pub fn active() -> Result<Option<Value>, String> {
+    let mut tasks = TASK.lock().map_err(|_| "CV check unavailable")?;
+    if tasks
+        .as_ref()
+        .is_some_and(|t| t.completed.is_some_and(|time| time.elapsed() > RETENTION))
+    {
+        *tasks = None;
+    }
+    Ok(tasks
+        .as_ref()
+        .map(|task| json!({"task_id":task.id,"document_id":task.document,"job_id":task.job})))
+}
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "CV check unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("CV check not found")?;
+    if tasks
+        .as_ref()
+        .is_some_and(|t| t.completed.is_some_and(|time| time.elapsed() > RETENTION))
+    {
+        *tasks = None;
+    }
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        let mut completed = COMPLETED.lock().map_err(|_| "CV check unavailable")?;
+        if completed
+            .as_ref()
+            .is_some_and(|(_, _, time)| time.elapsed() > RETENTION)
+        {
+            *completed = None;
+        }
+        return completed
+            .as_ref()
+            .filter(|(key, _, _)| key == id)
+            .map(|(_, result, _)| result.clone())
+            .ok_or_else(|| "CV check not found".into());
+    };
     let Some(result) = task.result.take() else {
         return Ok(json!({"status":"running"}));
     };
     *tasks = None;
-    Ok(match result {
+    let response = match result {
         Ok(report) => json!({"status":"complete","report":report}),
         Err(error) => json!({"status":"failed","error":error}),
-    })
+    };
+    *COMPLETED.lock().map_err(|_| "CV check unavailable")? =
+        Some((id.into(), response.clone(), std::time::Instant::now()));
+    Ok(response)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovers_active_and_completed_checks_without_cross_task_results() {
+        start(
+            "task-a".into(),
+            "doc-a".into(),
+            "job-a".into(),
+            "cv.txt".into(),
+            b"Fictional Rust engineer".to_vec(),
+            "Rust role".into(),
+            vec![],
+        )
+        .unwrap();
+        let pending = active().unwrap().unwrap();
+        assert_eq!(pending["task_id"], "task-a");
+        assert_eq!(pending["document_id"], "doc-a");
+        assert_eq!(pending["job_id"], "job-a");
+        assert!(start(
+            "task-b".into(),
+            "doc-b".into(),
+            "job-b".into(),
+            "cv.txt".into(),
+            b"Fictional".to_vec(),
+            "Role".into(),
+            vec![]
+        )
+        .is_err());
+        let result = (0..200)
+            .find_map(|_| {
+                let result = poll("task-a").unwrap();
+                if result["status"] == "running" {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    None
+                } else {
+                    Some(result)
+                }
+            })
+            .expect("check did not finish");
+        assert_eq!(result["status"], "complete");
+        assert_eq!(poll("task-a").unwrap(), result);
+        assert!(poll("other").is_err());
+        assert!(active().unwrap().is_none());
+        *TASK.lock().unwrap() = Some(Task {
+            id: "expired".into(),
+            document: "doc".into(),
+            job: "job".into(),
+            result: Some(Ok(json!({}))),
+            completed: Some(
+                std::time::Instant::now() - RETENTION - std::time::Duration::from_secs(1),
+            ),
+        });
+        assert!(poll("expired").is_err());
+        assert!(active().unwrap().is_none());
+    }
     #[test]
     #[ignore = "requires a local PDF worker and fictional PDF fixture"]
     fn checks_extractable_pdf_against_posting() {

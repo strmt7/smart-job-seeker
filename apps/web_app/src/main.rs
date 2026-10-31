@@ -2955,12 +2955,17 @@ fn serve(
             let task_id = random_id()?;
             ats_check::start(
                 task_id.clone(),
+                id.to_owned(),
+                job.as_str().to_owned(),
                 info.name,
                 bytes,
                 format!("{}\n{}", job_data.title, description),
                 facts,
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/ats-check-active" => {
+            json_reply(stream, "200 OK", json!({"active":ats_check::active()?}));
         }
         "/api/documents/ats-check-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
