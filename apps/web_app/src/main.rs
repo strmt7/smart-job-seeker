@@ -7,6 +7,7 @@ mod ats_check;
 mod attempt_record;
 mod candidate_task;
 mod control_rank;
+mod control_vision;
 mod convert_task;
 mod discovery_task;
 mod doc_suggest;
@@ -3588,6 +3589,195 @@ fn serve(
                 json!({"screenshot":screenshot,"record_saved":saved,"page_unchanged":same,"verified_count":check.as_ref().map_or(0, |value| value.verified),"unverified_count":check.as_ref().map_or(0, |value| value.unverified),"failed_fields":check.as_ref().map_or_else(Vec::new, |value| value.failed_labels.clone()),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments}),
             );
         }
+        "/api/form/control-vision-pending" => {
+            json_reply(stream, "200 OK", control_vision::pending()?);
+        }
+        "/api/form/control-vision-start" => {
+            let source = body["task_id"].as_str().ok_or("missing advice task")?;
+            let index = body["index"]
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value < 30)
+                .ok_or("Invalid control index")?;
+            let advice = control_rank::poll(source)?;
+            if advice["status"] != "complete" {
+                return Err("Control advice is unavailable; inspect again".into());
+            }
+            let current = session
+                .as_mut()
+                .filter(|s| {
+                    Some(s.id.as_str()) == advice["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                })
+                .ok_or("Form session expired")?;
+            let controls = advice["controls"]["controls"]
+                .as_array()
+                .ok_or("Control inventory unavailable")?;
+            let control = controls.get(index).ok_or("Control is unavailable")?;
+            let label = control["label"]
+                .as_str()
+                .filter(|label| !label.is_empty())
+                .ok_or("Control label unavailable")?
+                .to_owned();
+            let selector = control["selector"]
+                .as_str()
+                .filter(|selector| !selector.is_empty() && selector.len() <= 4096)
+                .ok_or("Control selector unavailable")?
+                .to_owned();
+            let digest = advice["snapshot_digest"]
+                .as_str()
+                .ok_or("Control snapshot unavailable")?
+                .to_owned();
+            let normalized = |value: &str| {
+                value
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+            };
+            let ambiguous = label == "Unlabelled control"
+                || controls
+                    .iter()
+                    .filter(|item| {
+                        item["label"]
+                            .as_str()
+                            .is_some_and(|value| normalized(value) == normalized(&label))
+                    })
+                    .count()
+                    != 1;
+            if control_rank::snapshot(&mut current.driver)
+                .ok()
+                .map(|(_, value)| value)
+                .as_deref()
+                != Some(digest.as_str())
+            {
+                return Err("The page changed; inspect it again".into());
+            }
+            let image = current
+                .driver
+                .with_review_timeout(|driver| driver.screenshot_field_context(&selector))
+                .map_err(|e| format!("Could not capture the control: {e}"))?;
+            if control_rank::snapshot(&mut current.driver)
+                .ok()
+                .map(|(_, value)| value)
+                .as_deref()
+                != Some(digest.as_str())
+            {
+                return Err("The page changed during capture; inspect it again".into());
+            }
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"control_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory crop; no control was clicked."}))).is_ok());
+            control_vision::start(control_vision::Request {
+                id: task_id.clone(),
+                session: current.id.clone(),
+                job_id: current.job_id.as_str().to_owned(),
+                model,
+                selector,
+                digest,
+                image: image.clone(),
+                label,
+                ambiguous,
+                capture_saved,
+            })?;
+            current.created = Instant::now();
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":task_id,"screenshot":image,"capture_saved":capture_saved}),
+            );
+        }
+        "/api/form/control-vision-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let mut result = control_vision::poll(id)?;
+            if matches!(result["status"].as_str(), Some("running" | "complete")) {
+                let current = session.as_mut().filter(|s| {
+                    Some(s.id.as_str()) == result["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                });
+                if let Some(current) = current {
+                    current.created = Instant::now();
+                    if result["status"] == "complete" {
+                        let current_snapshot = control_rank::snapshot(&mut current.driver)
+                            .ok()
+                            .map(|(_, digest)| digest);
+                        let image = result["selector"].as_str().and_then(|selector| {
+                            current
+                                .driver
+                                .with_review_timeout(|driver| {
+                                    driver.screenshot_field_context(selector)
+                                })
+                                .ok()
+                        });
+                        let same = current_snapshot.as_deref()
+                            == result["snapshot_digest"].as_str()
+                            && visual_review::image_freshness(
+                                result["image_hash"].as_str(),
+                                image.as_deref(),
+                            ) == "same";
+                        let previously_stale = result["comparison"] == "stale";
+                        if !same || previously_stale {
+                            result["comparison"] = json!("stale");
+                        }
+                        if result["comparison"] != "label_observed" {
+                            let reason =
+                                "Control visual review is uncertain or stale; inspect manually";
+                            ws.mark_manual_review(&current.job_id, reason, now())
+                                .map_err(|e| e.to_string())?;
+                            if !current
+                                .preview
+                                .manual_review
+                                .iter()
+                                .any(|item| item == reason)
+                            {
+                                current.preview.manual_review.push(reason.into());
+                            }
+                        }
+                        if result["result_saved"].is_null() {
+                            let saved = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"control_visual_result","time":now(),"task_id":id,"label":result["label"],"buttons":result["buttons"],"comparison":result["comparison"],"note":"Model transcription is advisory and does not prove a button's effect."})).is_ok());
+                            result["result_saved"] = json!(saved);
+                        } else if !same && !previously_stale {
+                            let saved = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"control_visual_stale","time":now(),"task_id":id})).is_ok());
+                            result["result_saved"] = json!(saved && result["result_saved"] == true);
+                        }
+                    }
+                } else if result["status"] == "complete" {
+                    result = json!({"status":"failed","session_id":result["session_id"],"job_id":result["job_id"],"error":"The review session ended; inspect the page manually"});
+                } else {
+                    result["session_unavailable"] = json!(true);
+                }
+            }
+            if result["status"] == "failed" && result["failure_recorded"].is_null() {
+                let job =
+                    JobIdentityId::new(result["job_id"].as_str().ok_or("missing review job")?)
+                        .map_err(|e| e.to_string())?;
+                let reason = "Control visual review failed; inspect manually";
+                ws.mark_manual_review(&job, reason, now())
+                    .map_err(|e| e.to_string())?;
+                if let Some(current) = session.as_mut().filter(|s| s.job_id == job) {
+                    if !current
+                        .preview
+                        .manual_review
+                        .iter()
+                        .any(|item| item == reason)
+                    {
+                        current.preview.manual_review.push(reason.into());
+                    }
+                }
+                result["failure_recorded"] = json!(true);
+            }
+            if result["status"] != "running" {
+                control_vision::complete(id, result.clone())?;
+            }
+            if let Some(object) = result.as_object_mut() {
+                object.remove("selector");
+                object.remove("snapshot_digest");
+                object.remove("image_hash");
+            }
+            json_reply(stream, "200 OK", result);
+        }
         "/api/form/link-rank-start" => {
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let current = session
@@ -5490,6 +5680,11 @@ fn serve_loop(
         if let Err(error) = control_rank::collect_orphaned(session.as_ref().map(|s| s.id.as_str()))
         {
             eprintln!("Could not release expired control advice: {error}");
+        }
+        if let Err(error) =
+            control_vision::collect_orphaned(session.as_ref().map(|s| s.id.as_str()))
+        {
+            eprintln!("Could not release expired control visual review: {error}");
         }
         match listener.accept() {
             Ok((mut stream, _)) => {

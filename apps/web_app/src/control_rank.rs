@@ -549,8 +549,44 @@ mod tests {
         assert!(focused["screenshot"]
             .as_str()
             .is_some_and(|image| !image.is_empty()));
+        let vision = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-start",
+            json!({"task_id":id,"index":0}),
+        );
+        let vision_id = vision["task_id"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let observed = loop {
+            let value = call(
+                &mut ws,
+                &mut session,
+                "/api/form/control-vision-status",
+                json!({"task_id":vision_id}),
+            );
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
+        println!(
+            "Control vision status: {}, comparison: {}, transcription: {}",
+            observed["status"], observed["comparison"], observed["buttons"]
+        );
+        assert_eq!(observed["status"], "complete");
+        assert!(observed["screenshot"]
+            .as_str()
+            .is_some_and(|image| !image.is_empty()));
         url.set_fragment(Some("changed"));
         session.as_mut().unwrap().driver.open(url.as_str()).unwrap();
+        let vision_stale = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-status",
+            json!({"task_id":vision_id}),
+        );
+        assert_eq!(vision_stale["comparison"], "stale");
         let stale = call(
             &mut ws,
             &mut session,
