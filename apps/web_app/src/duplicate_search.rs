@@ -360,6 +360,66 @@ mod tests {
             .iter()
             .all(|(id, _)| second.candidates.iter().all(|(other, _)| id != other)));
     }
+
+    #[test]
+    #[ignore = "requires a resource-gated resident local model"]
+    fn live_paged_search_api_advances_across_two_groups() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let target = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/paged-target","title":"Research scientist","employer":"Fictional Acme"}), 1).unwrap();
+        for index in 0..14 {
+            crate::manual_job::add(&mut ws, &json!({"url":format!("https://example.org/paged-{index}"),"title":format!("Sales role {index}"),"employer":"Fictional Acme"}), 1).unwrap();
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let call = |ws: &mut waypoint_workspace::Workspace, path: &str, value: Value| -> Value {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = value.to_string();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let mut after = String::new();
+        for expected in [12, 2] {
+            let started = call(
+                &mut ws,
+                "/api/duplicates/search-start",
+                json!({"id":target["id"],"after":after}),
+            );
+            let task = started["task_id"].as_str().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+            let result = loop {
+                let result = call(
+                    &mut ws,
+                    "/api/duplicates/search-status",
+                    json!({"task_id":task}),
+                );
+                if result["status"] != "running" {
+                    break result;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            };
+            println!("Fictional paged duplicate result: {result}");
+            assert_eq!(result["status"], "complete");
+            assert_eq!(result["total_candidates"], expected);
+            assert_eq!(result["examined"], expected);
+            assert_eq!(result["unexamined"], 0);
+            assert_eq!(result["saved"], true);
+            assert_eq!(result["page_after"], after);
+            if expected == 12 {
+                after = result["next_cursor"].as_str().unwrap().to_owned();
+            } else {
+                assert!(result["next_cursor"].is_null());
+            }
+        }
+    }
     struct Fake;
     impl Inference for Fake {
         fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {

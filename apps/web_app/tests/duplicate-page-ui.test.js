@@ -11,9 +11,10 @@ async function run(initial,result,paged=true){
  return {data,requests,messages};
 }
 (async()=>{
- const result={status:'complete',page_after:'',next_cursor:'job-12',examined:12,total_candidates:12,added:0,truncated:true};
+ const result={status:'complete',page_after:'',next_cursor:'job-12',examined:12,unexamined:0,total_candidates:12,added:0,truncated:true};
  let x=await run([],result);assert.equal(x.requests[1].body.after,'');assert.deepEqual(JSON.parse(x.data.get('waypoint-duplicate-cursor')),{job:'fictional',after:'job-12'});
- x=await run([...x.data],{...result,page_after:'job-12',next_cursor:'job-24',failed_batches:1});assert.equal(x.requests[1].body.after,'job-12');assert.equal(JSON.parse(x.data.get('waypoint-duplicate-cursor')).after,'job-12');
+ x=await run([...x.data],{...result,page_after:'job-12',next_cursor:'job-24',failed_batches:1,unexamined:1,examined:11});assert.equal(x.requests[1].body.after,'job-12');assert.equal(JSON.parse(x.data.get('waypoint-duplicate-cursor')).after,'job-12');
+ let recovered=await run([...x.data],{...result,page_after:'job-12',next_cursor:'job-24',failed_batches:1,retried_candidates:3});assert.equal(JSON.parse(recovered.data.get('waypoint-duplicate-cursor')).after,'job-24');
  x=await run([...x.data],{...result,page_after:'job-12',next_cursor:null,truncated:false});assert.equal(x.data.has('waypoint-duplicate-cursor'),false);
  x=await run([],{...result,page_after:null,next_cursor:null},false);assert.equal(JSON.parse(x.data.get('waypoint-duplicate-cursor')).after,'');
  console.log('Duplicate page UI checks passed.');

@@ -127,7 +127,7 @@ function renderJobs(){showDuplicateCoverage(state.duplicate_coverage,state.dupli
    let result;do{await new Promise(resolve=>setTimeout(resolve,1000));result=await api('/api/duplicates/search-status',{task_id:pending.task});}while(result.status==='running');
    sessionStorage.removeItem('waypoint-duplicate-search');if(result.status!=='complete')throw new Error(result.error || 'Duplicate search failed');
    if(typeof result.page_after==='string'){
-    if(result.unexamined || result.failed_batches)sessionStorage.setItem('waypoint-duplicate-cursor',JSON.stringify({job:job.id,after:result.page_after}));
+    if(!Number.isSafeInteger(result.examined) || !Number.isSafeInteger(result.total_candidates) || result.examined!==result.total_candidates || result.unexamined!==0)sessionStorage.setItem('waypoint-duplicate-cursor',JSON.stringify({job:job.id,after:result.page_after}));
     else if(typeof result.next_cursor==='string')sessionStorage.setItem('waypoint-duplicate-cursor',JSON.stringify({job:job.id,after:result.next_cursor}));
     else sessionStorage.removeItem('waypoint-duplicate-cursor');
    }else if(result.truncated)sessionStorage.setItem('waypoint-duplicate-cursor',JSON.stringify({job:job.id,after:''}));
