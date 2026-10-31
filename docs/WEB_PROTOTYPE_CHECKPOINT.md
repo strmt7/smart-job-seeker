@@ -1016,3 +1016,9 @@ A headless browser captured and recaptured the far-right tile of a fictional wid
 Saved job-ad screenshots now use horizontal and vertical tiles, with each captured image's coordinates stored in metadata. The existing five-image and six-MiB total byte limits remain. Captures exceeding the tile or dimension limits are marked incomplete; a complete dimensional capture can still omit hidden content, nested scrollers or dynamic changes.
 
 A fictional 3,000-by-2,400-pixel local page produced four positioned PNG segments; the existing listing-capture fixture, tile-budget test and web Clippy passed. No employer site or application submission was involved.
+
+## Saved job-page view — 2026-10-31
+
+New application-record folders with saved listing images now contain `original-job-page/view.html`. It positions captures with valid tile coordinates and warns when coverage is incomplete; captures without usable coordinates display up to five separate images. The view embeds no captured page text or URLs as markup and does not fetch remote content. Existing application-record folders are not backfilled.
+
+A fictional browser fixture opened the local view and checked tile positioning. Metadata tests covered missing, overlapping and untrusted data; the attempt-record group and web Clippy passed. The view cannot reveal content that was not captured.

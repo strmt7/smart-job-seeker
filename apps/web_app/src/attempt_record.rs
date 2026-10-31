@@ -684,6 +684,86 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     }
     Ok(json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable}))
 }
+/// Make a self-contained index for locally saved PNGs. Metadata supplies only
+/// validated numbers; captured page text and URLs never become HTML markup.
+fn listing_capture_view(metadata: &[u8], count: usize) -> String {
+    let capture: Value = serde_json::from_slice(metadata).unwrap_or(Value::Null);
+    let layout = (|| {
+        let width = capture["page_width"].as_f64()?;
+        let height = capture["page_height"].as_f64()?;
+        let rects = capture["segment_rectangles"].as_array()?;
+        if !(1.0..=20_000.0).contains(&width)
+            || !(1.0..=20_000.0).contains(&height)
+            || count == 0
+            || count > 5
+            || rects.len() != count
+        {
+            return None;
+        }
+        let mut result = Vec::new();
+        for rect in rects {
+            let (x, y, w, h) = (
+                rect["x"].as_f64()?,
+                rect["y"].as_f64()?,
+                rect["width"].as_f64()?,
+                rect["height"].as_f64()?,
+            );
+            if !x.is_finite()
+                || !y.is_finite()
+                || !w.is_finite()
+                || !h.is_finite()
+                || x < 0.0
+                || y < 0.0
+                || w <= 0.0
+                || h <= 0.0
+                || w > 1600.0
+                || h > 1600.0
+                || x + w > width
+                || y + h > height
+            {
+                return None;
+            }
+            result.push((x, y, w, h));
+        }
+        Some((width, height, result))
+    })();
+    let mut html = String::from("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Saved job page</title><style>body{font:16px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#202a35}.page{position:relative;width:100%;background:#eee}.page img{position:absolute}.fallback img{display:block;max-width:100%;height:auto;margin:1rem 0}</style></head><body><h1>Saved job page</h1><p>This is a captured image, not a live page. Hidden content and nested scrollers may be missing.</p>");
+    if let Some((width, height, rects)) = layout {
+        let area: f64 = rects.iter().map(|(_, _, w, h)| w * h).sum();
+        let overlap = rects.iter().enumerate().any(|(i, &(x, y, w, h))| {
+            rects
+                .iter()
+                .skip(i + 1)
+                .any(|&(x2, y2, w2, h2)| x < x2 + w2 && x2 < x + w && y < y2 + h2 && y2 < y + h)
+        });
+        if capture["full_dimensions_captured"] != true
+            || overlap
+            || (area - width * height).abs() > 0.01
+        {
+            html.push_str("<p>Capture is incomplete; parts of the page may be missing.</p>");
+        }
+        html.push_str(&format!(
+            "<div class=\"page\" style=\"aspect-ratio:{width}/{height}\">"
+        ));
+        for (index, (x, y, w, h)) in rects.iter().enumerate() {
+            html.push_str(&format!("<img src=\"{:04}.png\" alt=\"Saved page segment {}\" style=\"left:{:.6}%;top:{:.6}%;width:{:.6}%;height:{:.6}%\">", index + 1, index + 1, x / width * 100.0, y / height * 100.0, w / width * 100.0, h / height * 100.0));
+        }
+        html.push_str("</div>");
+    } else {
+        html.push_str("<p>Page layout is unavailable; up to five images are shown separately.</p><div class=\"fallback\">");
+        for index in 0..count.min(5) {
+            html.push_str(&format!(
+                "<img src=\"{:04}.png\" alt=\"Saved page segment {}\">",
+                index + 1,
+                index + 1
+            ));
+        }
+        html.push_str("</div>");
+    }
+    html.push_str("</body></html>");
+    html
+}
+
 impl AttemptRecord {
     pub fn start(
         ws: &Workspace,
@@ -815,6 +895,11 @@ impl AttemptRecord {
                 fs::write(source_dir.join(format!("{:04}.png", index + 1)), png)
                     .map_err(|e| e.to_string())?;
             }
+            fs::write(
+                source_dir.join("view.html"),
+                listing_capture_view(&metadata, segments.len()),
+            )
+            .map_err(|e| e.to_string())?;
         }
         if let Some(packet) = ws.packet(id).map_err(|e| e.to_string())? {
             fs::write(
@@ -1200,6 +1285,48 @@ pub fn capture_before_navigation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_listing_view_reconstructs_tiles_and_rejects_untrusted_markup() {
+        let metadata = json!({"page_width":3000,"page_height":2000,"full_dimensions_captured":true,
+            "source_url":"<script>not markup</script>",
+            "segment_rectangles":[{"x":0,"y":0,"width":1600,"height":1600},{"x":1600,"y":0,"width":1400,"height":1600},{"x":0,"y":1600,"width":1600,"height":400},{"x":1600,"y":1600,"width":1400,"height":400}]}).to_string();
+        let view = listing_capture_view(metadata.as_bytes(), 4);
+        assert!(view.contains("src=\"0004.png\""));
+        assert!(view.contains("left:53.333333%;top:80.000000%"));
+        assert!(!view.contains("<script>"));
+        assert!(!view.contains("Capture is incomplete"));
+        let incomplete = listing_capture_view(metadata.as_bytes(), 3);
+        assert!(incomplete.contains("Page layout is unavailable"));
+        assert!(!incomplete.contains("0004.png"));
+        let overlap = json!({"page_width":100,"page_height":100,"full_dimensions_captured":true,"segment_rectangles":[{"x":0,"y":0,"width":100,"height":100},{"x":0,"y":0,"width":100,"height":100}]}).to_string();
+        assert!(listing_capture_view(overlap.as_bytes(), 2).contains("Capture is incomplete"));
+        assert!(listing_capture_view(b"not json", 1).contains("Page layout is unavailable"));
+    }
+    #[test]
+    #[ignore = "starts a local browser against fictional saved listing images"]
+    fn saved_listing_view_opens_with_positioned_images() {
+        use waypoint_applications::driver::BrowserDriver;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        let metadata = json!({"page_width":2000,"page_height":1000,"full_dimensions_captured":true,"segment_rectangles":[{"x":0,"y":0,"width":1000,"height":1000},{"x":1000,"y":0,"width":1000,"height":1000}]}).to_string();
+        fs::write(
+            root.path().join("view.html"),
+            listing_capture_view(metadata.as_bytes(), 2),
+        )
+        .unwrap();
+        let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a0sAAAAASUVORK5CYII=").unwrap();
+        fs::write(root.path().join("0001.png"), &png).unwrap();
+        fs::write(root.path().join("0002.png"), &png).unwrap();
+        let url = url::Url::from_file_path(root.path().join("view.html")).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let style = driver
+            .read_attribute(".page img:nth-child(2)", "style")
+            .unwrap()
+            .unwrap();
+        assert!(style.contains("left:50.000000%"));
+        assert!(!driver.screenshot_base64().unwrap().is_empty());
+    }
     #[test]
     fn tile_planning_preserves_budget_and_reports_incomplete_pages() {
         let (tiles, complete) = capture_tiles(3000.0, 2400.0);
@@ -1789,6 +1916,11 @@ mod tests {
                 b"\x89PNG\r\n\x1a\nfictional-data"
             );
             assert!(record.dir.join("original-job-page/capture.json").exists());
+            assert!(
+                fs::read_to_string(record.dir.join("original-job-page/view.html"))
+                    .unwrap()
+                    .contains("Page layout is unavailable")
+            );
             assert_eq!(
                 fs::read_to_string(record.dir.join("original-job-page/page-text.txt")).unwrap(),
                 "Fictional original page text"
