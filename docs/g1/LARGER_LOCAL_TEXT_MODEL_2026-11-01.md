@@ -1,0 +1,9 @@
+# Larger local text-model checks — 2026-11-01
+
+A locally installed task-specialized 11.9B Q4 model was started through the existing resource gate with a 4,096-token context. Ollama reported it fully GPU-resident. A point-in-time sample while resident showed approximately 16.8 GiB free system memory and 12.8 GiB dedicated GPU use; these are not peak measurements. The model has no advertised vision capability and is not a replacement for a visual application agent. It was unloaded after testing. Its local identifier is omitted here because it is a user-specific model.
+
+With the original form-mapping path, one fictional 20-field test mapped the name and email and kept the Portuguese work-eligibility question for manual review. A separate fictional Portuguese test mapped the email and flagged work eligibility and consent. The German browser fixture failed: the initial response mapped both ordinary fields but omitted the sensitivity-review list, and the repair response flagged both fields. The application left them for manual review.
+
+A constrained-output experiment produced promising answers in direct probes but failed the production German fixture by flagging the ordinary email. On the 20-field fixture it also flagged the email and many other fields for review. A separate repair-prompt experiment returned an invalid review key. Both changes were discarded; the application continues to treat missing, conflicting or invalid sensitivity reviews conservatively. These small fictional tests do not establish general model quality or repeatability.
+
+After unloading that model, two resource-gated startup attempts for the installed vision-capable 12B model were refused for insufficient observed GPU headroom. The guard was not bypassed. No employer site or application submission was involved.

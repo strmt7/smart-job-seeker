@@ -702,6 +702,63 @@ fn validate_suggestions(
 #[cfg(test)]
 mod tests {
     #[test]
+    #[ignore = "requires an already resident local model and resource preflight"]
+    fn live_portuguese_contact_and_sensitive_questions() {
+        let name =
+            std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
+        let make = |selector: &str, label: &str, kind, autocomplete: Option<&str>| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: kind,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: autocomplete.map(str::to_owned),
+        };
+        let mut schema = form();
+        schema.fields = vec![
+            make(
+                "#candidate",
+                "Tem autorização legal para trabalhar neste país?",
+                FormFieldType::Text,
+                Some("email"),
+            ),
+            make(
+                "#contact",
+                "Endereço de e-mail",
+                FormFieldType::Email,
+                Some("email"),
+            ),
+            make(
+                "#q3",
+                "Concorda com o tratamento dos seus dados pessoais?",
+                FormFieldType::Checkbox,
+                None,
+            ),
+        ];
+        let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
+            .unwrap()
+            .with_resident_context();
+        let mut model =
+            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let (mapped, warnings, review) = suggest_with_review(
+            &mut model,
+            &schema,
+            &json!({"email":"avery@example.invalid"}),
+        )
+        .unwrap();
+        println!("Fictional Portuguese sensitivity: mappings={mapped:?}; warnings={warnings:?}; review={review:?}");
+        assert!(review.contains("#candidate") && review.contains("#q3"));
+        assert!(!mapped.iter().any(
+            |mapping| mapping.field_selector == "#candidate" || mapping.field_selector == "#q3"
+        ));
+        assert!(mapped
+            .iter()
+            .any(|mapping| mapping.field_selector == "#contact"
+                && mapping.value == PacketValue::Text("avery@example.invalid".into())));
+    }
+    #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_model_maps_explicit_full_name() {
         let model =
@@ -1027,9 +1084,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires local browser, preloaded qwen3.5:9b and resource preflight"]
+    #[ignore = "requires local browser, an already resident model and resource preflight"]
     fn live_multilingual_browser_form_uses_local_model_without_sensitive_fields() {
         use waypoint_applications::driver::BrowserDriver;
+        let model_name =
+            std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
         struct Recording<I> {
             inner: I,
             responses: Vec<Value>,
@@ -1058,7 +1117,7 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(
             crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some("qwen3.5:9b")
+            Some(model_name.as_str())
         );
         assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1080,13 +1139,12 @@ mod tests {
             .iter()
             .find(|f| f.label == "E-Mail-Adresse")
             .unwrap();
-        let model =
-            waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
-                .unwrap()
-                .with_resident_context();
+        let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model_name)
+            .unwrap()
+            .with_resident_context();
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
-            "qwen3.5:9b".into(),
+            model_name,
             crate::resident_model,
         );
         let mut model = Recording {
@@ -1988,8 +2046,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    #[ignore = "requires an already resident local model and resource preflight"]
     fn live_large_form_keeps_unrecognized_sensitive_question_for_review() {
+        let model_name =
+            std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
         let mut schema = form();
         schema.fields = (0..20)
             .map(|index| FormField {
@@ -2008,13 +2068,12 @@ mod tests {
                 autocomplete: (index == 5 || index == 6).then(|| "email".into()),
             })
             .collect();
-        let model =
-            waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
-                .unwrap()
-                .with_resident_context();
+        let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model_name)
+            .unwrap()
+            .with_resident_context();
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
-            "qwen3.5:9b".into(),
+            model_name,
             crate::resident_model,
         );
         let (mappings, warnings, review) = suggest_with_review(
