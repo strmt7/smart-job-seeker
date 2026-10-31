@@ -25,3 +25,9 @@ One sample during the run showed approximately 19.8 GiB free system memory and 1
 A fictional workspace contained a platform role, a differently named role with paraphrased matching duties, and twenty unrelated sales roles at the same employer. The related role was deliberately placed after the unrelated candidates in job-ID order. The bounded shortlist included it; two local `qwen3.5:9b` searches each examined twelve shortlisted roles without failed batches and returned only the related role. The remaining candidates were outside the shortlist, which was marked truncated. This small constructed example does not establish real-world duplicate recall or precision.
 
 A resource-gated model was used; one resident sample showed approximately 20.0 GiB free system memory and 12.3 GiB dedicated GPU use, not peak measurements. The model was unloaded afterward. No employer site or application submission was involved.
+
+## Visual review after a field changes — 2026-11-01
+
+In two fictional local-browser runs with resource-gated `qwen3.5:9b`, the model transcribed the value captured in a screenshot after the live field had been changed. The independent live-field check marked that apparent match unconfirmed in both runs. The model also transcribed an empty email placeholder as a value, even though that field was not part of the expected comparison. These are limited examples, not proof of vision accuracy or protection from all page changes.
+
+A resident sample showed approximately 20.6 GiB free system memory and 12.4 GiB dedicated GPU use, not peak measurements. The model was unloaded afterward. No employer site or application submission was involved.

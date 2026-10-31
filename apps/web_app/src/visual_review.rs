@@ -918,6 +918,60 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires one local browser, a preloaded local vision model and resource preflight"]
+    fn live_visual_review_rejects_a_value_changed_after_capture() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue, ProposedMapping};
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (_, bytes) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            crate::eligible_resident_model(&ps).unwrap().as_deref(),
+            Some(model.as_str())
+        );
+        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fictional-visual-placeholder.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let image = driver.screenshot_base64().unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#name".into(),
+                value: PacketValue::Text("Morgan Example".into()),
+            })
+            .unwrap();
+        let preview = crate::form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#name".into(),
+                value: PacketValue::Text("Avery Example".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let expected = vec![("Full name".into(), "Avery Example".into())];
+        let mut result = analyze_with_context(addr, &model, &image, &expected, Some(4096)).unwrap();
+        let raw_status = result["comparisons"][0]["status"].clone();
+        let counts = crosscheck_live_values(&mut driver, &preview, &["#name".into()], &mut result);
+        println!("Fictional changed-value review: raw={raw_status}, live_checks={counts:?}, result={result}");
+        assert_eq!(
+            raw_status, "matches_transcription",
+            "fixture did not show the previous value to the model"
+        );
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        assert_eq!(result["comparisons"][0]["dom_status"], "unconfirmed");
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "requires one local browser, a preloaded vision model and resource preflight"]
     fn live_vision_reviews_fictional_native_datalist() {
         use waypoint_applications::driver::BrowserDriver;
