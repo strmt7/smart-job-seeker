@@ -44,6 +44,10 @@ pub const UNINSPECTED_FRAME_REVIEW: &str =
 pub const INACCESSIBLE_FRAME_FORM_REVIEW: &str =
     "An inaccessible embedded frame may contain form controls; review it manually";
 
+/// The browser did not provide a stable child target for an inaccessible frame.
+pub const ISOLATED_FRAME_INSPECTION_UNAVAILABLE: &str =
+    "An inaccessible embedded frame could not be inspected; review it manually";
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -750,6 +754,85 @@ impl CdpDriver {
         Ok(self.frame_access(node)? == Some(true))
     }
 
+    /// Inspect only a frame target identified by the current page's DOM. No
+    /// fields, labels, values or URLs leave this call. None means unavailable.
+    fn isolated_frame_has_controls(&mut self, frame: &str) -> Result<Option<bool>, DriverError> {
+        let targets = self
+            .cdp
+            .call_browser("Target.getTargets", json!({}))
+            .map_err(derr)?;
+        let present = targets
+            .get("targetInfos")
+            .and_then(Value::as_array)
+            .is_some_and(|targets| {
+                targets.iter().any(|target| {
+                    target.get("type").and_then(Value::as_str) == Some("iframe")
+                        && target.get("targetId").and_then(Value::as_str) == Some(frame)
+                })
+            });
+        if !present {
+            return Ok(None);
+        }
+        let attached = self
+            .cdp
+            .call_browser(
+                "Target.attachToTarget",
+                json!({"targetId":frame,"flatten":true}),
+            )
+            .map_err(derr)?;
+        let session = attached
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Embedded target session unavailable".into()))?
+            .to_owned();
+        let inspected = (|| -> Result<Option<bool>, DriverError> {
+            self.cdp
+                .call_session(&session, "DOM.enable", json!({}))
+                .map_err(derr)?;
+            let before = self
+                .cdp
+                .call_session(&session, "Page.getFrameTree", json!({}))
+                .map_err(derr)?;
+            let identity = |tree: &Value| {
+                tree.pointer("/frameTree/frame/id")
+                    .and_then(Value::as_str)
+                    .zip(
+                        tree.pointer("/frameTree/frame/loaderId")
+                            .and_then(Value::as_str),
+                    )
+                    .map(|(id, loader)| (id.to_owned(), loader.to_owned()))
+            };
+            let Some(first) = identity(&before).filter(|(id, _)| id == frame) else {
+                return Ok(None);
+            };
+            let document = self
+                .cdp
+                .call_session(
+                    &session,
+                    "DOM.getDocument",
+                    json!({"depth":-1,"pierce":false}),
+                )
+                .map_err(derr)?;
+            let Some(root) = document.get("root") else {
+                return Ok(None);
+            };
+            let found = document_has_form_controls(root);
+            let after = self
+                .cdp
+                .call_session(&session, "Page.getFrameTree", json!({}))
+                .map_err(derr)?;
+            if identity(&after).as_ref() != Some(&first) {
+                return Ok(None);
+            }
+            Ok(Some(found))
+        })();
+        let detached = self
+            .cdp
+            .call_browser("Target.detachFromTarget", json!({"sessionId":session}));
+        detached.map_err(derr)?;
+        inspected
+    }
+
     /// Read the main document and a bounded number of accessible embedded documents.
     fn read_form(
         &mut self,
@@ -765,6 +848,7 @@ impl CdpDriver {
         let inspected = (|| -> Result<(), DriverError> {
             let mut queue = std::collections::VecDeque::from([(root, String::new(), 0usize)]);
             let mut inspected_count = 0;
+            let mut isolated_inspections = 0usize;
             while let Some((document, prefix, depth)) = queue.pop_front() {
                 if depth >= 3 || inspected_count >= 4 {
                     continue;
@@ -794,48 +878,46 @@ impl CdpDriver {
                     let access = self.frame_access(frame_id)?;
                     if access == Some(false) {
                         let mut has_controls = false;
+                        let mut isolated_target = None;
+                        let mut child_present = false;
                         walk(&document, false, &mut |node, _| {
                             if node.get("backendNodeId").and_then(Value::as_u64)
                                 == Some(frame_backend)
                             {
+                                isolated_target = node
+                                    .get("frameId")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned);
                                 if let Some(child) = node.get("contentDocument") {
-                                    walk_with_visibility(
-                                        child,
-                                        false,
-                                        false,
-                                        &mut |field, _, hidden| {
-                                            let tag = field
-                                                .get("nodeName")
-                                                .and_then(Value::as_str)
-                                                .unwrap_or("");
-                                            if !hidden
-                                                && (tag.eq_ignore_ascii_case("input")
-                                                    || tag.eq_ignore_ascii_case("textarea")
-                                                    || tag.eq_ignore_ascii_case("select"))
-                                            {
-                                                let attrs = attributes(field);
-                                                let non_answer =
-                                                    attrs.get("type").is_some_and(|kind| {
-                                                        matches!(
-                                                            kind.to_ascii_lowercase().as_str(),
-                                                            "hidden"
-                                                                | "submit"
-                                                                | "button"
-                                                                | "reset"
-                                                                | "image"
-                                                        )
-                                                    });
-                                                if !non_answer {
-                                                    has_controls = true;
-                                                }
-                                            }
-                                            true
-                                        },
-                                    );
+                                    child_present = true;
+                                    has_controls = document_has_form_controls(child);
                                 }
                             }
                             true
                         });
+                        if !child_present {
+                            let inspected = if isolated_inspections < 4 {
+                                if let Some(target) = isolated_target {
+                                    isolated_inspections += 1;
+                                    self.isolated_frame_has_controls(&target).ok().flatten()
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            match inspected {
+                                Some(found) => has_controls = found,
+                                None => {
+                                    if !walls
+                                        .iter()
+                                        .any(|wall| wall == ISOLATED_FRAME_INSPECTION_UNAVAILABLE)
+                                    {
+                                        walls.push(ISOLATED_FRAME_INSPECTION_UNAVAILABLE.into());
+                                    }
+                                }
+                            }
+                        }
                         if has_controls
                             && !walls
                                 .iter()
@@ -2650,6 +2732,31 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
             pending.extend(children.iter().rev().map(|child| (child, child_in_control)));
         }
     }
+}
+
+fn document_has_form_controls(document: &Value) -> bool {
+    let mut found = false;
+    walk_with_visibility(document, false, false, &mut |field, _, hidden| {
+        let tag = field.get("nodeName").and_then(Value::as_str).unwrap_or("");
+        if !hidden
+            && (tag.eq_ignore_ascii_case("input")
+                || tag.eq_ignore_ascii_case("textarea")
+                || tag.eq_ignore_ascii_case("select"))
+        {
+            let attrs = attributes(field);
+            let non_answer = attrs.get("type").is_some_and(|kind| {
+                matches!(
+                    kind.to_ascii_lowercase().as_str(),
+                    "hidden" | "submit" | "button" | "reset" | "image"
+                )
+            });
+            if !non_answer {
+                found = true;
+            }
+        }
+        true
+    });
+    found
 }
 
 fn walk_with_visibility<F: FnMut(&Value, bool, bool) -> bool>(

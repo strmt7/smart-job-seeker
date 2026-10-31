@@ -979,18 +979,18 @@ fn visible_embedded_form_can_be_filled_with_review_and_rejects_stale_scope() {
 
 #[test]
 #[ignore = "launches a real browser against fictional inaccessible frames"]
-fn sandboxed_out_of_process_frame_stays_uninspected() {
+fn sandboxed_out_of_process_form_is_detected_without_exposing_fields() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let page = driver
         .open(&file_url("form_inaccessible_frame.html"))
         .unwrap();
     assert!(page.schema.fields.is_empty());
-    // Sandboxed out-of-process content may not be present in the parent DOM.
+    // A separate owned target reveals the presence of controls without returning fields.
     assert!(page
         .walls
         .iter()
         .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
-    assert!(!page
+    assert!(page
         .walls
         .iter()
         .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
@@ -1008,6 +1008,25 @@ fn sandboxed_out_of_process_frame_stays_uninspected() {
         .trace
         .iter()
         .all(|event| !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser against fictional isolated-frame budget fixture"]
+fn isolated_frame_budget_reports_uninspected_content() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_isolated_budget.html")).unwrap();
+    assert!(page.schema.fields.is_empty());
+    assert!(
+        page.walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE),
+        "{:?}",
+        page.walls
+    );
+    assert!(!page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
 }
 
 #[test]

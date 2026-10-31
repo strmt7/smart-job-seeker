@@ -517,6 +517,16 @@ impl Cdp {
         self.call_inner(method, params, Some(session))
     }
 
+    /// A call scoped to an explicitly attached child target owned by this page.
+    pub fn call_session(
+        &mut self,
+        session: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, CdpError> {
+        self.call_inner(method, params, Some(session.to_owned()))
+    }
+
     fn call_inner(
         &mut self,
         method: &str,

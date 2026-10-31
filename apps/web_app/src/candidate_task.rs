@@ -384,6 +384,7 @@ fn listing_frame_warnings(walls: &[String]) -> Result<Vec<String>, String> {
     for wall in walls {
         if wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
             || wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW
+            || wall == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE
         {
             warnings.push(wall.clone());
         } else {
@@ -502,6 +503,7 @@ mod tests {
         let walls = vec![
             waypoint_browser::UNINSPECTED_FRAME_REVIEW.to_owned(),
             waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW.to_owned(),
+            waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE.to_owned(),
         ];
         assert_eq!(super::listing_frame_warnings(&walls).unwrap(), walls);
         assert!(super::listing_frame_warnings(&["captcha present".into()]).is_err());

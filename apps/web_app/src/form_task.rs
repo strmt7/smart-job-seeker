@@ -710,6 +710,28 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one local browser against a fictional process-isolated form"]
+    fn isolated_embedded_form_does_not_follow_another_link() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_inaccessible_frame.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let (page, _) = open_application_page(&mut driver, &url).unwrap();
+        assert!(page.schema.fields.is_empty());
+        assert!(page
+            .walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
+        assert_eq!(driver.current_url().unwrap(), url);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts one local browser against a fictional inaccessible form"]
     fn inaccessible_embedded_form_does_not_follow_another_link() {
         let fixture = cross_origin_form_fixture();

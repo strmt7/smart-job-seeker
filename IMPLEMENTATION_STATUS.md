@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Process-isolated embedded form detection — 2026-10-31
+
+- Waypoint can temporarily attach a separate browser protocol session to an isolated frame target identified in the controlled page's DOM. It checks only whether the target document appears to contain form controls, binds the observation to the frame and loader, and detaches. It does not return or fill the isolated fields. Unavailable targets and the four-target inspection limit are explicitly reported for manual review; CAPTCHA and other blocking walls remain blocking.
+- A fictional sandboxed frame, both application-review entry points, and a five-frame budget fixture were exercised locally. The local browser suite passed 40 tests before the additional budget fixture; that fixture passed separately. The SQLCipher-enabled web suite passed 300 tests. No live employer site, local model, or cross-origin autofill was tested.
+
 ## Detectable inaccessible embedded forms — 2026-10-30
 
 - When the browser protocol exposes a visible frame document that the embedding page cannot access, Waypoint can flag apparent form controls without offering those fields for autofill. Application inspection keeps that page for manual review rather than automatically following an alternate link. Listing extraction retains the frame warnings while CAPTCHA and other blocking walls still stop extraction.
