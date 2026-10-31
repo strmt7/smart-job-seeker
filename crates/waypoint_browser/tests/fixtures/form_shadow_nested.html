@@ -1,0 +1,10 @@
+<!doctype html><html><body>
+<x-outer id="outer" style="display:block"></x-outer>
+<button id="hide" type="button" onclick="document.getElementById('outer').style.display='none'">Hide</button>
+<script>
+const outer = document.getElementById('outer').attachShadow({mode:'open'});
+outer.innerHTML = `<x-inner id="inner" style="display:block"></x-inner>`;
+const inner = outer.getElementById('inner').attachShadow({mode:'open'});
+inner.innerHTML = `<label>Nested name <input name="nested" autocomplete="given-name"></label>`;
+</script>
+</body></html>

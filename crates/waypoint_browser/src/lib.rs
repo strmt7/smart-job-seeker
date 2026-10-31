@@ -48,6 +48,13 @@ pub const INACCESSIBLE_FRAME_FORM_REVIEW: &str =
 pub const ISOLATED_FRAME_INSPECTION_UNAVAILABLE: &str =
     "An inaccessible embedded frame could not be inspected; review it manually";
 
+/// A rendered web component contains form content that needs review.
+pub const SHADOW_FORM_REVIEW: &str =
+    "A web component may contain form controls; review it manually";
+
+pub const CLOSED_SHADOW_FORM_REVIEW: &str =
+    "A closed web component may contain form controls; review it manually";
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -566,7 +573,9 @@ impl CdpDriver {
     }
 
     fn node_id(&mut self, selector: &str) -> Result<Option<u64>, DriverError> {
-        let root = self.document_with_frames(selector.starts_with("waypoint-frame:"))?;
+        let root = self.document_with_frames(
+            selector.starts_with("waypoint-frame:") || selector.starts_with("waypoint-shadow:"),
+        )?;
         let root_id = root
             .get("nodeId")
             .and_then(|v| v.as_u64())
@@ -575,44 +584,62 @@ impl CdpDriver {
         let mut root_id = root_id;
         let mut inner = selector;
         let mut depth = 0;
-        while let Some(scope) = inner.strip_prefix("waypoint-frame:") {
+        loop {
+            let (scope, shadow) = if let Some(scope) = inner.strip_prefix("waypoint-frame:") {
+                (scope, false)
+            } else if let Some(scope) = inner.strip_prefix("waypoint-shadow:") {
+                (scope, true)
+            } else {
+                break;
+            };
             depth += 1;
             if depth > 3 {
                 return Err(DriverError(
-                    "Embedded field exceeds the frame depth limit".into(),
+                    "Embedded field exceeds the scope depth limit".into(),
                 ));
             }
             let mut parts = scope.splitn(3, ':');
-            let frame = parts.next().and_then(|s| s.parse::<u64>().ok());
-            let expected_document = parts.next().and_then(|s| s.parse::<u64>().ok());
+            let owner = parts.next().and_then(|s| s.parse::<u64>().ok());
+            let expected = parts.next().and_then(|s| s.parse::<u64>().ok());
             let next = parts.next().filter(|s| !s.is_empty());
-            let (Some(frame), Some(expected_document), Some(next)) =
-                (frame, expected_document, next)
-            else {
+            let (Some(owner), Some(expected), Some(next)) = (owner, expected, next) else {
                 return Err(DriverError("Invalid embedded field selector".into()));
             };
             let mut candidate = None;
             walk(&document, false, &mut |node, _| {
-                if node.get("backendNodeId").and_then(Value::as_u64) == Some(frame) {
+                if node.get("backendNodeId").and_then(Value::as_u64) == Some(owner) {
                     candidate = Some(node.clone());
                 }
                 true
             });
-            let Some(frame_node) = candidate else {
+            let Some(host) = candidate else {
                 return Ok(None);
             };
-            let Some(child) = frame_node.get("contentDocument") else {
+            let Some(host_id) = host.get("nodeId").and_then(Value::as_u64) else {
                 return Ok(None);
             };
-            if child.get("backendNodeId").and_then(Value::as_u64) != Some(expected_document) {
-                return Ok(None);
-            }
-            let Some(frame_id) = frame_node.get("nodeId").and_then(Value::as_u64) else {
-                return Ok(None);
+            let child = if shadow {
+                if !self.open_visible_shadow_host(host_id)? {
+                    return Ok(None);
+                }
+                host.get("shadowRoots")
+                    .and_then(Value::as_array)
+                    .and_then(|roots| {
+                        roots.iter().find(|root| {
+                            root.get("shadowRootType").and_then(Value::as_str) == Some("open")
+                                && root.get("backendNodeId").and_then(Value::as_u64)
+                                    == Some(expected)
+                        })
+                    })
+            } else {
+                if !self.accessible_visible_frame(host_id)? {
+                    return Ok(None);
+                }
+                host.get("contentDocument").filter(|child| {
+                    child.get("backendNodeId").and_then(Value::as_u64) == Some(expected)
+                })
             };
-            if !self.accessible_visible_frame(frame_id)? {
-                return Ok(None);
-            }
+            let Some(child) = child else { return Ok(None) };
             let Some(child_id) = child.get("nodeId").and_then(Value::as_u64) else {
                 return Ok(None);
             };
@@ -704,6 +731,30 @@ impl CdpDriver {
                 DriverError("Field availability is unavailable; manual review is needed".into())
             })?;
         Ok((visible, path.to_owned(), available))
+    }
+
+    fn open_visible_shadow_host(&mut self, node: u64) -> Result<bool, DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Ok(false);
+        }
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Web component disappeared; manual review is needed".into())
+            })?
+            .to_owned();
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this.shadowRoot !== null; }","returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result.pointer("/result/value").and_then(Value::as_bool) == Some(true))
     }
 
     /// None means hidden; otherwise report whether the embedding document can access it.
@@ -853,6 +904,75 @@ impl CdpDriver {
                 if depth >= 3 || inspected_count >= 4 {
                     continue;
                 }
+                let mut shadow_hosts = Vec::new();
+                walk_with_visibility(&document, false, false, &mut |node, _, hidden| {
+                    if !hidden {
+                        if let (Some(id), Some(backend), Some(roots)) = (
+                            node.get("nodeId").and_then(Value::as_u64),
+                            node.get("backendNodeId").and_then(Value::as_u64),
+                            node.get("shadowRoots").and_then(Value::as_array),
+                        ) {
+                            for root in roots {
+                                if root.get("shadowRootType").and_then(Value::as_str)
+                                    == Some("open")
+                                    && document_may_contain_form_or_scope(root)
+                                {
+                                    if let Some(root_backend) =
+                                        root.get("backendNodeId").and_then(Value::as_u64)
+                                    {
+                                        shadow_hosts.push((id, backend, root_backend));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    true
+                });
+                for (host_id, host_backend, root_backend) in shadow_hosts {
+                    if inspected_count >= 4 {
+                        break;
+                    }
+                    if started.elapsed() > Duration::from_secs(8) {
+                        return Err(DriverError("Embedded form inspection exceeded its time budget; manual review is needed".into()));
+                    }
+                    if !self.open_visible_shadow_host(host_id)? {
+                        continue;
+                    }
+                    let mut child = None;
+                    walk(&document, false, &mut |node, _| {
+                        if node.get("backendNodeId").and_then(Value::as_u64) == Some(host_backend) {
+                            child = node
+                                .get("shadowRoots")
+                                .and_then(Value::as_array)
+                                .and_then(|roots| {
+                                    roots.iter().find(|root| {
+                                        root.get("shadowRootType").and_then(Value::as_str)
+                                            == Some("open")
+                                            && root.get("backendNodeId").and_then(Value::as_u64)
+                                                == Some(root_backend)
+                                    })
+                                })
+                                .cloned();
+                        }
+                        true
+                    });
+                    let Some(child) = child else { continue };
+                    inspected_count += 1;
+                    let (mut embedded, mut embedded_walls) =
+                        self.read_form_document(url, &child)?;
+                    if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
+                        return Err(DriverError("Form has too many controls for one inspection; manual review is needed".into()));
+                    }
+                    let child_prefix =
+                        format!("{prefix}waypoint-shadow:{host_backend}:{root_backend}:");
+                    for field in &mut embedded.fields {
+                        field.selector = format!("{child_prefix}{}", field.selector);
+                    }
+                    schema.fields.extend(embedded.fields);
+                    schema.multi_step |= embedded.multi_step;
+                    walls.append(&mut embedded_walls);
+                    queue.push_back((child, child_prefix, depth + 1));
+                }
                 let mut frames = Vec::new();
                 walk_with_visibility(&document, false, false, &mut |node, _, hidden| {
                     let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
@@ -984,6 +1104,7 @@ impl CdpDriver {
         let mut next_nodes = Vec::new();
         let mut next_references = Vec::new();
         let mut frame_nodes = Vec::new();
+        let mut shadow_nodes = Vec::new();
         let mut text = String::new();
         let mut possible_next_step = false;
         walk_with_visibility(root, false, false, &mut |node, in_control, hidden| {
@@ -995,6 +1116,30 @@ impl CdpDriver {
             // Captchas hide in ordinary markup (a div, an iframe), not only in
             // form controls, so every node is checked.
             let attrs = attributes(node);
+            if !hidden {
+                if let Some(roots) = node.get("shadowRoots").and_then(Value::as_array) {
+                    let relevant: Vec<_> = roots
+                        .iter()
+                        .filter(|root| {
+                            matches!(
+                                root.get("shadowRootType").and_then(Value::as_str),
+                                Some("open" | "closed")
+                            )
+                        })
+                        .collect();
+                    if !relevant.is_empty() {
+                        if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                            let closed_form = relevant.iter().any(|root| {
+                                root.get("shadowRootType").and_then(Value::as_str) == Some("closed")
+                                    && document_has_form_controls(root)
+                            });
+                            shadow_nodes.push((id, closed_form));
+                        } else {
+                            wall_flags.push(SHADOW_FORM_REVIEW.into());
+                        }
+                    }
+                }
+            }
             if matches!(tag.as_str(), "iframe" | "frame") && !hidden {
                 if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
                     frame_nodes.push(id);
@@ -1346,6 +1491,7 @@ impl CdpDriver {
             .saturating_add(custom_nodes.len())
             .saturating_add(next_nodes.len())
             .saturating_add(frame_nodes.len())
+            .saturating_add(shadow_nodes.len())
             > 160
         {
             return Err(DriverError(
@@ -1418,6 +1564,17 @@ impl CdpDriver {
                         Some(label) => format!("{prefix}: {label}"),
                         None => prefix.into(),
                     });
+                }
+            }
+            for (node, closed_form) in shadow_nodes {
+                if start.elapsed() > Duration::from_secs(8) {
+                    return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
+                }
+                if self.control_visibility_and_path(node)?.0 {
+                    wall_flags.push(SHADOW_FORM_REVIEW.into());
+                    if closed_form {
+                        wall_flags.push(CLOSED_SHADOW_FORM_REVIEW.into());
+                    }
                 }
             }
             for node in frame_nodes {
@@ -1808,7 +1965,7 @@ impl CdpDriver {
                 self.cdp
                     .call("DOM.focus", json!({ "nodeId": node }))
                     .map_err(derr)?;
-                let focus = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return document.activeElement === this && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !((this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) && (this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()))); }","returnByValue":true})).map_err(derr)?;
+                let focus = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.getRootNode().activeElement === this && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !((this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) && (this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()))); }","returnByValue":true})).map_err(derr)?;
                 if focus.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
                     return Err(DriverError(
                         "Text field did not retain safe focus or changed to a choice control; review it manually".into(),
@@ -1998,6 +2155,7 @@ impl CdpDriver {
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label, apply) {
           if (this.tagName !== 'INPUT' || this.type !== 'radio' || !this.name) return false;
           const selector = 'fieldset,[role="radiogroup"]';
+          const root = this.getRootNode();
           const group = this.closest(selector); if (!group) return false;
           const norm = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
           const optionLabel = r => {
@@ -2007,7 +2165,7 @@ impl CdpDriver {
               if (!ids.length || ids.length > 16 || refs.length > 512) return null;
               const parts = [];
               for (const id of ids) {
-                const nodes = document.querySelectorAll('#' + CSS.escape(id));
+                const nodes = root.querySelectorAll('#' + CSS.escape(id));
                 if (nodes.length !== 1 || !nodes[0].textContent.trim()) return null;
                 parts.push(nodes[0].textContent);
               }
@@ -2017,7 +2175,7 @@ impl CdpDriver {
           };
           const unavailable = r => r.matches(':disabled') || !!r.closest('[aria-disabled="true" i], [aria-readonly="true" i]');
           const radios = Array.from(group.querySelectorAll('input[type=radio]')).filter(r => r.closest(selector) === group && r.name === this.name && r.form === this.form && !unavailable(r));
-          const allRadios = document.querySelectorAll('input[type=radio]'); if (allRadios.length > 5000) return false;
+          const allRadios = root.querySelectorAll('input[type=radio]'); if (allRadios.length > 5000) return false;
           const sameName = Array.from(allRadios).filter(r => r.name === this.name && r.form === this.form);
           if (sameName.some(r => r.closest(selector) !== group)) return false;
           const choices = radios.filter(r => { const text = optionLabel(r); return text !== null && norm(text) === norm(label); });
@@ -2732,6 +2890,44 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
             pending.extend(children.iter().rev().map(|child| (child, child_in_control)));
         }
     }
+}
+
+fn document_may_contain_form_or_scope(document: &Value) -> bool {
+    let mut found = document_has_form_controls(document);
+    if found {
+        return true;
+    }
+    walk_with_visibility(document, false, false, &mut |node, _, hidden| {
+        if !hidden {
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            let attrs = attributes(node);
+            if tag.eq_ignore_ascii_case("iframe")
+                || tag.eq_ignore_ascii_case("frame")
+                || node
+                    .get("shadowRoots")
+                    .and_then(Value::as_array)
+                    .is_some_and(|roots| {
+                        roots.iter().any(|root| {
+                            matches!(
+                                root.get("shadowRootType").and_then(Value::as_str),
+                                Some("open" | "closed")
+                            )
+                        })
+                    })
+                || attrs.get("role").is_some_and(|role| {
+                    matches!(
+                        role.to_ascii_lowercase().as_str(),
+                        "textbox" | "combobox" | "checkbox" | "radio" | "switch" | "slider"
+                    )
+                })
+                || attrs.contains_key("contenteditable")
+            {
+                found = true;
+            }
+        }
+        true
+    });
+    found
 }
 
 fn document_has_form_controls(document: &Value) -> bool {

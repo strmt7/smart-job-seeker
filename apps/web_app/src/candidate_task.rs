@@ -379,12 +379,14 @@ fn capture_listing(
     ListingCapture { metadata, segments }
 }
 
-fn listing_frame_warnings(walls: &[String]) -> Result<Vec<String>, String> {
+fn listing_embedded_warnings(walls: &[String]) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     for wall in walls {
         if wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
             || wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW
             || wall == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE
+            || wall == waypoint_browser::SHADOW_FORM_REVIEW
+            || wall == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
         {
             warnings.push(wall.clone());
         } else {
@@ -414,7 +416,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
             let mut browser =
                 waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
             let page = browser.open(&url).map_err(|e| e.to_string())?;
-            let frame_warnings = listing_frame_warnings(&page.walls)?;
+            let frame_warnings = listing_embedded_warnings(&page.walls)?;
             let current = browser.current_url().map_err(|e| e.to_string())?;
             let original = url::Url::parse(&url).map_err(|_| "Invalid URL")?;
             let reached = url::Url::parse(&current).map_err(|_| "Invalid destination")?;
@@ -499,14 +501,16 @@ pub fn complete(id: &str, value: Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn listing_keeps_frame_warnings_but_stops_on_captcha() {
+    fn listing_keeps_embedded_warnings_but_stops_on_captcha() {
         let walls = vec![
             waypoint_browser::UNINSPECTED_FRAME_REVIEW.to_owned(),
             waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW.to_owned(),
             waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE.to_owned(),
+            waypoint_browser::SHADOW_FORM_REVIEW.to_owned(),
+            waypoint_browser::CLOSED_SHADOW_FORM_REVIEW.to_owned(),
         ];
-        assert_eq!(super::listing_frame_warnings(&walls).unwrap(), walls);
-        assert!(super::listing_frame_warnings(&["captcha present".into()]).is_err());
+        assert_eq!(super::listing_embedded_warnings(&walls).unwrap(), walls);
+        assert!(super::listing_embedded_warnings(&["captcha present".into()]).is_err());
     }
 
     use super::*;

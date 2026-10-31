@@ -1097,6 +1097,120 @@ fn inaccessible_same_site_cross_origin_form_is_detected_without_fields() {
 }
 
 #[test]
+#[ignore = "launches one browser against nested fictional shadow roots"]
+fn nested_shadow_field_binds_every_visible_host() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_shadow_nested.html")).unwrap();
+    let selector = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Nested name")
+        .unwrap()
+        .selector
+        .clone();
+    assert_eq!(selector.matches("waypoint-shadow:").count(), 2);
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("Fictional".into()),
+        })
+        .unwrap();
+    driver.verify_text_value(&selector, "Fictional").unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#hide".into(),
+        })
+        .unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector,
+            value: PacketValue::Text("Must not be entered".into())
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser against fictional shadow-root controls"]
+fn open_shadow_fields_can_be_filled_and_closed_roots_need_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_shadow.html")).unwrap();
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::SHADOW_FORM_REVIEW));
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW));
+    assert!(!page
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Private question"));
+    let selector = |label: &str| {
+        page.schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .unwrap_or_else(|| panic!("missing {label}: {:?}", page.schema.fields))
+            .selector
+            .clone()
+    };
+    let name = selector("Name");
+    assert!(name.starts_with("waypoint-shadow:"));
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: name.clone(),
+            value: PacketValue::Text("Fictional".into()),
+        })
+        .unwrap();
+    driver.verify_text_value(&name, "Fictional").unwrap();
+    for choice in [
+        BrowserCommand::SelectOption {
+            selector: selector("Place"),
+            label: "Remote".into(),
+        },
+        BrowserCommand::Fill {
+            selector: selector("Updates"),
+            value: PacketValue::Bool(true),
+        },
+        BrowserCommand::SelectRadio {
+            selector: selector("Schedule"),
+            label: "Part time".into(),
+        },
+    ] {
+        driver.execute(&choice).unwrap();
+        driver.verify_choice(&choice).unwrap();
+    }
+    let attachment = selector("Attachment");
+    let file = upload_dir().join("fictional-shadow.pdf");
+    std::fs::write(&file, b"fictional fixture").unwrap();
+    driver.attach_local_file(&attachment, &file).unwrap();
+    driver.verify_local_file(&attachment, &file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#replace-host".into(),
+        })
+        .unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: name,
+            value: PacketValue::Text("Must not be entered".into())
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser against a fictional nested embedded form"]
 fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

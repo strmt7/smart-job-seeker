@@ -76,10 +76,10 @@ pub(crate) fn has_main_fields_and_embedded_content(
     live: &waypoint_applications::driver::LiveForm,
 ) -> bool {
     !live.schema.fields.is_empty()
-        && live
-            .walls
-            .iter()
-            .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW)
+        && live.walls.iter().any(|wall| {
+            wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+                || wall == waypoint_browser::SHADOW_FORM_REVIEW
+        })
 }
 
 /// Open the listing, then at most one unambiguous same-origin application link.
@@ -89,11 +89,10 @@ fn open_application_page(
     url: &str,
 ) -> Result<(waypoint_applications::driver::LiveForm, Option<String>), String> {
     let mut live = driver.open(url).map_err(|e| e.to_string())?;
-    if live
-        .walls
-        .iter()
-        .any(|wall| wall != waypoint_browser::UNINSPECTED_FRAME_REVIEW)
-    {
+    if live.walls.iter().any(|wall| {
+        wall != waypoint_browser::UNINSPECTED_FRAME_REVIEW
+            && wall != waypoint_browser::SHADOW_FORM_REVIEW
+    }) {
         return Ok((live, None));
     }
     let current = driver.current_url().map_err(|e| e.to_string())?;

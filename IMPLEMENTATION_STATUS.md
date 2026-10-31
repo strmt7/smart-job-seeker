@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Open web-component form controls — 2026-10-31
+
+- The browser can inspect bounded open shadow roots and bind field selectors to each host and root. It can fill and verify supported native controls there; closed roots with apparent form controls remain manual review. Web-component content is flagged for review, and visual page captures are not described as complete when such content is present. Decorative open roots without form controls or nested scopes do not consume the four-scope inspection budget.
+- Fictional local-browser fixtures exercised text, dropdown, checkbox, radio and PDF attachment controls, nested open roots, host hiding and replacement, and a closed root. A reviewed web-app prefill test covered the open-root field. The 43-test browser suite passed before the attachment fixture extension; that extension passed separately. The 301-test SQLCipher-enabled web suite passed. Mixed frame-and-shadow scopes, real employer sites and local-model accuracy remain unverified.
+
 ## Process-isolated embedded form detection — 2026-10-31
 
 - Waypoint can temporarily attach a separate browser protocol session to an isolated frame target identified in the controlled page's DOM. It checks only whether the target document appears to contain form controls, binds the observation to the frame and loader, and detaches. It does not return or fill the isolated fields. Unavailable targets and the four-target inspection limit are explicitly reported for manual review; CAPTCHA and other blocking walls remain blocking.

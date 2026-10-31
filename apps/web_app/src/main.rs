@@ -3572,11 +3572,10 @@ fn serve(
             let (clip_width, y, clip_height, total, page_coverage_complete) =
                 visual_review::segment_half_geometry(width, height, segment as usize, half)?;
             let coverage_complete = page_coverage_complete
-                && !current
-                    .preview
-                    .manual_review
-                    .iter()
-                    .any(|reason| reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW);
+                && !current.preview.manual_review.iter().any(|reason| {
+                    reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+                        || reason == waypoint_browser::SHADOW_FORM_REVIEW
+                });
             let url = current.driver.current_url().map_err(|e| e.to_string())?;
             let signature = visual_review::page_signature(&url, width, height);
             let screenshot = current

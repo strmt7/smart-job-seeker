@@ -383,10 +383,10 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 .ok()
                 .and_then(|current| displayable_inspected_url(&url, &current));
             if !crate::form_task::has_main_fields_and_embedded_content(&page)
-                && page
-                    .walls
-                    .iter()
-                    .all(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW)
+                && page.walls.iter().all(|wall| {
+                    wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+                        || wall == waypoint_browser::SHADOW_FORM_REVIEW
+                })
             {
                 let current = browser
                     .current_url()

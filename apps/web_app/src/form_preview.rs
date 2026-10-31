@@ -58,6 +58,8 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
     reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW
         || reason == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW
         || reason == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE
+        || reason == waypoint_browser::SHADOW_FORM_REVIEW
+        || reason == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
         || reason == "an unavailable field needs manual review"
         || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
@@ -675,6 +677,10 @@ mod tests {
         ));
         assert!(is_custom_review(
             waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE
+        ));
+        assert!(is_custom_review(waypoint_browser::SHADOW_FORM_REVIEW));
+        assert!(is_custom_review(
+            waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
         ));
         assert!(!is_custom_review(
             "a required field is disabled or read-only"
@@ -2072,7 +2078,11 @@ mod tests {
     fn reviewed_prefill_reaches_a_visible_embedded_form_after_hidden_frames() {
         use waypoint_domain::GrantId;
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        for filename in ["form_iframe_controls.html", "form_iframe_nested.html"] {
+        for filename in [
+            "form_iframe_controls.html",
+            "form_iframe_nested.html",
+            "form_shadow.html",
+        ] {
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../crates/waypoint_browser/tests/fixtures")
                 .join(filename);
@@ -2083,11 +2093,14 @@ mod tests {
                     .unwrap();
             assert_eq!(preview.suggestions.len(), 1);
             let selector = preview.suggestions[0].field_selector.clone();
-            assert!(selector.starts_with("waypoint-frame:"));
+            assert!(
+                selector.starts_with("waypoint-frame:") || selector.starts_with("waypoint-shadow:")
+            );
             assert!(preview
                 .manual_review
                 .iter()
-                .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW));
+                .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
+                    || wall == waypoint_browser::SHADOW_FORM_REVIEW));
             let mut ws = Workspace::in_memory().unwrap();
             let job_id = JobIdentityId::new("embedded-fixture").unwrap();
             ws.import_job(waypoint_store::StoredJob {

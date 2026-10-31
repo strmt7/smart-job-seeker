@@ -18,7 +18,7 @@ type SuggestionsWithReview = (Vec<ProposedMapping>, Vec<String>, HashSet<String>
 // Short, collision-free references are translated back before validation.
 fn model_field_selector(schema: &FormSchema, index: usize) -> String {
     let original = &schema.fields[index].selector;
-    if !original.starts_with("waypoint-frame:") {
+    if !original.starts_with("waypoint-frame:") && !original.starts_with("waypoint-shadow:") {
         return original.clone();
     }
     let mut alias = format!("@waypoint-field-{index}");
@@ -881,6 +881,19 @@ mod tests {
             .trace
             .iter()
             .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
+    fn shadow_field_uses_compact_model_identifier() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        schema.fields[0].selector = "waypoint-shadow:12:34:input[name=candidate]".into();
+        assert_eq!(model_field_selector(&schema, 0), "@waypoint-field-0");
+        let descriptions = vec![json!({"selector":"@waypoint-field-0"})];
+        let fields: Vec<_> = schema.fields.iter().collect();
+        let mut output = json!({"mappings":[{"selector":"@waypoint-field-0","profile_key":"first_name"}],"manual_review":[]});
+        restore_model_selectors(&mut output, &fields, &descriptions);
+        assert_eq!(output["mappings"][0]["selector"], schema.fields[0].selector);
     }
 
     #[test]
