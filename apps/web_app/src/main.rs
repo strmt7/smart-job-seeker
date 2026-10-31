@@ -4455,9 +4455,24 @@ fn serve(
                     ));
                 }
             };
+            if let Some(record) = &mut current.record {
+                if let Err(error) = record.event(json!({"type":"fill_commands_verified","time":now(),"completed_commands":completed,"note":"Each command completed and its live value was checked immediately afterward. The site may change values later; this does not prove submission."})) {
+                    let status_error = record.status("manual_review", now()).err();
+                    let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written after filling", now()).err();
+                    current.created = Instant::now();
+                    *session = Some(current);
+                    let detail = status_error.or_else(|| review_error.map(|e| e.to_string())).map(|e| format!(" The review status could not be saved: {e}.")).unwrap_or_default();
+                    return Err(format!("Fields were filled, but their completion could not be recorded: {error}. Inspect the open browser manually.{detail}"));
+                }
+            }
             let screenshot = match current.driver.screenshot_base64() {
                 Ok(image) => image,
                 Err(error) => {
+                    let record_error = current.record.as_mut().and_then(|record| {
+                        let event_error = record.event(json!({"type":"fill_screenshot_failed","time":now(),"note":"The review screenshot was unavailable; inspect the live form manually."})).err();
+                        let status_error = record.status("manual_review", now()).err();
+                        event_error.or(status_error)
+                    });
                     let review_error = ws
                         .mark_manual_review(
                             &current.job_id,
@@ -4470,8 +4485,11 @@ fn serve(
                     let flag_note = review_error
                         .map(|e| format!(" The manual-review flag could not be saved: {e}."))
                         .unwrap_or_default();
+                    let record_note = record_error
+                        .map(|e| format!(" The screenshot failure could not be recorded: {e}."))
+                        .unwrap_or_default();
                     return Err(format!(
-                        "Fields were filled, but the review screenshot failed: {error}.{flag_note} Inspect the open browser manually."
+                        "Fields were filled, but the review screenshot failed: {error}.{flag_note}{record_note} Inspect the open browser manually."
                     ));
                 }
             };
@@ -8406,6 +8424,24 @@ mod tests {
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect();
+            let verified_index = event_values
+                .iter()
+                .position(|event| event["type"] == "fill_commands_verified")
+                .unwrap();
+            let screenshot_index = event_values
+                .iter()
+                .position(|event| event["type"] == "fields_filled")
+                .unwrap();
+            assert!(verified_index < screenshot_index);
+            assert!(event_values[verified_index]["completed_commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field["selector"] == "#candidate"));
+            assert!(event_values[verified_index]["note"]
+                .as_str()
+                .unwrap()
+                .contains("does not prove submission"));
             let draft_link = event_values
                 .iter()
                 .find(|event| event["type"] == "document_draft_evidence_linked")

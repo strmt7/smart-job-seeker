@@ -1080,3 +1080,9 @@ A fictional Unicode text document was converted with the locally installed offic
 DOCX-to-PDF conversion now compares locally extracted DOCX text with selectable PDF text after whitespace normalization. The DOCX extractor covers body, header and footer text but may miss other content; repeated headers, fields and layout changes can also cause differences. A match is not a visual or ATS compatibility check. Extraction failures leave the saved PDF available and report the comparison as unavailable. Images remain outside this comparison.
 
 A fictional styled DOCX was converted with local runtimes and produced a comparison result; the conversion tests, simulated UI checks and web lint passed. The result panel is not persisted across reloads. No employer site or local model was used.
+
+## Filled-field record ordering — 2026-11-01
+
+After successful form commands and their immediate live-value checks, the attempt record now stores the completed selectors and labels before requesting a review screenshot. The earlier requested-answers event contains the corresponding reviewed values. If this completion event cannot be written, the session remains open for manual inspection; a screenshot failure also attempts to record the failure and set manual-review status. A successful check is a point-in-time observation and does not establish later field values or submission.
+
+A fictional local browser and HTTP fixture verified the new event and its ordering before the screenshot event. The screenshot-failure branch was not separately induced. No employer site or application submission was involved.
