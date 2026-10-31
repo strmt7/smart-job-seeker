@@ -4133,6 +4133,44 @@ fn serve(
                 json!({"selection":snapshot,"digest":digest}),
             );
         }
+        "/api/form/text-snapshot" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"].as_str().ok_or("missing field")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && !s.filled && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired or already filled")?;
+            let field = current
+                .preview
+                .schema
+                .fields
+                .iter()
+                .find(|f| f.selector == selector)
+                .ok_or("Field is no longer present")?;
+            if field.sensitive
+                || current.preview.model_review_selectors.contains(selector)
+                || !matches!(
+                    field.field_type,
+                    waypoint_applications::form_mapping::FormFieldType::Text
+                        | waypoint_applications::form_mapping::FormFieldType::Email
+                        | waypoint_applications::form_mapping::FormFieldType::TextArea
+                        | waypoint_applications::form_mapping::FormFieldType::Date
+                )
+            {
+                return Err("This field requires manual handling".into());
+            }
+            check_answer_page(current)?;
+            let snapshot = current
+                .driver
+                .text_value_snapshot(selector)
+                .map_err(|e| e.to_string())?;
+            let digest = form_preview::text_snapshot_digest(
+                &format!("prefill-{}", current.id),
+                selector,
+                &snapshot,
+            );
+            json_reply(stream, "200 OK", json!({"text":snapshot,"digest":digest}));
+        }
         "/api/form/fill" => {
             if body["reviewed"].as_bool() != Some(true) {
                 return Err("Explicit review is required".into());
@@ -4197,6 +4235,10 @@ fn serve(
                         || !matches!(
                             field.field_type,
                             waypoint_applications::form_mapping::FormFieldType::Select { .. }
+                                | waypoint_applications::form_mapping::FormFieldType::Text
+                                | waypoint_applications::form_mapping::FormFieldType::Email
+                                | waypoint_applications::form_mapping::FormFieldType::TextArea
+                                | waypoint_applications::form_mapping::FormFieldType::Date
                         )
                         || !prepared
                             .suggestions
@@ -4207,8 +4249,7 @@ fn serve(
                             .is_some()
                     {
                         return Err(
-                            "Replacement approval must identify a reviewed, selected dropdown"
-                                .into(),
+                            "Replacement approval must identify a reviewed, selected field".into(),
                         );
                     }
                 }
@@ -4270,7 +4311,7 @@ fn serve(
                 let note = review_error
                     .map(|e| format!(" The manual-review flag could not be saved: {e}."))
                     .unwrap_or_default();
-                return Err(format!("No fields were filled because an existing value needs review: {error}. Unselect that field or inspect the browser. For dropdowns, you can review a replacement in this panel, then retry.{note}"));
+                return Err(format!("No fields were filled because an existing value needs review: {error}. Unselect that field or inspect the browser. For supported fields, you can review a replacement in this panel, then retry.{note}"));
             }
             if current.record.is_none() {
                 match required_attempt_record(ws, &current.job_id) {
@@ -7434,6 +7475,68 @@ mod tests {
             choice_error.contains("different selection"),
             "{choice_error}"
         );
+        let field = session
+            .as_mut()
+            .unwrap()
+            .preview
+            .schema
+            .fields
+            .iter_mut()
+            .find(|field| field.selector == "#second")
+            .unwrap();
+        field.sensitive = true;
+        assert!(request(
+            &mut ws,
+            &mut session,
+            "/api/form/text-snapshot",
+            json!({"session_id":"existing-session","selector":"#second"})
+        )
+        .is_err());
+        session
+            .as_mut()
+            .unwrap()
+            .preview
+            .schema
+            .fields
+            .iter_mut()
+            .find(|field| field.selector == "#second")
+            .unwrap()
+            .sensitive = false;
+        let text_snapshot = request(
+            &mut ws,
+            &mut session,
+            "/api/form/text-snapshot",
+            json!({"session_id":"existing-session","selector":"#second"}),
+        )
+        .unwrap();
+        assert_eq!(text_snapshot["text"]["value"], "Existing answer");
+        let text_approval =
+            json!({"selector":"#second","digest":text_snapshot["digest"],"reviewed":true});
+        let text_command =
+            |value: &str| waypoint_applications::form_mapping::BrowserCommand::Fill {
+                selector: "#second".into(),
+                value: PacketValue::Text(value.into()),
+            };
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&text_command("Changed by page"))
+            .unwrap();
+        let stale_text = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first", "#second"]), json!([text_approval.clone()])),
+        )
+        .unwrap_err();
+        assert!(stale_text.contains("changed since"), "{stale_text}");
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&text_command("Existing answer"))
+            .unwrap();
         let snapshot = request(
             &mut ws,
             &mut session,
@@ -7478,11 +7581,12 @@ mod tests {
             .driver
             .execute(&command("Alpha"))
             .unwrap();
+        let combined = json!([text_approval, {"selector":"#existing-choice","digest":snapshot["digest"],"reviewed":true}]);
         assert!(request(
             &mut ws,
             &mut session,
             "/api/form/fill",
-            fill(json!(["#first", "#existing-choice"]), approvals)
+            fill(json!(["#first", "#second", "#existing-choice"]), combined)
         )
         .is_ok());
         let current = session.as_mut().unwrap();
@@ -7493,7 +7597,7 @@ mod tests {
             .unwrap();
         current
             .driver
-            .verify_text_value("#second", "Existing answer")
+            .verify_text_value("#second", "Different answer")
             .unwrap();
         current
             .driver

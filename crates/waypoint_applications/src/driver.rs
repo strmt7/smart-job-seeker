@@ -56,6 +56,12 @@ pub struct SelectSnapshot {
     pub value: String,
 }
 
+/// The bounded current text shown locally before an explicit replacement.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TextSnapshot {
+    pub value: String,
+}
+
 pub trait BrowserDriver {
     /// Open the destination and describe the live form.
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError>;
@@ -97,6 +103,9 @@ pub trait BrowserDriver {
     }
     fn selected_option_snapshot(&mut self, _selector: &str) -> Result<SelectSnapshot, DriverError> {
         Err(DriverError("Existing selection cannot be inspected".into()))
+    }
+    fn text_value_snapshot(&mut self, _selector: &str) -> Result<TextSnapshot, DriverError> {
+        Err(DriverError("Existing text cannot be inspected".into()))
     }
     /// Verify a supported choice without changing it.
     fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {

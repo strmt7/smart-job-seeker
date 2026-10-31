@@ -1046,3 +1046,9 @@ Fictional browser tests covered empty, matching and conflicting controls. A loca
 A form review can now display a supported native dropdown's current label and value and let the user explicitly approve replacing that specific selection with their reviewed answer. The approval is bound to the session, field and selection snapshot; the one-use prefill grant also binds the replacement approval and requested answers. A changed selection or edited replacement answer requires review again. Other existing-value conflicts still use the manual-review path, and native dropdown support does not cover datalists or custom controls.
 
 A fictional local browser and endpoint test rejected an unreviewed replacement and a changed selection, then filled after a valid review. Focused UI tests covered acknowledgment and changes during snapshot retrieval; ordinary prefill tests and web Clippy passed. No model or employer site was used, and no application was submitted.
+
+## Reviewed text replacement — 2026-10-31
+
+The existing-answer review also supports bounded text, email, textarea, date and supported editable-text controls. It shows the current text locally alongside the reviewed replacement; an explicit acknowledgment binds the current value to the session, field and one-use fill grant. If the current text or reviewed replacement changes, the user must review again. Sensitive and model-flagged fields cannot use this path, and unsupported controls remain manual. The captured current text is not included in the attempt event; its digest is recorded with the reviewed replacement.
+
+A fictional local endpoint and browser test rejected sensitive and stale text snapshots and completed a reviewed text and dropdown replacement. Focused UI and binding checks, a rich-text inspection fixture and web Clippy passed. No employer site, local model or application submission was used.

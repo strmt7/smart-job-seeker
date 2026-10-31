@@ -189,6 +189,18 @@ pub fn selection_snapshot_digest(
     .to_owned()
 }
 
+pub fn text_snapshot_digest(
+    scope: &str,
+    selector: &str,
+    snapshot: &waypoint_applications::driver::TextSnapshot,
+) -> String {
+    Sha256Digest::of(
+        &serde_json::json!({"scope":scope,"selector":selector,"text":snapshot}).to_string(),
+    )
+    .as_str()
+    .to_owned()
+}
+
 pub fn fill_payload_digest(
     preview: &FormPreview,
     replacements: &ReviewedReplacements,
@@ -209,18 +221,28 @@ fn check_existing_value(
     replacements: &ReviewedReplacements,
 ) -> Result<(), String> {
     if let Some(expected) = replacements.get(&field.selector) {
-        if !matches!(
-            (&field.field_type, value),
-            (FormFieldType::Select { .. }, PacketValue::Text(_))
-        ) {
-            return Err("Replacement approval does not apply to this field".into());
-        }
-        let snapshot = driver
-            .selected_option_snapshot(&field.selector)
-            .map_err(|error| error.to_string())?;
-        if selection_snapshot_digest(scope, &field.selector, &snapshot) != *expected {
+        let actual = match (&field.field_type, value) {
+            (FormFieldType::Select { .. }, PacketValue::Text(_)) => {
+                let snapshot = driver
+                    .selected_option_snapshot(&field.selector)
+                    .map_err(|error| error.to_string())?;
+                selection_snapshot_digest(scope, &field.selector, &snapshot)
+            }
+            (
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+                PacketValue::Text(_),
+            )
+            | (FormFieldType::Date, PacketValue::Date(_)) => {
+                let snapshot = driver
+                    .text_value_snapshot(&field.selector)
+                    .map_err(|error| error.to_string())?;
+                text_snapshot_digest(scope, &field.selector, &snapshot)
+            }
+            _ => return Err("Replacement approval does not apply to this field".into()),
+        };
+        if actual != *expected {
             return Err(format!(
-                "{} changed since the existing selection was reviewed",
+                "{} changed since the existing value was reviewed",
                 field.label
             ));
         }
@@ -733,6 +755,13 @@ mod tests {
             digest,
             selection_snapshot_digest("prefill-session-a", "#other", &snapshot)
         );
+        let text = waypoint_applications::driver::TextSnapshot {
+            value: "Old answer".into(),
+        };
+        assert_ne!(
+            text_snapshot_digest("prefill-session-a", "#field", &text),
+            text_snapshot_digest("prefill-session-b", "#field", &text)
+        );
         let preview = FormPreview {
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
@@ -850,6 +879,10 @@ mod tests {
         assert!(driver
             .ensure_text_replaceable("#editable", "Existing note")
             .is_ok());
+        assert_eq!(
+            driver.text_value_snapshot("#editable").unwrap().value,
+            "Existing note"
+        );
         assert!(driver
             .ensure_text_replaceable("#editable", "Different note")
             .is_err());

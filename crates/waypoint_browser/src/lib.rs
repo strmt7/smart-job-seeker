@@ -2564,6 +2564,48 @@ impl BrowserDriver for CdpDriver {
         })
     }
 
+    fn text_value_snapshot(
+        &mut self,
+        selector: &str,
+    ) -> Result<waypoint_applications::driver::TextSnapshot, DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Field is no longer present".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Existing text cannot be inspected".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]')) return null;
+            const editable = (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]');
+            let value;
+            if (editable) value = this.innerText;
+            else if ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) value = this.value;
+            else return null;
+            return typeof value === 'string' && value.length <= 4000 ? {value} : null;
+        }"#,"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some() {
+            return Err(DriverError("Existing text cannot be inspected".into()));
+        }
+        let value = result
+            .pointer("/result/value/value")
+            .and_then(Value::as_str)
+            .filter(|v| {
+                v.len() <= 16_000
+                    && !v
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            })
+            .ok_or_else(|| DriverError("Existing text cannot be displayed".into()))?;
+        Ok(waypoint_applications::driver::TextSnapshot {
+            value: value.to_owned(),
+        })
+    }
+
     fn ensure_text_replaceable(
         &mut self,
         selector: &str,
