@@ -19,3 +19,9 @@ Before loading, the host reported approximately 25.6 GiB free system memory. Whi
 The resource-gated `qwen3.5:9b` worker completed repeated assessments of a fictional Rust role and fictional qualification. In one captured pair, both assessments produced the same single-criterion rubric and a 100% midpoint; this is one simple example, not an accuracy or repeatability estimate. The comparison recorded matching digest/context snapshots. A separate run deliberately supplied a different digest; the assessment completed but its model identity remained unverified and no repeatability comparison was produced.
 
 One sample during the run showed approximately 19.8 GiB free system memory and 12.3 GiB dedicated GPU use, not peak measurements. The model was unloaded after testing. No candidate data, employer site or application submission was involved.
+
+## Crowded-employer duplicate check — 2026-11-01
+
+A fictional workspace contained a platform role, a differently named role with paraphrased matching duties, and twenty unrelated sales roles at the same employer. The related role was deliberately placed after the unrelated candidates in job-ID order. The bounded shortlist included it; two local `qwen3.5:9b` searches each examined twelve shortlisted roles without failed batches and returned only the related role. The remaining candidates were outside the shortlist, which was marked truncated. This small constructed example does not establish real-world duplicate recall or precision.
+
+A resource-gated model was used; one resident sample showed approximately 20.0 GiB free system memory and 12.3 GiB dedicated GPU use, not peak measurements. The model was unloaded afterward. No employer site or application submission was involved.

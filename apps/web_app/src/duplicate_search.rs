@@ -512,6 +512,46 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_duplicate_search_checks_ranked_crowded_employer() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let mut urls: Vec<_> = (0..40)
+            .map(|i| format!("https://example.org/fictional-role-{i}"))
+            .collect();
+        urls.sort_by_key(|url| waypoint_domain::sha256_hex(url.as_bytes()));
+        let same_url = urls.pop().unwrap();
+        let target = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/fictional-target","title":"Senior Platform Engineer","employer":"Fictional Acme Labs","description":"Build and operate reliable cloud infrastructure, automate deployments and improve service availability."}), 1).unwrap();
+        let same = crate::manual_job::add(&mut ws, &json!({"url":same_url,"title":"Senior Platform Reliability Lead","employer":"Fictional Acme Labs","description":"Improve service uptime, automate releases and manage cloud systems for the platform."}), 1).unwrap();
+        for (index, url) in urls.iter().take(20).enumerate() {
+            crate::manual_job::add(&mut ws, &json!({"url":url,"title":format!("Sales associate {index}"),"employer":"Fictional Acme Labs","description":"Sell products to customers in a retail store."}), 1).unwrap();
+        }
+        let id = waypoint_domain::JobIdentityId::new(target["id"].as_str().unwrap()).unwrap();
+        let input = crate::duplicate_search_inputs(&ws, &id).unwrap();
+        let same_id = same["id"].as_str().unwrap();
+        assert!(input.truncated);
+        assert!(
+            input.candidates.iter().any(|(id, _)| id == same_id),
+            "ranked candidates omitted the related role"
+        );
+        let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_resident_context();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let result = search(&mut model, &input.target, &input.candidates).unwrap();
+        println!("Fictional crowded employer: examined={}, unexamined={}, failed_batches={}, matches={:?}", result.examined, result.unexamined, result.failed_batches, result.matches);
+        assert_eq!(
+            (result.examined, result.unexamined, result.failed_batches),
+            (12, 0, 0)
+        );
+        assert!(result.matches.iter().any(|item| item["id"] == same_id));
+        assert!(result.matches.iter().all(|item| item["id"] == same_id));
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_duplicate_search_handles_bounded_multilingual_context() {
         let target = format!("Title: Senior Data Analyst; Employer: Example Labs; Location: Berlin; Requisition: R-421; Description: Analyze laboratory datasets with Python. {}", "補足資料 ".repeat(400));
         let candidates = vec![
