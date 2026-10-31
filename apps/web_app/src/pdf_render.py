@@ -20,7 +20,8 @@ try:
     reader = PdfReader(io.BytesIO(data), strict=True)
     if reader.is_encrypted:
         raise ValueError('Encrypted PDFs need manual review')
-    index = int(sys.argv[1])
+    page_arg, _, mode = sys.argv[1].partition(':')
+    index = int(page_arg)
     document = pdfium.PdfDocument(data)
     count = len(document)
     if count < 1 or count > 30 or index < 0 or index >= count:
@@ -37,7 +38,56 @@ try:
     png = out.getvalue()
     if len(png) > 3 * 1024 * 1024:
         raise ValueError('Rendered page exceeds 3 MiB; review the PDF externally')
-    print(json.dumps({'page': index, 'pages': count, 'image': base64.b64encode(png).decode('ascii')}))
+    result = {'page': index, 'pages': count, 'image': base64.b64encode(png).decode('ascii')}
+    if mode == 'geometry':
+        # This is an advisory check of selectable text geometry, not an image or
+        # semantic assessment. Limit work even on PDFs with pathological text.
+        geometry = {'status': 'unavailable', 'overlapping_pairs': 0}
+        textpage = None
+        try:
+            textpage = page.get_textpage()
+            count_chars = textpage.count_chars()
+            if count_chars == 0:
+                geometry['status'] = 'no_selectable_text'
+            elif count_chars <= 5000:
+                boxes = []
+                for i in range(count_chars):
+                    left, bottom, right, top = textpage.get_charbox(i)
+                    if not all(math.isfinite(v) for v in (left, bottom, right, top)):
+                        raise ValueError('Invalid text geometry')
+                    if right > left and top > bottom:
+                        boxes.append((left, right, bottom, top, i))
+                boxes.sort()
+                if not boxes:
+                    geometry['status'] = 'no_selectable_text'
+                active = []
+                comparisons = 0
+                overlaps = 0
+                for left, right, bottom, top, i in boxes:
+                    active = [b for b in active if b[1] > left]
+                    for other in active:
+                        comparisons += 1
+                        if comparisons > 100000:
+                            break
+                        l2, r2, b2, t2, j = other
+                        if abs(i - j) <= 1:
+                            continue
+                        intersection = max(0, min(right, r2) - left) * max(0, min(top, t2) - max(bottom, b2))
+                        smaller = min((right-left)*(top-bottom), (r2-l2)*(t2-b2))
+                        if intersection >= 0.35 * smaller:
+                            overlaps += 1
+                    if comparisons > 100000:
+                        break
+                    active.append((left, right, bottom, top, i))
+                if boxes and comparisons <= 100000:
+                    geometry = {'status': 'checked', 'overlapping_pairs': overlaps}
+        except Exception:
+            pass  # An unavailable geometric observation is never a clean result.
+        finally:
+            if textpage is not None:
+                textpage.close()
+        result['text_geometry'] = geometry
+    print(json.dumps(result))
     image.close()
     bitmap.close()
     page.close()

@@ -44,7 +44,7 @@ where
     let mut findings = Vec::new();
     let mut total = 0usize;
     for index in 0..PAGE_LIMIT {
-        let result = (|| -> Result<(usize, Vec<Value>), String> {
+        let result = (|| -> Result<(usize, Vec<Value>, Value), String> {
             let page = render(bytes, index)?;
             let count = page["pages"]
                 .as_u64()
@@ -60,9 +60,20 @@ where
                 .filter(|s| !s.is_empty() && s.len() <= 4 * 1024 * 1024)
                 .ok_or("Invalid rendered page image")?;
             let result = page_findings(&analyze(image)?)?;
-            Ok((count, result))
+            let geometry = match page["text_geometry"]["status"].as_str() {
+                Some("checked")
+                    if page["text_geometry"]["overlapping_pairs"]
+                        .as_u64()
+                        .is_some_and(|n| n <= 100_000) =>
+                {
+                    page["text_geometry"].clone()
+                }
+                Some("no_selectable_text") => json!({"status":"no_selectable_text"}),
+                _ => json!({"status":"unavailable"}),
+            };
+            Ok((count, result, geometry))
         })();
-        let (count, result) = match result {
+        let (count, result, geometry) = match result {
             Ok(result) => result,
             Err(error) if !findings.is_empty() => {
                 return Ok(
@@ -74,7 +85,7 @@ where
         if index == 0 {
             total = count;
         }
-        findings.push(json!({"page":index+1,"issues":result}));
+        findings.push(json!({"page":index+1,"issues":result,"text_geometry":geometry}));
         if index + 1 >= total {
             break;
         }
@@ -131,19 +142,24 @@ pub fn start(
             let addr = "127.0.0.1:11434"
                 .parse()
                 .map_err(|_| "Invalid local runtime address")?;
-            inspect(&bytes, crate::pdf_extract::render_page, |image| {
-                if crate::resident_model()?.as_deref() != Some(model.as_str()) {
-                    return Err("Resident model changed during visual review".into());
-                }
-                let value = crate::visual_review::generate_vision(addr, &model, image, &prompt)?;
-                page_findings(&value)?;
-                if let Ok(mut task) = TASK.lock() {
-                    if let Some(task) = task.as_mut().filter(|t| t.id == id) {
-                        task.pages_processed += 1;
+            inspect(
+                &bytes,
+                crate::pdf_extract::render_page_for_review,
+                |image| {
+                    if crate::resident_model()?.as_deref() != Some(model.as_str()) {
+                        return Err("Resident model changed during visual review".into());
                     }
-                }
-                Ok(value)
-            })
+                    let value =
+                        crate::visual_review::generate_vision(addr, &model, image, &prompt)?;
+                    page_findings(&value)?;
+                    if let Ok(mut task) = TASK.lock() {
+                        if let Some(task) = task.as_mut().filter(|t| t.id == id) {
+                            task.pages_processed += 1;
+                        }
+                    }
+                    Ok(value)
+                },
+            )
         })
         .unwrap_or_else(|_| Err("Document visual review stopped unexpectedly".into()));
         let evidence = match &outcome {
@@ -202,6 +218,39 @@ pub fn poll(id: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "requires the local PDF worker"]
+    fn detects_fictional_overprinted_text_geometry() {
+        let bytes = include_bytes!("../tests/fictional-document-overlap.pdf");
+        let clean = crate::pdf_extract::render_page_for_review(bytes, 0).unwrap();
+        let overlap = crate::pdf_extract::render_page_for_review(bytes, 1).unwrap();
+        assert_eq!(clean["text_geometry"]["status"], "checked");
+        assert_eq!(clean["text_geometry"]["overlapping_pairs"], 0);
+        assert_eq!(overlap["text_geometry"]["status"], "checked");
+        assert!(
+            overlap["text_geometry"]["overlapping_pairs"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        let limits = include_bytes!("../tests/fictional-document-geometry-limits.pdf");
+        let blank = crate::pdf_extract::render_page_for_review(limits, 0).unwrap();
+        let dense = crate::pdf_extract::render_page_for_review(limits, 1).unwrap();
+        assert_eq!(blank["text_geometry"]["status"], "no_selectable_text");
+        assert_eq!(dense["text_geometry"]["status"], "unavailable");
+    }
+    #[test]
+    fn malformed_geometry_is_not_reported_as_checked() {
+        let report = inspect(
+            b"fictional",
+            |_, _| Ok(json!({"pages":1,"image":"fixture","text_geometry":{"status":"checked","overlapping_pairs":-1}})),
+            |_| Ok(json!({"issues":[]})),
+        ).unwrap();
+        assert_eq!(
+            report["findings"][0]["text_geometry"]["status"],
+            "unavailable"
+        );
+    }
+    #[test]
     #[ignore = "requires a resident local vision model and fictional two-page overlap PDF"]
     fn live_model_detects_overlapping_document_text() {
         let bytes = include_bytes!("../tests/fictional-document-overlap.pdf");
@@ -212,7 +261,7 @@ mod tests {
         );
         let addr = "127.0.0.1:11434".parse().unwrap();
         let prompt = visual_prompt("Fictional candidate document for a software engineering role.");
-        let report = inspect(bytes, crate::pdf_extract::render_page, |image| {
+        let report = inspect(bytes, crate::pdf_extract::render_page_for_review, |image| {
             crate::visual_review::generate_vision(addr, &model, image, &prompt)
         })
         .unwrap();

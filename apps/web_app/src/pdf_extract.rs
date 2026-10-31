@@ -185,14 +185,29 @@ pub fn extract(bytes: &[u8]) -> Result<String, String> {
     String::from_utf8(data).map_err(|_| "PDF extractor returned invalid UTF-8".into())
 }
 pub fn render_page(bytes: &[u8], page: usize) -> Result<serde_json::Value, String> {
+    render_page_inner(bytes, page, false)
+}
+pub fn render_page_for_review(bytes: &[u8], page: usize) -> Result<serde_json::Value, String> {
+    render_page_inner(bytes, page, true)
+}
+fn render_page_inner(
+    bytes: &[u8],
+    page: usize,
+    geometry: bool,
+) -> Result<serde_json::Value, String> {
     if page > 29 {
         return Err("Page number exceeds 30-page limit".into());
     }
+    let argument = if geometry {
+        format!("{page}:geometry")
+    } else {
+        page.to_string()
+    };
     let data = run(
         bytes,
         bytes,
         include_str!("pdf_render.py"),
-        Some(&page.to_string()),
+        Some(&argument),
         4 * 1024 * 1024,
         true,
     )?;
