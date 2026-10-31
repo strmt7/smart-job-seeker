@@ -9,3 +9,9 @@ The live vision test was not run: the resource-gated startup of `gemma4:12b-it-q
 Document visual review also checks selectable character boxes on each rendered page for substantial overlap. A separate warning appears when pairs overlap; this can flag accents, font effects or duplicate text and does not prove a defect. Zero warnings do not prove the page is legible. Scanned pages report no selectable text, and the check reports unavailable if its 5,000-character or 100,000-comparison limits are exceeded or its geometry cannot be read. It is separate from the local model's findings and does not inspect images or guarantee correctness.
 
 The installed PDF worker detected overprinted characters in a fictional two-page fixture while reporting none on its clean page; separate blank and 6,000-character pages exercised the unavailable states. The focused document tests, UI warning test and web Clippy passed. The local model was not run in this check, and the earlier GPU startup refusal remains unresolved.
+
+## Geometry retained on vision failure — 2026-10-31
+
+If page rendering succeeds but the vision model fails or returns invalid findings, the partial report now retains that page's bounded text-geometry observation and explicitly marks the model review as failed. The count of visually inspected pages excludes the failed page; later pages are not attempted. Rendering failures still stop the review without an observation for the failed page.
+
+Synthetic first- and second-page failure cases passed. A separate run with the installed PDF worker rendered the fictional overlap fixture, simulated a model failure on page two and retained the overlap observation. The UI failure-label check and web Clippy passed. No vision model was run in this test.
