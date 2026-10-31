@@ -1114,3 +1114,9 @@ Store fixtures covered 29 candidates across overlapping tokens and a fully revie
 The page cursor now advances when all candidates were assessed, even if an initial batch failed and individual retries recovered it. It remains on the page when any candidates were not assessed or the counts are invalid.
 
 A fictional local HTTP fixture used the resource-gated `qwen3.5:9b` model to assess two consecutive groups of twelve and two saved jobs; both completed with no unexamined candidates and no flagged matches. A separate rendered, mocked-backend fixture exercised both page actions at 1,200 and 390 pixels, with no browser errors or horizontal overflow. The Browser plugin was unavailable; the existing local Playwright Core and Edge were used. No employer site or application submission was involved. These fixtures do not establish duplicate-detection accuracy.
+
+## Abandoned web-search result queue — 2026-11-01
+
+A web-search worker now stops waiting after 30 seconds when its one-result queue remains full. Already delivered pages remain recoverable; the run reports failure rather than appearing complete. If a fetched page could not be delivered, coverage counts it as attempted and separately reports it as fetched but unreported. Cancellation keeps its existing stopped status and also accounts for a fetched page that could not be delivered.
+
+Eleven focused batch-search tests passed, including a short-timeout fictional queue fixture, along with the simulated coverage-summary check and web lint. The production 30-second timeout and a live search provider were not separately exercised.

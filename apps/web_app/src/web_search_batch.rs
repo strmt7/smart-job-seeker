@@ -7,7 +7,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 struct Task {
     id: String,
@@ -17,6 +17,8 @@ struct Task {
     processed: usize,
     pending: Option<Value>,
     history: Vec<Value>,
+    timed_out: Arc<AtomicBool>,
+    unreported: Arc<AtomicBool>,
 }
 enum Message {
     Query(String, u8, Result<Value, String>),
@@ -42,13 +44,24 @@ pub fn pending() -> Result<Value, String> {
         }
     })
 }
-fn send(tx: &SyncSender<Message>, mut message: Message, cancel: &AtomicBool) -> bool {
+fn send(
+    tx: &SyncSender<Message>,
+    mut message: Message,
+    cancel: &AtomicBool,
+    timed_out: &AtomicBool,
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
     loop {
         match tx.try_send(message) {
             Ok(()) => return true,
             Err(TrySendError::Full(m)) => {
                 message = m;
                 if cancel.load(Ordering::Acquire) {
+                    return false;
+                }
+                if Instant::now() >= deadline {
+                    timed_out.store(true, Ordering::Release);
                     return false;
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -58,8 +71,14 @@ fn send(tx: &SyncSender<Message>, mut message: Message, cancel: &AtomicBool) -> 
     }
 }
 
-fn send_completion(tx: &SyncSender<Message>, limited: bool, cancel: &AtomicBool) -> bool {
-    send(tx, Message::Done(limited), cancel)
+fn send_completion(
+    tx: &SyncSender<Message>,
+    limited: bool,
+    cancel: &AtomicBool,
+    timed_out: &AtomicBool,
+    timeout: Duration,
+) -> bool {
+    send(tx, Message::Done(limited), cancel, timed_out, timeout)
 }
 
 /// Count requested provider pages, not jobs or distinct websites. Provider
@@ -145,6 +164,10 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
     let (tx, rx) = mpsc::sync_channel(1);
     let cancel = Arc::new(AtomicBool::new(false));
     let stop = cancel.clone();
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let unreported = Arc::new(AtomicBool::new(false));
+    let worker_timeout = timed_out.clone();
+    let worker_unreported = unreported.clone();
     let total = requests.len();
     *task = Some(Task {
         id,
@@ -154,6 +177,8 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         processed: 0,
         pending: None,
         history: Vec::new(),
+        timed_out,
+        unreported,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -183,7 +208,14 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
                 limit_reached = retain_batch_budget(&mut data, &mut seen);
                 data
             });
-            if !send(&tx, Message::Query(query, page, result), &stop) {
+            if !send(
+                &tx,
+                Message::Query(query, page, result),
+                &stop,
+                &worker_timeout,
+                Duration::from_secs(30),
+            ) {
+                worker_unreported.store(true, Ordering::Release);
                 return;
             }
             if limit_reached {
@@ -194,7 +226,13 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         // user cancels. Do not keep a worker waiting indefinitely for a
         // client that may never poll; disconnection preserves cancellation
         // and the buffered page is still available to the receiver.
-        let _ = send_completion(&tx, limit_reached, &stop);
+        let _ = send_completion(
+            &tx,
+            limit_reached,
+            &stop,
+            &worker_timeout,
+            Duration::from_secs(30),
+        );
     });
     Ok(())
 }
@@ -263,10 +301,21 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 task.total,
                 task.cancel.load(Ordering::Acquire),
             );
+            let unreported = usize::from(task.unreported.load(Ordering::Acquire));
+            let mut report = coverage(total, &task.history);
+            report["fetched_unreported_pages"] = json!(unreported);
+            report["attempted_pages"] = json!(task.history.len().saturating_add(unreported));
+            report["unattempted_pages"] =
+                json!(total.saturating_sub(task.history.len().saturating_add(unreported)));
             let response = if cancelled {
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"coverage":coverage(total, &task.history),"history":task.history})
+                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"coverage":report,"history":task.history})
             } else {
-                json!({"status":"failed","processed":processed,"total":total,"error":"Batch search stopped before completion","coverage":coverage(total, &task.history),"history":task.history})
+                let error = if task.timed_out.load(Ordering::Acquire) {
+                    "Batch search stopped because results were not collected within 30 seconds"
+                } else {
+                    "Batch search stopped before completion"
+                };
+                json!({"status":"failed","processed":processed,"total":total,"error":error,"coverage":report,"history":task.history})
             };
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone()));
@@ -309,10 +358,18 @@ mod tests {
             processed: 0,
             pending: None,
             history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
         });
         let (finished, result) = mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let sent = send_completion(&tx, false, &stop);
+            let sent = send_completion(
+                &tx,
+                false,
+                &stop,
+                &AtomicBool::new(false),
+                Duration::from_secs(30),
+            );
             finished.send(sent).unwrap();
         });
         cancel("cancel-full-channel").unwrap();
@@ -325,6 +382,52 @@ mod tests {
         assert_eq!(done["cancelled"], true);
         assert_eq!(done["history"][0], page);
         assert_eq!(done["coverage"]["unattempted_pages"], 1);
+    }
+    #[test]
+    fn uncollected_results_release_worker_and_account_for_fetched_page() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(Message::Query(
+            "fictional".into(),
+            1,
+            Ok(json!({"results":[]})),
+        ))
+        .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let timeout = Arc::new(AtomicBool::new(false));
+        let unreported = Arc::new(AtomicBool::new(false));
+        *TASK.lock().unwrap() = Some(Task {
+            id: "abandoned".into(),
+            rx,
+            cancel: stop.clone(),
+            total: 3,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+            timed_out: timeout.clone(),
+            unreported: unreported.clone(),
+        });
+        let worker = std::thread::spawn(move || {
+            if !send(
+                &tx,
+                Message::Query("fictional".into(), 2, Ok(json!({"results":[]}))),
+                &stop,
+                &timeout,
+                Duration::from_millis(10),
+            ) {
+                unreported.store(true, Ordering::Release);
+            }
+        });
+        worker.join().unwrap();
+        let page = poll("abandoned", 0).unwrap();
+        assert_eq!(page["page"], 1);
+        let result = poll("abandoned", 1).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert!(result["error"].as_str().unwrap().contains("not collected"));
+        assert_eq!(result["coverage"]["attempted_pages"], 2);
+        assert_eq!(result["coverage"]["fetched_unreported_pages"], 1);
+        assert_eq!(result["coverage"]["unattempted_pages"], 1);
+        assert_eq!(result["history"][0], page);
     }
     #[test]
     fn batch_cap_reports_links_dropped_from_a_provider_page() {
@@ -368,6 +471,8 @@ mod tests {
             processed: 0,
             pending: None,
             history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
         });
         tx.send(Message::Query(
             "role".into(),
@@ -457,6 +562,8 @@ mod tests {
             processed: 0,
             pending: None,
             history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
         });
         tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
             .unwrap();
@@ -487,6 +594,8 @@ mod tests {
             processed: 0,
             pending: None,
             history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
         });
         tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
             .unwrap();
@@ -512,6 +621,8 @@ mod tests {
             processed: 0,
             pending: None,
             history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
         });
         tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
             .unwrap();
