@@ -1090,3 +1090,9 @@ A fictional local browser and HTTP fixture verified the new event and its orderi
 ## Headless form review guidance — 2026-11-01
 
 When a headless form inspection reports any manual-review reason, the interface now explains how to reopen in a visible browser and warns that closing the session may discard unsaved changes on the site. The same warning appears for review reasons produced after filling. This guidance does not transfer browser session state or navigate application sections automatically. Focused simulated UI checks passed; no employer site or submission was involved.
+
+## Fit comparison model identity — 2026-11-01
+
+New assessment comparisons require identical saved inputs, model name, reported 64-character model digest, context length and scoring version. The model identity is sampled before and after each assessment; if either sample is unavailable or differs, the assessment can still be saved but is not compared. The runtime or model could change between samples. Existing saved name-only comparisons retain an explicit older-comparison warning, and older assessments without identity data cannot be compared under the new rule.
+
+Focused scoring and model-status tests passed. A resource-gated local model reported a 64-character digest and 4,096-token context; it was unloaded afterward. This did not run the complete fit assessment against the model or establish score accuracy.

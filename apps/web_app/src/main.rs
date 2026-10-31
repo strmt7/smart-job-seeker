@@ -1223,7 +1223,7 @@ fn model_diagnostics(data: &Value) -> Result<Value, String> {
         .ok_or("Ollama did not report resident models")?;
     if let Some(name) = eligible {
         return Ok(
-            json!({"model":name,"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"],"context_length":models[0]["context_length"].as_u64()}),
+            json!({"model":name,"model_digest":models[0]["digest"].as_str().filter(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())),"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"],"context_length":models[0]["context_length"].as_u64()}),
         );
     }
     let state = if models.is_empty() {
@@ -2141,7 +2141,8 @@ fn serve(
             if facts.is_empty() && instructions.trim().is_empty() {
                 return Err("Add reviewed qualifications or search instructions first".into());
             }
-            let model = resident_model()?.ok_or(
+            let model_status = resident_model_status()?;
+            let model = model_status["model"].as_str().map(str::to_owned).ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let task_id = random_id()?;
@@ -2172,7 +2173,11 @@ fn serve(
             });
             fit_task::start(
                 task_id.clone(),
-                model,
+                fit_task::FitModel {
+                    name: model,
+                    digest: model_status["model_digest"].as_str().map(str::to_owned),
+                    context_length: model_status["context_length"].as_u64(),
+                },
                 job_id.as_str().to_owned(),
                 digest,
                 fit_task::FactPool { facts, available },
@@ -6800,6 +6805,17 @@ mod tests {
         stop.store(true, std::sync::atomic::Ordering::Release);
         worker.join().unwrap();
         assert!(TcpListener::bind(addr).is_ok());
+    }
+
+    #[test]
+    fn model_status_reports_only_well_formed_digest() {
+        let mut report = json!({"models":[{"name":"local","size":10,"size_vram":10,"digest":"a".repeat(64),"context_length":4096}]});
+        assert_eq!(
+            model_diagnostics(&report).unwrap()["model_digest"],
+            "a".repeat(64)
+        );
+        report["models"][0]["digest"] = json!("not-a-digest");
+        assert!(model_diagnostics(&report).unwrap()["model_digest"].is_null());
     }
 
     #[test]

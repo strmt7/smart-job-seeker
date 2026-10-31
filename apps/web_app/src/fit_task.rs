@@ -9,6 +9,8 @@ struct Task {
     job_id: String,
     input_digest: String,
     model: String,
+    model_digest: Option<String>,
+    context_length: Option<u64>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -22,17 +24,39 @@ pub struct FitListing {
     pub model_text: String,
     pub verification_text: Option<String>,
 }
+pub struct FitModel {
+    pub name: String,
+    pub digest: Option<String>,
+    pub context_length: Option<u64>,
+}
+fn same_model_snapshot(
+    status: &Value,
+    name: &str,
+    digest: Option<&str>,
+    context: Option<u64>,
+) -> bool {
+    status["model"].as_str() == Some(name)
+        && digest.is_some_and(|value| status["model_digest"].as_str() == Some(value))
+        && context
+            .is_some_and(|value| value > 0 && status["context_length"].as_u64() == Some(value))
+}
 
 /// Compare two consecutive assessments only when their saved input digest,
-/// model name and scoring version agree. A model name does not prove that its
-/// weights or runtime are unchanged; this is an observation, not a guarantee.
+/// model identity, context and scoring version agree. The runtime may still
+/// change between snapshots; this is an observation, not a guarantee.
 pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Value> {
     let same_nonempty = |key: &str| {
         previous[key].as_str().filter(|s| !s.is_empty())
             == current[key].as_str().filter(|s| !s.is_empty())
             && previous[key].as_str().is_some_and(|s| !s.is_empty())
     };
-    if !same_nonempty("input_digest") || !same_nonempty("model") {
+    if !same_nonempty("input_digest")
+        || !same_nonempty("model")
+        || !same_nonempty("model_digest")
+        || previous["context_length"].as_u64().filter(|n| *n > 0)
+            != current["context_length"].as_u64().filter(|n| *n > 0)
+        || previous["context_length"].as_u64().is_none_or(|n| n == 0)
+    {
         return None;
     }
     let before = &previous["assessment"];
@@ -113,7 +137,7 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
         }
     }
     Some(
-        json!({"previous_score":old_score,"score_change":new_score-old_score,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed}),
+        json!({"previous_score":old_score,"score_change":new_score-old_score,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"identity_basis":"digest_context_snapshots"}),
     )
 }
 
@@ -129,13 +153,18 @@ pub fn pending() -> Result<Value, String> {
 
 pub fn start(
     id: String,
-    model: String,
+    model: FitModel,
     job_id: String,
     input_digest: String,
     pool: FactPool,
     instructions: String,
     listing: FitListing,
 ) -> Result<(), String> {
+    let FitModel {
+        name: model,
+        digest: model_digest,
+        context_length,
+    } = model;
     let mut task = TASK.lock().map_err(|_| "Assessment unavailable")?;
     if task.is_some() {
         return Err("An assessment is running or awaiting its result".into());
@@ -147,6 +176,8 @@ pub fn start(
         job_id,
         input_digest,
         model: model.clone(),
+        model_digest: model_digest.clone(),
+        context_length,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -155,9 +186,10 @@ pub fn start(
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                 .map_err(|e| e.to_string())?
                 .with_resident_context();
+            let task_model = model.clone();
             let mut model = crate::resident_inference::ResidentInference::new(
                 llm,
-                model,
+                model.clone(),
                 crate::resident_model,
             );
             let (selected, selection) = select_semantic_facts(
@@ -174,6 +206,15 @@ pub fn start(
                 &listing.model_text,
                 listing.verification_text.as_deref(),
             )?;
+            let identity_same = crate::resident_model_status().ok().is_some_and(|status| {
+                same_model_snapshot(
+                    &status,
+                    &task_model,
+                    model_digest.as_deref(),
+                    context_length,
+                )
+            });
+            result["model_identity_verified"] = json!(identity_same);
             result["selection"] = selection;
             Ok(result)
         })
@@ -564,7 +605,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let model = task.model.clone();
     Ok(match result {
         Ok(assessment) => {
-            json!({"status":"complete","assessment":assessment,"job_id":job_id,"input_digest":input_digest,"model":model})
+            json!({"status":"complete","assessment":assessment,"job_id":job_id,"input_digest":input_digest,"model":model,"model_digest":if assessment["model_identity_verified"] == true { task.model_digest.as_deref() } else { None },"context_length":if assessment["model_identity_verified"] == true { task.context_length } else { None }})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
@@ -2284,9 +2325,40 @@ mod tests {
     }
 
     #[test]
+    fn model_snapshot_must_have_matching_digest_and_context() {
+        let status = json!({"model":"local","model_digest":"abc","context_length":4096});
+        assert!(same_model_snapshot(
+            &status,
+            "local",
+            Some("abc"),
+            Some(4096)
+        ));
+        assert!(!same_model_snapshot(
+            &status,
+            "local",
+            Some("other"),
+            Some(4096)
+        ));
+        assert!(!same_model_snapshot(&status, "local", None, Some(4096)));
+        assert!(!same_model_snapshot(
+            &status,
+            "local",
+            Some("abc"),
+            Some(8192)
+        ));
+        assert!(!same_model_snapshot(&status, "local", Some("abc"), None));
+        assert!(!same_model_snapshot(
+            &status,
+            "other",
+            Some("abc"),
+            Some(4096)
+        ));
+    }
+
+    #[test]
     fn comparison_requires_same_inputs_model_and_scoring_version() {
         let item = json!({"source":"listing","excerpt":"Python","importance":"required","status":"supported","qualification":"Used Python"});
-        let prior = json!({"input_digest":"abc","model":"local","assessment":{"score":75,"scoring_version":"criteria-v1","rubric":[item]}});
+        let prior = json!({"input_digest":"abc","model":"local","model_digest":"fixture-digest","context_length":4096,"assessment":{"score":75,"scoring_version":"criteria-v1","rubric":[item]}});
         let mut current = prior.clone();
         current["assessment"]["score"] = json!(50);
         current["assessment"]["rubric"][0]["status"] = json!("unknown");
@@ -2312,7 +2384,7 @@ mod tests {
             .unwrap()
             .push(duplicate_item);
         assert!(repeatability_comparison(&prior, &duplicate).is_none());
-        for key in ["input_digest", "model"] {
+        for key in ["input_digest", "model", "model_digest", "context_length"] {
             let mut different = current.clone();
             different[key] = json!("different");
             assert!(repeatability_comparison(&prior, &different).is_none());
@@ -4191,6 +4263,8 @@ mod tests {
             job_id: id.as_str().into(),
             input_digest: digest,
             model: "fixture".into(),
+            model_digest: None,
+            context_length: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -4216,6 +4290,8 @@ mod tests {
             job_id: "job".into(),
             input_digest: "digest".into(),
             model: "fixture".into(),
+            model_digest: None,
+            context_length: None,
         });
         assert!(discard("fixture-running")
             .unwrap_err()
@@ -4251,6 +4327,8 @@ mod tests {
             job_id: id.as_str().into(),
             input_digest: digest,
             model: "fixture-model".into(),
+            model_digest: None,
+            context_length: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -4285,10 +4363,16 @@ mod tests {
             job_id: "job".into(),
             input_digest: "digest".into(),
             model: "local".into(),
+            model_digest: None,
+            context_length: None,
         });
         let result = start(
             "second".into(),
-            "local".into(),
+            FitModel {
+                name: "local".into(),
+                digest: None,
+                context_length: None,
+            },
             "job".into(),
             "digest".into(),
             FactPool {
