@@ -1058,3 +1058,7 @@ A fictional local endpoint and browser test rejected sensitive and stale text sn
 The existing-answer review now covers supported native multi-selects, radio groups and checkboxes as well as text and single-select fields. It shows the current state and reviewed replacement, requires explicit acknowledgment, and binds the state to the session, field and one-use fill grant. A changed state requires review again; sensitive, model-flagged and unsupported custom controls remain manual. Re-inspecting a field revokes its prior approval until the new state is acknowledged.
 
 Fictional local browser and endpoint tests covered matching and conflicting choices, rejected changed checkbox, multi-select and radio snapshots, and completed reviewed replacements. Focused UI checks and web Clippy passed. No model, employer site or application submission was involved.
+
+## Existing-answer review layout — 2026-10-31
+
+The acknowledgment checkbox is aligned with its label in the existing-answer review. A fictional mocked-backend browser fixture exercised checkbox and multi-select replacement approvals and the no-fill retry path at 1,200, 800 and 390 pixels wide; no horizontal page overflow or unexpected browser errors were observed. The single HTTP 400 was deliberately returned by the fixture to exercise retry. This did not use a live backend, model or employer site, and did not submit an application.

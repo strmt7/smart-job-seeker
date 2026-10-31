@@ -172,3 +172,6 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 .fit-split summary { cursor: pointer; font-weight: 600; }
 .fit-split label { margin-top: .6rem; overflow-wrap: anywhere; }
 .repeated-search-results p { overflow-wrap: anywhere; }
+
+.replacement-ack{display:flex;align-items:flex-start;gap:.55rem;margin:.75rem 0;line-height:1.45}
+.replacement-ack input[type="checkbox"]{width:16px;height:16px;flex:0 0 16px;margin:.15rem 0 0;padding:0}
