@@ -5433,7 +5433,11 @@ mod tests {
         use waypoint_applications::form_mapping::{BrowserCommand, PacketValue};
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_iframe_scroll.html");
-        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+        let html = std::fs::read_to_string(fixture).unwrap().replace("</body></html>", "<style>@keyframes fixturemove{from{transform:translateX(0)}to{transform:translateX(110px)}}body.animate #marker{animation:fixturemove 0.35s infinite linear}#marker{position:fixed;top:250px;left:0;width:30px;height:30px;background:#a01}</style><div id='marker'></div><button id='arm-animation' type='button' onclick=\"document.body.classList.add('animate')\">Animate fictional marker</button></body></html>");
+        let mut fixture_file = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+        fixture_file.write_all(html.as_bytes()).unwrap();
+        fixture_file.flush().unwrap();
+        let url = url::Url::from_file_path(fixture_file.path().canonicalize().unwrap())
             .unwrap()
             .to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
@@ -5492,7 +5496,8 @@ mod tests {
             last_visual_freshness_key: None,
             record: None,
         });
-        let mut ws = Workspace::in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
         ws.import_job(waypoint_store::StoredJob {
             id: JobIdentityId::new("fixture-job").unwrap(),
             title: "Role".into(),
@@ -5509,10 +5514,18 @@ mod tests {
             posted_at: None,
         })
         .unwrap();
+        session.as_mut().unwrap().record = attempt_record::AttemptRecord::start(
+            &ws,
+            &JobIdentityId::new("fixture-job").unwrap(),
+            "focus-fixture",
+            1,
+        )
+        .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         for (step, (selected, allowed)) in [
             ("#other", false),
+            (selector.as_str(), true),
             (selector.as_str(), true),
             (selector.as_str(), true),
             (selector.as_str(), true),
@@ -5546,6 +5559,20 @@ mod tests {
                     .unwrap();
                 std::thread::sleep(Duration::from_millis(200));
             }
+            if step == 4 {
+                let driver = &mut session.as_mut().unwrap().driver;
+                driver
+                    .execute(&BrowserCommand::Fill {
+                        selector: other.clone(),
+                        value: PacketValue::Text("fictional@example.invalid".into()),
+                    })
+                    .unwrap();
+                driver
+                    .execute(&BrowserCommand::Click {
+                        selector: "#arm-animation".into(),
+                    })
+                    .unwrap();
+            }
             let body = json!({"session_id":"fixture-session","selector":selected}).to_string();
             let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
             write!(client, "POST /api/form/visual-focus HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
@@ -5571,7 +5598,39 @@ mod tests {
                 assert!(response.contains("\"value_retained\":true"));
                 assert!(response.contains("Far email"));
             }
+            if step == 4 {
+                assert!(
+                    response.contains("\"visual_freshness\":\"changed\""),
+                    "{response}"
+                );
+                assert!(response.contains("\"value_retained\":false"));
+                assert!(response.contains("\"record_saved\":true"));
+            }
         }
+        let record_dir = std::fs::read_dir(dir.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let events = std::fs::read_to_string(record_dir.join("events.jsonl")).unwrap();
+        let changed = events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|event| {
+                event["type"] == "visual_focus_capture" && event["visual_freshness"] == "changed"
+            })
+            .unwrap();
+        assert!(record_dir
+            .join(changed["before_screenshot"].as_str().unwrap())
+            .is_file());
+        assert!(record_dir
+            .join(changed["screenshot"].as_str().unwrap())
+            .is_file());
+        assert_ne!(
+            std::fs::read(record_dir.join(changed["before_screenshot"].as_str().unwrap())).unwrap(),
+            std::fs::read(record_dir.join(changed["screenshot"].as_str().unwrap())).unwrap()
+        );
         assert!(ws
             .manual_review_reasons(&JobIdentityId::new("fixture-job").unwrap())
             .unwrap()
@@ -5585,7 +5644,7 @@ mod tests {
         assert!(current
             .driver
             .verify_text_value(&other, "fictional@example.invalid")
-            .is_err());
+            .is_ok());
         assert!(current
             .driver
             .trace

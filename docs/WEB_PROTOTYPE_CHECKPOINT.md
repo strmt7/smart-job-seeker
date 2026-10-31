@@ -1132,3 +1132,7 @@ A fictional local fetcher fixture covered incremental persistence, a degraded bo
 When focusing a completed field, the app now captures the viewport before and after its bounded live-value checks. A visible change prevents the field from being reported as retained and adds a manual-review reason; animation may cause this warning. When an application record is available, both screenshots are saved for a changed interval. A capture failure is reported for manual review. The checks remain sequential and cannot prove that the page did not change before, after or invisibly between them.
 
 A fictional local browser fixture covered an unchanged screenshot and changes to filled values; a simulated interface check covered the changed-image warning. A changing screenshot during this endpoint was not separately induced. No local model, employer site or application submission was involved.
+
+## Changing focused viewport fixture — 2026-11-01
+
+A fictional local browser fixture now animates a visible page element while a completed field is checked. The endpoint reported a changed viewport, withheld the retained-value indication, recorded manual review, and saved distinct before-and-after screenshot files. The expanded fixture passed four runs after adjusting its final assertion to account for deliberately restoring a field. This tests a visible animation, not every possible dynamic or hidden field change; no model or employer site was used.
