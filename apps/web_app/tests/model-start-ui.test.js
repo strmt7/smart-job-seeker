@@ -1,0 +1,17 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start = source.indexOf('let modelStartFollowing=false;');
+const end = source.indexOf("document.querySelector('#model-inventory')",start);
+assert.ok(start >= 0 && end > start);
+const eligibleStart=source.indexOf('function modelCanStart(');
+const eligibleEnd=source.indexOf('let modelStartFollowing=',eligibleStart);
+const eligible=vm.runInNewContext(`${source.slice(eligibleStart,eligibleEnd)}; modelCanStart`);
+assert.equal(eligible({name:'local',format:'gguf',disk_bytes:2*1073741824}),true);
+assert.equal(eligible({name:'fixture-cloud',format:'gguf',disk_bytes:2*1073741824}),false);
+assert.equal(eligible({name:'local',format:'',disk_bytes:2*1073741824}),false);
+assert.equal(eligible({name:'local',format:'gguf',disk_bytes:382}),false);
+const calls=[],store=new Map(),info={textContent:''},button={disabled:false};
+const context={document:{querySelector:()=>info},sessionStorage:{getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},setTimeout:fn=>fn(),api:async(path,body)=>{calls.push([path,body]);return path.endsWith('/start')?{task_id:'fixture-task'}:{status:'complete',model:{model:'fixture-model'}};}};
+(async()=>{const run=vm.runInNewContext(`${source.slice(start,end).replace('void recoverModelStart();','')}; startInstalledModel`,context);await run('fixture-model',button);assert.deepEqual(calls.map(x=>x[0]),['/api/model-start/start','/api/model-start/status']);assert.equal(calls[0][1].model,'fixture-model');assert.equal(store.size,0);assert.equal(button.disabled,false);assert.match(info.textContent,/Model started/);console.log('Model startup UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

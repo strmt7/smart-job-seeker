@@ -34,6 +34,7 @@ mod gpu_resources;
 mod letter_export;
 mod link_rank;
 mod manual_job;
+mod model_start;
 mod pdf_extract;
 mod pdf_job;
 mod pdf_preview_task;
@@ -1206,7 +1207,7 @@ fn installed_model_inventory(data: &Value) -> Result<Value, String> {
             invalid += 1;
             continue;
         };
-        entries.push(json!({"name":name,"disk_bytes":model["size"].as_u64()}));
+        entries.push(json!({"name":name,"disk_bytes":model["size"].as_u64(),"format":model["details"]["format"].as_str().filter(|format| format.len() <= 64 && !format.chars().any(char::is_control))}));
     }
     Ok(
         json!({"models":entries,"reported_count":models.len(),"examined":models.len().min(100),"invalid":invalid}),
@@ -1503,6 +1504,10 @@ fn serve(
         );
         return Ok(());
     }
+    if method == "GET" && path == "/api/model-start/active" {
+        json_reply(stream, "200 OK", json!({"task_id":model_start::active()?}));
+        return Ok(());
+    }
     if method == "GET" && path == "/api/gpu-status" {
         let result = std::panic::catch_unwind(gpu_resources::sample)
             .unwrap_or_else(|_| json!({"state":"unavailable","reported_adapters":0,"adapters":[]}));
@@ -1560,6 +1565,16 @@ fn serve(
     let body: Value = serde_json::from_slice(&buf[header_end..header_end + length])
         .map_err(|_| "invalid JSON")?;
     match path.as_str() {
+        "/api/model-start/start" => {
+            let model = body["model"].as_str().ok_or("missing model")?.to_owned();
+            let id = random_id()?;
+            model_start::start(id.clone(), model)?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/model-start/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", model_start::poll(id)?);
+        }
         "/api/jobs/add" => {
             let result = manual_job::add(ws, &body, now())?;
             json_reply(stream, "200 OK", result);
@@ -5451,6 +5466,7 @@ mod tests {
         let mut models: Vec<Value> = (0..101)
             .map(|index| json!({"name":format!("model-{index}"),"size":1024}))
             .collect();
+        models[0] = json!({"name":"local","size":1024,"details":{"format":"gguf"}});
         models[1] = json!({"name":"invalid\nname","size":12});
         models[2] = json!({"name":"no-size"});
         let result = installed_model_inventory(&json!({"models":models})).unwrap();
@@ -5459,6 +5475,8 @@ mod tests {
         assert_eq!(result["invalid"], 1);
         assert_eq!(result["models"].as_array().unwrap().len(), 99);
         assert!(result["models"][1]["disk_bytes"].is_null());
+        assert_eq!(result["models"][0]["format"], "gguf");
+        assert!(result["models"][1]["format"].is_null());
         assert!(installed_model_inventory(&json!({})).is_err());
     }
     #[test]

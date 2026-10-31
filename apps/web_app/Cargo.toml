@@ -41,6 +41,7 @@ workspace = true
 
 [target.'cfg(windows)'.dependencies]
 gpuviewer-core = { version = "=0.1.1", default-features = false, features = ["wddm"] }
+sysinfo = { version = "=0.40.1", default-features = false, features = ["system"] }
 tray-icon = { version = "=0.26.1", default-features = false }
 winit = { version = "=0.30.13", default-features = false }
 processkit = { version = "=3.3.4", default-features = false, features = ["limits", "process-control"] }
