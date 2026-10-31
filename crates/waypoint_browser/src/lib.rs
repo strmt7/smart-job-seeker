@@ -58,6 +58,9 @@ pub const CLOSED_SHADOW_FORM_REVIEW: &str =
 pub const EMBEDDED_SCOPE_LIMIT_REVIEW: &str =
     "Some embedded scopes could not be inspected within the limit; review them manually";
 
+pub const NATIVE_DATALIST_REVIEW: &str =
+    "A suggested datalist value needs manual review on the application page";
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -1108,6 +1111,7 @@ impl CdpDriver {
         url: &str,
         root: &Value,
     ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
+        let datalists = static_datalists(root);
         let mut controls = vec![];
         let mut hidden_selectors = std::collections::HashSet::new();
         let mut labels: HashMap<String, String> = HashMap::new();
@@ -1231,7 +1235,9 @@ impl CdpDriver {
                     && attrs
                         .get("role")
                         .is_some_and(|role| role.eq_ignore_ascii_case("combobox")))
-                    || (tag == "input" && attrs.contains_key("list"))
+                    || (tag == "input"
+                        && attrs.contains_key("list")
+                        && native_datalist_options(&attrs, &datalists).is_none())
                     || (matches!(tag.as_str(), "input" | "textarea")
                         && attrs.get("aria-autocomplete").is_some_and(|value| {
                             matches!(
@@ -1400,7 +1406,13 @@ impl CdpDriver {
                             .unwrap_or_default(),
                         tag: tag.clone(),
                         attrs: attrs.clone(),
-                        options: options_of(node),
+                        options: if tag == "input" {
+                            native_datalist_options(&attrs, &datalists)
+                                .cloned()
+                                .unwrap_or_default()
+                        } else {
+                            options_of(node)
+                        },
                     };
                     if hidden {
                         add_hidden_selectors(&mut hidden_selectors, &control);
@@ -1839,7 +1851,15 @@ impl CdpDriver {
                     continue;
                 }
             }
+            let native_datalist = control.tag == "input"
+                && native_datalist_options(&control.attrs, &datalists).is_some();
+            if native_datalist && !walls.iter().any(|wall| wall == NATIVE_DATALIST_REVIEW) {
+                walls.push(NATIVE_DATALIST_REVIEW.into());
+            }
             let field_type = match (control.tag.as_str(), input_type.as_str()) {
+                ("input", _) if native_datalist => FormFieldType::Select {
+                    options: control.options.clone(),
+                },
                 (_, "file") => FormFieldType::File,
                 (_, "checkbox") => FormFieldType::Checkbox,
                 (_, "radio") => FormFieldType::Radio { options: vec![] },
@@ -2087,7 +2107,7 @@ impl CdpDriver {
             .and_then(|v| v.get("objectId"))
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this.tagName !== 'SELECT' || this.multiple || this.matches(':disabled') || (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]'))) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && !matches[0].closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !matches[0].disabled && !(matches[0].parentElement && matches[0].parentElement.tagName === 'OPTGROUP' && matches[0].parentElement.disabled) && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { if (this instanceof HTMLInputElement && this.hasAttribute('list')) { const input = this, root = input.getRootNode(), list = input.list, listId = input.getAttribute('list'); const safe = () => input.isConnected && !input.matches(':disabled') && !input.readOnly && !input.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && ['text','search','email','tel','url'].includes(input.type) && !input.hasAttribute('role') && !input.hasAttribute('aria-autocomplete') && !input.multiple && list instanceof HTMLDataListElement && list.isConnected && input.list === list && root.querySelectorAll('#' + CSS.escape(listId)).length === 1; if (!safe()) return false; const options = Array.from(list.options); if (!options.length || options.length > 100 || options.some(o => o.disabled || o.closest('optgroup[disabled]') || !o.hasAttribute('value') || !o.value || o.value.length > 200 || o.value.trim() !== o.value)) return false; const values = options.map(o => o.value); if (new Set(values.map(v => v.toLowerCase())).size !== values.length) return false; const matches = options.filter(o => o.value.toLowerCase() === label.toLowerCase()); if (matches.length !== 1) return false; const chosen = matches[0]; if (apply) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, chosen.value); input.dispatchEvent(new Event('input', {bubbles:true})); input.dispatchEvent(new Event('change', {bubbles:true})); } return safe() && input.validity.valid && input.value === chosen.value && Array.from(list.options).length === options.length && Array.from(list.options).every((o,i) => o === options[i] && !o.disabled && !o.closest('optgroup[disabled]') && o.value === values[i]); } if (this.tagName !== 'SELECT' || this.multiple || this.matches(':disabled') || (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]'))) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && !matches[0].closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !matches[0].disabled && !(matches[0].parentElement && matches[0].parentElement.tagName === 'OPTGROUP' && matches[0].parentElement.disabled) && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result
                 .get("result")
@@ -2904,6 +2924,84 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
             pending.extend(children.iter().rev().map(|child| (child, child_in_control)));
         }
     }
+}
+
+/// Collect only unambiguous static datalists in this document or shadow root.
+fn static_datalists(root: &Value) -> HashMap<String, Vec<String>> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut lists: HashMap<String, Option<Vec<String>>> = HashMap::new();
+    walk(root, false, &mut |node, _| {
+        let attrs = attributes(node);
+        if let Some(id) = attrs
+            .get("id")
+            .filter(|id| !id.is_empty() && id.len() <= 512)
+        {
+            *counts.entry(id.clone()).or_default() += 1;
+            if node
+                .get("nodeName")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.eq_ignore_ascii_case("datalist"))
+            {
+                let mut values: Vec<String> = Vec::new();
+                let mut valid = !attrs.contains_key("disabled");
+                walk(node, false, &mut |child, _| {
+                    let tag = child.get("nodeName").and_then(Value::as_str).unwrap_or("");
+                    let attrs = attributes(child);
+                    if (tag.eq_ignore_ascii_case("option") || tag.eq_ignore_ascii_case("optgroup"))
+                        && attrs.contains_key("disabled")
+                    {
+                        valid = false;
+                    }
+                    if tag.eq_ignore_ascii_case("option") {
+                        match attrs.get("value") {
+                            Some(value)
+                                if !value.is_empty()
+                                    && value.len() <= 200
+                                    && value.trim() == value
+                                    && !values.iter().any(|previous| {
+                                        previous.to_lowercase() == value.to_lowercase()
+                                    })
+                                    && values.len() < 100 =>
+                            {
+                                values.push(value.clone())
+                            }
+                            _ => valid = false,
+                        }
+                    }
+                    true
+                });
+                lists.insert(id.clone(), (valid && !values.is_empty()).then_some(values));
+            }
+        }
+        true
+    });
+    lists
+        .into_iter()
+        .filter_map(|(id, values)| {
+            (counts.get(&id) == Some(&1))
+                .then_some(values)
+                .flatten()
+                .map(|values| (id, values))
+        })
+        .collect()
+}
+
+fn native_datalist_options<'a>(
+    attrs: &HashMap<String, String>,
+    lists: &'a HashMap<String, Vec<String>>,
+) -> Option<&'a Vec<String>> {
+    let kind = attrs
+        .get("type")
+        .map(|kind| kind.to_ascii_lowercase())
+        .unwrap_or_else(|| "text".into());
+    if !matches!(kind.as_str(), "text" | "search" | "email" | "tel" | "url")
+        || attrs.contains_key("role")
+        || attrs.contains_key("aria-autocomplete")
+        || attrs.contains_key("multiple")
+    {
+        return None;
+    }
+    attrs.get("list").and_then(|id| lists.get(id))
 }
 
 fn document_has_embedded_scope(document: &Value) -> bool {

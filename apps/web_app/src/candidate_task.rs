@@ -388,6 +388,7 @@ fn listing_embedded_warnings(walls: &[String]) -> Result<Vec<String>, String> {
             || wall == waypoint_browser::SHADOW_FORM_REVIEW
             || wall == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
             || wall == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
+            || wall == waypoint_browser::NATIVE_DATALIST_REVIEW
         {
             warnings.push(wall.clone());
         } else {
@@ -510,6 +511,7 @@ mod tests {
             waypoint_browser::SHADOW_FORM_REVIEW.to_owned(),
             waypoint_browser::CLOSED_SHADOW_FORM_REVIEW.to_owned(),
             waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW.to_owned(),
+            waypoint_browser::NATIVE_DATALIST_REVIEW.to_owned(),
         ];
         assert_eq!(super::listing_embedded_warnings(&walls).unwrap(), walls);
         assert!(super::listing_embedded_warnings(&["captcha present".into()]).is_err());

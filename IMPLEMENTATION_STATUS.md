@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Native datalist choices — 2026-10-31
+
+- Standard text inputs backed by an unambiguous, bounded HTML datalist can now be offered as reviewed choices. Waypoint selects only an explicitly listed value, sends input and change events, and rechecks the value and options. Duplicate IDs or values, disabled choices, custom ARIA comboboxes, and changed or invalid controls remain manual. A manual-review warning remains because a site's internal selection state may not be visible from the input value.
+- Fictional local fixtures verified selection, page event handling, rejection of invalid or changed lists, a shadow-root datalist, and reviewed web-app prefill. The local browser suite passed 47 tests before the final shadow fixture extension, which passed separately; the SQLCipher-enabled web suite passed 301. No live site or local model was tested.
+
 ## Mixed embedded scopes — 2026-10-31
 
 - The existing four-scope inspection budget can now be used along one nested path instead of stopping at three. Frame and open-shadow selectors retain every ancestor identity and visibility check. If another relevant scope cannot be inspected within the limit, the form and application checker report that gap for manual review.

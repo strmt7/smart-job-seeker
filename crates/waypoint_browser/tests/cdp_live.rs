@@ -1285,6 +1285,10 @@ fn open_shadow_fields_can_be_filled_and_closed_roots_need_review() {
             selector: selector("Schedule"),
             label: "Part time".into(),
         },
+        BrowserCommand::SelectOption {
+            selector: selector("Timezone"),
+            label: "CET".into(),
+        },
     ] {
         driver.execute(&choice).unwrap();
         driver.verify_choice(&choice).unwrap();
@@ -1494,6 +1498,89 @@ fn embedded_controls_after_hidden_frames_can_be_filled_and_verified() {
 }
 
 #[test]
+#[ignore = "launches one browser against fictional native datalists"]
+fn native_datalist_choices_are_reviewable_and_checked_after_events() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_datalist.html")).unwrap();
+    let field = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#region")
+        .unwrap();
+    assert_eq!(
+        field.field_type,
+        FormFieldType::Select {
+            options: vec!["Germany".into(), "Canada".into()]
+        }
+    );
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::NATIVE_DATALIST_REVIEW));
+    for selector in ["#duplicate", "#custom", "#duplicate-id", "#disabled"] {
+        assert!(
+            !page
+                .schema
+                .fields
+                .iter()
+                .any(|field| field.selector == selector),
+            "{selector}"
+        );
+    }
+    for (selector, value) in [
+        ("#duplicate", "One"),
+        ("#custom", "Germany"),
+        ("#duplicate-id", "One"),
+        ("#disabled", "One"),
+    ] {
+        assert!(
+            driver
+                .execute(&BrowserCommand::SelectOption {
+                    selector: selector.into(),
+                    label: value.into()
+                })
+                .is_err(),
+            "{selector} must not be selected"
+        );
+    }
+    let command = BrowserCommand::SelectOption {
+        selector: "#region".into(),
+        label: "Germany".into(),
+    };
+    driver.execute(&command).unwrap();
+    driver.verify_choice(&command).unwrap();
+    assert_eq!(
+        driver
+            .read_attribute("#region", "data-seen")
+            .unwrap()
+            .as_deref(),
+        Some("Germany")
+    );
+    for selector in ["#clear", "#changing-role"] {
+        assert!(
+            driver
+                .execute(&BrowserCommand::SelectOption {
+                    selector: selector.into(),
+                    label: "Germany".into()
+                })
+                .is_err(),
+            "{selector}"
+        );
+    }
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#change-list".into(),
+        })
+        .unwrap();
+    assert!(driver.verify_choice(&command).is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser with a fictional autocomplete fixture"]
 fn autocomplete_choices_are_not_mistaken_for_selected_text_fields() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
@@ -1501,19 +1588,22 @@ fn autocomplete_choices_are_not_mistaken_for_selected_text_fields() {
         .open(&file_url("form_autocomplete_choice.html"))
         .unwrap();
     assert!(page.schema.fields.iter().any(|field| field.label == "Name"));
-    for label in [
-        "City",
-        "Country",
-        "Category",
-        "Region",
-        "Nested choice",
-        "Search terms",
-    ] {
+    for label in ["City", "Country", "Region", "Nested choice", "Search terms"] {
         assert!(
             !page.schema.fields.iter().any(|field| field.label == label),
             "{label} should remain manual"
         );
     }
+    assert!(page
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Category"
+            && matches!(field.field_type, FormFieldType::Select { .. })));
+    assert!(page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::NATIVE_DATALIST_REVIEW));
     assert!(page
         .walls
         .iter()

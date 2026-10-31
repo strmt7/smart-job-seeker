@@ -61,6 +61,7 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
         || reason == waypoint_browser::SHADOW_FORM_REVIEW
         || reason == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
         || reason == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
+        || reason == waypoint_browser::NATIVE_DATALIST_REVIEW
         || reason == "an unavailable field needs manual review"
         || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
@@ -689,6 +690,7 @@ mod tests {
         assert!(is_custom_review(
             waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
         ));
+        assert!(is_custom_review(waypoint_browser::NATIVE_DATALIST_REVIEW));
         assert!(!is_custom_review("captcha present"));
     }
 
@@ -2088,25 +2090,32 @@ mod tests {
             "form_shadow.html",
             "form_mixed_scopes.html",
             "form_four_scopes.html",
+            "form_datalist.html",
         ] {
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../crates/waypoint_browser/tests/fixtures")
                 .join(filename);
             let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
             let live = driver.open(url.as_str()).unwrap();
-            let preview =
-                suggest_without_model(live, &json!({"first_name":"Fictional"}), "No model")
-                    .unwrap();
+            let preview = suggest_without_model(
+                live,
+                &json!({"first_name":"Fictional","country":"Germany"}),
+                "No model",
+            )
+            .unwrap();
             assert_eq!(preview.suggestions.len(), 1);
             let selector = preview.suggestions[0].field_selector.clone();
             assert!(
-                selector.starts_with("waypoint-frame:") || selector.starts_with("waypoint-shadow:")
+                selector.starts_with("waypoint-frame:")
+                    || selector.starts_with("waypoint-shadow:")
+                    || (filename == "form_datalist.html" && selector == "#region")
             );
             assert!(preview
                 .manual_review
                 .iter()
                 .any(|wall| wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
-                    || wall == waypoint_browser::SHADOW_FORM_REVIEW));
+                    || wall == waypoint_browser::SHADOW_FORM_REVIEW
+                    || wall == waypoint_browser::NATIVE_DATALIST_REVIEW));
             let mut ws = Workspace::in_memory().unwrap();
             let job_id = JobIdentityId::new("embedded-fixture").unwrap();
             ws.import_job(waypoint_store::StoredJob {
@@ -2163,7 +2172,16 @@ mod tests {
                 .unwrap(),
                 1
             );
-            driver.verify_text_value(&selector, "Fictional").unwrap();
+            if filename == "form_datalist.html" {
+                driver
+                    .verify_choice(&BrowserCommand::SelectOption {
+                        selector: selector.clone(),
+                        label: "Germany".into(),
+                    })
+                    .unwrap();
+            } else {
+                driver.verify_text_value(&selector, "Fictional").unwrap();
+            }
             assert!(grant.consumed);
             assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
         }

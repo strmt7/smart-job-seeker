@@ -7,7 +7,7 @@
 <script>
 for (const host of document.querySelectorAll('x-decoration')) { host.style.display='block'; host.attachShadow({mode:'open'}).innerHTML='<span>Decoration</span>'; }
 const openRoot = document.getElementById('open-host').attachShadow({mode:'open'});
-openRoot.innerHTML = `<label>Name <input name="candidate" autocomplete="given-name"></label><label>Place <select name="place"><option>Choose</option><option>Remote</option></select></label><label>Updates <input name="updates" type="checkbox"></label><fieldset><legend>Schedule</legend><label><input type="radio" name="schedule" value="full">Full time</label><label><input type="radio" name="schedule" value="part">Part time</label></fieldset><label>Attachment <input type="file" name="attachment" accept=".pdf"></label>`;
+openRoot.innerHTML = `<label>Name <input name="candidate" autocomplete="given-name"></label><label>Place <select name="place"><option>Choose</option><option>Remote</option></select></label><label>Updates <input name="updates" type="checkbox"></label><fieldset><legend>Schedule</legend><label><input type="radio" name="schedule" value="full">Full time</label><label><input type="radio" name="schedule" value="part">Part time</label></fieldset><label>Attachment <input type="file" name="attachment" accept=".pdf"></label><label>Timezone <input name="timezone" list="zones"></label><datalist id="zones"><option value="UTC"><option value="CET"></datalist>`;
 const closedRoot = document.getElementById('closed-host').attachShadow({mode:'closed'});
 closedRoot.innerHTML = `<label>Private question <input name="private"></label>`;
 </script>
