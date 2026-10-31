@@ -1660,6 +1660,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpuviewer-core"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bbfe6e46ddfe7a144445354798b2d01e3502403f646d94646844f737c60cf2b"
+dependencies = [
+ "serde",
+ "windows",
+]
+
+[[package]]
 name = "guillotiere"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4812,6 +4822,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "getrandom 0.3.4",
+ "gpuviewer-core",
  "native-tls",
  "percent-encoding",
  "processkit",

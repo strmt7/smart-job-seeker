@@ -1,0 +1,13 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start = source.indexOf('function gpuStatusText(');
+const end = source.indexOf("document.querySelector('#gpu-status')",start);
+assert.ok(start >= 0 && end > start);
+const format = vm.runInNewContext(`${source.slice(start,end)}; gpuStatusText`);
+assert.match(format({state:'unavailable',adapters:[]}), /could not be sampled/);
+assert.match(format({state:'unsupported'}), /unavailable/);
+assert.match(format({state:'incomplete',adapters:[{name:'fixture',total_bytes:1024,used_bytes:null}]}), /incomplete/);
+assert.match(format({state:'sampled',adapters:[{name:'fixture',total_bytes:1073741824,used_bytes:0}]}), /0.00 GiB used \/ 1.00 GiB dedicated/);
+console.log('GPU status UI checks passed.');

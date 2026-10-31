@@ -30,6 +30,7 @@ mod gmail_net;
 mod gmail_oauth;
 mod gmail_password;
 mod gmail_self_test;
+mod gpu_resources;
 mod letter_export;
 mod link_rank;
 mod manual_job;
@@ -1500,6 +1501,12 @@ fn serve(
                 Err(error) => json!({"model":null,"state":"unreachable","error":error}),
             },
         );
+        return Ok(());
+    }
+    if method == "GET" && path == "/api/gpu-status" {
+        let result = std::panic::catch_unwind(gpu_resources::sample)
+            .unwrap_or_else(|_| json!({"state":"unavailable","reported_adapters":0,"adapters":[]}));
+        json_reply(stream, "200 OK", result);
         return Ok(());
     }
     if method == "GET" && path == "/api/model-inventory" {

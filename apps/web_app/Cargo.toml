@@ -40,6 +40,7 @@ webbrowser = "1.2"
 workspace = true
 
 [target.'cfg(windows)'.dependencies]
+gpuviewer-core = { version = "=0.1.1", default-features = false, features = ["wddm"] }
 tray-icon = { version = "=0.26.1", default-features = false }
 winit = { version = "=0.30.13", default-features = false }
 processkit = { version = "=3.3.4", default-features = false, features = ["limits", "process-control"] }
