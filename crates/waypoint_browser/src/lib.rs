@@ -392,6 +392,89 @@ impl CdpDriver {
         Ok(())
     }
 
+    /// Capture a bounded area around a known field after it has been scrolled
+    /// into view. The crop may omit a distant label or obscured content.
+    pub fn screenshot_field_context(&mut self, selector: &str) -> Result<String, DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Field is unavailable for visual capture".into()))?;
+        let model = self
+            .cdp
+            .call("DOM.getBoxModel", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let quad = model
+            .pointer("/model/border")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("Field has no capture bounds".into()))?;
+        let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
+        if numbers.len() != 8 || numbers.iter().any(|number| !number.is_finite()) {
+            return Err(DriverError("Invalid field capture bounds".into()));
+        }
+        let x = numbers
+            .iter()
+            .step_by(2)
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let y = numbers
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let metrics = self
+            .cdp
+            .call("Page.getLayoutMetrics", json!({}))
+            .map_err(derr)?;
+        let viewport = metrics
+            .get("cssVisualViewport")
+            .ok_or_else(|| DriverError("Viewport unavailable for visual capture".into()))?;
+        let page_x = viewport
+            .get("pageX")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| DriverError("Viewport position unavailable".into()))?;
+        let page_y = viewport
+            .get("pageY")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| DriverError("Viewport position unavailable".into()))?;
+        let (page_width, page_height) = self.page_dimensions()?;
+        let left = (x + page_x - 120.0).max(0.0).min(page_width);
+        let top = (y + page_y - 70.0).max(0.0).min(page_height);
+        let right = numbers
+            .iter()
+            .step_by(2)
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max)
+            + page_x;
+        let bottom = numbers
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max)
+            + page_y;
+        let width = (right + 60.0 - left)
+            .clamp(220.0, 720.0)
+            .min(page_width - left);
+        let height = (bottom + 60.0 - top)
+            .clamp(80.0, 400.0)
+            .min(page_height - top);
+        if right > left + width || bottom > top + height {
+            return Err(DriverError(
+                "Field is too large for one visual capture".into(),
+            ));
+        }
+        if !left.is_finite() || !top.is_finite() || width <= 0.0 || height <= 0.0 {
+            return Err(DriverError("Field capture is outside the page".into()));
+        }
+        let captured = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":1}})).map_err(derr)?;
+        let data = captured
+            .get("data")
+            .and_then(Value::as_str)
+            .filter(|data| data.len() <= 4 * 1024 * 1024)
+            .ok_or_else(|| DriverError("Field screenshot unavailable or too large".into()))?;
+        Ok(data.to_owned())
+    }
+
     /// Attach a caller-selected local file to a known form control.
     pub fn attach_local_file(
         &mut self,

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
-const start = source.indexOf(' async function inspectVisual(){');
+const start = source.indexOf(' async function inspectVisual(targetSelector=null){');
 const end = source.indexOf('\n visualButton.addEventListener', start);
 assert.ok(start >= 0 && end > start);
 const calls = [], store = new Map();
@@ -16,7 +16,7 @@ const context = {
   api:async(path, body)=>{
     if(path === '/api/form/visual-review-start'){
       calls.push(body);
-      return {task_id:String(calls.length), segment:body.segment, half:body.half, segments:1, page_signature:'page', coverage_complete:true, screenshot:'fixture', record_saved:true};
+      return {task_id:String(calls.length), segment:body.segment, half:body.half, segments:1, target_selector:body.target_selector, page_signature:'page', coverage_complete:true, screenshot:'fixture', record_saved:true};
     }
     const full = body.task_id === '1';
     return {status:'complete', visual_freshness:'same', record_saved:true,
@@ -27,6 +27,10 @@ const context = {
   const run = vm.runInNewContext(`${source.slice(start,end)}; inspectVisual`,context);
   await run();
   assert.deepEqual(calls.map(x=>x.half),[null,0,1]);
+  assert.equal(store.size,0);
+  calls.length=0; await run('fictional-selector');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].target_selector,'fictional-selector');
   assert.equal(store.size,0);
   assert.equal(context.visualButton.disabled,false);
   console.log('Dense visual segment retry UI check passed.');

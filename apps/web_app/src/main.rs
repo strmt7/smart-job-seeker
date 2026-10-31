@@ -3565,27 +3565,64 @@ fn serve(
                 }
                 _ => return Err("Invalid visual segment subdivision".into()),
             };
+            let target = match body.get("target_selector") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(selector)) if segment == 0 && half.is_none() => {
+                    if !current.completed_selectors.contains(selector) {
+                        return Err("Select a field filled in this session".into());
+                    }
+                    let field = current
+                        .preview
+                        .schema
+                        .fields
+                        .iter()
+                        .find(|field| &field.selector == selector)
+                        .ok_or("Field is no longer present")?;
+                    if !matches!(
+                        field.field_type,
+                        waypoint_applications::form_mapping::FormFieldType::Text
+                            | waypoint_applications::form_mapping::FormFieldType::Email
+                            | waypoint_applications::form_mapping::FormFieldType::TextArea
+                            | waypoint_applications::form_mapping::FormFieldType::Select { .. }
+                    ) {
+                        return Err("Focused visual transcription currently supports text and single-select fields; inspect this field manually".into());
+                    }
+                    if field.label.trim().is_empty() || field.label.len() > 500 {
+                        return Err("Field has no usable label for visual review".into());
+                    }
+                    Some((selector.clone(), field.label.clone()))
+                }
+                _ => return Err("Invalid targeted visual review".into()),
+            };
             let (width, height) = current
                 .driver
                 .page_dimensions()
                 .map_err(|e| e.to_string())?;
             let (clip_width, y, clip_height, total, page_coverage_complete) =
                 visual_review::segment_half_geometry(width, height, segment as usize, half)?;
-            let coverage_complete = page_coverage_complete
+            let coverage_complete = target.is_none()
+                && page_coverage_complete
                 && !current.preview.manual_review.iter().any(|reason| {
                     reason == waypoint_browser::UNINSPECTED_FRAME_REVIEW
                         || reason == waypoint_browser::SHADOW_FORM_REVIEW
                 });
             let url = current.driver.current_url().map_err(|e| e.to_string())?;
             let signature = visual_review::page_signature(&url, width, height);
-            let screenshot = current
-                .driver
-                .screenshot_segment(clip_width, y, clip_height)
-                .map_err(|e| e.to_string())?;
+            let screenshot = if let Some((selector, _)) = &target {
+                current.driver.screenshot_field_context(selector)
+            } else {
+                current
+                    .driver
+                    .screenshot_segment(clip_width, y, clip_height)
+            }
+            .map_err(|e| e.to_string())?;
             let task_id = random_id()?;
+            let target_selectors = target.as_ref().map(|(selector, _)| vec![selector.clone()]);
             let (expected, comparisons_truncated) = visual_review::expected_from_preview(
                 &current.preview,
-                &current.completed_selectors,
+                target_selectors
+                    .as_ref()
+                    .unwrap_or(&current.completed_selectors),
             );
             let result_path = current
                 .record
@@ -3605,7 +3642,7 @@ fn serve(
                 ),
                 model,
                 screenshot.clone(),
-                expected,
+                (expected, target.clone()),
                 result_path,
             ) {
                 visual_review::finish_pending_review(
@@ -3618,13 +3655,13 @@ fn serve(
             }
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
-                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"segment":segment,"half":half,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
                 }).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":task_id,"screenshot":screenshot,"segment":segment,"half":half,"segments":total,"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"record_saved":record_saved}),
+                json!({"task_id":task_id,"screenshot":screenshot,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"record_saved":record_saved}),
             );
         }
         "/api/form/visual-review-status" => {
@@ -3699,22 +3736,28 @@ fn serve(
                             current.preview.manual_review.push(reason.into());
                         }
                     }
-                    let fresh_screenshot = result["segment"].as_u64().and_then(|segment| {
-                        let (clip_width, y, clip_height, _, _) =
-                            visual_review::segment_half_geometry(
-                                width,
-                                height,
-                                segment as usize,
-                                result["half"]
-                                    .as_u64()
-                                    .and_then(|h| usize::try_from(h).ok()),
-                            )
-                            .ok()?;
-                        current
-                            .driver
-                            .screenshot_segment(clip_width, y, clip_height)
-                            .ok()
-                    });
+                    let capture_target = result["target_selector"].as_str().map(str::to_owned);
+                    let capture_segment = result["segment"].as_u64();
+                    let capture_half = result["half"]
+                        .as_u64()
+                        .and_then(|h| usize::try_from(h).ok());
+                    let capture = |driver: &mut waypoint_browser::CdpDriver| {
+                        if let Some(selector) = capture_target.as_deref() {
+                            driver.screenshot_field_context(selector).ok()
+                        } else {
+                            let segment = capture_segment?;
+                            let (clip_width, y, clip_height, _, _) =
+                                visual_review::segment_half_geometry(
+                                    width,
+                                    height,
+                                    segment as usize,
+                                    capture_half,
+                                )
+                                .ok()?;
+                            driver.screenshot_segment(clip_width, y, clip_height).ok()
+                        }
+                    };
+                    let fresh_screenshot = capture(&mut current.driver);
                     let (verified, unconfirmed) = visual_review::crosscheck_live_values(
                         &mut current.driver,
                         &current.preview,
@@ -3724,22 +3767,7 @@ fn serve(
                     let final_screenshot = if verified + unconfirmed == 0 {
                         fresh_screenshot.clone()
                     } else {
-                        result["segment"].as_u64().and_then(|segment| {
-                            let (clip_width, y, clip_height, _, _) =
-                                visual_review::segment_half_geometry(
-                                    width,
-                                    height,
-                                    segment as usize,
-                                    result["half"]
-                                        .as_u64()
-                                        .and_then(|h| usize::try_from(h).ok()),
-                                )
-                                .ok()?;
-                            current
-                                .driver
-                                .screenshot_segment(clip_width, y, clip_height)
-                                .ok()
-                        })
+                        capture(&mut current.driver)
                     };
                     let mut freshness = visual_review::interval_freshness(
                         result["screenshot_hash"].as_str(),
