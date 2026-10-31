@@ -34,6 +34,7 @@ mod gpu_resources;
 mod letter_export;
 mod link_rank;
 mod manual_job;
+mod model_install;
 mod model_start;
 mod pdf_extract;
 mod pdf_job;
@@ -1504,6 +1505,14 @@ fn serve(
         );
         return Ok(());
     }
+    if method == "GET" && path == "/api/model-install/active" {
+        json_reply(
+            stream,
+            "200 OK",
+            json!({"task_id":model_install::active()?}),
+        );
+        return Ok(());
+    }
     if method == "GET" && path == "/api/model-start/active" {
         json_reply(stream, "200 OK", json!({"task_id":model_start::active()?}));
         return Ok(());
@@ -1565,6 +1574,16 @@ fn serve(
     let body: Value = serde_json::from_slice(&buf[header_end..header_end + length])
         .map_err(|_| "invalid JSON")?;
     match path.as_str() {
+        "/api/model-install/start" => {
+            let model = body["model"].as_str().ok_or("missing model")?;
+            let id = random_id()?;
+            model_install::start(id.clone(), model)?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/model-install/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", model_install::poll(id)?);
+        }
         "/api/model-start/start" => {
             let model = body["model"].as_str().ok_or("missing model")?.to_owned();
             let id = random_id()?;
