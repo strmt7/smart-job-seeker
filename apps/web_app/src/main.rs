@@ -1180,6 +1180,10 @@ fn resident_model_status() -> Result<Value, String> {
     let addr = "127.0.0.1:11434"
         .parse()
         .map_err(|_| "invalid runtime address")?;
+    resident_model_status_at(addr)
+}
+
+fn resident_model_status_at(addr: std::net::SocketAddr) -> Result<Value, String> {
     let (status, bytes) = http_request(addr, "GET", "/api/ps", None, 3000)?;
     if status != 200 {
         return Err(format!("Ollama returned HTTP {status}"));
@@ -1215,7 +1219,7 @@ fn model_diagnostics(data: &Value) -> Result<Value, String> {
         .ok_or("Ollama did not report resident models")?;
     if let Some(name) = eligible {
         return Ok(
-            json!({"model":name,"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"]}),
+            json!({"model":name,"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"],"context_length":models[0]["context_length"].as_u64()}),
         );
     }
     let state = if models.is_empty() {
@@ -1236,6 +1240,50 @@ fn model_diagnostics(data: &Value) -> Result<Value, String> {
         }
     };
     Ok(json!({"model":null,"state":state,"loaded_models":models.len()}))
+}
+
+/// `/api/show` describes a model's advertised capabilities, not the accuracy
+/// of those capabilities or whether the model remains resident afterward.
+fn vision_capability(data: &Value) -> Option<bool> {
+    let items = data.get("capabilities")?.as_array()?;
+    if items.len() > 100 || items.iter().any(|item| item.as_str().is_none()) {
+        return None;
+    }
+    Some(items.iter().any(|item| item.as_str() == Some("vision")))
+}
+
+fn model_status_with_capabilities() -> Result<Value, String> {
+    let addr = "127.0.0.1:11434"
+        .parse()
+        .map_err(|_| "invalid runtime address")?;
+    model_status_with_capabilities_at(addr)
+}
+
+fn model_status_with_capabilities_at(addr: std::net::SocketAddr) -> Result<Value, String> {
+    let mut status = resident_model_status_at(addr)?;
+    let Some(model) = status["model"].as_str().map(str::to_owned) else {
+        return Ok(status);
+    };
+    let request = serde_json::to_vec(&json!({"model": model})).map_err(|e| e.to_string())?;
+    let vision = http_request(addr, "POST", "/api/show", Some(&request), 3000)
+        .ok()
+        .and_then(|(code, bytes)| (code == 200).then_some(bytes))
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|data| vision_capability(&data));
+    // Discard capability claims if the resident model changed between calls.
+    let after = resident_model_status_at(addr).ok();
+    if after.as_ref().is_some_and(|after| {
+        after["model"] == status["model"]
+            && after["reported_bytes"] == status["reported_bytes"]
+            && after["reported_vram_bytes"] == status["reported_vram_bytes"]
+            && after["context_length"] == status["context_length"]
+    }) {
+        status["vision"] = json!(vision);
+    } else {
+        status = after.unwrap_or_else(|| json!({"model":null,"state":"unreachable"}));
+        status["vision"] = Value::Null;
+    }
+    Ok(status)
 }
 
 fn eligible_resident_model(data: &Value) -> Result<Option<String>, String> {
@@ -1443,7 +1491,7 @@ fn serve(
         return Ok(());
     }
     if method == "GET" && path == "/api/model-status" {
-        let status = resident_model_status();
+        let status = model_status_with_capabilities();
         json_reply(
             stream,
             "200 OK",
@@ -6522,6 +6570,72 @@ mod tests {
         let status = model_diagnostics(&good).unwrap();
         assert_eq!(status["state"], "ready");
         assert_eq!(status["reported_vram_bytes"], 1_000_000);
+    }
+
+    #[test]
+    fn model_vision_capability_requires_a_well_formed_report() {
+        assert_eq!(
+            vision_capability(&json!({"capabilities":["completion","vision"]})),
+            Some(true)
+        );
+        assert_eq!(
+            vision_capability(&json!({"capabilities":["completion"]})),
+            Some(false)
+        );
+        assert_eq!(vision_capability(&json!({})), None);
+        assert_eq!(
+            vision_capability(&json!({"capabilities":["vision", null]})),
+            None
+        );
+        assert_eq!(
+            vision_capability(&json!({"capabilities":vec!["vision";101]})),
+            None
+        );
+    }
+
+    #[test]
+    fn model_capability_is_discarded_when_resident_model_changes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let replies = [
+                json!({"models":[{"name":"first","size":10,"size_vram":10,"context_length":4096}]}),
+                json!({"capabilities":["vision"]}),
+                json!({"models":[{"name":"second","size":10,"size_vram":10,"context_length":4096}]}),
+            ];
+            for body in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        let result = model_status_with_capabilities_at(addr).unwrap();
+        worker.join().unwrap();
+        assert_eq!(result["model"], "second");
+        assert!(result["vision"].is_null());
+    }
+
+    #[test]
+    #[ignore = "requires one preloaded local vision model and resource preflight"]
+    fn live_model_status_reports_vision_without_loading_another_model() {
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
+        let before = resident_model_status().unwrap();
+        assert_eq!(before["model"], model);
+        let status = model_status_with_capabilities().unwrap();
+        assert_eq!(status["model"], model);
+        assert_eq!(status["vision"], true);
+        assert_eq!(status["context_length"], 4096);
+        let after = resident_model_status().unwrap();
+        assert_eq!(before, after);
     }
 
     fn request(path: &str, token: &str, body: &str) -> String {

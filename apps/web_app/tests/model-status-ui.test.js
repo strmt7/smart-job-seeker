@@ -1,0 +1,15 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function modelStatusText(');
+const end = source.indexOf("document.querySelector('#model-status')", start);
+assert.ok(start >= 0 && end > start);
+const format = vm.runInNewContext(`${source.slice(start,end)}; modelStatusText`);
+const base = {model:'fictional',reported_vram_bytes:1073741824,context_length:4096};
+assert.match(format({...base,vision:true}), /Vision reported/);
+assert.match(format({...base,vision:false}), /Vision not reported/);
+assert.match(format({...base,vision:null}), /could not be confirmed/);
+assert.match(format({...base,context_length:null}), /context unavailable/);
+assert.match(format({model:null,state:'no_model'}), /no loaded model/);
+console.log('Model status UI checks passed.');
