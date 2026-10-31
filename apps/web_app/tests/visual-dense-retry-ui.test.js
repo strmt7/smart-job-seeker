@@ -5,13 +5,13 @@ const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf(' async function inspectVisual(targetSelector=null){');
 const end = source.indexOf('\n visualButton.addEventListener', start);
 assert.ok(start >= 0 && end > start);
-const calls = [], store = new Map();
-const panel = {isConnected:true, replaceChildren(){}, append(){}};
+const calls = [], store = new Map(), messages = []; let refreshes=0;
+const panel = {isConnected:true, replaceChildren(){}, append(item){if(item?.text)messages.push(item.text);}};
 const context = {
   result:{session_id:'fictional'}, fillInProgress:false, fillCompleted:false,
   visualButton:{disabled:false}, fillButton:null, visualPanel:panel,
   sessionStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},
-  element:()=>({}), document:{createElement:()=>({})}, refresh:async()=>{},
+  element:(_tag,text)=>({text}), document:{createElement:()=>({})}, refresh:async()=>{refreshes++;},
   setTimeout:fn=>fn(), visualComparisonStatus:()=>'', visualReviewNeedsQueueRefresh:()=>false,
   api:async(path, body)=>{
     if(path === '/api/form/visual-review-start'){
@@ -19,7 +19,7 @@ const context = {
       return {task_id:String(calls.length), segment:body.segment, half:body.half, segments:1, target_selector:body.target_selector, page_signature:'page', coverage_complete:true, screenshot:'fixture', record_saved:true};
     }
     const full = body.task_id === '1';
-    return {status:'complete', visual_freshness:'same', record_saved:true,
+    return {status:'complete', visual_freshness:'same', record_saved:true, target_unobserved:calls[0]?.target_selector!=null,
       visual_review:{observations:full ? Array(20).fill({label:'x',visible_value:'y'}) : [], comparisons:[], observation_limit_reached:full}};
   }
 };
@@ -28,9 +28,11 @@ const context = {
   await run();
   assert.deepEqual(calls.map(x=>x.half),[null,0,1]);
   assert.equal(store.size,0);
-  calls.length=0; await run('fictional-selector');
+  calls.length=0; refreshes=0; messages.length=0; await run('fictional-selector');
   assert.equal(calls.length,1);
   assert.equal(calls[0].target_selector,'fictional-selector');
+  assert.ok(messages.some(message=>message.includes('could not be identified')));
+  assert.equal(refreshes,1);
   assert.equal(store.size,0);
   assert.equal(context.visualButton.disabled,false);
   console.log('Dense visual segment retry UI check passed.');

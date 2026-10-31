@@ -989,12 +989,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    #[ignore = "starts a local browser and requires a preloaded local model and resource preflight"]
     fn live_local_model_reinspects_and_prefills_a_fictional_wizard() {
         use waypoint_domain::GrantId;
         let addr = "127.0.0.1:11434".parse().unwrap();
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
         assert_eq!(
-            waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
+            waypoint_inference::ollama::resident_context(addr, &model).unwrap(),
             4096
         );
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1003,12 +1005,12 @@ mod tests {
             .unwrap();
         let url = url::Url::from_file_path(fixture).unwrap().to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
         let mut llm = crate::resident_inference::ResidentInference::new(
             llm,
-            "qwen3.5:9b".into(),
+            model.clone(),
             crate::resident_model,
         );
         let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
@@ -1079,7 +1081,7 @@ mod tests {
         driver.verify_text_value("#given", "Avery").unwrap();
         let visual_first = crate::visual_review::analyze(
             addr,
-            "qwen3.5:9b",
+            &model,
             &driver.screenshot_base64().unwrap(),
             &[("Your given name".into(), "Avery".into())],
         )
@@ -1112,7 +1114,7 @@ mod tests {
         driver.verify_text_value("#permit", "").unwrap();
         let visual_second = crate::visual_review::analyze(
             addr,
-            "qwen3.5:9b",
+            &model,
             &driver.screenshot_base64().unwrap(),
             &[("Email address".into(), "avery@example.invalid".into())],
         )
@@ -1138,8 +1140,10 @@ mod tests {
         use base64::Engine;
         use waypoint_domain::GrantId;
         let addr = "127.0.0.1:11434".parse().unwrap();
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
         assert_eq!(
-            waypoint_inference::ollama::resident_context(addr, "qwen3.5:9b").unwrap(),
+            waypoint_inference::ollama::resident_context(addr, &model).unwrap(),
             4096
         );
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if multilingual {
@@ -1153,12 +1157,12 @@ mod tests {
             .unwrap()
             .to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
         let mut llm = crate::resident_inference::ResidentInference::new(
             llm,
-            "qwen3.5:9b".into(),
+            model.clone(),
             crate::resident_model,
         );
         let preview = inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery", "email":"avery@example.invalid", "work_authorization":"unknown"})).unwrap();
@@ -1282,7 +1286,7 @@ mod tests {
         .unwrap();
         let visual = crate::visual_review::analyze(
             addr,
-            "qwen3.5:9b",
+            &model,
             &image,
             &[
                 (given_label.into(), "Avery".into()),

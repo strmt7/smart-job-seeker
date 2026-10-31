@@ -3829,6 +3829,25 @@ fn serve(
                             current.preview.manual_review.push(reason.into());
                         }
                     }
+                    let target_unobserved = visual_review::flag_unobserved_target(
+                        ws,
+                        &current.job_id,
+                        capture_target.is_some(),
+                        &result["visual_review"],
+                        now(),
+                    )?;
+                    result["target_unobserved"] = json!(target_unobserved);
+                    if target_unobserved {
+                        let reason = visual_review::TARGET_UNOBSERVED_REASON;
+                        if !current
+                            .preview
+                            .manual_review
+                            .iter()
+                            .any(|item| item == reason)
+                        {
+                            current.preview.manual_review.push(reason.into());
+                        }
+                    }
                     if unconfirmed > 0 {
                         let reason = "A visually transcribed field could not be verified against its live value";
                         ws.mark_manual_review(&current.job_id, reason, now())

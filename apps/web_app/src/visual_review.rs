@@ -274,6 +274,40 @@ pub fn transcription_mismatch_count(result: &Value) -> usize {
     })
 }
 
+/// A focused capture has exactly one expected field. Unlike an ordinary page
+/// segment, an unobserved result cannot be deferred to another segment.
+pub fn target_unobserved(result: &Value) -> bool {
+    let Some(items) = result.get("comparisons").and_then(Value::as_array) else {
+        return true;
+    };
+    if items.len() != 1 {
+        return true;
+    }
+    !matches!(
+        items[0]["status"].as_str(),
+        Some("matches_transcription" | "differs_from_transcription")
+    )
+}
+
+pub const TARGET_UNOBSERVED_REASON: &str =
+    "A focused visual field inspection could not identify its selected field";
+pub fn flag_unobserved_target(
+    ws: &waypoint_workspace::Workspace,
+    job: &waypoint_domain::JobIdentityId,
+    targeted: bool,
+    result: &Value,
+    timestamp: i64,
+) -> Result<bool, String> {
+    if !targeted || !target_unobserved(result) {
+        return Ok(false);
+    }
+    ws.mark_manual_review(job, TARGET_UNOBSERVED_REASON, timestamp)
+        .map_err(|e| {
+            format!("Focused field inspection needs review, but its flag could not be saved: {e}")
+        })?;
+    Ok(true)
+}
+
 pub const TRANSCRIPTION_MISMATCH_REASON: &str =
     "A visually transcribed field differs from its reviewed answer";
 pub const VISUAL_FAILURE_REASON: &str = "Visual form review failed; inspect the form manually";
@@ -1314,6 +1348,50 @@ mod tests {
             .unwrap()
             .iter()
             .any(|reason| reason.reason == VISUAL_FAILURE_REASON));
+    }
+
+    #[test]
+    fn focused_review_flags_missing_or_ambiguous_observations() {
+        assert!(target_unobserved(&json!({})));
+        assert!(target_unobserved(&json!({"comparisons":[]})));
+        assert!(target_unobserved(
+            &json!({"comparisons":[{"status":"unobserved"}]})
+        ));
+        assert!(target_unobserved(
+            &json!({"comparisons":[{"status":"unexpected"}]})
+        ));
+        assert!(target_unobserved(
+            &json!({"comparisons":[{"status":"matches_transcription"},{"status":"matches_transcription"}]})
+        ));
+        assert!(!target_unobserved(
+            &json!({"comparisons":[{"status":"matches_transcription"}]})
+        ));
+        assert!(!target_unobserved(
+            &json!({"comparisons":[{"status":"differs_from_transcription"}]})
+        ));
+    }
+
+    #[test]
+    fn unobserved_focused_review_survives_clearing_pending_reason() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/focused-fixture","title":"Engineer","employer":"Fixture"}), 1).unwrap();
+        let job = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let pending = begin_pending_review(&ws, &job, "focused-task", 2).unwrap();
+        let unobserved = json!({"comparisons":[{"status":"unobserved"}]});
+        assert!(!flag_unobserved_target(&ws, &job, false, &unobserved, 3).unwrap());
+        assert!(flag_unobserved_target(&ws, &job, true, &unobserved, 3).unwrap());
+        assert!(finish_pending_review(&ws, &job, "focused-task", pending).unwrap());
+        let reasons = ws.manual_review_reasons(&job).unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].reason, TARGET_UNOBSERVED_REASON);
+        assert!(!flag_unobserved_target(
+            &ws,
+            &job,
+            true,
+            &json!({"comparisons":[{"status":"matches_transcription"}]}),
+            4
+        )
+        .unwrap());
     }
 
     #[test]
