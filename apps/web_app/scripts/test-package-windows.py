@@ -92,3 +92,68 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
         raise AssertionError('A distribution without a license was accepted')
 
 print('Fictional LibreOffice bundle and license checks passed.')
+
+# Exercise the pinned-runtime bundler using tiny fictional archives.
+with tempfile.TemporaryDirectory(prefix='waypoint-ollama-fixture-', dir=target) as temp:
+    root = Path(temp)
+    license_file = root / 'LICENSE'
+    license_file.write_bytes(b'fictional license')
+    base = root / 'base.zip'
+    rocm = root / 'rocm.zip'
+    def make_archive(path, entries):
+        with zipfile.ZipFile(path, 'w') as source:
+            for name, data in entries:
+                source.writestr(name, data)
+    def archive_spec(path):
+        data = path.read_bytes()
+        return (path.name, 'unused', len(data), hashlib.sha256(data).hexdigest(), 1024 * 1024)
+    make_archive(base, [('ollama.exe', b'executable'), ('lib/ollama/LLAMA_CPP_LICENSE', b'license'), ('lib/ollama/vulkan/ggml-vulkan.dll', b'vulkan')])
+    make_archive(rocm, [('lib/ollama/rocm_v7_1/ggml-hip.dll', b'rocm')])
+    specs = (archive_spec(base), archive_spec(rocm))
+    output = root / 'bundle.zip'
+    with zipfile.ZipFile(output, 'w') as archive:
+        hashes = packager.add_ollama_runtime(archive, root, specs=specs, license_path=license_file, license_hash=hashlib.sha256(b'fictional license').hexdigest())
+    with zipfile.ZipFile(output) as archive:
+        assert len(hashes) == 5
+        for name, digest in hashes.items():
+            assert hashlib.sha256(archive.read('app/' + name)).hexdigest() == digest
+    make_archive(rocm, [('lib/ollama/rocm_v7_1/ggml-hip.dll', b'changed')])
+    try:
+        with zipfile.ZipFile(root / 'bad-hash.zip', 'w') as archive:
+            packager.add_ollama_runtime(archive, root, specs=specs, license_path=license_file, license_hash=hashlib.sha256(b'fictional license').hexdigest())
+    except ValueError as error:
+        assert 'pinned' in str(error)
+    else:
+        raise AssertionError('A changed runtime archive was accepted')
+    make_archive(rocm, [('../escape.dll', b'bad')])
+    try:
+        with zipfile.ZipFile(root / 'bad-path.zip', 'w') as archive:
+            packager.add_ollama_runtime(archive, root, specs=(archive_spec(base), archive_spec(rocm)), license_path=license_file, license_hash=hashlib.sha256(b'fictional license').hexdigest())
+    except ValueError as error:
+        assert 'path' in str(error)
+    else:
+        raise AssertionError('A traversal path was accepted')
+    make_archive(rocm, [('OLLAMA.EXE', b'duplicate')])
+    try:
+        with zipfile.ZipFile(root / 'duplicate.zip', 'w') as archive:
+            packager.add_ollama_runtime(archive, root, specs=(archive_spec(base), archive_spec(rocm)), license_path=license_file, license_hash=hashlib.sha256(b'fictional license').hexdigest())
+    except ValueError as error:
+        assert 'Duplicate' in str(error)
+    else:
+        raise AssertionError('A case-insensitive duplicate was accepted')
+    make_archive(rocm, [('NUL.txt', b'device')])
+    try:
+        with zipfile.ZipFile(root / 'reserved.zip', 'w') as archive:
+            packager.add_ollama_runtime(archive, root, specs=(archive_spec(base), archive_spec(rocm)), license_path=license_file, license_hash=hashlib.sha256(b'fictional license').hexdigest())
+    except ValueError as error:
+        assert 'path' in str(error)
+    else:
+        raise AssertionError('A Windows device path was accepted')
+    try:
+        with zipfile.ZipFile(root / 'bad-license.zip', 'w') as archive:
+            packager.add_ollama_runtime(archive, root, specs=specs, license_path=license_file, license_hash='0'*64)
+    except ValueError as error:
+        assert 'license' in str(error)
+    else:
+        raise AssertionError('An unreviewed runtime license was accepted')
+print('Fictional Ollama bundle integrity checks passed.')

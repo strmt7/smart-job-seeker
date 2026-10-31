@@ -117,6 +117,43 @@ if ($officeFiles.Count -gt 0) {
         }
     }
 }
+$ollamaFiles = @()
+if ($null -ne $manifest.ollama_files) {
+    $ollamaFiles = @($manifest.ollama_files.PSObject.Properties)
+}
+$ollamaRoot = Join-Path $source 'dependencies/ollama'
+if ($ollamaFiles.Count -eq 0 -and (Test-Path -LiteralPath $ollamaRoot)) {
+    throw 'The package contains an unlisted Ollama runtime.'
+}
+if ($ollamaFiles.Count -gt 0) {
+    $expectedOllama = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $requiredOllama = @('dependencies/ollama/ollama.exe', 'dependencies/ollama/LICENSE', 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE', 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll', 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')
+    if ($ollamaFiles.Count -gt 50000 -or @($requiredOllama | Where-Object { -not $manifest.ollama_files.$_ }).Count -gt 0) {
+        throw 'Package manifest contains an incomplete Ollama runtime inventory.'
+    }
+    foreach ($entry in $ollamaFiles) {
+        $name = $entry.Name
+        if (-not $name.StartsWith('dependencies/ollama/', [StringComparison]::Ordinal) -or $name -match '[\\:*?"<>|\x00-\x1f]' -or $name -match '(^|/)\.{1,2}(/|$)|//|[. ](/|$)' -or $entry.Value -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'Package manifest contains an invalid Ollama runtime entry.'
+        }
+        if (-not $expectedOllama.Add($name)) { throw 'Package manifest contains duplicate Ollama runtime entries.' }
+        $file = Join-Path $source $name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+            throw "Bundled Ollama file is missing or damaged: $name. Extract the complete package and try again."
+        }
+    }
+    $rootItem = Get-Item -LiteralPath $ollamaRoot -Force -ErrorAction Stop
+    if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The bundled Ollama directory cannot be a link.' }
+    foreach ($item in @(Get-ChildItem -LiteralPath $ollamaRoot -Force -Recurse -ErrorAction Stop)) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The bundled Ollama runtime cannot contain links.' }
+        if (-not $item.PSIsContainer) {
+            if (-not $item.FullName.StartsWith($sourcePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'The bundled Ollama runtime escaped the package directory.' }
+            $relative = $item.FullName.Substring($sourcePrefix.Length).Replace('\', '/')
+            if (-not $expectedOllama.Remove($relative)) { throw 'The bundled Ollama runtime contains an unlisted file.' }
+        }
+    }
+    if ($expectedOllama.Count -ne 0) { throw 'The bundled Ollama inventory was not fully verified.' }
+}
 $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Waypoint.lnk'
 if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcut)) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null
@@ -137,7 +174,7 @@ try {
             throw "Installed package file is missing or damaged: $($entry.Name)."
         }
     }
-    foreach ($entry in (@($pythonFiles) + @($officeFiles))) {
+    foreach ($entry in (@($pythonFiles) + @($officeFiles) + @($ollamaFiles))) {
         $file = Join-Path $InstallDirectory $entry.Name
         if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
             throw "Installed dependency file is missing or damaged: $($entry.Name)."

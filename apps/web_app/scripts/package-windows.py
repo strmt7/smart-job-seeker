@@ -27,6 +27,11 @@ PDF_WHEELS = (
 OFFICE_MSI_URL = 'https://download.documentfoundation.org/libreoffice/stable/26.8.2/win/x86_64/LibreOffice_26.8.2_Win_x86-64.msi'
 OFFICE_MSI_SHA256 = 'ff4b911403b67ee9e6249f820f9782c44bb32c94fdaa45b0da53a8e419e5307a'
 OFFICE_MSI_MAX_BYTES = 512 * 1024 * 1024
+OLLAMA_ARCHIVES = (
+    ('ollama-windows-amd64.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.13/ollama-windows-amd64.zip', 1601969847, '7afa38624fa62ee5d8293422d0ab084c1bb4603134c7f4dafce11a033b57cc19', 4 * 1024**3),
+    ('ollama-windows-amd64-rocm.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.13/ollama-windows-amd64-rocm.zip', 257076385, '2ab082d5414d51ef4cd675543c976770743c90e3cad0d9deb540160ae3b25573', 2 * 1024**3),
+)
+OLLAMA_LICENSE_SHA256 = '5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226'
 
 def discover_libreoffice(environment):
     """Find a local candidate; bundling still validates and inventories it."""
@@ -206,6 +211,62 @@ def add_python_runtime(archive, package_path=None):
                 with source_zip.open(entry) as src, archive.open('app/dependencies/python/' + relative, 'w') as dest:
                     shutil.copyfileobj(src, dest, length=1024 * 1024)
 
+def add_ollama_runtime(archive, local_archives=None, *, specs=OLLAMA_ARCHIVES, license_path=None, license_hash=OLLAMA_LICENSE_SHA256):
+    """Stream pinned official archives into an app-local runtime inventory."""
+    license_path = Path(license_path) if license_path else REPO / 'docs/OLLAMA_LICENSE.txt'
+    license_bytes = license_path.read_bytes().replace(b'\r\n', b'\n')
+    if hashlib.sha256(license_bytes).hexdigest() != license_hash:
+        raise ValueError('Ollama license does not match the reviewed version')
+    hashes = {}
+    seen = set()
+    for name, url, expected_size, expected_hash, max_unpacked in specs:
+        with tempfile.TemporaryFile(dir=REPO / 'target') as temporary:
+            source = open(Path(local_archives) / name, 'rb') if local_archives else urllib.request.urlopen(url, timeout=60)
+            sha = hashlib.sha256()
+            size = 0
+            with source:
+                while chunk := source.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > expected_size:
+                        raise ValueError(f'{name} exceeds its pinned size')
+                    sha.update(chunk)
+                    temporary.write(chunk)
+            if size != expected_size or sha.hexdigest() != expected_hash:
+                raise ValueError(f'{name} does not match its pinned size and SHA-256')
+            temporary.seek(0)
+            with zipfile.ZipFile(temporary) as source_zip:
+                entries = source_zip.infolist()
+                if len(entries) > 50000 or sum(entry.file_size for entry in entries) > max_unpacked:
+                    raise ValueError(f'{name} contents exceed runtime limits')
+                for entry in entries:
+                    if entry.is_dir():
+                        continue
+                    relative = entry.filename
+                    parts = relative.split('/')
+                    if (not relative or '\\' in relative or any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in parts)
+                        or any(re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in parts)
+                        or re.search(r'[\x00-\x1f:*?"<>|]', relative)
+                        or entry.flag_bits & 1 or ((entry.external_attr >> 16) & 0o170000) == 0o120000):
+                        raise ValueError(f'Unexpected Ollama archive path in {name}')
+                    key = relative.casefold()
+                    if key in seen or key == 'license':
+                        raise ValueError(f'Duplicate Ollama runtime path in {name}')
+                    seen.add(key)
+                    destination = 'app/dependencies/ollama/' + relative
+                    digest = hashlib.sha256()
+                    with source_zip.open(entry) as src, archive.open(destination, 'w', force_zip64=True) as dest:
+                        while chunk := src.read(1024 * 1024):
+                            digest.update(chunk)
+                            dest.write(chunk)
+                    hashes['dependencies/ollama/' + relative] = digest.hexdigest()
+    required = {'ollama.exe', 'lib/ollama/llama_cpp_license', 'lib/ollama/vulkan/ggml-vulkan.dll', 'lib/ollama/rocm_v7_1/ggml-hip.dll'}
+    if not required.issubset(seen):
+        raise ValueError('Ollama runtime archives are incomplete')
+    archive.writestr('app/dependencies/ollama/LICENSE', license_bytes)
+    hashes['dependencies/ollama/LICENSE'] = hashlib.sha256(license_bytes).hexdigest()
+    return hashes
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, help='New ZIP path inside this repository')
@@ -213,12 +274,20 @@ def main():
     parser.add_argument('--build-dir', help='Directory containing the executable and its build receipt (defaults to target/<profile>)')
     parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
+    ollama = parser.add_mutually_exclusive_group()
+    ollama.add_argument('--ollama-archive-dir', help='Optional directory of pinned Ollama archives for offline packaging')
+    ollama.add_argument('--no-ollama', action='store_true', help='Do not bundle the local model runtime')
     office = parser.add_mutually_exclusive_group()
     office.add_argument('--libreoffice-dir', help='Bundle this complete LibreOffice distribution for PDF conversion')
     office.add_argument('--libreoffice-msi', help='Use a local copy of the pinned LibreOffice MSI for offline provisioning')
     office.add_argument('--no-libreoffice', action='store_true', help='Do not automatically bundle an installed LibreOffice distribution')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
+    if not args.no_ollama:
+        target_dir = REPO / 'target'
+        target_dir.mkdir(exist_ok=True)
+        if shutil.disk_usage(target_dir).free < 8 * 1024**3:
+            raise ValueError('At least 8 GiB of free disk space is required for runtime bundling')
     office_root = select_libreoffice(args.no_libreoffice, args.libreoffice_dir, os.environ)
     output = Path(args.output).resolve()
     if not output.is_relative_to(REPO) or output.suffix.lower() != '.zip' or output.exists():
@@ -308,6 +377,7 @@ def main():
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
             office_hashes = add_libreoffice(archive, office_root) if office_root else {}
+            ollama_hashes = {} if args.no_ollama else add_ollama_runtime(archive, args.ollama_archive_dir)
             runtime_hashes = {}
             for info in archive.infolist():
                 if info.filename.startswith('app/dependencies/python/'):
@@ -328,9 +398,10 @@ def main():
                 for index,path in enumerate(files): add(path,f'app/licenses/crates/{name}-{version}/{index}-{path.name}')
                 inventory.append({'name':name,'version':version,'license':license_expr,'files':len(files)})
             archive.writestr('app/licenses/dependencies.json',json.dumps(inventory,indent=2))
-            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
+            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'ollama_files':ollama_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
             office_note = 'LibreOffice is bundled.' if office_hashes else 'LibreOffice is not bundled and needs separate setup for document conversion.'
-            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} Microsoft Visual C++ runtime, a Chromium browser, and Ollama may need separate installation. See app/README.md.\n')
+            ollama_note = 'Ollama is bundled; start it from Settings.' if ollama_hashes else 'Ollama is not bundled and needs separate setup.'
+            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} Microsoft Visual C++ runtime and a Chromium browser may need separate installation. See app/README.md.\n')
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise

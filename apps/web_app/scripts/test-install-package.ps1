@@ -8,7 +8,7 @@ try {
     $installer = Join-Path $testRoot 'install.ps1'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-package.ps1') -Destination $installer
     $app = Join-Path $testRoot 'app'
-    foreach ($name in @('waypoint_web.exe', 'libcrypto-test.dll', 'dependencies/python/python.exe', 'dependencies/libreoffice/program/soffice.com', 'dependencies/libreoffice/LICENSE.html')) {
+    foreach ($name in @('waypoint_web.exe', 'libcrypto-test.dll', 'dependencies/python/python.exe', 'dependencies/libreoffice/program/soffice.com', 'dependencies/libreoffice/LICENSE.html', 'dependencies/ollama/ollama.exe', 'dependencies/ollama/LICENSE', 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE', 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll', 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')) {
         $file = Join-Path $app $name
         New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
         [IO.File]::WriteAllText($file, "fictional fixture: $name")
@@ -25,6 +25,13 @@ try {
         openssl_dll = 'libcrypto-test.dll'
         openssl_sha256 = Hash 'libcrypto-test.dll'
         python_files = @{ 'dependencies/python/python.exe' = (Hash 'dependencies/python/python.exe') }
+        ollama_files = @{
+            'dependencies/ollama/ollama.exe' = (Hash 'dependencies/ollama/ollama.exe')
+            'dependencies/ollama/LICENSE' = (Hash 'dependencies/ollama/LICENSE')
+            'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE' = (Hash 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE')
+            'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll' = (Hash 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll')
+            'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll' = (Hash 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')
+        }
         libreoffice_files = @{
             'dependencies/libreoffice/program/soffice.com' = (Hash 'dependencies/libreoffice/program/soffice.com')
             'dependencies/libreoffice/program/hidden.dll' = (Hash 'dependencies/libreoffice/program/hidden.dll')
@@ -92,6 +99,51 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/soffice.com') -PathType Leaf)) { throw 'Bundled converter was not copied.' }
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/hidden.dll') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $installed 'hidden-top.txt') -PathType Leaf)) { throw 'Hidden package files were not copied.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/ollama/ollama.exe') -PathType Leaf)) { throw 'Bundled local runtime was not copied.' }
+    $runtimeLink = Join-Path $app 'dependencies/ollama/linked-directory'
+    New-Item -ItemType Junction -Path $runtimeLink -Target $other | Out-Null
+    try {
+        $linkedDestination = Join-Path $testRoot 'linked-ollama'
+        $rejected = $false
+        try { & $installer -InstallDirectory $linkedDestination -NoShortcut } catch {
+            if ($_.Exception.Message -notmatch 'cannot contain links') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected -or (Test-Path -LiteralPath $linkedDestination)) { throw 'An Ollama link was not rejected.' }
+    } finally {
+        [IO.Directory]::Delete($runtimeLink)
+    }
+    $unlistedOllama = Join-Path $app 'dependencies/ollama/unlisted.dll'
+    [IO.File]::WriteAllText($unlistedOllama, 'unlisted fixture')
+    $unlistedDestination = Join-Path $testRoot 'unlisted-ollama'
+    $rejected = $false
+    try { & $installer -InstallDirectory $unlistedDestination -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'unlisted file') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected -or (Test-Path -LiteralPath $unlistedDestination)) { throw 'An unlisted Ollama file was not rejected.' }
+    Remove-Item -LiteralPath $unlistedOllama
+    $ollamaLicenseHash = $manifest.ollama_files['dependencies/ollama/LICENSE']
+    $manifest.ollama_files.Remove('dependencies/ollama/LICENSE')
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
+    $missingOllama = Join-Path $testRoot 'missing-ollama-license'
+    $rejected = $false
+    try { & $installer -InstallDirectory $missingOllama -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'incomplete Ollama') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected -or (Test-Path -LiteralPath $missingOllama)) { throw 'Missing Ollama license was not rejected.' }
+    $manifest.ollama_files['dependencies/ollama/LICENSE'] = $ollamaLicenseHash
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
+    [IO.File]::WriteAllText((Join-Path $app 'dependencies/ollama/ollama.exe'), 'damaged')
+    $damagedOllama = Join-Path $testRoot 'damaged-ollama'
+    $rejected = $false
+    try { & $installer -InstallDirectory $damagedOllama -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'missing or damaged') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected -or (Test-Path -LiteralPath $damagedOllama)) { throw 'Damaged Ollama runtime was not rejected.' }
+    [IO.File]::WriteAllText((Join-Path $app 'dependencies/ollama/ollama.exe'), 'fictional fixture: dependencies/ollama/ollama.exe')
     $licenseHash = $manifest.libreoffice_files['dependencies/libreoffice/LICENSE.html']
     $manifest.libreoffice_files.Remove('dependencies/libreoffice/LICENSE.html')
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
@@ -119,6 +171,23 @@ try {
     $withoutOffice = Join-Path $testRoot 'without-office'
     & $installer -InstallDirectory $withoutOffice -NoShortcut
     if (-not (Test-Path -LiteralPath (Join-Path $withoutOffice 'waypoint_web.exe') -PathType Leaf)) { throw 'Package without the optional converter did not install.' }
+    $ollamaSource = [IO.Path]::GetFullPath((Join-Path $app 'dependencies/ollama'))
+    $ollamaSaved = [IO.Path]::GetFullPath((Join-Path $testRoot 'saved-ollama'))
+    $fixturePrefix = $testRoot.TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $ollamaSource.StartsWith($fixturePrefix, [StringComparison]::OrdinalIgnoreCase) -or -not $ollamaSaved.StartsWith($fixturePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Runtime fixture paths escaped the test directory.' }
+    $savedOllamaInventory = $manifest.ollama_files
+    Move-Item -LiteralPath $ollamaSource -Destination $ollamaSaved
+    try {
+        $manifest.ollama_files = @{}
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
+        $withoutOllama = Join-Path $testRoot 'without-ollama'
+        & $installer -InstallDirectory $withoutOllama -NoShortcut
+        if (Test-Path -LiteralPath (Join-Path $withoutOllama 'dependencies/ollama')) { throw 'An omitted runtime was unexpectedly installed.' }
+    } finally {
+        Move-Item -LiteralPath $ollamaSaved -Destination $ollamaSource
+        $manifest.ollama_files = $savedOllamaInventory
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
+    }
     # Simulate corruption after copying, before the installer reports success.
     function Copy-Item {
         [CmdletBinding()]
