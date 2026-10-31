@@ -42,6 +42,7 @@ mod pdf_preview_task;
 mod pdf_probe_task;
 mod pdf_setup;
 mod resident_inference;
+mod runtime_start;
 mod search_planner;
 mod smtp_handoff;
 mod storage_settings;
@@ -1505,6 +1506,14 @@ fn serve(
         );
         return Ok(());
     }
+    if method == "GET" && path == "/api/runtime-start/active" {
+        json_reply(
+            stream,
+            "200 OK",
+            json!({"task_id":runtime_start::active()?}),
+        );
+        return Ok(());
+    }
     if method == "GET" && path == "/api/model-install/active" {
         json_reply(
             stream,
@@ -1574,6 +1583,15 @@ fn serve(
     let body: Value = serde_json::from_slice(&buf[header_end..header_end + length])
         .map_err(|_| "invalid JSON")?;
     match path.as_str() {
+        "/api/runtime-start/start" => {
+            let id = random_id()?;
+            runtime_start::start(id.clone())?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/runtime-start/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", runtime_start::poll(id)?);
+        }
         "/api/model-install/start" => {
             let model = body["model"].as_str().ok_or("missing model")?;
             let id = random_id()?;

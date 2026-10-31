@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('let runtimeStartFollowing=false;');
+const end=source.indexOf('let modelInstallFollowing=false;',start);
+assert.ok(start>=0 && end>start);
+const store=new Map(),calls=[],info={textContent:''};let handler;const button={disabled:false,addEventListener:(_event,fn)=>{handler=fn;}};
+const context={document:{querySelector:q=>q==='#runtime-start'?button:info},sessionStorage:{getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},setTimeout:fn=>fn(),api:async(path,body)=>{calls.push([path,body]);return path.endsWith('/start')?{task_id:'fixture'}:{status:'complete',result:{already_running:false}};}};
+(async()=>{vm.runInNewContext(source.slice(start,end).replace('void recoverRuntimeStart();',''),context);await handler();assert.deepEqual(calls.map(x=>x[0]),['/api/runtime-start/start','/api/runtime-start/status']);assert.equal(store.size,0);assert.equal(button.disabled,false);assert.match(info.textContent,/No model was loaded/);console.log('Runtime startup UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
