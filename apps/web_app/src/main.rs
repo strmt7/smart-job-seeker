@@ -3658,6 +3658,25 @@ fn serve(
                 .driver
                 .scroll_field_into_view(selector)
                 .map_err(|e| e.to_string())?;
+            let before = match current
+                .driver
+                .with_review_timeout(|driver| driver.screenshot_base64())
+            {
+                Ok(image) => image,
+                Err(error) => {
+                    ws.mark_manual_review(
+                        &current.job_id,
+                        "Visual focus screenshot unavailable",
+                        now(),
+                    )
+                    .map_err(|e| {
+                        format!("Screenshot failed and the review flag could not be saved: {e}")
+                    })?;
+                    return Err(format!(
+                        "Could not capture the focused form; inspect it manually: {error}"
+                    ));
+                }
+            };
             let check = current.driver.with_review_timeout(|driver| {
                 form_preview::verify_completed_fields(
                     driver,
@@ -3666,9 +3685,31 @@ fn serve(
                     selector,
                 )
             });
-            if !check.failed_labels.is_empty() || check.unverified > 0 {
+            let screenshot = match current
+                .driver
+                .with_review_timeout(|driver| driver.screenshot_base64())
+            {
+                Ok(image) => image,
+                Err(error) => {
+                    ws.mark_manual_review(
+                        &current.job_id,
+                        "Visual focus screenshot unavailable",
+                        now(),
+                    )
+                    .map_err(|e| {
+                        format!("Screenshot failed and the review flag could not be saved: {e}")
+                    })?;
+                    return Err(format!(
+                        "Could not recapture the focused form; inspect it manually: {error}"
+                    ));
+                }
+            };
+            let before_hash = Sha256Digest::of(&before);
+            let freshness =
+                visual_review::image_freshness(Some(before_hash.as_str()), Some(&screenshot));
+            if !check.failed_labels.is_empty() || check.unverified > 0 || freshness != "same" {
                 let reason =
-                    "Filled fields changed or could not all be verified after visual navigation";
+                    "Filled fields or the visible form changed, or could not all be verified after visual navigation";
                 ws.mark_manual_review(&current.job_id, reason, now()).map_err(|e| format!("Field verification was incomplete and the review flag could not be saved: {e}"))?;
                 if !current
                     .preview
@@ -3679,17 +3720,14 @@ fn serve(
                     current.preview.manual_review.push(reason.into());
                 }
             }
-            let screenshot = current
-                .driver
-                .screenshot_base64()
-                .map_err(|e| e.to_string())?;
             let saved = current.record.as_mut().is_some_and(|record| {
-                record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"value_retained":check.selected_retained,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"screenshot":format!("screenshots/{name}")}))).is_ok()
+                let original = if freshness != "same" { record.screenshot_with_name(&before).map(Some) } else { Ok(None) };
+                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"screenshot":format!("screenshots/{name}")})))).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels}),
+                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels}),
             );
         }
         "/api/form/visual-review-start" => {
@@ -5524,6 +5562,7 @@ mod tests {
             assert!(response.contains("200 OK") && response.contains("\"screenshot\""));
             if step == 1 {
                 assert!(response.contains("\"value_retained\":true"));
+                assert!(response.contains("\"visual_freshness\":\"same\""));
             }
             if step == 2 {
                 assert!(response.contains("\"value_retained\":false"));

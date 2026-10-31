@@ -1126,3 +1126,9 @@ Eleven focused batch-search tests passed, including a short-timeout fictional qu
 Board discovery now retains the run's per-board reports and latest terminal response in memory. The interface redraws the report history rather than appending one-time responses and can recover an active run when its start response is lost. A lost status response can be retried without repeating already persisted board imports. A stopped worker retains its processed-board history and reports failure. Recovery is bounded to the active run and latest terminal response and does not survive an app restart.
 
 A fictional local fetcher fixture covered incremental persistence, a degraded board, completed-result replay and a disconnected worker. A simulated interface check covered lost start and status responses. No live job board or employer site was contacted in this check.
+
+## Focused-field screenshot interval — 2026-11-01
+
+When focusing a completed field, the app now captures the viewport before and after its bounded live-value checks. A visible change prevents the field from being reported as retained and adds a manual-review reason; animation may cause this warning. When an application record is available, both screenshots are saved for a changed interval. A capture failure is reported for manual review. The checks remain sequential and cannot prove that the page did not change before, after or invisibly between them.
+
+A fictional local browser fixture covered an unchanged screenshot and changes to filled values; a simulated interface check covered the changed-image warning. A changing screenshot during this endpoint was not separately induced. No local model, employer site or application submission was involved.
