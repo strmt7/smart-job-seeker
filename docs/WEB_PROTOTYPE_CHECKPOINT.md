@@ -992,3 +992,9 @@ A fictional on-disk workspace test verified that pending navigation survives reo
 A CV readability check now retains an uncollected task and exposes its document and job IDs for recovery after a lost start response. Polling a finished task retains the latest response for a retry; completed responses and uncollected tasks are accessible for up to ten minutes, and a new task cannot replace an uncollected one. Retention is in process memory and checked when accessed; application restart loses the task. The result remains a literal text comparison, not an employer ATS score.
 
 A local task test covered task identity, duplicate start refusal, repeated result retrieval and expiry. A simulated UI test covered a lost start response followed by a lost status response; it recovered the same check without launching another. Focused tests, JavaScript syntax and web Clippy passed. No employer site or model was used.
+
+## Keep an open data-entry form — 2026-10-31
+
+Application inspection now keeps the current page for review when it contains at least two required data-entry controls, even if another application link is present. This structural hint does not rely on field labels and does not establish that the page is an application: search or other forms may also match, while applications with fewer required controls may not. The existing manual navigation warning remains visible. No fields are filled or submitted by inspection.
+
+A fictional local browser fixture with two required controls and another application link stayed on the original page; a synthetic test covered the threshold and excluded a checkbox. The form-inspection test group and web Clippy passed. This is not a test of a live employer site.

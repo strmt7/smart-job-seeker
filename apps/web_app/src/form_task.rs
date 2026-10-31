@@ -72,6 +72,29 @@ pub(crate) fn has_upload_control(
     })
 }
 
+/// Multiple required data-entry controls suggest a form may already be open.
+/// This is only a navigation hint, not proof that the form is an application.
+fn has_required_data_entry_form(fields: &[waypoint_applications::form_mapping::FormField]) -> bool {
+    use waypoint_applications::form_mapping::FormFieldType;
+    fields
+        .iter()
+        .filter(|field| {
+            field.required
+                && matches!(
+                    field.field_type,
+                    FormFieldType::Text
+                        | FormFieldType::Email
+                        | FormFieldType::TextArea
+                        | FormFieldType::Select { .. }
+                        | FormFieldType::MultiSelect { .. }
+                        | FormFieldType::Date
+                )
+        })
+        .take(2)
+        .count()
+        >= 2
+}
+
 pub(crate) fn has_main_fields_and_embedded_content(
     live: &waypoint_applications::driver::LiveForm,
 ) -> bool {
@@ -108,6 +131,9 @@ fn open_application_page(
     // this is not proof that the page accepts applications.
     if has_upload_control(&live.schema.fields) {
         return Ok((live, None));
+    }
+    if has_required_data_entry_form(&live.schema.fields) {
+        return Ok((live, Some("This page has required data-entry fields; review it before following another application link.".into())));
     }
     if has_main_fields_and_embedded_content(&live) {
         return Ok((live, Some("The current page has visible fields and embedded content; review it before navigating away.".into())));
@@ -823,6 +849,51 @@ mod tests {
             open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert_eq!(driver.opened, ["https://jobs.example.org/role"]);
         assert_eq!(form.schema.fields[0].field_type, FormFieldType::File);
+    }
+
+    #[test]
+    fn recognizes_multiple_required_data_entries_without_field_name_rules() {
+        let field = |required, field_type| FormField {
+            selector: "#example".into(),
+            label: "Response".into(),
+            field_type,
+            required,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: None,
+        };
+        assert!(has_required_data_entry_form(&[
+            field(true, FormFieldType::Text),
+            field(true, FormFieldType::TextArea)
+        ]));
+        assert!(!has_required_data_entry_form(&[
+            field(true, FormFieldType::Text),
+            field(false, FormFieldType::Email)
+        ]));
+        assert!(!has_required_data_entry_form(&[
+            field(true, FormFieldType::Checkbox),
+            field(true, FormFieldType::Text)
+        ]));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional form"]
+    fn keeps_current_form_when_another_application_link_is_present() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-current-step-with-application-link.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let (page, warning) = open_application_page(&mut driver, &url).unwrap();
+        assert_eq!(driver.current_url().unwrap(), url);
+        assert!(has_required_data_entry_form(&page.schema.fields));
+        assert!(warning.unwrap().contains("required data-entry"));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
     }
 
     #[test]
