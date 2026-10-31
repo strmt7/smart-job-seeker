@@ -308,7 +308,8 @@ mod tests {
         });
         url.set_fragment(Some("changed"));
         driver.open(url.as_str()).unwrap();
-        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
         let job = crate::manual_job::add(
             &mut ws,
             &json!({"url":"https://example.invalid/fictional","title":"Role","employer":"Fixture"}),
@@ -336,6 +337,9 @@ mod tests {
             last_visual_freshness_key: None,
             record: None,
         });
+        session.as_mut().unwrap().record =
+            crate::attempt_record::AttemptRecord::start(&ws, &job_id, "fixture-control", 2)
+                .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let body = json!({"task_id":"fixture-stale"}).to_string();
@@ -351,7 +355,138 @@ mod tests {
         assert_eq!(value["status"], "failed");
         assert!(value["indices"].is_null());
         assert!(!ws.manual_review_reasons(&job_id).unwrap().is_empty());
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Application page changed during control advice"));
+        let record = std::fs::read_dir(dir.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(std::fs::read_to_string(record.join("events.jsonl"))
+            .unwrap()
+            .contains("control_advice_stale"));
         assert_eq!(poll("fixture-stale").unwrap(), value);
+    }
+
+    #[test]
+    #[ignore = "requires a local browser and a resource-gated resident model"]
+    fn live_control_advice_api_replays_and_rechecks_page() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_domain::{JobIdentityId, Sha256Digest};
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fictional-controls.html");
+        let mut url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview =
+            crate::form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job = crate::manual_job::add(&mut ws, &json!({"url":"https://example.invalid/live-fixture","title":"Role","employer":"Fixture"}), 1).unwrap();
+        let job_id = JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
+        let mut session = Some(crate::ReviewSession {
+            id: "fixture-session".into(),
+            job_id: job_id.clone(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url: url.to_string(),
+            profile_digest: Sha256Digest::of("fixture"),
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(120),
+            filled: false,
+            completed_selectors: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let call = |ws: &mut waypoint_workspace::Workspace,
+                    session: &mut Option<crate::ReviewSession>,
+                    path: &str,
+                    value: Value|
+         -> Value {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = value.to_string();
+            write!(client,"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, session, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let started = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-rank-start",
+            json!({"session_id":"fixture-session"}),
+        );
+        let id = started["task_id"].as_str().unwrap();
+        let pending = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-rank-pending",
+            json!({}),
+        );
+        assert_eq!(pending["task_id"], id);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let result = loop {
+            let result = call(
+                &mut ws,
+                &mut session,
+                "/api/form/control-rank-status",
+                json!({"task_id":id}),
+            );
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
+        println!("Fictional control advice endpoint: {result}");
+        assert_eq!(result["status"], "complete");
+        assert!(result["indices"].as_array().unwrap().contains(&json!(0)));
+        assert!(!result["indices"].as_array().unwrap().contains(&json!(1)));
+        assert_eq!(
+            call(
+                &mut ws,
+                &mut session,
+                "/api/form/control-rank-status",
+                json!({"task_id":id})
+            ),
+            result
+        );
+        url.set_fragment(Some("changed"));
+        session.as_mut().unwrap().driver.open(url.as_str()).unwrap();
+        let stale = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-rank-status",
+            json!({"task_id":id}),
+        );
+        assert_eq!(stale["status"], "failed");
+        assert!(stale["indices"].is_null());
+        assert!(!ws.manual_review_reasons(&job_id).unwrap().is_empty());
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted") && !event.contains("click")));
     }
 
     #[test]

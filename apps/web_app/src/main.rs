@@ -3414,13 +3414,25 @@ fn serve(
                         if fresh.as_ref().ok().map(|(_, digest)| digest.as_str())
                             != result["snapshot_digest"].as_str()
                         {
-                            ws.mark_manual_review(
-                                &current.job_id,
-                                "Application page changed during control advice",
-                                now(),
-                            )
-                            .map_err(|e| e.to_string())?;
-                            result = json!({"status":"failed","session_id":current.id,"error":"The page changed or could not be rechecked; inspect it again"});
+                            let reason = "Application page changed during control advice";
+                            ws.mark_manual_review(&current.job_id, reason, now())
+                                .map_err(|e| e.to_string())?;
+                            if !current
+                                .preview
+                                .manual_review
+                                .iter()
+                                .any(|item| item == reason)
+                            {
+                                current.preview.manual_review.push(reason.into());
+                            }
+                            let record_failed = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"control_advice_stale","time":now(),"task_id":id,"note":"The page changed or could not be rechecked; no advice was returned."})).is_err());
+                            let error = if record_failed {
+                                "The page changed or could not be rechecked; the attempt record could not be updated"
+                            } else {
+                                "The page changed or could not be rechecked; inspect it again"
+                            };
+                            result =
+                                json!({"status":"failed","session_id":current.id,"error":error});
                         }
                     }
                 } else if result["status"] == "complete" {
