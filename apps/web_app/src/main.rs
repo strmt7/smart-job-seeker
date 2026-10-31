@@ -4169,7 +4169,7 @@ fn serve(
             current.preview.suggestions = prepared.suggestions;
             form_preview::refresh_required_review(&mut current.preview);
             if let Err(error) =
-                form_preview::preflight_existing_text(&mut current.driver, &current.preview)
+                form_preview::preflight_existing_values(&mut current.driver, &current.preview)
             {
                 let review_error = ws
                     .mark_manual_review(
@@ -7279,6 +7279,10 @@ mod tests {
                     field_selector: "#second".into(),
                     value: PacketValue::Text("Different answer".into()),
                 },
+                ProposedMapping {
+                    field_selector: "#existing-choice".into(),
+                    value: PacketValue::Text("Beta".into()),
+                },
             ],
             manual_review: vec![],
             model_review_selectors: Default::default(),
@@ -7317,6 +7321,11 @@ mod tests {
             error.starts_with("No fields were filled because an existing value needs review:"),
             "{error}"
         );
+        let choice_error = request(json!(["#first", "#existing-choice"])).unwrap_err();
+        assert!(
+            choice_error.contains("different selection"),
+            "{choice_error}"
+        );
         assert!(request(json!(["#first"])).is_ok());
         drop(request);
         let current = session.as_mut().unwrap();
@@ -7328,6 +7337,15 @@ mod tests {
         current
             .driver
             .verify_text_value("#second", "Existing answer")
+            .unwrap();
+        current
+            .driver
+            .verify_choice(
+                &waypoint_applications::form_mapping::BrowserCommand::SelectOption {
+                    selector: "#existing-choice".into(),
+                    label: "Alpha".into(),
+                },
+            )
             .unwrap();
         assert!(current
             .driver
@@ -7357,7 +7375,13 @@ mod tests {
             assert!(fixture_html.contains("value=\"Old value\""));
             std::fs::write(
                 &fixture_copy,
-                fixture_html.replace("value=\"Old value\"", "value=\"\""),
+                fixture_html
+                    .replace("value=\"Old value\"", "value=\"\"")
+                    .replace(
+                        "id=\"travel\" type=\"checkbox\" checked",
+                        "id=\"travel\" type=\"checkbox\"",
+                    )
+                    .replace("value=\"onsite\" checked", "value=\"onsite\""),
             )
             .unwrap();
             let url = format!(
@@ -7701,7 +7725,7 @@ mod tests {
                     .read_attribute("#travel", "data-seen")
                     .unwrap()
                     .as_deref(),
-                Some("false")
+                Some("true")
             );
             assert_eq!(
                 session
@@ -8055,7 +8079,7 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("Close the active review session"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":false},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":true},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();

@@ -2612,6 +2612,52 @@ impl BrowserDriver for CdpDriver {
         Ok(())
     }
 
+    fn ensure_choice_replaceable(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
+        let (selector, kind) = match command {
+            BrowserCommand::SelectOption { selector, .. } => (selector, "select"),
+            BrowserCommand::SelectOptions { selector, .. } => (selector, "multi"),
+            BrowserCommand::SelectRadio { selector, .. } => (selector, "radio"),
+            BrowserCommand::Fill {
+                selector,
+                value: PacketValue::Bool(_),
+            } => (selector, "checkbox"),
+            _ => return Err(DriverError("Unsupported choice inspection".into())),
+        };
+        if self.verify_choice(command).is_ok() {
+            return Ok(());
+        }
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Choice field is no longer present".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Existing choice cannot be inspected".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(kind) {
+            if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]')) return false;
+            if (kind === 'checkbox') return this instanceof HTMLInputElement && this.type === 'checkbox' && !this.checked;
+            if (kind === 'select' && this instanceof HTMLInputElement && this.hasAttribute('list')) return !this.readOnly && this.value === '';
+            if (kind === 'select') return this instanceof HTMLSelectElement && !this.multiple && this.options.length <= 5000 && Array.from(this.selectedOptions).every(o => o.value === '');
+            if (kind === 'multi') return this instanceof HTMLSelectElement && this.multiple && this.options.length <= 5000 && this.selectedOptions.length === 0;
+            if (kind !== 'radio' || !(this instanceof HTMLInputElement) || this.type !== 'radio' || !this.name) return false;
+            const groupSelector = 'fieldset,[role="radiogroup"]', group = this.closest(groupSelector), root = this.getRootNode();
+            if (!group) return false;
+            const all = root.querySelectorAll('input[type=radio]'); if (all.length > 5000) return false;
+            const same = Array.from(all).filter(r => r.name === this.name && r.form === this.form);
+            return same.length > 0 && same.every(r => r.closest(groupSelector) === group && !r.checked);
+        }"#,"arguments":[{"value":kind}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError("Field already has a different selection or cannot be inspected; review it in the browser".into()));
+        }
+        Ok(())
+    }
+
     fn verify_choice(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
         match command {
             BrowserCommand::SelectOptions { selector, labels } => {

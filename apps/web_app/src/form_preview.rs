@@ -175,7 +175,7 @@ pub struct FillContext<'a> {
     pub completed: &'a mut Vec<Value>,
 }
 
-fn check_existing_text(
+fn check_existing_value(
     driver: &mut dyn BrowserDriver,
     field: &waypoint_applications::form_mapping::FormField,
     value: &PacketValue,
@@ -188,12 +188,36 @@ fn check_existing_text(
         | (FormFieldType::Date, PacketValue::Date(text)) => driver
             .ensure_text_replaceable(&field.selector, text)
             .map_err(|error| format!("{} needs manual review: {error}", field.label)),
+        (FormFieldType::Select { .. }, PacketValue::Text(label)) => driver
+            .ensure_choice_replaceable(&BrowserCommand::SelectOption {
+                selector: field.selector.clone(),
+                label: label.clone(),
+            })
+            .map_err(|error| format!("{} needs manual review: {error}", field.label)),
+        (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => driver
+            .ensure_choice_replaceable(&BrowserCommand::SelectOptions {
+                selector: field.selector.clone(),
+                labels: labels.clone(),
+            })
+            .map_err(|error| format!("{} needs manual review: {error}", field.label)),
+        (FormFieldType::Radio { .. }, PacketValue::Text(label)) => driver
+            .ensure_choice_replaceable(&BrowserCommand::SelectRadio {
+                selector: field.selector.clone(),
+                label: label.clone(),
+            })
+            .map_err(|error| format!("{} needs manual review: {error}", field.label)),
+        (FormFieldType::Checkbox, PacketValue::Bool(value)) => driver
+            .ensure_choice_replaceable(&BrowserCommand::Fill {
+                selector: field.selector.clone(),
+                value: PacketValue::Bool(*value),
+            })
+            .map_err(|error| format!("{} needs manual review: {error}", field.label)),
         _ => Ok(()),
     }
 }
 
-/// Check the chosen text answers before any fill command or approval consumption.
-pub fn preflight_existing_text(
+/// Check the chosen answers before any fill command or approval consumption.
+pub fn preflight_existing_values(
     driver: &mut dyn BrowserDriver,
     preview: &FormPreview,
 ) -> Result<(), String> {
@@ -204,7 +228,7 @@ pub fn preflight_existing_text(
             .iter()
             .find(|field| field.selector == mapping.field_selector)
             .ok_or("Reviewed field is unavailable")?;
-        check_existing_text(driver, field, &mapping.value)?;
+        check_existing_value(driver, field, &mapping.value)?;
     }
     Ok(())
 }
@@ -291,7 +315,7 @@ pub fn apply_reviewed_text_fields(
         if field.sensitive || preview.model_review_selectors.contains(&field.selector) || !valid {
             return Err("Field requires manual handling".into());
         }
-        check_existing_text(driver, field, &mapping.value)?;
+        check_existing_value(driver, field, &mapping.value)?;
     }
     let payload = serde_json::to_string(&preview.suggestions).map_err(|e| e.to_string())?;
     let payload_digest = Sha256Digest::of(&payload);
@@ -324,7 +348,7 @@ pub fn apply_reviewed_text_fields(
             .iter()
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
-        check_existing_text(driver, field, &mapping.value)?;
+        check_existing_value(driver, field, &mapping.value)?;
         let command = match (&field.field_type, &mapping.value) {
             (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
                 BrowserCommand::SelectOptions {
@@ -623,6 +647,74 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    #[ignore = "starts a local browser against fictional preselected choices"]
+    fn existing_choices_are_not_replaced_without_review() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-existing-choices.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let select = |selector: &str, label: &str| BrowserCommand::SelectOption {
+            selector: selector.into(),
+            label: label.into(),
+        };
+        let multi = |selector: &str, label: &str| BrowserCommand::SelectOptions {
+            selector: selector.into(),
+            labels: vec![label.into()],
+        };
+        let radio = |selector: &str, label: &str| BrowserCommand::SelectRadio {
+            selector: selector.into(),
+            label: label.into(),
+        };
+        let checkbox = |selector: &str, value: bool| BrowserCommand::Fill {
+            selector: selector.into(),
+            value: PacketValue::Bool(value),
+        };
+        assert!(driver
+            .ensure_choice_replaceable(&select("#empty", "Beta"))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&select("#chosen", "Alpha"))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&select("#chosen", "Beta"))
+            .is_err());
+        assert!(driver
+            .ensure_choice_replaceable(&multi("#multi", "Alpha"))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&multi("#multi", "Beta"))
+            .is_err());
+        assert!(driver
+            .ensure_choice_replaceable(&multi("#empty-multi", "Beta"))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&radio("#r1", "Alpha"))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&radio("#r1", "Beta"))
+            .is_err());
+        assert!(driver
+            .ensure_choice_replaceable(&radio("#r3", "Beta"))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&checkbox("#checked", true))
+            .is_ok());
+        assert!(driver
+            .ensure_choice_replaceable(&checkbox("#checked", false))
+            .is_err());
+        assert!(driver
+            .ensure_choice_replaceable(&checkbox("#unchecked", true))
+            .is_ok());
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
 
     #[test]
     #[ignore = "starts a local browser against a fictional prefilled form"]

@@ -83,6 +83,10 @@ pub trait BrowserDriver {
             "Existing field value cannot be inspected".into(),
         ))
     }
+    /// Refuse to replace a different existing choice without manual review.
+    fn ensure_choice_replaceable(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
+        Err(DriverError("Existing choice cannot be inspected".into()))
+    }
     /// Verify a supported choice without changing it.
     fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
         Err(DriverError("Choice verification is unavailable".into()))

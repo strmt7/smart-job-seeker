@@ -1034,3 +1034,9 @@ A fictional local-browser fixture checked empty, matching, conflicting, textarea
 The fill endpoint now checks selected text fields before creating the attempt record or consuming approval. When that check finds a different or uninspectable value, it keeps the review session open, marks the job for manual review and lets the user unselect the field or inspect the browser before retrying. A later failure after commands begin remains a partial-fill case requiring inspection; the existing per-command checks remain in place.
 
 A fictional local HTTP and browser test first encountered a conflicting field, then retried the same session with that field unselected and verified the original value remained unchanged. The existing endpoint partial-fill fixture, UI failure-handling check and web Clippy passed. No employer application was submitted.
+
+## Existing choices before autofill — 2026-10-31
+
+The existing-value preflight now also checks supported native selects, multi-selects, radio groups, datalists and checkboxes. A matching selection can proceed; a different existing selection stops the batch for review. An empty select value, no multi-select or radio selection, and an unchecked checkbox are treated as unselected. Some sites use empty or unchecked states as meaningful answers, so these checks cannot establish user intent; custom controls still require review. A default nonempty selection may also cause a conservative stop. The user can exclude the field or inspect the browser and retry.
+
+Fictional browser tests covered empty, matching and conflicting controls. A local endpoint test confirmed that a selected-option conflict leaves the form unchanged and the session available for retry; the existing autofill endpoint fixture and web Clippy passed. No employer site, local model or application submission was used.
