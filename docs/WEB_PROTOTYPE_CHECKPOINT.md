@@ -1120,3 +1120,9 @@ A fictional local HTTP fixture used the resource-gated `qwen3.5:9b` model to ass
 A web-search worker now stops waiting after 30 seconds when its one-result queue remains full. Already delivered pages remain recoverable; the run reports failure rather than appearing complete. If a fetched page could not be delivered, coverage counts it as attempted and separately reports it as fetched but unreported. Cancellation keeps its existing stopped status and also accounts for a fetched page that could not be delivered.
 
 Eleven focused batch-search tests passed, including a short-timeout fictional queue fixture, along with the simulated coverage-summary check and web lint. The production 30-second timeout and a live search provider were not separately exercised.
+
+## Board discovery response recovery — 2026-11-01
+
+Board discovery now retains the run's per-board reports and latest terminal response in memory. The interface redraws the report history rather than appending one-time responses and can recover an active run when its start response is lost. A lost status response can be retried without repeating already persisted board imports. A stopped worker retains its processed-board history and reports failure. Recovery is bounded to the active run and latest terminal response and does not survive an app restart.
+
+A fictional local fetcher fixture covered incremental persistence, a degraded board, completed-result replay and a disconnected worker. A simulated interface check covered lost start and status responses. No live job board or employer site was contacted in this check.

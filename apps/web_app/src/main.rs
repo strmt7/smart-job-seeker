@@ -2325,6 +2325,9 @@ fn serve(
                 json!({"current":digest == search_plan_context(ws)?.2}),
             );
         }
+        "/api/discover/pending" => {
+            json_reply(stream, "200 OK", discovery_task::pending()?);
+        }
         "/api/discover/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", discovery_task::poll(id, ws)?);

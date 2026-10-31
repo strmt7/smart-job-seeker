@@ -17,12 +17,22 @@ struct Task {
     cancel: Arc<AtomicBool>,
     total: usize,
     processed: usize,
+    history: Vec<Value>,
 }
 enum Message {
     Board(DiscoveryTarget, String, Result<String, FetchFailure>),
     Done,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+pub fn pending() -> Result<Value, String> {
+    let tasks = TASK.lock().map_err(|_| "Discovery task unavailable")?;
+    Ok(match tasks.as_ref() {
+        Some(task) => json!({"active":true,"task_id":task.id,"history":task.history}),
+        None => json!({"active":false}),
+    })
+}
 struct BoundedFetcher;
 impl Fetcher for BoundedFetcher {
     fn get(&self, url: &str) -> Result<String, FetchFailure> {
@@ -114,6 +124,7 @@ fn start_with_fetcher(
         cancel,
         total,
         processed: 0,
+        history: Vec::new(),
     });
     drop(task);
     std::thread::spawn(move || {
@@ -151,10 +162,15 @@ fn start_with_fetcher(
 }
 pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Discovery task unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|t| t.id == id)
-        .ok_or("Discovery run not found")?;
+    let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
+        return COMPLETED
+            .lock()
+            .map_err(|_| "Discovery task unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| "Discovery run not found".into());
+    };
     match task.rx.try_recv() {
         Ok(Message::Board(target, url, result)) => {
             let more = if target.source == "jobicy" {
@@ -172,34 +188,38 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
             };
             let outcome = ws.discover(std::slice::from_ref(&target), &fetcher, crate::now());
             task.processed += 1;
+            let report = json!({"source":target.source,"board":target.board,"summary":outcome.summary(),"coverage":outcome.coverage,"has_more":more});
+            task.history.push(report.clone());
             Ok(
-                json!({"status":"running","source":target.source,"board":target.board,"processed":task.processed,"total":task.total,"summary":outcome.summary(),"coverage":outcome.coverage,"has_more":more}),
+                json!({"status":"running","source":report["source"],"board":report["board"],"processed":task.processed,"total":task.total,"summary":report["summary"],"coverage":report["coverage"],"has_more":more,"history":task.history}),
             )
         }
         Ok(Message::Done) => {
             let processed = task.processed;
             let total = task.total;
             let cancelled = task.cancel.load(Ordering::Acquire);
+            let result = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"history":task.history});
+            *COMPLETED.lock().map_err(|_| "Discovery task unavailable")? =
+                Some((id.to_owned(), result.clone()));
             *tasks = None;
-            Ok(
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled}),
-            )
+            Ok(result)
         }
-        Err(TryRecvError::Empty) => {
-            Ok(json!({"status":"running","processed":task.processed,"total":task.total}))
-        }
+        Err(TryRecvError::Empty) => Ok(
+            json!({"status":"running","processed":task.processed,"total":task.total,"history":task.history}),
+        ),
         Err(TryRecvError::Disconnected) => {
             let cancelled = task.cancel.load(Ordering::Acquire);
             let processed = task.processed;
             let total = task.total;
-            *tasks = None;
-            if cancelled {
-                Ok(
-                    json!({"status":"complete","processed":processed,"total":total,"cancelled":true}),
-                )
+            let result = if cancelled {
+                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"history":task.history})
             } else {
-                Ok(json!({"status":"failed","error":"Discovery worker stopped before completion"}))
-            }
+                json!({"status":"failed","processed":processed,"total":total,"history":task.history,"error":"Discovery worker stopped before completion"})
+            };
+            *COMPLETED.lock().map_err(|_| "Discovery task unavailable")? =
+                Some((id.to_owned(), result.clone()));
+            *tasks = None;
+            Ok(result)
         }
     }
 }
@@ -233,6 +253,7 @@ mod tests {
             None,
         )
         .unwrap();
+        assert_eq!(pending().unwrap()["task_id"], "fixture");
         let mut ws = Workspace::in_memory().unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut seen = false;
@@ -247,6 +268,11 @@ mod tests {
                 }
             }
             if result["status"] == "complete" {
+                assert_eq!(result["history"].as_array().unwrap().len(), 2);
+                assert_eq!(result["history"][0]["source"], "greenhouse");
+                assert_eq!(result["history"][1]["source"], "lever");
+                assert_eq!(poll("fixture", &mut ws).unwrap(), result);
+                assert_eq!(pending().unwrap()["active"], false);
                 break;
             }
             assert!(Instant::now() < deadline);
@@ -299,5 +325,19 @@ mod tests {
             Some(&mut ws)
         )
         .is_err());
+        let (sender, rx) = mpsc::sync_channel(1);
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "interrupted".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 2,
+            processed: 1,
+            history: vec![json!({"source":"greenhouse","board":"fixture","summary":"1 saved"})],
+        });
+        let failed = poll("interrupted", &mut ws).unwrap();
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["history"].as_array().unwrap().len(), 1);
+        assert_eq!(poll("interrupted", &mut ws).unwrap(), failed);
     }
 }
