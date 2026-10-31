@@ -9,6 +9,10 @@ const next = 'A possible next-step control was found. Navigate and inspect the n
 assert.equal(needsVisible({visible:false, fields:[], manual_review:[next]}), true);
 assert.equal(needsVisible({visible:true, fields:[], manual_review:[next]}), false);
 assert.equal(needsVisible({visible:false, fields:[{sensitive:true}], manual_review:[]}), true);
+assert.equal(needsVisible({visible:false, fields:[], manual_review:['a required custom control needs manual review']}), true);
+assert.equal(needsVisible({visible:false, fields:[], manual_review:['No form fields were detected; navigation, login, an embedded frame, or manual review may be required']}), true);
+assert.equal(needsVisible({visible:true, fields:[], manual_review:['a required custom control needs manual review']}), false);
 assert.equal(needsVisible({visible:false, fields:[], manual_review:[]}), false);
 assert.ok(source.includes('if(formRequiresVisibleBrowser(result))'));
+assert.ok(source.includes('formRequiresVisibleBrowser({visible:result.visible,fields:result.fields,manual_review:outcome.manual_review})'));
 console.log('Form navigation guidance checks passed.');

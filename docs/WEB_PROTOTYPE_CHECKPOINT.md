@@ -1086,3 +1086,7 @@ A fictional styled DOCX was converted with local runtimes and produced a compari
 After successful form commands and their immediate live-value checks, the attempt record now stores the completed selectors and labels before requesting a review screenshot. The earlier requested-answers event contains the corresponding reviewed values. If this completion event cannot be written, the session remains open for manual inspection; a screenshot failure also attempts to record the failure and set manual-review status. A successful check is a point-in-time observation and does not establish later field values or submission.
 
 A fictional local browser and HTTP fixture verified the new event and its ordering before the screenshot event. The screenshot-failure branch was not separately induced. No employer site or application submission was involved.
+
+## Headless form review guidance — 2026-11-01
+
+When a headless form inspection reports any manual-review reason, the interface now explains how to reopen in a visible browser and warns that closing the session may discard unsaved changes on the site. The same warning appears for review reasons produced after filling. This guidance does not transfer browser session state or navigate application sections automatically. Focused simulated UI checks passed; no employer site or submission was involved.
