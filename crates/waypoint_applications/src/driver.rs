@@ -49,7 +49,7 @@ pub struct PageLink {
 pub const PAGE_LINK_LIMIT: usize = 200;
 
 /// The bounded current selection shown to the user before a replacement.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SelectSnapshot {
     pub index: usize,
     pub label: String,
@@ -60,6 +60,14 @@ pub struct SelectSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TextSnapshot {
     pub value: String,
+}
+
+/// Bounded state of a checkbox, radio group or multiple-selection control.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChoiceSnapshot {
+    pub kind: String,
+    pub checked: Option<bool>,
+    pub selections: Vec<SelectSnapshot>,
 }
 
 pub trait BrowserDriver {
@@ -106,6 +114,13 @@ pub trait BrowserDriver {
     }
     fn text_value_snapshot(&mut self, _selector: &str) -> Result<TextSnapshot, DriverError> {
         Err(DriverError("Existing text cannot be inspected".into()))
+    }
+    fn choice_snapshot(
+        &mut self,
+        _selector: &str,
+        _kind: &str,
+    ) -> Result<ChoiceSnapshot, DriverError> {
+        Err(DriverError("Existing choices cannot be inspected".into()))
     }
     /// Verify a supported choice without changing it.
     fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {

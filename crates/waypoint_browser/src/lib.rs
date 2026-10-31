@@ -2654,6 +2654,71 @@ impl BrowserDriver for CdpDriver {
         Ok(())
     }
 
+    fn choice_snapshot(
+        &mut self,
+        selector: &str,
+        kind: &str,
+    ) -> Result<waypoint_applications::driver::ChoiceSnapshot, DriverError> {
+        if !matches!(kind, "checkbox" | "radio" | "multi") {
+            return Err(DriverError("Unsupported choice snapshot".into()));
+        }
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Choice field is no longer present".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Existing choices cannot be inspected".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(kind) {
+            if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]')) return null;
+            if (kind === 'checkbox') return this instanceof HTMLInputElement && this.type === 'checkbox' ? {kind,checked:this.checked,selections:[]} : null;
+            if (kind === 'multi') {
+                if (!(this instanceof HTMLSelectElement) || !this.multiple || this.options.length > 1000 || this.selectedOptions.length > 100) return null;
+                const selections = Array.from(this.options).map((o,index) => ({o,index})).filter(p => p.o.selected).map(p => ({index:p.index,label:p.o.label.trim().replace(/\s+/g,' '),value:p.o.value}));
+                return selections.some(p => p.label.length > 500 || p.value.length > 500) ? null : {kind,checked:null,selections};
+            }
+            if (kind !== 'radio' || !(this instanceof HTMLInputElement) || this.type !== 'radio' || !this.name) return null;
+            const groupSelector='fieldset,[role="radiogroup"]', group=this.closest(groupSelector), root=this.getRootNode(); if (!group) return null;
+            const all=root.querySelectorAll('input[type=radio]'); if (all.length > 5000) return null;
+            const same=Array.from(all).filter(r => r.name === this.name && r.form === this.form);
+            if (!same.length || same.length > 1000 || same.some(r => r.closest(groupSelector) !== group)) return null;
+            const label = r => {const refs=r.getAttribute('aria-labelledby'); if (refs !== null) { const ids=refs.trim().split(/\s+/).filter(Boolean); if (!ids.length || ids.length > 16 || refs.length > 512) return null; const nodes=ids.map(id => root.querySelectorAll('#'+CSS.escape(id))); if (nodes.some(n => n.length !== 1 || !n[0].textContent.trim())) return null; return nodes.map(n => n[0].textContent).join(' '); } return r.getAttribute('aria-label') || (r.labels && r.labels[0] && r.labels[0].textContent) || r.name || '';};
+            const selected=same.map((r,index)=>({r,index})).filter(p=>p.r.checked); if (selected.length > 1) return null;
+            const selections=[]; for (const p of selected) {if (p.r.matches(':disabled') || p.r.closest('[aria-disabled="true" i], [aria-readonly="true" i]')) return null; const text=label(p.r); if (text === null || text.length > 500 || p.r.value.length > 500) return null; selections.push({index:p.index,label:text.trim().replace(/\s+/g,' '),value:p.r.value});}
+            return {kind,checked:null,selections};
+        }"#,"arguments":[{"value":kind}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some() {
+            return Err(DriverError("Existing choices cannot be inspected".into()));
+        }
+        let mut snapshot: waypoint_applications::driver::ChoiceSnapshot = serde_json::from_value(
+            result
+                .pointer("/result/value")
+                .cloned()
+                .unwrap_or(Value::Null),
+        )
+        .map_err(|_| DriverError("Existing choices cannot be inspected".into()))?;
+        if snapshot.kind != kind
+            || snapshot.selections.len() > 100
+            || (kind == "checkbox") != snapshot.checked.is_some()
+            || (kind == "checkbox" && !snapshot.selections.is_empty())
+            || (kind == "radio" && snapshot.selections.len() > 1)
+            || snapshot.selections.iter().any(|v| {
+                v.index >= 1000
+                    || v.label.len() > 2000
+                    || v.value.len() > 2000
+                    || v.label.chars().chain(v.value.chars()).any(char::is_control)
+            })
+        {
+            return Err(DriverError("Existing choices cannot be displayed".into()));
+        }
+        snapshot.selections.sort_by_key(|v| v.index);
+        Ok(snapshot)
+    }
+
     fn selected_option_snapshot(
         &mut self,
         selector: &str,

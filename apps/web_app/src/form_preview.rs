@@ -201,6 +201,18 @@ pub fn text_snapshot_digest(
     .to_owned()
 }
 
+pub fn choice_snapshot_digest(
+    scope: &str,
+    selector: &str,
+    snapshot: &waypoint_applications::driver::ChoiceSnapshot,
+) -> String {
+    Sha256Digest::of(
+        &serde_json::json!({"scope":scope,"selector":selector,"choice":snapshot}).to_string(),
+    )
+    .as_str()
+    .to_owned()
+}
+
 pub fn fill_payload_digest(
     preview: &FormPreview,
     replacements: &ReviewedReplacements,
@@ -237,6 +249,20 @@ fn check_existing_value(
                     .text_value_snapshot(&field.selector)
                     .map_err(|error| error.to_string())?;
                 text_snapshot_digest(scope, &field.selector, &snapshot)
+            }
+            (FormFieldType::MultiSelect { .. }, PacketValue::TextList(_))
+            | (FormFieldType::Radio { .. }, PacketValue::Text(_))
+            | (FormFieldType::Checkbox, PacketValue::Bool(_)) => {
+                let kind = match field.field_type {
+                    FormFieldType::MultiSelect { .. } => "multi",
+                    FormFieldType::Radio { .. } => "radio",
+                    FormFieldType::Checkbox => "checkbox",
+                    _ => unreachable!(),
+                };
+                let snapshot = driver
+                    .choice_snapshot(&field.selector, kind)
+                    .map_err(|error| error.to_string())?;
+                choice_snapshot_digest(scope, &field.selector, &snapshot)
             }
             _ => return Err("Replacement approval does not apply to this field".into()),
         };
@@ -762,6 +788,23 @@ mod tests {
             text_snapshot_digest("prefill-session-a", "#field", &text),
             text_snapshot_digest("prefill-session-b", "#field", &text)
         );
+        let checkbox = waypoint_applications::driver::ChoiceSnapshot {
+            kind: "checkbox".into(),
+            checked: Some(true),
+            selections: vec![],
+        };
+        let changed = waypoint_applications::driver::ChoiceSnapshot {
+            checked: Some(false),
+            ..checkbox.clone()
+        };
+        assert_ne!(
+            choice_snapshot_digest("prefill-session-a", "#field", &checkbox),
+            choice_snapshot_digest("prefill-session-a", "#field", &changed)
+        );
+        assert_ne!(
+            choice_snapshot_digest("prefill-session-a", "#field", &checkbox),
+            choice_snapshot_digest("prefill-session-b", "#field", &checkbox)
+        );
         let preview = FormPreview {
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
@@ -847,6 +890,24 @@ mod tests {
         assert!(driver
             .ensure_choice_replaceable(&checkbox("#unchecked", true))
             .is_ok());
+        let old_multi = driver.choice_snapshot("#multi", "multi").unwrap();
+        assert_eq!(old_multi.selections[0].label, "Alpha");
+        let old_radio = driver.choice_snapshot("#r1", "radio").unwrap();
+        assert_eq!(old_radio.selections[0].label, "Alpha");
+        assert_eq!(
+            driver
+                .choice_snapshot("#checked", "checkbox")
+                .unwrap()
+                .checked,
+            Some(true)
+        );
+        driver.execute(&multi("#multi", "Beta")).unwrap();
+        driver.execute(&radio("#r1", "Beta")).unwrap();
+        assert_ne!(
+            old_multi,
+            driver.choice_snapshot("#multi", "multi").unwrap()
+        );
+        assert_ne!(old_radio, driver.choice_snapshot("#r1", "radio").unwrap());
         assert!(driver
             .trace
             .iter()

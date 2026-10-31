@@ -1052,3 +1052,9 @@ A fictional local browser and endpoint test rejected an unreviewed replacement a
 The existing-answer review also supports bounded text, email, textarea, date and supported editable-text controls. It shows the current text locally alongside the reviewed replacement; an explicit acknowledgment binds the current value to the session, field and one-use fill grant. If the current text or reviewed replacement changes, the user must review again. Sensitive and model-flagged fields cannot use this path, and unsupported controls remain manual. The captured current text is not included in the attempt event; its digest is recorded with the reviewed replacement.
 
 A fictional local endpoint and browser test rejected sensitive and stale text snapshots and completed a reviewed text and dropdown replacement. Focused UI and binding checks, a rich-text inspection fixture and web Clippy passed. No employer site, local model or application submission was used.
+
+## Reviewed choice replacement — 2026-10-31
+
+The existing-answer review now covers supported native multi-selects, radio groups and checkboxes as well as text and single-select fields. It shows the current state and reviewed replacement, requires explicit acknowledgment, and binds the state to the session, field and one-use fill grant. A changed state requires review again; sensitive, model-flagged and unsupported custom controls remain manual. Re-inspecting a field revokes its prior approval until the new state is acknowledged.
+
+Fictional local browser and endpoint tests covered matching and conflicting choices, rejected changed checkbox, multi-select and radio snapshots, and completed reviewed replacements. Focused UI checks and web Clippy passed. No model, employer site or application submission was involved.

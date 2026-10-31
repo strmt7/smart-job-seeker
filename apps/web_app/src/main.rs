@@ -4171,6 +4171,41 @@ fn serve(
             );
             json_reply(stream, "200 OK", json!({"text":snapshot,"digest":digest}));
         }
+        "/api/form/choice-snapshot" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"].as_str().ok_or("missing field")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && !s.filled && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired or already filled")?;
+            let field = current
+                .preview
+                .schema
+                .fields
+                .iter()
+                .find(|f| f.selector == selector)
+                .ok_or("Field is no longer present")?;
+            if field.sensitive || current.preview.model_review_selectors.contains(selector) {
+                return Err("This field requires manual handling".into());
+            }
+            let kind = match field.field_type {
+                waypoint_applications::form_mapping::FormFieldType::MultiSelect { .. } => "multi",
+                waypoint_applications::form_mapping::FormFieldType::Radio { .. } => "radio",
+                waypoint_applications::form_mapping::FormFieldType::Checkbox => "checkbox",
+                _ => return Err("This field requires manual handling".into()),
+            };
+            check_answer_page(current)?;
+            let snapshot = current
+                .driver
+                .choice_snapshot(selector, kind)
+                .map_err(|e| e.to_string())?;
+            let digest = form_preview::choice_snapshot_digest(
+                &format!("prefill-{}", current.id),
+                selector,
+                &snapshot,
+            );
+            json_reply(stream, "200 OK", json!({"choice":snapshot,"digest":digest}));
+        }
         "/api/form/fill" => {
             if body["reviewed"].as_bool() != Some(true) {
                 return Err("Explicit review is required".into());
@@ -4239,6 +4274,9 @@ fn serve(
                                 | waypoint_applications::form_mapping::FormFieldType::Email
                                 | waypoint_applications::form_mapping::FormFieldType::TextArea
                                 | waypoint_applications::form_mapping::FormFieldType::Date
+                                | waypoint_applications::form_mapping::FormFieldType::MultiSelect { .. }
+                                | waypoint_applications::form_mapping::FormFieldType::Radio { .. }
+                                | waypoint_applications::form_mapping::FormFieldType::Checkbox
                         )
                         || !prepared
                             .suggestions
@@ -7410,6 +7448,18 @@ mod tests {
                     field_selector: "#existing-choice".into(),
                     value: PacketValue::Text("Beta".into()),
                 },
+                ProposedMapping {
+                    field_selector: "#previous-check".into(),
+                    value: PacketValue::Bool(false),
+                },
+                ProposedMapping {
+                    field_selector: "#previous-multi".into(),
+                    value: PacketValue::TextList(vec!["Beta".into()]),
+                },
+                ProposedMapping {
+                    field_selector: "#previous-radio".into(),
+                    value: PacketValue::Text("Beta".into()),
+                },
             ],
             manual_review: vec![],
             model_review_selectors: Default::default(),
@@ -7581,12 +7631,128 @@ mod tests {
             .driver
             .execute(&command("Alpha"))
             .unwrap();
-        let combined = json!([text_approval, {"selector":"#existing-choice","digest":snapshot["digest"],"reviewed":true}]);
+        let choice_snapshot = request(
+            &mut ws,
+            &mut session,
+            "/api/form/choice-snapshot",
+            json!({"session_id":"existing-session","selector":"#previous-check"}),
+        )
+        .unwrap();
+        assert_eq!(choice_snapshot["choice"]["checked"], true);
+        let checkbox_approval = json!({"selector":"#previous-check","digest":choice_snapshot["digest"],"reviewed":true});
+        let checkbox = |value| waypoint_applications::form_mapping::BrowserCommand::Fill {
+            selector: "#previous-check".into(),
+            value: PacketValue::Bool(value),
+        };
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&checkbox(false))
+            .unwrap();
+        let stale_choice = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(
+                json!(["#previous-check"]),
+                json!([checkbox_approval.clone()]),
+            ),
+        )
+        .unwrap_err();
+        assert!(stale_choice.contains("changed since"), "{stale_choice}");
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&checkbox(true))
+            .unwrap();
+        let multi_snapshot = request(
+            &mut ws,
+            &mut session,
+            "/api/form/choice-snapshot",
+            json!({"session_id":"existing-session","selector":"#previous-multi"}),
+        )
+        .unwrap();
+        assert_eq!(multi_snapshot["choice"]["selections"][0]["label"], "Alpha");
+        let multi_approval =
+            json!({"selector":"#previous-multi","digest":multi_snapshot["digest"],"reviewed":true});
+        let multi =
+            |label: &str| waypoint_applications::form_mapping::BrowserCommand::SelectOptions {
+                selector: "#previous-multi".into(),
+                labels: vec![label.into()],
+            };
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&multi("Beta"))
+            .unwrap();
+        let stale_multi = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#previous-multi"]), json!([multi_approval.clone()])),
+        )
+        .unwrap_err();
+        assert!(stale_multi.contains("changed since"), "{stale_multi}");
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&multi("Alpha"))
+            .unwrap();
+        let radio_snapshot = request(
+            &mut ws,
+            &mut session,
+            "/api/form/choice-snapshot",
+            json!({"session_id":"existing-session","selector":"#previous-radio"}),
+        )
+        .unwrap();
+        assert_eq!(radio_snapshot["choice"]["selections"][0]["label"], "Alpha");
+        let radio_approval =
+            json!({"selector":"#previous-radio","digest":radio_snapshot["digest"],"reviewed":true});
+        let radio =
+            |label: &str| waypoint_applications::form_mapping::BrowserCommand::SelectRadio {
+                selector: "#previous-radio".into(),
+                label: label.into(),
+            };
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&radio("Beta"))
+            .unwrap();
+        let stale_radio = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#previous-radio"]), json!([radio_approval.clone()])),
+        )
+        .unwrap_err();
+        assert!(stale_radio.contains("changed since"), "{stale_radio}");
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&radio("Alpha"))
+            .unwrap();
+        let combined = json!([text_approval, {"selector":"#existing-choice","digest":snapshot["digest"],"reviewed":true}, checkbox_approval, multi_approval, radio_approval]);
         assert!(request(
             &mut ws,
             &mut session,
             "/api/form/fill",
-            fill(json!(["#first", "#second", "#existing-choice"]), combined)
+            fill(
+                json!([
+                    "#first",
+                    "#second",
+                    "#existing-choice",
+                    "#previous-check",
+                    "#previous-multi",
+                    "#previous-radio"
+                ]),
+                combined
+            )
         )
         .is_ok());
         let current = session.as_mut().unwrap();
@@ -7608,6 +7774,9 @@ mod tests {
                 },
             )
             .unwrap();
+        current.driver.verify_choice(&checkbox(false)).unwrap();
+        current.driver.verify_choice(&multi("Beta")).unwrap();
+        current.driver.verify_choice(&radio("Beta")).unwrap();
         assert!(current
             .driver
             .trace
