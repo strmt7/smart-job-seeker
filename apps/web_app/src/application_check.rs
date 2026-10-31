@@ -481,12 +481,15 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                         true,
                     )
                 } else if page.schema.fields.is_empty()
-                    && page
-                        .walls
-                        .iter()
-                        .any(|wall| wall == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE)
+                    && page.walls.iter().any(|wall| {
+                        wall == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE
+                            || wall == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
+                    })
                 {
-                    ("An embedded frame could not be inspected.".to_owned(), true)
+                    (
+                        "Some embedded content could not be inspected.".to_owned(),
+                        true,
+                    )
                 } else {
                     classify_fields(&page.schema.fields, followed)
                 };
@@ -1432,6 +1435,38 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one browser using a fictional scope-limit form"]
+    fn application_check_reports_uninspected_scope_for_manual_review() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_five_scopes.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        super::start(
+            "fixture-scope-limit".into(),
+            "fictional-job".into(),
+            url,
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some((_, _, message, review)) = poll("fixture-scope-limit").unwrap() {
+                assert!(review);
+                assert!(
+                    message.contains("embedded content could not be inspected"),
+                    "{message}"
+                );
+                acknowledge("fixture-scope-limit").unwrap();
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     #[test]

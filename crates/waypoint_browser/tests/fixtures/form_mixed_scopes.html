@@ -1,0 +1,10 @@
+<!doctype html><html><body>
+<x-outer id="outer" style="display:block"></x-outer>
+<button id="hide" type="button" onclick="document.getElementById('outer').style.display='none'">Hide</button>
+<button id="show" type="button" onclick="document.getElementById('outer').style.display='block'">Show</button>
+<button id="replace-frame" type="button" onclick="document.getElementById('outer').shadowRoot.querySelector('iframe').srcdoc='replacement'">Replace</button>
+<script>
+const outer = document.getElementById('outer').attachShadow({mode:'open'});
+const frame = document.createElement('iframe'); frame.style.cssText='display:block;width:500px;height:180px';
+frame.srcdoc = "<!doctype html><html><body><x-inner id=\"inner\" style=\"display:block\"></x-inner><script>document.getElementById('inner').attachShadow({mode:'open'}).innerHTML='<label>Mixed name <input name=\"mixed\" autocomplete=\"given-name\"></label>';<\/script></body></html>"; outer.append(frame);
+</script></body></html>

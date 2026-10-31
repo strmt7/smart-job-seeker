@@ -60,6 +60,7 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
         || reason == waypoint_browser::ISOLATED_FRAME_INSPECTION_UNAVAILABLE
         || reason == waypoint_browser::SHADOW_FORM_REVIEW
         || reason == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
+        || reason == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
         || reason == "an unavailable field needs manual review"
         || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
@@ -684,6 +685,9 @@ mod tests {
         ));
         assert!(!is_custom_review(
             "a required field is disabled or read-only"
+        ));
+        assert!(is_custom_review(
+            waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
         ));
         assert!(!is_custom_review("captcha present"));
     }
@@ -2082,6 +2086,8 @@ mod tests {
             "form_iframe_controls.html",
             "form_iframe_nested.html",
             "form_shadow.html",
+            "form_mixed_scopes.html",
+            "form_four_scopes.html",
         ] {
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../crates/waypoint_browser/tests/fixtures")

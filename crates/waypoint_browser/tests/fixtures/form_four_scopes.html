@@ -1,0 +1,5 @@
+<!doctype html><html><body>
+<x-outer id="outer" style="display:block"></x-outer>
+<button id="hide" type="button" onclick="document.getElementById('outer').style.display='none'">Hide</button>
+<script>const outer=document.getElementById('outer').attachShadow({mode:'open'});const frame=document.createElement('iframe');frame.style.cssText='display:block;width:500px;height:180px';frame.srcdoc="<!doctype html><html><body><x-inner id=\"inner\" style=\"display:block\"></x-inner><script>const root=document.getElementById('inner').attachShadow({mode:'open'});const frame=document.createElement('iframe');frame.style.cssText='display:block;width:400px;height:120px';frame.srcdoc=\"<label>Deep name <input name=\\\"deep\\\" autocomplete=\\\"given-name\\\"></label>\";root.append(frame);<\/script></body></html>";outer.append(frame);</script>
+</body></html>

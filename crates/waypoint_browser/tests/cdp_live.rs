@@ -1097,6 +1097,108 @@ fn inaccessible_same_site_cross_origin_form_is_detected_without_fields() {
 }
 
 #[test]
+#[ignore = "launches one browser against five fictional mixed scopes"]
+fn scope_limit_reports_a_fifth_uninspected_scope() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_five_scopes.html")).unwrap();
+    assert!(page.schema.fields.is_empty(), "{:?}", page.schema.fields);
+    assert!(
+        page.walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW),
+        "{:?}",
+        page.walls
+    );
+}
+
+#[test]
+#[ignore = "launches one browser against four fictional mixed scopes"]
+fn four_mixed_scopes_can_be_filled_and_reject_hidden_ancestors() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_four_scopes.html")).unwrap();
+    assert!(!page
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW));
+    let selector = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Deep name")
+        .expect("four-scope field")
+        .selector
+        .clone();
+    assert_eq!(selector.matches("waypoint-shadow:").count(), 2);
+    assert_eq!(selector.matches("waypoint-frame:").count(), 2);
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("Fictional".into()),
+        })
+        .unwrap();
+    driver.verify_text_value(&selector, "Fictional").unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#hide".into(),
+        })
+        .unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector,
+            value: PacketValue::Text("Must not be entered".into())
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one browser against a fictional mixed-scope form"]
+fn mixed_shadow_frame_shadow_field_binds_every_scope() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_mixed_scopes.html")).unwrap();
+    let field = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Mixed name")
+        .expect("mixed-scope field");
+    let selector = field.selector.clone();
+    assert_eq!(selector.matches("waypoint-shadow:").count(), 2);
+    assert_eq!(selector.matches("waypoint-frame:").count(), 1);
+    let fill = |value: &str| BrowserCommand::Fill {
+        selector: selector.clone(),
+        value: PacketValue::Text(value.into()),
+    };
+    driver.execute(&fill("Fictional")).unwrap();
+    driver.verify_text_value(&selector, "Fictional").unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#hide".into(),
+        })
+        .unwrap();
+    assert!(driver.execute(&fill("Must not be entered")).is_err());
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#show".into(),
+        })
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#replace-frame".into(),
+        })
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(driver.execute(&fill("Must not reach replacement")).is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one browser against nested fictional shadow roots"]
 fn nested_shadow_field_binds_every_visible_host() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

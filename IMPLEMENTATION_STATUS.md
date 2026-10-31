@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Mixed embedded scopes — 2026-10-31
+
+- The existing four-scope inspection budget can now be used along one nested path instead of stopping at three. Frame and open-shadow selectors retain every ancestor identity and visibility check. If another relevant scope cannot be inspected within the limit, the form and application checker report that gap for manual review.
+- Fictional local-browser fixtures covered shadow-to-frame-to-shadow and a four-scope shadow/frame chain, including hidden-ancestor and replaced-frame refusal. A fifth-scope fixture reported incomplete inspection. The reviewed web-app prefill path exercised the mixed forms. The local browser suite passed 46 tests and the SQLCipher-enabled web suite passed 301; live employers and local-model interpretation were not tested.
+
 ## Open web-component form controls — 2026-10-31
 
 - The browser can inspect bounded open shadow roots and bind field selectors to each host and root. It can fill and verify supported native controls there; closed roots with apparent form controls remain manual review. Web-component content is flagged for review, and visual page captures are not described as complete when such content is present. Decorative open roots without form controls or nested scopes do not consume the four-scope inspection budget.

@@ -55,6 +55,9 @@ pub const SHADOW_FORM_REVIEW: &str =
 pub const CLOSED_SHADOW_FORM_REVIEW: &str =
     "A closed web component may contain form controls; review it manually";
 
+pub const EMBEDDED_SCOPE_LIMIT_REVIEW: &str =
+    "Some embedded scopes could not be inspected within the limit; review them manually";
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -593,7 +596,7 @@ impl CdpDriver {
                 break;
             };
             depth += 1;
-            if depth > 3 {
+            if depth > 4 {
                 return Err(DriverError(
                     "Embedded field exceeds the scope depth limit".into(),
                 ));
@@ -901,7 +904,12 @@ impl CdpDriver {
             let mut inspected_count = 0;
             let mut isolated_inspections = 0usize;
             while let Some((document, prefix, depth)) = queue.pop_front() {
-                if depth >= 3 || inspected_count >= 4 {
+                if depth >= 4 || inspected_count >= 4 {
+                    if document_has_embedded_scope(&document)
+                        && !walls.iter().any(|wall| wall == EMBEDDED_SCOPE_LIMIT_REVIEW)
+                    {
+                        walls.push(EMBEDDED_SCOPE_LIMIT_REVIEW.into());
+                    }
                     continue;
                 }
                 let mut shadow_hosts = Vec::new();
@@ -930,6 +938,9 @@ impl CdpDriver {
                 });
                 for (host_id, host_backend, root_backend) in shadow_hosts {
                     if inspected_count >= 4 {
+                        if !walls.iter().any(|wall| wall == EMBEDDED_SCOPE_LIMIT_REVIEW) {
+                            walls.push(EMBEDDED_SCOPE_LIMIT_REVIEW.into());
+                        }
                         break;
                     }
                     if started.elapsed() > Duration::from_secs(8) {
@@ -990,6 +1001,9 @@ impl CdpDriver {
                 });
                 for (frame_id, frame_backend) in frames {
                     if inspected_count >= 4 {
+                        if !walls.iter().any(|wall| wall == EMBEDDED_SCOPE_LIMIT_REVIEW) {
+                            walls.push(EMBEDDED_SCOPE_LIMIT_REVIEW.into());
+                        }
                         break;
                     }
                     if started.elapsed() > Duration::from_secs(8) {
@@ -2890,6 +2904,33 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
             pending.extend(children.iter().rev().map(|child| (child, child_in_control)));
         }
     }
+}
+
+fn document_has_embedded_scope(document: &Value) -> bool {
+    let mut found = false;
+    walk_with_visibility(document, false, false, &mut |node, _, hidden| {
+        if !hidden {
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            if tag.eq_ignore_ascii_case("iframe")
+                || tag.eq_ignore_ascii_case("frame")
+                || node
+                    .get("shadowRoots")
+                    .and_then(Value::as_array)
+                    .is_some_and(|roots| {
+                        roots.iter().any(|root| {
+                            matches!(
+                                root.get("shadowRootType").and_then(Value::as_str),
+                                Some("open" | "closed")
+                            ) && document_may_contain_form_or_scope(root)
+                        })
+                    })
+            {
+                found = true;
+            }
+        }
+        true
+    });
+    found
 }
 
 fn document_may_contain_form_or_scope(document: &Value) -> bool {
