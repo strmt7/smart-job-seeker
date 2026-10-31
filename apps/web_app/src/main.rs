@@ -952,9 +952,17 @@ fn duplicate_inputs(
     })
 }
 
+#[cfg(test)]
 fn duplicate_search_inputs(
     ws: &Workspace,
     id: &JobIdentityId,
+) -> Result<duplicate_search::Inputs, String> {
+    duplicate_search_inputs_page(ws, id, None)
+}
+fn duplicate_search_inputs_page(
+    ws: &Workspace,
+    id: &JobIdentityId,
+    after: Option<&str>,
 ) -> Result<duplicate_search::Inputs, String> {
     if ws.duplicate_index_pending().map_err(|e| e.to_string())? {
         return Err(
@@ -988,7 +996,15 @@ fn duplicate_search_inputs(
         .map_err(|e| e.to_string())?
         .ok_or("Job not found")?;
     let (target, target_digest, target_shortened) = listing(&job)?;
-    let (neighbors, truncated) = ws.duplicate_neighbors(id).map_err(|e| e.to_string())?;
+    let (neighbors, truncated, next_cursor) = if let Some(after) = after {
+        let (neighbors, next) = ws
+            .duplicate_neighbors_page(id, after)
+            .map_err(|e| e.to_string())?;
+        (neighbors, next.is_some(), next)
+    } else {
+        let (neighbors, truncated) = ws.duplicate_neighbors(id).map_err(|e| e.to_string())?;
+        (neighbors, truncated, None)
+    };
     let mut candidates = Vec::with_capacity(neighbors.len());
     let mut source_digests = Vec::with_capacity(neighbors.len());
     let mut source_texts_shortened = usize::from(target_shortened);
@@ -999,7 +1015,7 @@ fn duplicate_search_inputs(
         candidates.push((job.id.as_str().to_owned(), text));
     }
     let digest = Sha256Digest::of(
-        &json!({"target":target,"target_digest":target_digest,"candidates":candidates,"source_digests":source_digests,"truncated":truncated}).to_string(),
+        &json!({"target":target,"target_digest":target_digest,"candidates":candidates,"source_digests":source_digests,"truncated":truncated,"page_after":after,"next_cursor":next_cursor}).to_string(),
     )
     .as_str()
     .to_owned();
@@ -1010,6 +1026,8 @@ fn duplicate_search_inputs(
         digest,
         truncated,
         source_texts_shortened,
+        page_after: after.map(str::to_owned),
+        next_cursor,
     })
 }
 
@@ -1646,8 +1664,17 @@ fn serve(
         "/api/duplicates/search-start" => {
             let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job")?)
                 .map_err(|e| e.to_string())?;
-            let input = duplicate_search_inputs(ws, &job)?;
-            if input.candidates.is_empty() {
+            let after = match body.get("after") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) if value.is_empty() => Some(""),
+                Some(Value::String(value)) => {
+                    JobIdentityId::new(value).map_err(|e| e.to_string())?;
+                    Some(value.as_str())
+                }
+                _ => return Err("Invalid duplicate search cursor".into()),
+            };
+            let input = duplicate_search_inputs_page(ws, &job, after)?;
+            if input.candidates.is_empty() && input.next_cursor.is_none() {
                 return Err("No unreviewed related-employer candidates were found".into());
             }
             let model = resident_model()?.ok_or(
@@ -1663,7 +1690,7 @@ fn serve(
             if result["status"] == "complete" && result["saved"] != true {
                 let job = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job")?)
                     .map_err(|e| e.to_string())?;
-                let input = duplicate_search_inputs(ws, &job)?;
+                let input = duplicate_search_inputs_page(ws, &job, result["page_after"].as_str())?;
                 if Some(input.digest.as_str()) != result["digest"].as_str() {
                     result = json!({"status":"failed","error":"Listings or duplicate decisions changed; search again"});
                 } else {

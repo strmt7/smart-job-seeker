@@ -10,6 +10,8 @@ pub struct Inputs {
     pub digest: String,
     pub truncated: bool,
     pub source_texts_shortened: usize,
+    pub page_after: Option<String>,
+    pub next_cursor: Option<String>,
 }
 struct Task {
     id: String,
@@ -98,7 +100,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     );
     Ok(match result {
         Ok(result) => {
-            json!({"status":"complete","job_id":job,"digest":digest,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"truncated":truncated,"source_texts_shortened":task.input.source_texts_shortened,"target_text_shortened":result.target_text_shortened,"candidate_texts_shortened":result.candidate_texts_shortened,"retried_candidates":result.retried_candidates,"matches":result.matches})
+            json!({"status":"complete","job_id":job,"digest":digest,"page_after":task.input.page_after,"next_cursor":task.input.next_cursor,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"truncated":truncated,"source_texts_shortened":task.input.source_texts_shortened,"target_text_shortened":result.target_text_shortened,"candidate_texts_shortened":result.candidate_texts_shortened,"retried_candidates":result.retried_candidates,"matches":result.matches})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
@@ -337,6 +339,26 @@ mod tests {
         assert_eq!(a.target, b.target);
         assert_ne!(a.digest, b.digest);
         assert_eq!(a.source_texts_shortened, 1);
+    }
+    #[test]
+    fn paged_search_inputs_bind_cursor_and_do_not_repeat_candidates() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let target = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/target","title":"Research scientist","employer":"Fictional Acme"}), 1).unwrap();
+        for index in 0..14 {
+            crate::manual_job::add(&mut ws, &json!({"url":format!("https://example.org/page-{index}"),"title":format!("Sales role {index}"),"employer":"Fictional Acme"}), 1).unwrap();
+        }
+        let id = waypoint_domain::JobIdentityId::new(target["id"].as_str().unwrap()).unwrap();
+        let first = crate::duplicate_search_inputs_page(&ws, &id, Some("")).unwrap();
+        assert_eq!(first.candidates.len(), 12);
+        let cursor = first.next_cursor.as_deref().unwrap();
+        let second = crate::duplicate_search_inputs_page(&ws, &id, Some(cursor)).unwrap();
+        assert_eq!(second.candidates.len(), 2);
+        assert!(second.next_cursor.is_none());
+        assert_ne!(first.digest, second.digest);
+        assert!(first
+            .candidates
+            .iter()
+            .all(|(id, _)| second.candidates.iter().all(|(other, _)| id != other)));
     }
     struct Fake;
     impl Inference for Fake {

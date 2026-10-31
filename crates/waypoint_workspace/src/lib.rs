@@ -646,6 +646,14 @@ impl Workspace {
         Ok(self.store.duplicate_neighbors(id.as_str())?)
     }
 
+    pub fn duplicate_neighbors_page(
+        &self,
+        id: &JobIdentityId,
+        after: &str,
+    ) -> Result<(Vec<StoredJob>, Option<String>), WorkspaceError> {
+        Ok(self.store.duplicate_neighbors_page(id.as_str(), after)?)
+    }
+
     pub fn add_ai_duplicates(
         &self,
         first: &JobIdentityId,

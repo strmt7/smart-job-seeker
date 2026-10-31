@@ -443,6 +443,44 @@ impl Store {
         Ok((result, truncated))
     }
 
+    /// Keyset page over indexed employer neighbors. Each token contributes at
+    /// most 13 IDs, so even a large employer cannot force an unbounded scan.
+    pub fn duplicate_neighbors_page(
+        &self,
+        id: &str,
+        after: &str,
+    ) -> rusqlite::Result<(Vec<StoredJob>, Option<String>)> {
+        let mut stmt = self.conn.prepare("SELECT token FROM job_employer_tokens WHERE job_id=?1 ORDER BY length(token) DESC,token LIMIT 8")?;
+        let tokens = stmt
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut ids = BTreeSet::new();
+        let mut candidates = self.conn.prepare("SELECT t.job_id FROM job_employer_tokens t WHERE t.token=?1 AND t.job_id<>?2 AND t.job_id>?3 ORDER BY t.job_id LIMIT 13")?;
+        for token in tokens {
+            for candidate in
+                candidates.query_map(params![token, id, after], |row| row.get::<_, String>(0))?
+            {
+                ids.insert(candidate?);
+            }
+        }
+        let more = ids.len() > 12;
+        let mut jobs = Vec::new();
+        let mut last = None;
+        for candidate in ids.into_iter().take(12) {
+            last = Some(candidate.clone());
+            let decided: bool = self.conn.query_row("SELECT EXISTS(SELECT 1 FROM possible_duplicates WHERE (job_a=?1 AND job_b=?2) OR (job_a=?2 AND job_b=?1))", params![id, candidate], |row| row.get(0))?;
+            if !decided {
+                if let Ok(candidate_id) = waypoint_domain::JobIdentityId::new(&candidate) {
+                    if let Some(job) = self.get_job(&candidate_id)? {
+                        jobs.push(job);
+                    }
+                }
+            }
+        }
+        let next = if more { last } else { None };
+        Ok((jobs, next))
+    }
+
     pub fn add_ai_duplicates(
         &self,
         first: &str,
@@ -915,6 +953,73 @@ mod tests {
                 .any(|job| job.id.as_str() == format!("candidate-{index:02}")));
         }
         assert!(store.possible_duplicates().unwrap().is_empty());
+    }
+    #[test]
+    fn neighbor_pages_cover_bounded_candidates_without_repeating_ids() {
+        let mut store = Store::in_memory().unwrap();
+        let source = job("source", "Engineer", "Acme", None);
+        store.upsert_job(&source).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                [source.id.as_str()],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'research')",
+                [source.id.as_str()],
+            )
+            .unwrap();
+        for index in 0..29 {
+            let candidate = job(&format!("candidate-{index:02}"), "Role", "Acme", None);
+            store.upsert_job(&candidate).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                    [candidate.id.as_str()],
+                )
+                .unwrap();
+            if index % 2 == 0 {
+                store
+                    .conn
+                    .execute(
+                        "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'research')",
+                        [candidate.id.as_str()],
+                    )
+                    .unwrap();
+            }
+        }
+        let mut after = String::new();
+        let mut seen = BTreeSet::new();
+        loop {
+            let (page, next) = store.duplicate_neighbors_page("source", &after).unwrap();
+            assert!(page.len() <= 12);
+            for job in &page {
+                assert!(seen.insert(job.id.as_str().to_owned()));
+            }
+            match next {
+                Some(cursor) => {
+                    assert!(cursor > after);
+                    after = cursor;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), 29);
+        let decided: Vec<_> = (0..12)
+            .map(|index| (format!("candidate-{index:02}"), "Reviewed".into()))
+            .collect();
+        assert_eq!(store.add_ai_duplicates("source", &decided).unwrap(), 12);
+        let (empty, cursor) = store.duplicate_neighbors_page("source", "").unwrap();
+        assert!(empty.is_empty());
+        let cursor = cursor.expect("a page of already reviewed jobs must still advance");
+        assert_eq!(cursor, "candidate-11");
+        let (next, _) = store.duplicate_neighbors_page("source", &cursor).unwrap();
+        assert_eq!(next.len(), 12);
     }
     #[test]
     fn fuzzy_title_overlap_is_bounded() {
