@@ -705,6 +705,98 @@ fn validate_suggestions(
 mod tests {
     #[test]
     #[ignore = "requires an already resident local model and resource preflight"]
+    fn live_multilingual_ambiguity_and_eligibility_review() {
+        let name =
+            std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
+        let mut schema = form();
+        schema.fields = [
+            ("#updates", "Where should we send updates?", None),
+            (
+                "#eligibility",
+                "¿Está autorizado legalmente para trabajar en este país?",
+                Some("email"),
+            ),
+            ("#email", "Adresse e-mail", Some("email")),
+        ]
+        .into_iter()
+        .map(|(selector, label, autocomplete)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: autocomplete.map(str::to_owned),
+        })
+        .collect();
+        let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
+            .unwrap()
+            .with_resident_context();
+        let mut model =
+            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let (mappings, warnings, review) = suggest_with_review(
+            &mut model,
+            &schema,
+            &json!({"email":"avery@example.invalid"}),
+        )
+        .unwrap();
+        println!("Fictional mixed-language review: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
+        assert!(review.contains("#updates") && review.contains("#eligibility"));
+        assert!(!mappings
+            .iter()
+            .any(|m| m.field_selector == "#updates" || m.field_selector == "#eligibility"));
+        assert!(mappings.iter().any(|m| m.field_selector == "#email"
+            && m.value == PacketValue::Text("avery@example.invalid".into())));
+    }
+    #[test]
+    #[ignore = "requires an already resident local model and resource preflight"]
+    fn live_multilingual_ambiguity_and_sponsorship_review() {
+        let name =
+            std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
+        let mut schema = form();
+        schema.fields = [
+            ("#updates", "¿Dónde debemos enviar novedades?", None),
+            (
+                "#sponsorship",
+                "Aurez-vous besoin d'un visa de travail parrainé ?",
+                Some("email"),
+            ),
+            ("#email", "Email address", Some("email")),
+        ]
+        .into_iter()
+        .map(|(selector, label, autocomplete)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: autocomplete.map(str::to_owned),
+        })
+        .collect();
+        let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
+            .unwrap()
+            .with_resident_context();
+        let mut model =
+            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let (mappings, warnings, review) = suggest_with_review(
+            &mut model,
+            &schema,
+            &json!({"email":"avery@example.invalid"}),
+        )
+        .unwrap();
+        println!("Fictional mixed-language sponsorship review: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
+        assert!(review.contains("#updates") && review.contains("#sponsorship"));
+        assert!(!mappings
+            .iter()
+            .any(|m| m.field_selector == "#updates" || m.field_selector == "#sponsorship"));
+        assert!(mappings.iter().any(|m| m.field_selector == "#email"
+            && m.value == PacketValue::Text("avery@example.invalid".into())));
+    }
+    #[test]
+    #[ignore = "requires an already resident local model and resource preflight"]
     fn live_portuguese_contact_and_sensitive_questions() {
         let name =
             std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
