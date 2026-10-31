@@ -998,3 +998,9 @@ A local task test covered task identity, duplicate start refusal, repeated resul
 Application inspection now keeps the current page for review when it contains at least two required data-entry controls, even if another application link is present. This structural hint does not rely on field labels and does not establish that the page is an application: search or other forms may also match, while applications with fewer required controls may not. The existing manual navigation warning remains visible. No fields are filled or submitted by inspection.
 
 A fictional local browser fixture with two required controls and another application link stayed on the original page; a synthetic test covered the threshold and excluded a checkbox. The form-inspection test group and web Clippy passed. This is not a test of a live employer site.
+
+## Wide-page application captures — 2026-10-31
+
+Application records can now capture wide pages in horizontal and vertical tiles, preserving the existing six-segment budget. A page up to 4,096 pixels wide can be captured when its height also fits within that budget; larger or more complex dimensions are explicitly marked incomplete. This does not establish capture of hidden content or nested scroll areas.
+
+A headless browser captured a fictional 3,000-by-2,400-pixel page in four bounded tiles, including the tile covering the far-right field. The existing off-screen capture and collision fixture, tile-planning test and web Clippy passed. No application was submitted.

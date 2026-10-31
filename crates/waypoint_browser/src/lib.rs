@@ -594,11 +594,26 @@ impl CdpDriver {
         y: f64,
         height: f64,
     ) -> Result<String, DriverError> {
-        if !width.is_finite()
+        self.screenshot_tile(0.0, y, width, height)
+    }
+
+    /// Capture a bounded two-dimensional page tile without navigating or clicking.
+    pub fn screenshot_tile(
+        &mut self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) -> Result<String, DriverError> {
+        if !x.is_finite()
+            || x < 0.0
+            || x > 4096.0
+            || !width.is_finite()
             || !y.is_finite()
             || !height.is_finite()
             || width <= 0.0
             || width > 2048.0
+            || x + width > 4096.0
             || y < 0.0
             || height <= 0.0
             || height > 2000.0
@@ -607,7 +622,7 @@ impl CdpDriver {
                 "Screenshot segment exceeds capture limits".into(),
             ));
         }
-        let result = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":0,"y":y,"width":width,"height":height,"scale":1}})).map_err(derr)?;
+        let result = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}})).map_err(derr)?;
         let data = result
             .get("data")
             .and_then(Value::as_str)

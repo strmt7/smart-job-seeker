@@ -1134,6 +1134,28 @@ fn record_capture_failure(record: &mut AttemptRecord, error: String, timestamp: 
     message
 }
 
+/// Build at most six bounded tiles, reporting when dimensions exceed the budget.
+fn capture_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
+    let capped_width = width.min(4096.0);
+    let capped_height = height.min(12000.0);
+    let mut tiles = Vec::new();
+    let mut y = 0.0;
+    while y < capped_height {
+        let tile_height = (capped_height - y).min(2000.0);
+        let mut x = 0.0;
+        while x < capped_width {
+            if tiles.len() == 6 {
+                return (tiles, false);
+            }
+            let tile_width = (capped_width - x).min(2048.0);
+            tiles.push((x, y, tile_width, tile_height));
+            x += tile_width;
+        }
+        y += tile_height;
+    }
+    (tiles, width <= 4096.0 && height <= 12000.0)
+}
+
 /// Save a maximum of six segments; report when a page exceeds the limit.
 pub fn capture_page(
     driver: &mut waypoint_browser::CdpDriver,
@@ -1141,24 +1163,17 @@ pub fn capture_page(
     timestamp: i64,
 ) -> Result<(), String> {
     let (width, height) = driver.page_dimensions().map_err(|e| e.to_string())?;
-    let width_limited = width.min(2048.0);
-    let capped_height = height.min(12000.0);
+    let (tiles, within_limits) = capture_tiles(width, height);
     let capture_id = crate::random_id()?;
     record.event(json!({"type":"page_capture_started","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height}))?;
-    let mut y = 0.0;
-    let mut count = 0;
-    while y < capped_height {
-        let segment_height = (capped_height - y).min(2000.0);
+    for (count, (x, y, tile_width, tile_height)) in tiles.iter().copied().enumerate() {
         let image = driver
-            .screenshot_segment(width_limited, y, segment_height)
+            .screenshot_tile(x, y, tile_width, tile_height)
             .map_err(|e| e.to_string())?;
         let name = record.screenshot_with_name(&image)?;
-        record.event(json!({"type":"page_capture_segment","time":timestamp,"capture_id":capture_id,"index":count,"x":0,"y":y,"width":width_limited,"height":segment_height,"screenshot":format!("screenshots/{name}")}))?;
-        y += segment_height;
-        count += 1;
+        record.event(json!({"type":"page_capture_segment","time":timestamp,"capture_id":capture_id,"index":count,"x":x,"y":y,"width":tile_width,"height":tile_height,"screenshot":format!("screenshots/{name}")}))?;
     }
-    let within_limits = width <= 2048.0 && height <= 12000.0;
-    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":count,"full_dimensions_captured":within_limits,"note":"Page dimensions alone do not guarantee capture of hidden content or nested scrollers."}))?;
+    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":tiles.len(),"full_dimensions_captured":within_limits,"note":"Page dimensions alone do not guarantee capture of hidden content or nested scrollers."}))?;
     if !within_limits {
         return Err("Page exceeded screenshot capture limits".into());
     }
@@ -1185,6 +1200,70 @@ pub fn capture_before_navigation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tile_planning_preserves_budget_and_reports_incomplete_pages() {
+        let (tiles, complete) = capture_tiles(3000.0, 2400.0);
+        assert!(complete);
+        assert_eq!(
+            tiles,
+            vec![
+                (0.0, 0.0, 2048.0, 2000.0),
+                (2048.0, 0.0, 952.0, 2000.0),
+                (0.0, 2000.0, 2048.0, 400.0),
+                (2048.0, 2000.0, 952.0, 400.0)
+            ]
+        );
+        let (tiles, complete) = capture_tiles(4096.0, 12000.0);
+        assert_eq!(tiles.len(), 6);
+        assert!(!complete);
+        assert!(!capture_tiles(4097.0, 1000.0).1);
+        assert!(capture_tiles(2048.0, 12000.0).1);
+    }
+    #[test]
+    #[ignore = "starts one headless browser against a fictional wide form"]
+    fn captures_bounded_horizontal_tiles_on_wide_page() {
+        use waypoint_applications::driver::BrowserDriver;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        fs::create_dir(root.path().join("screenshots")).unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_path_buf(),
+            sequence: 0,
+        };
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-wide-capture.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        capture_page(&mut driver, &mut record, 1).unwrap();
+        let events: Vec<Value> = fs::read_to_string(root.path().join("events.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let segments: Vec<_> = events
+            .iter()
+            .filter(|event| event["type"] == "page_capture_segment")
+            .collect();
+        assert_eq!(segments.len(), 4);
+        assert!(segments.iter().any(
+            |event| event["x"].as_f64() == Some(2048.0) && event["y"].as_f64() == Some(2000.0)
+        ));
+        assert!(events
+            .iter()
+            .any(|event| event["type"] == "page_capture"
+                && event["full_dimensions_captured"] == true));
+        assert!(segments.iter().all(|event| root
+            .path()
+            .join(event["screenshot"].as_str().unwrap())
+            .is_file()));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
     use waypoint_domain::ApplicationState;
     use waypoint_store::StoredJob;
 
