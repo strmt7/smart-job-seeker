@@ -28,7 +28,7 @@ assert.match(controls.children.at(-1).textContent, /Enter two separate exact exc
 const inputs = split.children.filter(node=>node.tag==='label' && node.children[0].tag==='input').map(node=>node.children[0]);
 const statuses = split.children.filter(node=>node.tag==='label' && node.children[0].tag==='select').map(node=>node.children[0]);
 inputs[0].value='C'; inputs[1].value='C++'; inputs[1].listeners.input();
-assert.equal(controls.children.at(-1).textContent, 'Temporary estimate: 50% · 0–100% range');
+assert.equal(controls.children.at(-1).textContent, 'Temporary estimate: insufficient evidence · 0–100% range');
 statuses[0].value='supported'; statuses[0].listeners.change();
 assert.equal(controls.children.at(-1).textContent, 'Temporary estimate: 75% · 50–100% range');
 split.open=false; split.listeners.toggle();

@@ -9,7 +9,7 @@ const render = vm.runInNewContext(`(function(a,output,element){${source.slice(st
 const output = {nodes:[], append(node){this.nodes.push(node);}};
 render({dimensions:{job_requirements:{criteria:1,score:100,score_range:{lower:100,upper:100}},user_preferences:{criteria:2,score:50,score_range:{lower:0,upper:100}},required:null,preferred:null}}, output, (tag,text)=>({tag,text}));
 assert.match(output.nodes[0].text, /Job criteria: 100%.*1 model-selected criterion\./);
-assert.match(output.nodes[1].text, /Your preferences: 50%.*0–100%.*2 model-selected criteria\./);
+assert.match(output.nodes[1].text, /Your preferences: insufficient evidence.*0–100%.*2 model-selected criteria\./);
 assert.match(output.nodes[2].text, /before temporary exclusions/);
 assert.equal(output.nodes.length, 3);
 const old = {nodes:[], append(node){this.nodes.push(node);}};
