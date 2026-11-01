@@ -1288,6 +1288,62 @@ fn unassociated_questions_are_advisory_and_never_auto_filled() {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn repeated_text_selectors_target_the_individual_field() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_repeated_text_selectors.html"))
+        .unwrap();
+    let field = |label: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .unwrap()
+    };
+    for (ours, other, value) in [
+        (
+            "Applicant email",
+            "Reference email",
+            "fictional@example.invalid",
+        ),
+        ("Applicant phone", "Reference phone", "2025550101"),
+    ] {
+        let applicant = field(ours);
+        let reference = field(other);
+        assert_ne!(applicant.selector, reference.selector);
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: applicant.selector.clone(),
+                value: PacketValue::Text(value.into()),
+            })
+            .unwrap();
+        assert_eq!(
+            driver
+                .text_value_snapshot(&applicant.selector)
+                .unwrap()
+                .value,
+            value
+        );
+        assert_eq!(
+            driver
+                .text_value_snapshot(&reference.selector)
+                .unwrap()
+                .value,
+            ""
+        );
+    }
+    assert!(!live
+        .walls
+        .iter()
+        .any(|wall| wall == "ambiguous form controls need manual review"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn checkbox_context_budget_is_reported_and_requires_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

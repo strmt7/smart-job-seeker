@@ -3613,10 +3613,10 @@ impl CdpDriver {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector)
                 || supported_editing_host(&control.tag, &control.attrs)
-                || (control
+                || (!control
                     .attrs
                     .get("type")
-                    .is_some_and(|kind| kind.eq_ignore_ascii_case("checkbox"))
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("radio"))
                     && selector_counts.get(&selector).copied().unwrap_or(0) > 1)
             {
                 css_paths
