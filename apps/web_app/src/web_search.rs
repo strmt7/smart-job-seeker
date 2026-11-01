@@ -167,12 +167,35 @@ pub(crate) fn parse_excluding(
             break;
         }
     }
-    let unavailable = data
-        .get("unresponsive_engines")
-        .and_then(Value::as_array)
-        .map(|v| v.len());
+    let unavailable = data.get("unresponsive_engines").and_then(Value::as_array);
+    let mut unavailable_names = Vec::new();
+    if let Some(entries) = unavailable {
+        // Provider output is untrusted. Keep only bounded labels, not error
+        // messages or URLs, and report when the list was not fully named.
+        for entry in entries.iter().take(50) {
+            let raw = entry
+                .as_str()
+                .or_else(|| {
+                    entry
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .and_then(Value::as_str)
+                })
+                .or_else(|| entry.get("engine").and_then(Value::as_str));
+            if let Some(raw) = raw {
+                let name: String = raw.chars().filter(|c| !c.is_control()).take(80).collect();
+                let name = name.trim();
+                if !name.is_empty()
+                    && !unavailable_names.iter().any(|prior: &String| prior == name)
+                    && unavailable_names.len() < 8
+                {
+                    unavailable_names.push(name.to_owned());
+                }
+            }
+        }
+    }
     Ok(
-        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable,"limited":examined < results.len(),"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len(),"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
     )
 }
 
@@ -254,6 +277,34 @@ mod tests {
         assert!(request_url("https://user:secret@example.org/", "engineer").is_err());
         let data=parse(&json!({"results":[{"title":"Role","url":"https://example.org/job","content":"Fictional"},{"title":"private","url":"https://127.0.0.1/job"},{"title":"duplicate","url":"https://example.org/job"}]}).to_string()).unwrap();
         assert_eq!(data["results"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn provider_engine_failures_retain_bounded_names_without_error_messages() {
+        let data = parse(&json!({"results":[],"unresponsive_engines":[["engine-one","private detail"], ["engine-one","duplicate"], {"engine":"engine\ntwo"}, [42,"invalid"], "engine-three"]}).to_string()).unwrap();
+        assert_eq!(data["unresponsive_engines"], 5);
+        assert_eq!(
+            data["unresponsive_engine_names"],
+            json!(["engine-one", "enginetwo", "engine-three"])
+        );
+        assert!(!data.to_string().contains("private detail"));
+        let failures: Vec<Value> = (0..12)
+            .map(|i| json!([format!("engine-{i}"), "error"]))
+            .collect();
+        let limited =
+            parse(&json!({"results":[],"unresponsive_engines":failures}).to_string()).unwrap();
+        assert_eq!(limited["unresponsive_engines"], 12);
+        assert_eq!(
+            limited["unresponsive_engine_names"]
+                .as_array()
+                .unwrap()
+                .len(),
+            8
+        );
+        assert_eq!(
+            parse(&json!({"results":[]}).to_string()).unwrap()["unresponsive_engines"],
+            Value::Null
+        );
     }
 
     #[test]
