@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Fictional document vision probe — 2026-11-01
+
+- An isolated Ollama 0.40.13 instance ran `qwen3.5:9b` (model ID prefix `c97eb11d70b1`) on CPU with four threads, a 2048-token context and no GPU layers. The shared Ollama service was not used. A single direct JSON request took 43 seconds including loading; available system memory stayed at or above 19.73 GiB and returned to 26.4 GiB afterward.
+- On the fictional styled-document image (SHA-256 `4a9e20f2e8e198ecd59e4aba00fd4b19dbe3a7c5af55a2bfc56f66924a501434`), the model returned `Senior Systems Engineer`, missing the accent in `Sénior`, and called that word bold italic rather than bold. It identified the following italic and underlined words correctly. The raw local result and server log are under `target/model-eval/isolated-vision-20261101`; this was a direct model probe, not an end-to-end application review or a general accuracy estimate.
+- An ignored live qualification test now preserves this fictional image and checks the complete transcription and styles through the app's vision adapter. It requires a separately preloaded model and resource preflight; it was compiled but not run through the adapter in this probe. The recorded model response would fail its exact checks.
+
 ## PDF page-boundary review — 2026-11-01
 
 - The local PDF worker now counts selectable character boxes extending more than 0.5 PDF points beyond the intersection of the media and crop boxes. A nonzero or unavailable count keeps the document for manual review, and the interface explains the warning. Older reports without this observation also need review. This is an advisory geometry check; it does not detect every form of clipping or assess nonselectable content.

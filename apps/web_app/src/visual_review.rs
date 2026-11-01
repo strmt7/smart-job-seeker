@@ -1233,6 +1233,28 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "qualifies a preloaded vision model; may fail when transcription or style is wrong"]
+    fn live_vision_reads_fictional_document_styling() {
+        use base64::Engine;
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
+        assert_eq!(
+            crate::resident_model().unwrap().as_deref(),
+            Some(model.as_str())
+        );
+        let image = base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("../tests/fictional-styled-document.png"));
+        let prompt = "Read the job title on this fictional document and describe the type style of each word in that title. Return JSON with title and styles. Do not guess if unclear.";
+        let result =
+            generate_vision("127.0.0.1:11434".parse().unwrap(), &model, &image, prompt).unwrap();
+        println!("Fictional document visual result: {result}");
+        assert_eq!(result["title"], "Sénior Systems Engineer");
+        assert_eq!(result["styles"]["Sénior"], "bold");
+        assert_eq!(result["styles"]["Systems"], "italic");
+        assert_eq!(result["styles"]["Engineer"], "underlined");
+    }
+
+    #[test]
     #[ignore = "requires a preloaded local vision model and resource preflight"]
     fn live_visual_review_dense_form_checks_late_mismatches() {
         use base64::Engine;
