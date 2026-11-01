@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Focused visual-review prompt — 2026-11-01
+
+- A fictional sectioned form exposed prompt contamination: when the requested qualified label was included in the focused prompt, `gemma4:12b-it-q4_K_M` returned that label even for an image containing only the control and no visible label or heading. The focused prompt now asks for visible fields without supplying the requested label; matching to the expected label happens afterward. A mock-service test checks that the requested label is absent from the prompt.
+- In an isolated CPU rerun of that fixture, the model matched the target when its section headings were visible and the control-only crop remained unobserved. The three-observation live test took 51.43 seconds after preload, with at least 17.09 GiB available RAM and 27.2 GiB after cleanup. Focused visual-review tests and lint passed. This is one fictional case and does not guarantee that a model will not invent labels; visual observations remain advisory and live checks remain required. Native output is under `target/model-eval/isolated-gemma-section-unbiased-20261101`.
+
 ## Repeated visual labels — 2026-11-01
 
 - The previous section-prefix matching change also made distinct, fully qualified labels with the same final field name unobserved. The matcher now accepts exact, unique qualified labels while still refusing an unqualified label when its leaf could refer to multiple fields. Focused ambiguity tests and lint passed.
