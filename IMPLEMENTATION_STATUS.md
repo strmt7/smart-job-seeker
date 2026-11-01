@@ -1,3 +1,8 @@
+## Navigation advice behind overlays — 2026-11-01
+
+- When an inspected page reports an obscured field, control advice now always performs the separate navigation pass, even if the first pass returned five choices. Each pass remains limited to five model-selected controls; duplicates are removed, yielding at most ten suggestions. Advice remains read-only and must be reviewed. The second model call adds latency and its failure still surfaces as an error rather than partial advice.
+- A scripted regression covered a full first pass, duplicate removal and an additional section control; the UI check displayed a sixth suggestion. Focused control-ranking tests and web-app Clippy passed. This change was not re-evaluated with a live model or employer page, and no application was sent.
+
 ## Local control advice refinement — 2026-11-01
 
 - Navigation advice now asks the local model to exclude controls that edit field values or upload documents. On one read-only inspection of a public Workable application, the resident qwen3.5:9b initially suggested a phone-country selector alongside cookie options; after the prompt change it suggested an education control and four cookie options, without the phone selector or submission control. These are individual observations, not a general accuracy guarantee. Advice is displayed for user review and does not click controls.
