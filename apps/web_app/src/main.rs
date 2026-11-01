@@ -5334,9 +5334,24 @@ fn serve(
                 .push((selector.to_owned(), path, current.id.clone()));
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name,"attachment_name":name}))?;
-                if let Ok(image) = current.driver.screenshot_base64() {
-                    let name = record.screenshot_with_name(&image)?;
-                    record.event(json!({"type":"attachment_viewport","time":now(),"selector":selector,"screenshot":format!("screenshots/{name}")}))?;
+                let screenshot = current
+                    .driver
+                    .screenshot_base64()
+                    .map_err(|e| e.to_string());
+                if let Err(error) =
+                    attempt_record::attachment_viewport(record, selector, screenshot, now())
+                {
+                    let _ = record.event(json!({"type":"attachment_viewport_unavailable","time":now(),"selector":selector,"error":error}));
+                    ws.mark_manual_review(
+                        &current.job_id,
+                        "Post-attachment screenshot unavailable",
+                        now(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                    current.preview.manual_review.push(
+                        "Post-attachment screenshot unavailable; inspect the file field manually"
+                            .into(),
+                    );
                 }
                 if let Err(error) = attempt_record::capture_page(&mut current.driver, record, now())
                 {

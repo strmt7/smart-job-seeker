@@ -911,6 +911,18 @@ fn source_only_text(metadata: Option<&[u8]>) -> (&'static str, Option<String>, O
     }
 }
 
+/// Persist the immediate post-attachment viewport or report why it is missing.
+pub fn attachment_viewport(
+    record: &mut AttemptRecord,
+    selector: &str,
+    image: Result<String, String>,
+    timestamp: i64,
+) -> Result<(), String> {
+    let image = image.map_err(|_| "Post-attachment screenshot unavailable")?;
+    let name = record.screenshot_with_name(&image)?;
+    record.event(json!({"type":"attachment_viewport","time":timestamp,"selector":selector,"screenshot":format!("screenshots/{name}")}))
+}
+
 impl AttemptRecord {
     pub fn start(
         ws: &Workspace,
@@ -2095,6 +2107,30 @@ mod tests {
         assert_eq!(listing["attempts"][0]["status"], "record_incomplete");
         assert_eq!(listing["attempts"][0]["submitted_by_waypoint"], false);
         assert!(listing["attempts"][0]["submitted"].is_null());
+    }
+
+    #[test]
+    fn missing_attachment_viewport_is_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().into(),
+            sequence: 0,
+        };
+        let error = attachment_viewport(&mut record, "#resume", Err("fixture failure".into()), 1)
+            .unwrap_err();
+        assert!(error.contains("screenshot unavailable"));
+        assert!(!root.path().join("events.jsonl").exists());
+        let image = STANDARD.encode(b"\x89PNG\r\n\x1a\nfictional");
+        assert!(attachment_viewport(&mut record, "#resume", Ok(image.clone()), 1).is_err());
+        fs::create_dir(root.path().join("screenshots")).unwrap();
+        attachment_viewport(&mut record, "#resume", Ok(image), 2).unwrap();
+        let event: Value =
+            serde_json::from_slice(&fs::read(root.path().join("events.jsonl")).unwrap()).unwrap();
+        assert_eq!(event["type"], "attachment_viewport");
+        assert!(root
+            .path()
+            .join(event["screenshot"].as_str().unwrap())
+            .is_file());
     }
 
     #[test]
