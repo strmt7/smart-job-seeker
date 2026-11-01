@@ -1080,3 +1080,7 @@ A resource-gated qwen3.5:9b run inspected a read-only crop around the empty Phon
 ### Field capture context (2026-11-01)
 
 Field-context captures now use up to 240 pixels of available left context within the existing 720-pixel width, while refusing a capture that cannot include the entire target. On the same public Greenhouse field used in the previous visual check, the resulting crop showed the previously clipped neighboring labels in one observation; qwen3.5:9b again reported the empty Phone field correctly in one resource-gated run. Geometry and local-browser viewport tests, web Clippy and formatting passed. Context can still be clipped by viewport edges, target size or overlays; this does not establish general visual accuracy. The model was unloaded, and no form values, clicks or submissions were made.
+
+### Duplicate title levels (2026-11-01)
+
+Candidate title comparison now normalizes standalone uppercase Roman levels I–V to 1–5. For example, `Nurse II` and `Nurse 2` can be flagged for review when the employer candidate checks also match; no records are merged, and different levels do not become identical. The focused fictional test also checks that C++ remains intact. Existing already-indexed records are not automatically rescanned solely by this change, and the bounded candidate scan and other identity limitations remain. The duplicate test group passed (36 passed, one ignored), as did web Clippy and formatting. No external site was contacted or application submitted.

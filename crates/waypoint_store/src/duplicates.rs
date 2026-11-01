@@ -77,11 +77,20 @@ fn title_terms(title: &str) -> BTreeSet<String> {
         .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
         .map(|word| word.trim_start_matches(['+', '#']))
         .filter(|word| word.chars().any(char::is_alphanumeric))
-        .map(|word| match word.to_lowercase().as_str() {
-            "sr" => "senior".into(),
-            "jr" => "junior".into(),
-            "dev" | "developer" | "engineering" => "engineer".into(),
-            other => other.to_owned(),
+        .map(|word| match word {
+            // Uppercase Roman levels are common in job titles. Only use this
+            // for candidate comparison; a shared level does not prove identity.
+            "I" => "1".into(),
+            "II" => "2".into(),
+            "III" => "3".into(),
+            "IV" => "4".into(),
+            "V" => "5".into(),
+            _ => match word.to_lowercase().as_str() {
+                "sr" => "senior".into(),
+                "jr" => "junior".into(),
+                "dev" | "developer" | "engineering" => "engineer".into(),
+                other => other.to_owned(),
+            },
         })
         .collect()
 }
@@ -1740,6 +1749,26 @@ mod tests {
         assert_eq!(pairs.len(), 1);
         assert!(pairs[0].reason.contains("Matching requisition"));
         assert!(store.has_duplicate_hold("a").unwrap());
+    }
+
+    #[test]
+    fn equivalent_roman_and_numeric_levels_are_reviewed_without_merging() {
+        assert_eq!(title_score("Nurse II", "Nurse 2"), 100);
+        assert_eq!(title_score("Nurse III", "Nurse 3"), 100);
+        assert!(title_score("Nurse II", "Nurse 3") < 65);
+        assert!(title_words("C++ Developer").contains("c++"));
+        let mut store = Store::in_memory().unwrap();
+        let first = job("roman", "Nurse II", "Example Hospital", None);
+        let second = job("digit", "Nurse 2", "Example Hospital", None);
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(store.has_duplicate_hold("roman").unwrap());
+        assert!(store.has_duplicate_hold("digit").unwrap());
     }
 
     #[test]
