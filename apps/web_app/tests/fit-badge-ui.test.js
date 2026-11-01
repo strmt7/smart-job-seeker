@@ -34,7 +34,7 @@ const controlsLine = source.split('\n').find(value => value.startsWith('function
 function fakeNode(tag,text='') { return {tag,textContent:text,children:[],listeners:{},append(...nodes){this.children.push(...nodes);},setAttribute(){},addEventListener(event,callback){this.listeners[event]=callback;}}; }
 const context = {fitRubricScore:calculate,element:(tag,text)=>fakeNode(tag,text),document:{createElement:tag=>fakeNode(tag)}};
 const controls = vm.runInNewContext(`(${controlsLine})`,context)(rubric);
-const selects = controls.children.filter(node=>node.tag==='label').map(node=>node.children[0]);
+const selects = controls.children.filter(node=>node.tag==='label' && node.textContent!=='Importance').map(node=>node.children[0]);
 assert.equal(selects.length,3);
 assert.equal(controls.children.at(-1).textContent,'Temporary estimate: 43% · 0–86% range');
 selects[1].value='supported';
