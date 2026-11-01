@@ -1288,6 +1288,36 @@ fn unassociated_questions_are_advisory_and_never_auto_filled() {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn unlabelled_checkbox_group_context_is_advisory() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_unlabelled_checkboxes.html"))
+        .unwrap();
+    let group: Vec<_> = live
+        .schema
+        .fields
+        .iter()
+        .filter(|field| field.label.contains("Have you worked here before?"))
+        .collect();
+    assert_eq!(group.len(), 2);
+    assert!(group
+        .iter()
+        .all(|field| field.sensitive && field.label.starts_with("Possible question (review):")));
+    assert!(live.schema.fields.iter().any(|field| field.label == "A"));
+    assert!(live.schema.fields.iter().any(|field| field.label == "C"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label.contains("Misleading hidden question")));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn unlabelled_radio_groups_are_deduplicated_but_require_manual_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

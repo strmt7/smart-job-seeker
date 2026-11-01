@@ -2322,11 +2322,12 @@ impl CdpDriver {
             .map(str::to_owned))
     }
 
-    /// Read nearby visible context for an unnamed native radio group. The
+    /// Read nearby visible context for an unnamed native choice group. The
     /// result is advisory and the group stays manual regardless of its text.
-    fn rendered_unassociated_radio_question(
+    fn rendered_unassociated_choice_question(
         &mut self,
         node: u64,
+        kind: &str,
     ) -> Result<Option<String>, DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Ok(None);
@@ -2338,15 +2339,15 @@ impl CdpDriver {
         let object = resolved
             .pointer("/object/objectId")
             .and_then(Value::as_str)
-            .ok_or_else(|| DriverError("Radio disappeared".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
-            if (!this.isConnected || !(this instanceof HTMLInputElement) || this.type !== 'radio' || !this.name || !this.form) return null;
+            .ok_or_else(|| DriverError("Choice disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(kind) {
+            if (!this.isConnected || !(this instanceof HTMLInputElement) || this.type !== kind || !['radio','checkbox'].includes(kind) || !this.name || !this.form) return null;
             let branch = this;
             for (let depth = 0; depth < 8; depth++) {
                 const parent = branch.parentElement;
                 if (!parent || ['FORM','FIELDSET','SECTION','BODY'].includes(parent.tagName) || parent.children.length > 20) return null;
                 const controls = parent.querySelectorAll('input:not([type="hidden" i]),textarea,select,button,[contenteditable="true"]');
-                if (controls.length > 20 || Array.from(controls).some(control => !(control instanceof HTMLInputElement) || control.type !== 'radio' || control.name !== this.name || control.form !== this.form)) return null;
+                if (controls.length > 20 || Array.from(controls).some(control => !(control instanceof HTMLInputElement) || control.type !== kind || control.name !== this.name || control.form !== this.form)) return null;
                 if (controls.length >= 2) {
                     const candidates = [];
                     for (const sibling of parent.children) {
@@ -2362,7 +2363,7 @@ impl CdpDriver {
                 branch = parent;
             }
             return null;
-        }"#, "returnByValue":true}));
+        }"#, "arguments":[{"value":kind}], "returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -3931,10 +3932,27 @@ impl CdpDriver {
                     label.chars().take(160).collect::<String>()
                 ));
             }
+            let unassociated_checkbox_group = if input_type == "checkbox"
+                && !field_containers.contains_key(&control.node_id)
+                && unassociated_question_count < 16
+            {
+                unassociated_question_count += 1;
+                self.with_review_timeout(|driver| {
+                    driver.rendered_unassociated_choice_question(control.node_id, "checkbox")
+                })
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+            if let Some(question) = &unassociated_checkbox_group {
+                label = format!("Possible question (review): {question} — {label}");
+            }
             let sensitive = label_unverified
                 || may_be_unannotated_choice
                 || unsupported_native
                 || unassociated_textarea
+                || unassociated_checkbox_group.is_some()
                 || is_sensitive_label(&label)
                 || input_type == "password";
             if input_type == "radio" {
@@ -4020,7 +4038,8 @@ impl CdpDriver {
                         let context = if unassociated_question_count < 16 {
                             unassociated_question_count += 1;
                             self.with_review_timeout(|driver| {
-                                driver.rendered_unassociated_radio_question(control.node_id)
+                                driver
+                                    .rendered_unassociated_choice_question(control.node_id, "radio")
                             })
                             .ok()
                             .flatten()

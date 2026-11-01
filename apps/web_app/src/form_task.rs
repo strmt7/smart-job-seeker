@@ -2152,6 +2152,12 @@ mod tests {
                                 .iter()
                                 .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
                         );
+                        for field in &preview.schema.fields {
+                            println!(
+                                "field: required={} sensitive={} label={:?}",
+                                field.required, field.sensitive, field.label
+                            );
+                        }
                         if preview
                             .manual_review
                             .iter()
