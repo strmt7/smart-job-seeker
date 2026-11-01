@@ -3,7 +3,7 @@
 ## Bounded visual cross-check — 2026-11-01
 
 - The live-value checks following a visual review stop starting new checks after four seconds and use the browser's one-second per-command review timeout. Remaining visual matches are reported as unconfirmed. A fictional driver test covered an exhausted budget and an earlier verification failure. Individual browser operations can contain multiple commands, so four seconds is not a hard wall-clock deadline. No local model or employer site was used.
-- The URL, dimensions and screenshot recaptures around that check now also use the short per-command timeout. The visual-review unit selection passed 22 tests (10 ignored). The local browser endpoint fixture initially failed its two-segment event assertion, then passed on two retries; the intermittent fixture result remains unexplained. These checks do not establish a hard total timeout or live-site behavior.
+- The URL, dimensions and screenshot recaptures around that check now also use the short per-command timeout. The visual-review unit selection passed 22 tests (10 ignored). The local browser endpoint fixture intermittently failed its two-segment assertion: a retained synthetic event log showed Chromium's measured width changing from 1243 to 1258 pixels during capture, followed by a first-tile mismatch on retry. Five subsequent diagnostic runs passed before another failure. The trigger for the mismatch is not established, and capture correctly reported uncertainty rather than a complete record. These checks do not establish a hard total timeout or live-site behavior.
 
 ## Focused visual review of choices — 2026-11-01
 
