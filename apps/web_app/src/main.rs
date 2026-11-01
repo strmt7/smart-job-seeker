@@ -3720,6 +3720,8 @@ fn serve(
             if let Err(error) = control_vision::start(control_vision::Request {
                 id: task_id.clone(),
                 session: current.id.clone(),
+                rank_task: source.to_owned(),
+                control_index: index,
                 job_id: current.job_id.as_str().to_owned(),
                 pending_revision,
                 model,

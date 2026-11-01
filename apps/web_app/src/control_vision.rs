@@ -5,6 +5,8 @@ use std::sync::Mutex;
 struct Task {
     id: String,
     session: String,
+    rank_task: String,
+    control_index: usize,
     job_id: String,
     pending_revision: i64,
     selector: String,
@@ -87,12 +89,14 @@ pub fn pending() -> Result<Value, String> {
     }
     Ok(task.as_ref().map_or_else(
         || json!({"active":false}),
-        |t| json!({"active":true,"task_id":t.id,"session_id":t.session}),
+        |t| json!({"active":true,"task_id":t.id,"session_id":t.session,"rank_task_id":t.rank_task,"control_index":t.control_index}),
     ))
 }
 pub struct Request {
     pub id: String,
     pub session: String,
+    pub rank_task: String,
+    pub control_index: usize,
     pub job_id: String,
     pub pending_revision: i64,
     pub model: String,
@@ -122,6 +126,8 @@ pub fn start(request: Request) -> Result<(), String> {
     let Request {
         id,
         session,
+        rank_task,
+        control_index,
         job_id,
         pending_revision,
         model,
@@ -135,6 +141,8 @@ pub fn start(request: Request) -> Result<(), String> {
     *task = Some(Task {
         id: id.clone(),
         session,
+        rank_task,
+        control_index,
         job_id,
         pending_revision,
         selector,
@@ -192,7 +200,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
             json!({"status":"failed","session_id":task.session,"job_id":task.job_id,"pending_revision":task.pending_revision,"error":error})
         }
         Some(Ok(items)) => {
-            json!({"status":"complete","session_id":task.session,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":comparison(&task.label,task.ambiguous,items)})
+            json!({"status":"complete","session_id":task.session,"rank_task_id":task.rank_task,"control_index":task.control_index,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":comparison(&task.label,task.ambiguous,items)})
         }
     })
 }
@@ -341,6 +349,8 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "orphan-task".into(),
             session: "old-session".into(),
+            rank_task: "rank-task".into(),
+            control_index: 2,
             job_id: "fixture-job".into(),
             pending_revision: 42,
             selector: "button".into(),
@@ -353,6 +363,9 @@ mod tests {
             result: Some(Err("model stopped".into())),
             finished: Some(std::time::Instant::now()),
         });
+        let active = pending().unwrap();
+        assert_eq!(active["rank_task_id"], "rank-task");
+        assert_eq!(active["control_index"], 2);
         collect_orphaned(None).unwrap();
         let result = poll("orphan-task").unwrap();
         assert_eq!(result["status"], "failed");
