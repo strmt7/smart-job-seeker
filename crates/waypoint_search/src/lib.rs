@@ -187,7 +187,12 @@ pub fn check_constraints_with_remote(
         } else if !c
             .locations
             .iter()
-            .any(|allowed| observed.eq_ignore_ascii_case(allowed.trim()))
+            .filter(|allowed| !allowed.trim().is_empty())
+            .any(|allowed| {
+                observed
+                    .lines()
+                    .any(|candidate| candidate.trim().eq_ignore_ascii_case(allowed.trim()))
+            })
         {
             let outcome = if remote.is_none() {
                 ConstraintOutcome::Unknown(format!("location '{location}' is outside the allowed set and remote status is not established"))
@@ -436,6 +441,31 @@ mod tests {
         assert!(
             check_constraints_with_remote(&locations, &[], None, None, None, "Zurich").is_empty()
         );
+    }
+
+    #[test]
+    fn location_constraints_accept_any_stated_location() {
+        let constraints = CampaignConstraints {
+            locations: vec!["San Francisco, CA".into()],
+            ..Default::default()
+        };
+        let listed = "New York, NY\nSan Francisco, CA";
+        assert!(
+            check_constraints_with_remote(&constraints, &[], None, None, Some(false), listed)
+                .is_empty()
+        );
+        let different = CampaignConstraints {
+            locations: vec!["London".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints_with_remote(&different, &[], None, None, Some(false), listed)[0].1,
+            ConstraintOutcome::Fail(_)
+        ));
+        assert!(matches!(
+            check_constraints_with_remote(&different, &[], None, None, None, listed)[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
     }
 
     #[test]

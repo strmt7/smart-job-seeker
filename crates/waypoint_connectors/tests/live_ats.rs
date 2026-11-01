@@ -111,3 +111,39 @@ fn captured_lever_descriptions_include_requirement_sections() {
     assert!(checked > 0);
     println!("Checked requirement sections in {checked} captured public postings");
 }
+
+#[test]
+#[ignore = "requires a separately captured public Lever API response"]
+fn captured_lever_locations_preserve_all_alternatives() {
+    let body =
+        std::fs::read_to_string(std::env::var("WAYPOINT_LEVER_CAPTURE").expect("capture path"))
+            .unwrap();
+    let raw: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    let parsed = parse_lever("spotify", &body).unwrap();
+    let mut multiple = 0;
+    for (row, source) in parsed.iter().zip(raw.iter()) {
+        let Some(locations) = source
+            .pointer("/categories/allLocations")
+            .and_then(|value| value.as_array())
+        else {
+            continue;
+        };
+        if locations.len() > 1 {
+            multiple += 1;
+        }
+        for location in locations {
+            let Some(text) = location.as_str() else {
+                continue;
+            };
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !text.is_empty() {
+                assert!(row
+                    .location
+                    .lines()
+                    .any(|actual| actual.eq_ignore_ascii_case(&text)));
+            }
+        }
+    }
+    assert!(multiple > 0);
+    println!("Checked {multiple} captured postings with multiple locations");
+}

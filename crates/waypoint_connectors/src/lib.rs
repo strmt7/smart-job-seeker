@@ -106,6 +106,8 @@ struct LeverList {
 struct LeverCategories {
     #[serde(default)]
     location: String,
+    #[serde(default, rename = "allLocations")]
+    all_locations: Option<Vec<String>>,
     #[serde(default, rename = "workplaceType")]
     workplace_type: String,
 }
@@ -313,6 +315,22 @@ fn lever_description(job: &LeverPosting) -> Option<String> {
     }
 }
 
+fn lever_locations(categories: &LeverCategories) -> String {
+    let mut locations = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for value in
+        std::iter::once(&categories.location).chain(categories.all_locations.iter().flatten())
+    {
+        // Preserve each source location as one line; whitespace in a source
+        // value cannot manufacture an additional alternative.
+        let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !normalized.is_empty() && seen.insert(normalized.to_lowercase()) {
+            locations.push(normalized);
+        }
+    }
+    locations.join("\n")
+}
+
 /// Parse a Lever postings payload.
 pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
     let jobs: Vec<LeverPosting> = serde_json::from_str(payload)
@@ -337,6 +355,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
                 _ => None,
             });
             let description = lever_description(&j);
+            let location = lever_locations(&j.categories);
             RawPosting {
                 identity: identity_key("lever", Some(&j.id), &j.hosted_url),
                 source: "lever".into(),
@@ -345,7 +364,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
                 employer_namespace: company.to_string(),
                 title: j.text,
                 employer: company.to_string(),
-                location: j.categories.location,
+                location,
                 remote: evidence == Some(true),
                 remote_evidence: evidence,
                 posted_at: j.created_at.map(|ms| format!("unix:{ms}")),
@@ -623,6 +642,13 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].remote);
         assert_eq!(out[0].identity, "lever::req::abc-123");
+    }
+
+    #[test]
+    fn lever_preserves_all_location_alternatives() {
+        let payload = r#"[{"id":"a","text":"Engineer","categories":{"location":"New York, NY","allLocations":["New York, NY","San Francisco, CA","  san francisco, CA "]}}]"#;
+        let rows = parse_lever("example", payload).unwrap();
+        assert_eq!(rows[0].location, "New York, NY\nSan Francisco, CA");
     }
 
     #[test]
