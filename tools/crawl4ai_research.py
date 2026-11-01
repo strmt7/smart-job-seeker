@@ -179,7 +179,8 @@ def retain_capture(path: Path, url: str, result, row: dict) -> dict:
     return {"capture": path.name, "capture_sha256": hashlib.sha256(content).hexdigest()}
 
 
-async def fetch(owner, url: str, marker: str = "", capture: Path | None = None) -> dict:
+async def fetch(owner, url: str, marker: str = "", capture: Path | None = None,
+                settle_seconds: float = 0.1) -> dict:
     """Purpose: Crawl with finite lifetime. Inputs: Owner/URL/marker/new capture. Outputs: Diagnosis and evidence."""
     from crawl4ai import CacheMode, CrawlerRunConfig
 
@@ -187,7 +188,8 @@ async def fetch(owner, url: str, marker: str = "", capture: Path | None = None) 
     row = {"url": url, "success": False}
     result = None
     try:
-        config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, check_robots_txt=True)
+        config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, check_robots_txt=True,
+                                  delay_before_return_html=settle_seconds, page_timeout=30000)
         result = await asyncio.wait_for(owner.arun(url=url, config=config), timeout=45)
         row.update(inspect_result(result, marker))
     except TimeoutError as error:
@@ -247,7 +249,7 @@ async def execute(args) -> int:
         return 0 if passed else 1
     if args.command == "capture":
         if (len(args.url) > 2048 or any(ord(character) < 32 for character in args.url)
-                or len(args.marker) > 200):
+                or len(args.marker) > 200 or not 0 <= args.settle_seconds <= 10):
             raise ValueError("Research URL or expected marker exceeds its limit")
         parsed = urlsplit(args.url)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
@@ -265,7 +267,7 @@ async def execute(args) -> int:
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
             async with crawler() as owner:
-                row = await fetch(owner, args.url, args.marker, destination)
+                row = await fetch(owner, args.url, args.marker, destination, args.settle_seconds)
         except Exception as error:
             row = {"url": args.url, "success": False, "failure_category": "provider_error",
                    "error": f"{type(error).__name__}: {error}"[:500]}
@@ -317,6 +319,8 @@ def main() -> int:
     capture.add_argument("url")
     capture.add_argument("--capture", type=Path, required=True, help="New native result file; never overwrite")
     capture.add_argument("--marker", default="", help="Optional expected content marker")
+    capture.add_argument("--settle-seconds", type=float, default=0.1,
+                         help="Bounded wait after page load for client rendering (0 to 10 seconds)")
     qualify = commands.add_parser("qualify")
     qualify.add_argument("--receipt", type=Path, required=True, help="New local JSON evidence file; never overwrite")
     return asyncio.run(execute(parser.parse_args()))

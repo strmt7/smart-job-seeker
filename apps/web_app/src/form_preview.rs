@@ -2809,10 +2809,7 @@ mod tests {
             .expect("set the public application URL");
         let model =
             std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").expect("set the local model name");
-        assert_eq!(
-            crate::resident_model().unwrap().as_deref(),
-            Some(model.as_str())
-        );
+        let (addr, context) = crate::visual_review::benchmark_target(&model).unwrap();
         let parsed = url::Url::parse(&url).unwrap();
         let source = crate::manual_job::source(parsed.host_str().unwrap());
         crate::form_links::check_job_and_destination(
@@ -2824,10 +2821,19 @@ mod tests {
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
         assert!(!live.schema.fields.is_empty(), "no fields detected");
-        let mut llm =
-            waypoint_inference::ollama::OllamaInference::new("http://127.0.0.1:11434", model)
-                .unwrap()
-                .with_resident_context();
+        let llm =
+            waypoint_inference::ollama::OllamaInference::new(&format!("http://{addr}"), &model)
+                .unwrap();
+        let llm = if let Some(context) = context {
+            llm.with_context_window(context).unwrap()
+        } else {
+            llm.with_resident_context()
+        };
+        let checked_model = model.clone();
+        let mut llm = crate::resident_inference::ResidentInference::new(llm, model, move || {
+            crate::visual_review::benchmark_target(&checked_model)
+                .map(|_| Some(checked_model.clone()))
+        });
         let preview = suggest_for_live_form(live.clone(), &mut llm, &json!({"full_name":"Avery Example", "first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123", "city":"Example City", "linkedin":"https://example.invalid/avery"})).unwrap();
         for field in &preview.schema.fields {
             let value = preview

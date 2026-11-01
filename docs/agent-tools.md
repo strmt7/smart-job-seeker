@@ -40,6 +40,9 @@ public page and retain evidence, choose a new output file, for example:
 py -3.13 -B tools/crawl4ai_tool.py capture https://example.org/ --capture target/research/example.native.json
 ```
 
+For a client-rendered page, `--settle-seconds 5` adds a bounded wait after page
+load; the maximum is 10 seconds and the overall crawl remains time-limited.
+
 Captures include the native result, status, error, provider version and digest.
 They are never overwritten. The adapter checks robots, uses a bounded timeout,
 and does not enable stealth, personal browser profiles or external LLMs. Keep

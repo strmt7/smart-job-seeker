@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Read-only Ashby application preview — 2026-11-01
+
+- The public Ashby board API returned 74 listings (raw response SHA-256 `5cd3b481cf94f61fbda8d83570dc4977726fc676c11f5cf47352ce4dc677fafb`). The selected Engineering Manager application page initially produced an empty crawler extraction; a new optional, bounded post-load wait produced substantive content after five seconds (native capture SHA-256 `7c0af163a784b3926123ca13ddfd54181d3b2bcdb952a6f9db62ff9997f7a2ca`). The unsuccessful initial capture is retained separately. These counts and the posting are point-in-time observations.
+- Waypoint's browser detected nine fields, one incomplete custom-choice inventory and a CAPTCHA wall. An isolated CPU run of `gemma4:12b-it-q4_K_M` with a fictional profile suggested name, email and LinkedIn and flagged four other detected text fields for manual review, including three open-ended experience questions. The page contains other questions not offered as ordinary detected fields; this is incomplete form coverage. The preview test took 51.81 seconds after preload, with at least 16.05 GiB available RAM. No values were entered, no choices clicked, no files uploaded and no application submitted. Native evidence is retained under `target/research/` and `target/model-eval/isolated-gemma-ashby-preview-20261101`.
+
 ## Agent tools and Rust coverage — 2026-11-01
 
 - Added repository-local agent skills, an isolated source-bound CocoIndex adapter,

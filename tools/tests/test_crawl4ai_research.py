@@ -28,6 +28,8 @@ class CaptureTests(unittest.TestCase):
             row = asyncio.run(research.fetch(owner, 'https://example.org/', 'public page', path))
             self.assertTrue(row['success'])
             self.assertTrue(owner.arun.call_args.kwargs['config']['check_robots_txt'])
+            self.assertEqual(owner.arun.call_args.kwargs['config']['page_timeout'], 30000)
+            self.assertEqual(owner.arun.call_args.kwargs['config']['delay_before_return_html'], 0.1)
             capture = json.loads(path.read_text(encoding='utf-8'))
             self.assertEqual(capture['provider_version'], 'fixture')
             self.assertEqual(capture['native_result']['markdown'], text)
@@ -39,11 +41,15 @@ class CaptureTests(unittest.TestCase):
                 patch.object(research, 'crawler', side_effect=RuntimeError('fixture failure')), \
                 patch.object(research.importlib.metadata, 'version', return_value='fixture'):
             path = Path(temporary) / 'failure.json'
-            args = SimpleNamespace(command='capture', url='https://example.org/', marker='', capture=path)
+            args = SimpleNamespace(command='capture', url='https://example.org/', marker='', capture=path, settle_seconds=0.1)
             self.assertEqual(asyncio.run(research.execute(args)), 1)
             self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['diagnosis']['failure_category'], 'provider_error')
             args.url = 'https://127.0.0.1/private'
             with self.assertRaisesRegex(ValueError, 'nonpublic'):
+                asyncio.run(research.execute(args))
+            args.url = 'https://example.org/'
+            args.settle_seconds = 11
+            with self.assertRaisesRegex(ValueError, 'limit'):
                 asyncio.run(research.execute(args))
 
 
