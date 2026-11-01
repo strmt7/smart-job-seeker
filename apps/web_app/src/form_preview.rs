@@ -490,16 +490,29 @@ pub fn apply_reviewed_text_fields_with_replacements(
                 value: mapping.value.clone(),
             },
         };
-        driver
-            .execute(&command)
-            .map_err(|e| format!("Prefill stopped; review the form: {e}"))?;
-        completed.push(serde_json::json!({"selector":field.selector,"label":field.label}));
+        execute_and_verify_field(driver, preview, field, &command, completed)?;
     }
+    // Check again after all writes because later fields can change earlier ones.
     for mapping in &preview.suggestions {
         verify_filled_field(driver, preview, &mapping.field_selector)
             .map_err(|error| format!("After filling, {error}"))?;
     }
     Ok(preview.suggestions.len())
+}
+
+fn execute_and_verify_field(
+    driver: &mut dyn BrowserDriver,
+    preview: &FormPreview,
+    field: &waypoint_applications::form_mapping::FormField,
+    command: &BrowserCommand,
+    completed: &mut Vec<Value>,
+) -> Result<(), String> {
+    driver
+        .execute(command)
+        .map_err(|e| format!("Prefill stopped; review the form: {e}"))?;
+    completed.push(serde_json::json!({"selector":field.selector,"label":field.label}));
+    verify_filled_field(driver, preview, &field.selector)
+        .map_err(|error| format!("After filling, {error}"))
 }
 
 /// Bounded live-value check after navigation. A failure or budget cutoff is
@@ -1129,6 +1142,79 @@ mod tests {
         assert_eq!(failed.verified, 1);
         assert_eq!(failed.unverified, 32);
         assert_eq!(failed.failed_labels, vec!["Field 1"]);
+    }
+
+    #[test]
+    fn failed_immediate_verification_stops_later_field_commands() {
+        struct RejectingDriver {
+            written: Vec<String>,
+        }
+        impl BrowserDriver for RejectingDriver {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                unreachable!()
+            }
+            fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
+                if let BrowserCommand::Fill { selector, .. } = command {
+                    self.written.push(selector.clone());
+                }
+                Ok(())
+            }
+            fn verify_text_value(&mut self, _: &str, _: &str) -> Result<(), DriverError> {
+                Err(DriverError("site rejected value".into()))
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                unreachable!()
+            }
+        }
+        let fields: Vec<_> = ["first", "second"]
+            .iter()
+            .map(|name| waypoint_applications::form_mapping::FormField {
+                selector: format!("#{name}"),
+                label: name.to_string(),
+                field_type: FormFieldType::Text,
+                required: true,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: None,
+                autocomplete: None,
+            })
+            .collect();
+        let suggestions = fields
+            .iter()
+            .map(|field| ProposedMapping {
+                field_selector: field.selector.clone(),
+                value: PacketValue::Text("Example".into()),
+            })
+            .collect();
+        let preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions,
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut driver = RejectingDriver { written: vec![] };
+        let mut completed = vec![];
+        let outcome: Result<(), String> = preview.suggestions.iter().try_for_each(|mapping| {
+            let field = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == mapping.field_selector)
+                .unwrap();
+            let command = BrowserCommand::Fill {
+                selector: mapping.field_selector.clone(),
+                value: mapping.value.clone(),
+            };
+            execute_and_verify_field(&mut driver, &preview, field, &command, &mut completed)
+        });
+        assert!(outcome.is_err());
+        assert_eq!(driver.written, vec!["#first"]);
+        assert_eq!(completed.len(), 1);
     }
 
     #[test]
