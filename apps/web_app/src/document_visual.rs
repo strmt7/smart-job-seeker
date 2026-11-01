@@ -123,6 +123,12 @@ pub fn needs_followup(review: &Value) -> bool {
     else {
         return true;
     };
+    if report["complete"] != true
+        || report["pages_inspected"].as_u64() != Some(pages)
+        || !report["error"].is_null()
+    {
+        return true;
+    }
     let Some(findings) = report["findings"]
         .as_array()
         .filter(|findings| findings.len() == pages as usize)
@@ -303,8 +309,23 @@ mod tests {
     }
     #[test]
     fn followup_distinguishes_completed_review_from_clean_observations() {
-        let clean = json!({"report":{"pages":1,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}]}});
+        let clean = json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}]}});
         assert!(!needs_followup(&clean));
+        for (key, value) in [
+            ("complete", json!(false)),
+            ("pages_inspected", json!(0)),
+            ("error", json!("Render failed")),
+        ] {
+            let mut inconsistent = clean.clone();
+            inconsistent["report"][key] = value;
+            assert!(needs_followup(&inconsistent));
+        }
+        let mut incomplete_metadata = clean.clone();
+        incomplete_metadata["report"]
+            .as_object_mut()
+            .unwrap()
+            .remove("complete");
+        assert!(needs_followup(&incomplete_metadata));
         for page in [
             json!({"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Clipped"}],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
             json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":1}}),
@@ -312,7 +333,7 @@ mod tests {
             json!({"page":2,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
         ] {
             assert!(needs_followup(
-                &json!({"report":{"pages":1,"findings":[page]}})
+                &json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[page]}})
             ));
         }
         assert!(needs_followup(&json!({"report":{"pages":1,"findings":[]}})));
