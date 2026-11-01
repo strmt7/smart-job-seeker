@@ -880,3 +880,70 @@ document.querySelector('#settings-license').addEventListener('click',()=>license
 document.querySelector('.settings-nav a[href="#local-tools"]').addEventListener('click',()=>{document.querySelector('#local-tools').open=true;});
 
 for(const link of document.querySelectorAll('.settings-nav a[href="#profile-section"],.settings-nav a[href="#documents-section"]'))link.addEventListener('click',event=>{event.preventDefault();history.replaceState(null,'',link.hash);syncWorkspaceNavigation();document.querySelector('aside').scrollTop=0;});
+
+const experiencePanel=document.querySelector('#experience-panel');
+const experienceForm=document.querySelector('#experience-form');
+const experienceStatus=document.querySelector('#experience-status');
+const experienceList=document.querySelector('#experience-list');
+const relatedExperienceList=document.querySelector('#experience-related-list');
+const relatedExperienceStatus=document.querySelector('#experience-related-status');
+let relatedExperienceRequest=0;
+function clearRelatedExperiences(){relatedExperienceRequest++;relatedExperienceList.replaceChildren();relatedExperienceStatus.textContent='';}
+experienceForm.addEventListener('change',clearRelatedExperiences);
+document.querySelector('#experience-related').addEventListener('click',async()=>{
+ const fields=new FormData(experienceForm),request=++relatedExperienceRequest;
+ relatedExperienceList.replaceChildren();relatedExperienceStatus.textContent='Looking for related lessons…';
+ try{
+  const data=await api('/api/form-experiences/related',{stage:fields.get('stage'),control:fields.get('control'),platform:fields.get('platform')||null});
+  if(request!==relatedExperienceRequest)return;
+  for(const item of data.experiences){
+   const e=item.experience,label=x=>String(x||'unknown').replaceAll('_',' ');
+   relatedExperienceList.append(element('p',`${label(e.observation)} → ${label(e.response)} · reported outcome: ${label(e.outcome)} (${item.same_platform?'same platform hint':'platform not matched'})`,'review-label'));
+  }
+  relatedExperienceStatus.textContent=data.experiences.length?'Related observations are hints; check the current form. Search again after changing or removing a lesson.':'No related lessons found.';
+ }catch(error){if(request===relatedExperienceRequest)relatedExperienceStatus.textContent=`Could not find related lessons: ${error.message}`;}
+});
+async function loadExperiences(){
+ experienceStatus.textContent='Loading lessons…';
+ try{
+  const data=await api('/api/form-experiences/list',{});
+  experienceList.replaceChildren();
+  for(const item of data.experiences){
+   const row=element('div',null,'notice experience-record');
+   const e=item.experience;
+   const label=x=>String(x||'unknown').replaceAll('_',' ');
+   row.append(element('p',`${label(e.stage)} · ${label(e.control)} · ${label(e.platform)}: ${label(e.observation)} → ${label(e.response)} · reported outcome: ${label(e.outcome)}`));
+   const editLabel=element('label','Correct reported outcome');
+   const edit=document.createElement('select');
+   for(const [value,text] of [['unknown','Not established'],['helped','Helped in this case'],['did_not_help','Did not help']]){const option=document.createElement('option');option.value=value;option.textContent=text;edit.append(option);}
+   edit.value=e.outcome;editLabel.append(edit);row.append(editLabel);
+   const saveOutcome=element('button','Save corrected outcome');saveOutcome.type='button';
+   saveOutcome.addEventListener('click',async()=>{
+    saveOutcome.disabled=remove.disabled=true;
+    try{await api('/api/form-experiences/correct-outcome',{id:item.id,revision:item.revision,outcome:edit.value,confirmed:true});clearRelatedExperiences();await loadExperiences();}
+    catch(error){experienceStatus.textContent=error.message;saveOutcome.disabled=remove.disabled=false;}
+   });
+   row.append(saveOutcome);
+   const remove=element('button','Remove lesson');remove.type='button';
+   remove.addEventListener('click',async()=>{
+    if(!window.confirm('Remove this lesson from future use? Old encrypted backups may still contain it.'))return;
+    remove.disabled=true;
+    try{await api('/api/form-experiences/revoke',{id:item.id,revision:item.revision,confirmed:true});clearRelatedExperiences();await loadExperiences();}
+    catch(error){experienceStatus.textContent=error.message;remove.disabled=false;}
+   });
+   row.append(remove);experienceList.append(row);
+  }
+  experienceStatus.textContent=data.experiences.length?`${data.experiences.length} reviewed lessons. Relevant lessons may be supplied to the local model during form inspection; verify every suggestion.`:'No reviewed lessons yet.';
+ }catch(error){experienceStatus.textContent=`Could not load lessons: ${error.message}`;}
+}
+experiencePanel.addEventListener('toggle',()=>{if(experiencePanel.open)loadExperiences();});
+experienceForm.addEventListener('submit',async event=>{
+ event.preventDefault();const fields=new FormData(experienceForm),button=experienceForm.querySelector('button');
+ if(!fields.has('confirmed'))return;
+ button.disabled=true;experienceStatus.textContent='Saving lesson…';
+ try{
+  await api('/api/form-experiences/save',{confirmed:true,experience:{stage:fields.get('stage'),control:fields.get('control'),platform:fields.get('platform')||null,observation:fields.get('observation'),response:fields.get('response'),outcome:fields.get('outcome')}});
+  experienceForm.elements.confirmed.checked=false;clearRelatedExperiences();await loadExperiences();
+ }catch(error){experienceStatus.textContent=`Could not save lesson: ${error.message}`;}
+ finally{button.disabled=false;}
+});

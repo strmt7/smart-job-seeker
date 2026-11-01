@@ -390,12 +390,16 @@ const MIGRATIONS: &[&str] = &[
     "INSERT INTO meta(key,value)
        SELECT 'duplicate_title_level_cursor','' WHERE EXISTS (SELECT 1 FROM jobs LIMIT 1);
      UPDATE meta SET value='42' WHERE key='schema_version';",
+    // v43 — user-reviewed experiences are always sealed before storage.
+    "CREATE TABLE form_experiences(id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>0), sealed_content BLOB);
+     UPDATE meta SET value='43' WHERE key='schema_version';",
 ];
 
 pub mod documents;
 pub mod duplicates;
 pub mod email_handoff;
 pub mod fit_assessments;
+pub mod form_experiences;
 pub mod generated_drafts;
 pub mod job_capture;
 pub mod mail_credentials;
@@ -1741,7 +1745,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "42");
+        assert_eq!(version, "43");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

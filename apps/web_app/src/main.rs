@@ -26,6 +26,7 @@ mod duplicate_compare;
 mod duplicate_search;
 mod email_draft;
 pub mod email_worker;
+mod experience_inference;
 mod extract_task;
 mod fit_task;
 mod form_links;
@@ -243,6 +244,17 @@ fn random_id() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| format!("random id generation failed: {e}"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn experience_snapshot_current(
+    revisions: &[(String, u64)],
+    current: &[waypoint_workspace::form_experience::ExperienceMatch],
+) -> bool {
+    revisions.iter().all(|(id, revision)| {
+        current
+            .iter()
+            .any(|item| item.id == *id && item.revision == *revision && item.experience.enabled)
+    })
 }
 
 fn draft_request_id(value: &Value) -> Result<Option<String>, String> {
@@ -2018,6 +2030,88 @@ fn serve(
     let body: Value = serde_json::from_slice(&buf[header_end..header_end + length])
         .map_err(|_| "invalid JSON")?;
     match path.as_str() {
+        "/api/form-experiences/list" => {
+            let entries = ws.form_experiences().map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"experiences":entries}));
+        }
+        "/api/form-experiences/related" => {
+            use waypoint_workspace::form_experience::{Control, Platform, Stage};
+            let stage: Stage =
+                serde_json::from_value(body["stage"].clone()).map_err(|_| "Invalid stage")?;
+            let control: Control =
+                serde_json::from_value(body["control"].clone()).map_err(|_| "Invalid control")?;
+            let platform: Option<Platform> =
+                serde_json::from_value(body["platform"].clone()).map_err(|_| "Invalid platform")?;
+            let entries = ws
+                .related_form_experiences(stage, control, platform)
+                .map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"experiences":entries}));
+        }
+        "/api/form-experiences/save" => {
+            use waypoint_workspace::form_experience::Experience;
+            if body["confirmed"] != true {
+                return Err("Review and confirm this experience before saving".into());
+            }
+            let mut value = body["experience"].clone();
+            let object = value.as_object_mut().ok_or("Missing experience")?;
+            object.insert("version".into(), json!(1));
+            object.insert("reviewed".into(), json!(true));
+            object.insert("enabled".into(), json!(true));
+            object.insert("observed_at".into(), json!(now()));
+            let experience: Experience =
+                serde_json::from_value(value).map_err(|_| "Invalid experience categories")?;
+            let id = random_id()?;
+            let revision = ws
+                .save_form_experience(&id, 0, &experience)
+                .map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"id":id,"revision":revision}));
+        }
+        "/api/form-experiences/revoke" => {
+            if form_task::busy()
+                || session
+                    .as_ref()
+                    .is_some_and(|s| s.created.elapsed() <= s.ttl)
+            {
+                return Err("Close the active form review before changing lessons".into());
+            }
+            if body["confirmed"] != true {
+                return Err("Confirm removal before revoking this experience".into());
+            }
+            let id = body["id"].as_str().ok_or("Missing experience ID")?;
+            let revision = body["revision"]
+                .as_u64()
+                .ok_or("Missing experience revision")?;
+            if !ws
+                .revoke_form_experience(id, revision)
+                .map_err(|e| e.to_string())?
+            {
+                return Err("Experience changed or was already removed; reload".into());
+            }
+            json_reply(stream, "200 OK", json!({"ok":true}));
+        }
+        "/api/form-experiences/correct-outcome" => {
+            use waypoint_workspace::form_experience::Outcome;
+            if form_task::busy()
+                || session
+                    .as_ref()
+                    .is_some_and(|s| s.created.elapsed() <= s.ttl)
+            {
+                return Err("Close the active form review before changing lessons".into());
+            }
+            if body["confirmed"] != true {
+                return Err("Confirm the corrected outcome".into());
+            }
+            let id = body["id"].as_str().ok_or("Missing experience ID")?;
+            let revision = body["revision"]
+                .as_u64()
+                .ok_or("Missing experience revision")?;
+            let outcome: Outcome =
+                serde_json::from_value(body["outcome"].clone()).map_err(|_| "Invalid outcome")?;
+            let revision = ws
+                .correct_form_experience_outcome(id, revision, outcome)
+                .map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"revision":revision}));
+        }
         "/api/runtime-start/start" => {
             let id = random_id()?;
             runtime_start::start(id.clone())?;
@@ -4075,6 +4169,19 @@ fn serve(
             }
             let visible = body["visible"].as_bool().unwrap_or(false);
             let model = resident_model().ok().flatten();
+            let experiences = if model.is_some() {
+                use waypoint_workspace::form_experience::{Control, Stage};
+                let mut items = ws
+                    .related_form_experiences(Stage::EnterInformation, Control::Text, None)
+                    .map_err(|e| e.to_string())?;
+                items.extend(
+                    ws.related_form_experiences(Stage::EnterInformation, Control::Choice, None)
+                        .map_err(|e| e.to_string())?,
+                );
+                items
+            } else {
+                Vec::new()
+            };
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(text) => {
                     serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?
@@ -4091,7 +4198,7 @@ fn serve(
                 profile,
                 model,
                 visible,
-                pending_revision,
+                (pending_revision, experiences),
             ) {
                 if let Err(cleanup) = form_task::finish_pending(ws, &id, &task_id, pending_revision)
                 {
@@ -4117,6 +4224,7 @@ fn serve(
                 url,
                 profile_digest,
                 visible,
+                experience_revisions,
                 result,
             } = finished;
             let (mut driver, mut preview) = match result {
@@ -4144,6 +4252,13 @@ fn serve(
                     return Ok(());
                 }
             };
+            if !experience_revisions.is_empty() {
+                let current = ws.form_experiences().map_err(|e| e.to_string())?;
+                if !experience_snapshot_current(&experience_revisions, &current) {
+                    preview.suggestions.clear();
+                    preview.manual_review.push("A lesson changed during inspection; suggestions were discarded. Inspect again.".into());
+                }
+            }
             let job = ws
                 .job(&job_id)
                 .map_err(|e| e.to_string())?
@@ -10196,6 +10311,129 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
         let facts = worker.join().unwrap();
         format!("{response}\nfacts={facts}")
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reviewed_form_experience_api_persists_and_revokes() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let path = dir.path().to_owned();
+        let worker = std::thread::spawn(move || {
+            let mut workspace = Workspace::open(&path).unwrap();
+            let mut session = None;
+            for _ in 0..10 {
+                let (mut stream, _) = listener.accept().unwrap();
+                if let Err(error) = serve(
+                    &mut stream,
+                    &mut workspace,
+                    &mut session,
+                    "test-token",
+                    port,
+                ) {
+                    json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+                }
+            }
+        });
+        let send = |path: &str, value: Value| -> Value {
+            let body = value.to_string();
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream,"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let experience = json!({"stage":"enter_information","control":"text","platform":"lever","observation":"value_changed","response":"verify_value_again","outcome":"did_not_help"});
+        assert!(send(
+            "/api/form-experiences/save",
+            json!({"experience":experience})
+        )["error"]
+            .is_string());
+        let saved = send(
+            "/api/form-experiences/save",
+            json!({"confirmed":true,"experience":experience}),
+        );
+        let listed = send("/api/form-experiences/list", json!({}));
+        assert_eq!(listed["experiences"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["experiences"][0]["id"], saved["id"]);
+        assert_eq!(
+            listed["experiences"][0]["experience"]["outcome"],
+            "did_not_help"
+        );
+        let related = send(
+            "/api/form-experiences/related",
+            json!({"stage":"enter_information","control":"text","platform":"lever"}),
+        );
+        assert_eq!(related["experiences"][0]["id"], saved["id"]);
+        assert_eq!(related["experiences"][0]["same_platform"], true);
+        let corrected = send(
+            "/api/form-experiences/correct-outcome",
+            json!({"confirmed":true,"id":saved["id"],"revision":saved["revision"],"outcome":"helped"}),
+        );
+        assert_eq!(corrected["revision"], 2);
+        assert!(send("/api/form-experiences/correct-outcome", json!({"confirmed":true,"id":saved["id"],"revision":saved["revision"],"outcome":"unknown"}))["error"].is_string());
+        let updated = send("/api/form-experiences/list", json!({}));
+        assert_eq!(updated["experiences"][0]["experience"]["outcome"], "helped");
+        assert_eq!(
+            updated["experiences"][0]["experience"]["observed_at"],
+            listed["experiences"][0]["experience"]["observed_at"]
+        );
+        assert_eq!(
+            send(
+                "/api/form-experiences/revoke",
+                json!({"confirmed":true,"id":saved["id"],"revision":corrected["revision"]})
+            )["ok"],
+            true
+        );
+        assert!(send("/api/form-experiences/list", json!({}))["experiences"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(send(
+            "/api/form-experiences/related",
+            json!({"stage":"enter_information","control":"text","platform":"lever"})
+        )["experiences"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn changed_or_revoked_experience_invalidates_snapshot() {
+        use waypoint_workspace::form_experience::{
+            Control, Experience, ExperienceMatch, Observation, Outcome, Response, Stage,
+        };
+        let item = ExperienceMatch {
+            id: "fixture".into(),
+            revision: 1,
+            same_platform: false,
+            experience: Experience {
+                version: 1,
+                reviewed: true,
+                enabled: true,
+                observed_at: 1,
+                platform: None,
+                stage: Stage::EnterInformation,
+                control: Control::Text,
+                observation: Observation::ValueChanged,
+                response: Response::VerifyValueAgain,
+                outcome: Outcome::Unknown,
+            },
+        };
+        let snapshot = vec![(item.id.clone(), item.revision)];
+        assert!(experience_snapshot_current(
+            &snapshot,
+            std::slice::from_ref(&item)
+        ));
+        let mut changed = item.clone();
+        changed.revision = 2;
+        assert!(!experience_snapshot_current(&snapshot, &[changed]));
+        let mut disabled = item;
+        disabled.experience.enabled = false;
+        assert!(!experience_snapshot_current(&snapshot, &[disabled]));
+        assert!(!experience_snapshot_current(&snapshot, &[]));
     }
 
     #[test]

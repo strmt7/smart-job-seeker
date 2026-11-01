@@ -195,3 +195,6 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 @media(max-width:850px){.jobs>.reviewed-sort{margin-left:20px;margin-right:20px}}
 
 .reinspection-text{white-space:pre-wrap;overflow-wrap:anywhere}
+#experience-form .experience-confirm{display:flex;align-items:flex-start;gap:8px;flex-basis:100%;line-height:1.4}
+#experience-form .experience-confirm input{width:auto;flex:none;margin:2px 0 0}
+#experience-list .experience-record button{margin:8px 8px 0 0}

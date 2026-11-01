@@ -4,6 +4,7 @@ use std::sync::{mpsc, Mutex};
 use waypoint_applications::driver::BrowserDriver;
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_inference::OllamaInference;
+use waypoint_workspace::form_experience::ExperienceMatch;
 
 #[cfg(test)]
 pub(crate) struct CrossOriginFixture {
@@ -175,6 +176,7 @@ pub struct Finished {
     pub url: String,
     pub profile_digest: Sha256Digest,
     pub visible: bool,
+    pub experience_revisions: Vec<(String, u64)>,
     pub result: Result<(waypoint_browser::CdpDriver, form_preview::FormPreview), String>,
 }
 struct Task {
@@ -185,6 +187,7 @@ struct Task {
     url: String,
     profile_digest: Sha256Digest,
     visible: bool,
+    experience_revisions: Vec<(String, u64)>,
     failure: Option<String>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -239,8 +242,9 @@ pub fn start(
     profile: serde_json::Value,
     model: Option<String>,
     visible: bool,
-    pending_revision: i64,
+    review: (i64, Vec<ExperienceMatch>),
 ) -> Result<(), String> {
+    let (pending_revision, experiences) = review;
     let (model, lease, no_model_reason) = match model {
         Some(model) => match doc_suggest::lease() {
             Ok(lease) => (Some(model), Some(lease), String::new()),
@@ -254,6 +258,10 @@ pub fn start(
     }
     let (sender, receiver) = mpsc::channel();
     let profile_digest = Sha256Digest::of(&profile.to_string());
+    let experience_revisions: Vec<_> = experiences
+        .iter()
+        .map(|item| (item.id.clone(), item.revision))
+        .collect();
     *task = Some(Task {
         id,
         receiver,
@@ -262,6 +270,7 @@ pub fn start(
         url: url.clone(),
         profile_digest: profile_digest.clone(),
         visible,
+        experience_revisions: experience_revisions.clone(),
         failure: None,
     });
     drop(task);
@@ -280,7 +289,12 @@ pub fn start(
                     model,
                     crate::resident_model,
                 );
-                form_preview::suggest_for_live_form(live, &mut llm, &profile)?
+                let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &experiences);
+                let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
+                if !experiences.is_empty() {
+                    preview.manual_review.push("Reviewed lessons were supplied as fallible context; verify every suggestion against this form.".into());
+                }
+                preview
             } else {
                 form_preview::suggest_without_model(live, &profile, &no_model_reason)?
             };
@@ -296,6 +310,7 @@ pub fn start(
             url,
             profile_digest,
             visible,
+            experience_revisions,
             result,
         });
     });
@@ -315,6 +330,7 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
             url: task.url.clone(),
             profile_digest: task.profile_digest.clone(),
             visible: task.visible,
+            experience_revisions: task.experience_revisions.clone(),
             result: Err(error.clone()),
         }));
     }
@@ -335,6 +351,7 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
                 url: task.url.clone(),
                 profile_digest: task.profile_digest.clone(),
                 visible: task.visible,
+                experience_revisions: task.experience_revisions.clone(),
                 result: Err("Form inspection stopped unexpectedly".into()),
             };
             task.failure = Some("Form inspection stopped unexpectedly".into());
@@ -377,6 +394,66 @@ mod tests {
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[cfg(windows)]
+    #[test]
+    fn new_experience_can_be_saved_during_inspection_but_not_revoked() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let _guard = TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = waypoint_workspace::Workspace::open(dir.path()).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fixture-pending".into(),
+            receiver,
+            job_id: JobIdentityId::new("fixture-job").unwrap(),
+            pending_revision: 0,
+            url: "https://example.invalid/job".into(),
+            profile_digest: Sha256Digest::of("fixture"),
+            visible: false,
+            experience_revisions: vec![],
+            failure: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut request = |path: &str, body: serde_json::Value| {
+            let body = body.to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let served = crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port);
+            if served.is_err() {
+                return (served, serde_json::Value::Null);
+            }
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            (
+                served,
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap(),
+            )
+        };
+        let (saved, value) = request(
+            "/api/form-experiences/save",
+            serde_json::json!({"confirmed":true,"experience":{"stage":"enter_information","control":"text","platform":null,"observation":"value_changed","response":"verify_value_again","outcome":"unknown"}}),
+        );
+        assert!(saved.is_ok());
+        let (blocked, _) = request(
+            "/api/form-experiences/revoke",
+            serde_json::json!({"confirmed":true,"id":value["id"],"revision":value["revision"]}),
+        );
+        assert!(blocked
+            .unwrap_err()
+            .contains("Close the active form review"));
+        *TASK.lock().unwrap() = None;
+        drop(sender);
+        let (removed, _) = request(
+            "/api/form-experiences/revoke",
+            serde_json::json!({"confirmed":true,"id":value["id"],"revision":value["revision"]}),
+        );
+        assert!(removed.is_ok());
+    }
 
     #[test]
     fn pending_inspection_survives_reopen_and_preserves_other_reasons() {
@@ -424,6 +501,7 @@ mod tests {
             url: "https://example.org/temporary".into(),
             profile_digest: Sha256Digest::of("fixture"),
             visible: false,
+            experience_revisions: vec![],
             failure: None,
         });
         assert_eq!(
@@ -498,6 +576,7 @@ mod tests {
             url: "https://example.org/job".into(),
             profile_digest: Sha256Digest::of("fictional-profile"),
             visible: false,
+            experience_revisions: vec![],
             failure: None,
         });
         assert!(crate::active_form_review_reasons(&job_id, &None)
@@ -589,7 +668,7 @@ mod tests {
             serde_json::json!({"country":"Germany"}),
             Some("fictional-model".into()),
             false,
-            0,
+            (0, vec![]),
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -971,7 +1050,7 @@ mod tests {
             serde_json::json!({"email":"alex@example.invalid"}),
             None,
             false,
-            0,
+            (0, vec![]),
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1020,7 +1099,7 @@ mod tests {
             serde_json::json!({"email":"alex@example.invalid"}),
             Some(model),
             false,
-            0,
+            (0, vec![]),
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
@@ -1122,7 +1201,7 @@ mod tests {
             serde_json::json!({}),
             None,
             false,
-            0,
+            (0, vec![]),
         )
         .unwrap();
         assert!(busy());
