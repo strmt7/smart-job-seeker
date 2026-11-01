@@ -149,3 +149,15 @@ the earlier delayed-form fixture; both retained the CAPTCHA review wall. This
 remains a bounded heuristic: fields rendered after the final inspection can be
 missed, and an initially nonempty form is not monitored for later additions.
 No real employer form was filled or submitted in this check.
+
+## Reviewed custom-choice opening
+
+The web review flow can open a closed custom choice after a saved, current
+local-vision review and a separate user gesture. It records the action and
+capture, consumes the review once, and requires a fresh visual review of the
+opened choice before further filling. The opening runs on a bounded background
+worker; an uncertain result remains in manual review. A fictional local
+browser fixture exercised the approval, recording, replay and follow-up gate.
+Its visual results were simulated for this test. This does not establish safe
+behavior on arbitrary employer pages: page scripts can have side effects, and
+no real employer control was opened or application submitted in this check.

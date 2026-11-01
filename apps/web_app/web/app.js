@@ -431,6 +431,20 @@ function showFormPreview(job,result){setWorkspaceView('applications');
       visualResult.replaceChildren(element('p',outcome.comparison==='label_observed'?'The local model observed the label. Review the live control; this does not verify its action.':'The label could not be reliably verified. Review the live control manually.','review-label'));
       if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured choice control';image.src=`data:image/png;base64,${outcome.screenshot}`;visualResult.append(image);}
       if(outcome.capture_saved===false || outcome.result_saved===false)visualResult.append(element('p','The visual evidence could not be saved to the application record.','review-label'));
+      if(outcome.comparison==='label_observed' && outcome.capture_saved===true && outcome.result_saved===true && outcome.pending_finished===true && inventory.can_open===true && !choice.expanded){
+       const review=element('label',''),confirm=document.createElement('input'),open=element('button','Open reviewed choice');confirm.type='checkbox';open.type='button';review.append(confirm,document.createTextNode(' I reviewed the destination and this control. Opening it may cause the site to transmit data.'));visualResult.append(review,open);
+       open.addEventListener('click',async()=>{
+        if(!confirm.checked){visualResult.append(element('p','Confirm the destination and control first.','review-label'));return;}open.disabled=true;
+        try{
+         let action;try{action=JSON.parse(sessionStorage.getItem('waypoint-choice-action')||'null');}catch(_){}
+         if(action && action.session!==result.session_id)throw new Error('Another choice action is pending');
+         if(!action){const active=await api('/api/form/custom-choice-action-pending',{});if(active.active){if(active.session_id!==result.session_id)throw new Error('Another choice action is pending');action={task:active.task_id,session:result.session_id};}else{const started=await api('/api/form/custom-choice-open',{session_id:result.session_id,visual_task_id:pending.task,reviewed:true,source_reviewed:true});action={task:started.task_id,session:result.session_id};}sessionStorage.setItem('waypoint-choice-action',JSON.stringify(action));}
+         let opened;do{await new Promise(resolve=>setTimeout(resolve,700));opened=await api('/api/form/custom-choice-action-status',{task_id:action.task});}while(opened.status==='running');sessionStorage.removeItem('waypoint-choice-action');
+         if(opened.status!=='complete' || opened.opened!==true || opened.record_saved!==true || opened.previous_fields_verified!==true)throw new Error(opened.error || 'The result needs manual review');
+         visualResult.append(element('p','Choice opened. Inspect the options and run a new visual check before any further action.','review-label'));if(opened.screenshot){const image=document.createElement('img');image.alt='Choice after opening';image.src=`data:image/png;base64,${opened.screenshot}`;visualResult.append(image);}
+        }catch(error){visualResult.append(element('p',`Choice action needs review and was not retried: ${error.message}`,'review-label'));}
+       });
+      }
      }catch(error){visualResult.replaceChildren(element('p',`Choice visual check unavailable: ${error.message}`,'review-label'));}finally{visual.disabled=false;}
     });section.append(visual,visualResult);choicesPanel.append(section);
    }

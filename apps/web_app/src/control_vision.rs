@@ -30,6 +30,7 @@ pub(crate) fn set_choice_fixture(
     job: &str,
     revision: i64,
     capture: (&str, &str, &str, &str),
+    capture_saved: bool,
 ) {
     let (selector, digest, image, label) = capture;
     *TASK.lock().unwrap() = Some(Task {
@@ -45,7 +46,7 @@ pub(crate) fn set_choice_fixture(
         image: image.into(),
         label: label.into(),
         ambiguous: false,
-        capture_saved: false,
+        capture_saved,
         choice: true,
         result: Some(Ok(vec![label.into()])),
         finished: Some(std::time::Instant::now()),
@@ -270,6 +271,33 @@ pub fn complete(id: &str, result: Value) -> Result<(), String> {
     *completed = Some((id.into(), result, std::time::Instant::now()));
     Ok(())
 }
+
+/// Consume one completed choice observation before a reviewed external action.
+/// A failed or ambiguous action must obtain a new observation rather than retry.
+pub fn consume_choice_evidence(id: &str) -> Result<Value, String> {
+    let mut completed = COMPLETED.lock().map_err(|_| "Control vision unavailable")?;
+    let (_, result, _) = completed
+        .as_mut()
+        .filter(|(key, _, at)| key == id && at.elapsed() <= std::time::Duration::from_secs(600))
+        .ok_or("Completed choice visual review not found")?;
+    mark_choice_evidence_consumed(result)?;
+    Ok(result.clone())
+}
+
+fn mark_choice_evidence_consumed(result: &mut Value) -> Result<(), String> {
+    if result["status"] != "complete"
+        || result["choice"] != true
+        || result["comparison"] != "label_observed"
+        || result["capture_saved"] != true
+        || result["result_saved"] != true
+        || result["pending_finished"] != true
+        || result["action_consumed"] == true
+    {
+        return Err("Choice visual evidence is incomplete, stale, or already used".into());
+    }
+    result["action_consumed"] = json!(true);
+    Ok(())
+}
 pub fn collect_orphaned(active: Option<&str>) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Control vision unavailable")?;
     if let Some(orphan) = task
@@ -320,6 +348,19 @@ pub fn finish_pending(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choice_evidence_requires_saved_current_review_and_is_one_use() {
+        let mut result = json!({"status":"complete","choice":true,"comparison":"label_observed","capture_saved":true,"result_saved":true,"pending_finished":true});
+        let mut missing = result.clone();
+        missing["capture_saved"] = json!(false);
+        assert!(mark_choice_evidence_consumed(&mut missing).is_err());
+        let mut stale = result.clone();
+        stale["comparison"] = json!("stale");
+        assert!(mark_choice_evidence_consumed(&mut stale).is_err());
+        assert!(mark_choice_evidence_consumed(&mut result).is_ok());
+        assert!(mark_choice_evidence_consumed(&mut result).is_err());
+    }
 
     #[test]
     #[ignore = "requires one resource-gated resident local vision model and a fictional browser fixture"]

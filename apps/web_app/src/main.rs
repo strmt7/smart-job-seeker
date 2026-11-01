@@ -11,6 +11,7 @@ mod contact_advice;
 mod control_rank;
 mod control_vision;
 mod convert_task;
+mod custom_choice_action;
 mod discovery_task;
 mod doc_suggest;
 mod document_convert;
@@ -113,6 +114,7 @@ struct ReviewSession {
     // Attachment verification is scoped to the inspection session in which
     // the control was observed; later wizard sections can reuse selectors.
     attachments: Vec<(String, std::path::PathBuf, String, String)>,
+    pending_choice_visual: Option<(String, String, i64)>,
     last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
 }
@@ -195,6 +197,7 @@ fn active_form_review_reasons(
     session: &Option<ReviewSession>,
 ) -> Result<Vec<String>, String> {
     let mut reasons = form_links::protected_reasons(job)?;
+    reasons.extend(custom_choice_action::protected_reasons(job)?);
     if let Some(current) = session.as_ref().filter(|current| &current.job_id == job) {
         reasons.push(form_task::pending_reason(&current.inspection_task_id));
     }
@@ -2152,6 +2155,7 @@ fn serve(
                 || form_task::busy()
                 || candidate_task::busy()
                 || form_links::busy()
+                || custom_choice_action::busy()
             {
                 return Err(
                     "Close or finish the active form inspection before checking another page"
@@ -2325,6 +2329,7 @@ fn serve(
                 || application_check::busy()
                 || candidate_task::busy()
                 || form_links::busy()
+                || custom_choice_action::busy()
             {
                 return Err(
                     "Finish the current browser session before inspecting a listing".into(),
@@ -3735,6 +3740,7 @@ fn serve(
                 || form_task::busy()
                 || candidate_task::busy()
                 || form_links::busy()
+                || custom_choice_action::busy()
             {
                 return Err("Wait for the current browser inspection to finish".into());
             }
@@ -3924,6 +3930,7 @@ fn serve(
                 visible,
                 staged_files: vec![],
                 attachments: vec![],
+                pending_choice_visual: None,
                 last_visual_freshness_key: None,
                 record,
             });
@@ -3935,10 +3942,11 @@ fn serve(
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
             let (choices, digest) = custom_choice_snapshot(&mut current.driver)?;
+            let can_open = check_answer_page(current).is_ok();
             json_reply(
                 stream,
                 "200 OK",
-                json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest}),
+                json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest,"can_open":can_open}),
             );
         }
         "/api/form/custom-choice-vision-start" => {
@@ -4020,6 +4028,203 @@ fn serve(
                 "200 OK",
                 json!({"task_id":task_id,"screenshot":image,"capture_saved":capture_saved}),
             );
+        }
+        "/api/form/custom-choice-open" => {
+            if body["reviewed"] != true || body["source_reviewed"] != true {
+                return Err("Review the destination and choice before opening it".into());
+            }
+            if custom_choice_action::busy() {
+                return Err("A choice action is already running".into());
+            }
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let task_id = body["visual_task_id"]
+                .as_str()
+                .ok_or("missing visual review")?;
+            let evidence = control_vision::poll(task_id)?;
+            if evidence["status"] != "complete"
+                || evidence["choice"] != true
+                || evidence["comparison"] != "label_observed"
+                || evidence["session_id"].as_str() != Some(id)
+                || evidence["capture_saved"] != true
+                || evidence["result_saved"] != true
+                || evidence["pending_finished"] != true
+                || evidence["action_consumed"] == true
+            {
+                return Err("A saved, current choice visual review is required".into());
+            }
+            let selector = evidence["selector"]
+                .as_str()
+                .ok_or("Choice selector unavailable")?
+                .to_owned();
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            if ws
+                .has_duplicate_hold(&current.job_id)
+                .map_err(|error| error.to_string())?
+            {
+                return Err(
+                    "Review possible duplicate jobs before interacting with this application"
+                        .into(),
+                );
+            }
+            let job = ws
+                .job(&current.job_id)
+                .map_err(|error| error.to_string())?
+                .ok_or("Job not found")?;
+            if !matches!(
+                job.state,
+                ApplicationState::Shortlisted | ApplicationState::Prepared
+            ) || job.canonical_url.as_deref() != Some(current.url.as_str())
+            {
+                return Err("Job or destination changed; inspect again".into());
+            }
+            let profile: Value = match ws.candidate_profile().map_err(|error| error.to_string())? {
+                Some(profile) => {
+                    serde_json::from_str(&profile).map_err(|_| "stored profile is invalid")?
+                }
+                None => json!({}),
+            };
+            if Sha256Digest::of(&profile.to_string()) != current.profile_digest {
+                return Err("Profile changed; inspect the current page again".into());
+            }
+            check_answer_page(current)?;
+            if let Some(first) = current.completed_selectors.first().cloned() {
+                let check = current.driver.with_review_timeout(|driver| {
+                    form_preview::verify_completed_fields(
+                        driver,
+                        &current.preview,
+                        &current.completed_selectors,
+                        &first,
+                    )
+                });
+                if !check.selected_retained
+                    || !check.failed_labels.is_empty()
+                    || check.unverified != 0
+                {
+                    return Err(
+                        "Previously filled fields changed or could not be checked; inspect again"
+                            .into(),
+                    );
+                }
+            }
+            let live = current
+                .driver
+                .inspect_current()
+                .map_err(|error| error.to_string())?;
+            form_links::check_job_and_destination(
+                &job.source,
+                &live.origin,
+                waypoint_policy::Operation::Prefill,
+            )?;
+            let (choices, before) = custom_choice_snapshot(&mut current.driver)?;
+            let matches: Vec<_> = choices
+                .choices
+                .iter()
+                .filter(|choice| choice.selector == selector)
+                .collect();
+            if matches.len() != 1
+                || matches[0].expanded
+                || evidence["label"].as_str() != Some(matches[0].label.as_str())
+            {
+                return Err("Choice changed or is already open; inspect again".into());
+            }
+            let image = current
+                .driver
+                .with_review_timeout(|driver| driver.screenshot_field_context(&selector))
+                .map_err(|error| error.to_string())?;
+            let after = custom_choice_snapshot(&mut current.driver)?.1;
+            if !control_vision::capture_is_current(
+                evidence["snapshot_digest"].as_str(),
+                Some(&before),
+                Some(&after),
+                evidence["image_hash"].as_str(),
+                Some(&image),
+            ) {
+                return Err("Choice or visual evidence changed; inspect again".into());
+            }
+            let record = current
+                .record
+                .as_mut()
+                .ok_or("A disk-backed application record is required before opening a choice")?;
+            record.event(json!({"type":"custom_choice_open_requested","time":now(),"selector":selector,"visual_task_id":task_id,"note":"Explicitly reviewed; no submission authorized."}))?;
+            control_vision::consume_choice_evidence(task_id)?;
+            let grant_id = random_id()?;
+            let payload = json!({"action":"open_custom_choice","selector":selector,"snapshot_digest":before,"visual_task_id":task_id}).to_string();
+            ws.record_consumed_prefill_grant(&waypoint_store::prefill_grants::PrefillGrantRecord {
+                id: grant_id.clone(),
+                job_id: current.job_id.as_str().into(),
+                intent_id: format!("choice-{grant_id}"),
+                payload_hash: Sha256Digest::of(&payload).as_str().into(),
+                profile_hash: current.profile_digest.as_str().into(),
+                schema_hash: Sha256Digest::of(&live.schema.schema_hash_input())
+                    .as_str()
+                    .into(),
+                destination: live.origin,
+                created_at: now(),
+            })
+            .map_err(|error| error.to_string())?;
+            let action_id = random_id()?;
+            let revision = custom_choice_action::begin_pending(ws, &current.job_id, &action_id)?;
+            let current = session.take().ok_or("Form session expired")?;
+            if let Err((current, error)) =
+                custom_choice_action::start(action_id.clone(), current, selector, revision)
+            {
+                let cleanup =
+                    custom_choice_action::finish_pending(ws, &current.job_id, &action_id, revision);
+                *session = Some(*current);
+                cleanup?;
+                return Err(error);
+            }
+            json_reply(stream, "200 OK", json!({"task_id":action_id}));
+        }
+        "/api/form/custom-choice-action-pending" => {
+            json_reply(stream, "200 OK", custom_choice_action::pending()?);
+        }
+        "/api/form/custom-choice-action-status" => {
+            let id = body["task_id"].as_str().ok_or("missing choice task")?;
+            let result = match custom_choice_action::poll(id)? {
+                custom_choice_action::Poll::Running => json!({"status":"running"}),
+                custom_choice_action::Poll::Cached(value) => value,
+                custom_choice_action::Poll::Lost(job, revision) => {
+                    ws.mark_manual_review(&job, "Custom choice action outcome is uncertain", now())
+                        .map_err(|error| error.to_string())?;
+                    custom_choice_action::finish_pending(ws, &job, id, revision)?;
+                    let value = json!({"status":"uncertain","error":"The review session ended; inspect the application manually"});
+                    custom_choice_action::remember(id, value.clone())?;
+                    value
+                }
+                custom_choice_action::Poll::Complete(returned, mut value, revision) => {
+                    let job = returned.job_id.clone();
+                    if session.is_some() {
+                        ws.mark_manual_review(
+                            &job,
+                            "Custom choice session was replaced; inspect manually",
+                            now(),
+                        )
+                        .map_err(|error| error.to_string())?;
+                        value = json!({"status":"uncertain","error":"The review session changed; inspect the application manually"});
+                        custom_choice_action::finish_pending(ws, &job, id, revision)?;
+                    } else {
+                        *session = Some(*returned);
+                        if value["status"] != "complete"
+                            || value["record_saved"] != true
+                            || value["previous_fields_verified"] != true
+                        {
+                            ws.mark_manual_review(
+                                &job,
+                                "Custom choice action needs manual review",
+                                now(),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        }
+                    }
+                    custom_choice_action::remember(id, value.clone())?;
+                    value
+                }
+            };
+            json_reply(stream, "200 OK", result);
         }
         "/api/form/control-rank-pending" => {
             json_reply(stream, "200 OK", control_rank::pending()?);
@@ -4447,6 +4652,47 @@ fn serve(
                         .ok_or("missing pending review revision")?;
                     control_vision::finish_pending(ws, &job, id, revision)?;
                     result["pending_finished"] = json!(true);
+                }
+                if result["choice"] == true
+                    && result["comparison"] == "label_observed"
+                    && result["capture_saved"] == true
+                    && result["result_saved"] == true
+                    && result["pending_finished"] == true
+                {
+                    if let Some(current) = session
+                        .as_mut()
+                        .filter(|s| Some(s.id.as_str()) == result["session_id"].as_str())
+                    {
+                        if let Some((selector, action_id, revision)) =
+                            current.pending_choice_visual.clone()
+                        {
+                            if result["selector"].as_str() == Some(selector.as_str()) {
+                                let (inventory, digest) =
+                                    custom_choice_snapshot(&mut current.driver)?;
+                                let expanded = inventory
+                                    .choices
+                                    .iter()
+                                    .filter(|choice| choice.selector == selector && choice.expanded)
+                                    .count()
+                                    == 1;
+                                if expanded
+                                    && result["snapshot_digest"].as_str() == Some(digest.as_str())
+                                {
+                                    custom_choice_action::finish_pending(
+                                        ws,
+                                        &current.job_id,
+                                        &action_id,
+                                        revision,
+                                    )?;
+                                    current.pending_choice_visual = None;
+                                    current.preview.manual_review.retain(|reason| {
+                                        reason != form_preview::POST_CHOICE_VISUAL_REQUIRED
+                                    });
+                                    result["post_choice_review_finished"] = json!(true);
+                                }
+                            }
+                        }
+                    }
                 }
                 control_vision::complete(id, result.clone())?;
             }
@@ -6857,6 +7103,7 @@ mod tests {
             visible: false,
             staged_files: vec![],
             attachments: vec![],
+            pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
         });
@@ -6992,6 +7239,7 @@ mod tests {
             visible: false,
             staged_files: vec![],
             attachments: vec![],
+            pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
         });
@@ -9798,6 +10046,7 @@ mod tests {
             visible: false,
             staged_files: vec![],
             attachments: vec![],
+            pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
         });
@@ -10252,6 +10501,7 @@ mod tests {
                 visible: false,
                 staged_files: vec![],
                 attachments: vec![],
+                pending_choice_visual: None,
                 last_visual_freshness_key: None,
                 record: None,
             });

@@ -391,6 +391,7 @@ mod tests {
             visible: false,
             staged_files: vec![],
             attachments: vec![],
+            pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
         });
@@ -517,6 +518,7 @@ mod tests {
             visible: false,
             staged_files: vec![],
             attachments: vec![],
+            pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
         });

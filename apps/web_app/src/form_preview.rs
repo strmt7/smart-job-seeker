@@ -70,11 +70,13 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
         || reason.starts_with("a custom control needs manual review: ")
 }
 
+pub const POST_CHOICE_VISUAL_REQUIRED: &str = "Visual review required after opening a choice";
+
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
     if preview
         .manual_review
         .iter()
-        .any(|reason| reason == "captcha present")
+        .any(|reason| reason == "captcha present" || reason == POST_CHOICE_VISUAL_REQUIRED)
         || fresh_walls.iter().any(|wall| !is_custom_review(wall))
     {
         return false;
@@ -2584,6 +2586,7 @@ mod tests {
             visible: false,
             staged_files: vec![],
             attachments: vec![],
+            pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
         });
@@ -2680,6 +2683,7 @@ mod tests {
             job_id.as_str(),
             revision,
             (&selector, &digest, &image, "Job location"),
+            false,
         );
         let poll = |ws: &mut Workspace, session: &mut Option<crate::ReviewSession>| -> Value {
             let body = json!({"task_id":"choice-vision-fixture"}).to_string();
