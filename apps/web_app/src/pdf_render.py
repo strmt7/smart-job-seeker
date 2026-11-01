@@ -22,7 +22,7 @@ try:
         raise ValueError('Encrypted PDFs need manual review')
     page_arg, _, mode = sys.argv[1].partition(':')
     index = int(page_arg)
-    if mode not in ('', 'geometry', 'top', 'bottom'):
+    if mode not in ('', 'geometry', 'top', 'bottom', 'left', 'right'):
         raise ValueError('Unsupported page region')
     document = pdfium.PdfDocument(data)
     count = len(document)
@@ -32,14 +32,18 @@ try:
     width, height = page.get_size()
     if not all(math.isfinite(v) and 1 <= v <= 20000 for v in (width, height)):
         raise ValueError('Unsupported PDF page dimensions')
-    if mode in ('top', 'bottom'):
+    if mode in ('top', 'bottom', 'left', 'right'):
         # Render the crop directly, preserving the same bounded bitmap budget
         # while giving the selected region more source pixels when possible.
-        region_height = height * 0.55
-        scale = min(2.25, 1598 / width, 2198 / region_height,
-                    math.sqrt(3100000 / (width * region_height)))
-        removed = height * 0.45
-        crop = (0, removed, 0, 0) if mode == 'top' else (0, 0, 0, removed)
+        region_width = width * (0.55 if mode in ('left', 'right') else 1)
+        region_height = height * (0.55 if mode in ('top', 'bottom') else 1)
+        scale = min(2.25, 1598 / region_width, 2198 / region_height,
+                    math.sqrt(3100000 / (region_width * region_height)))
+        crops = {'top': (0, height * .45, 0, 0),
+                 'bottom': (0, 0, 0, height * .45),
+                 'left': (0, 0, width * .45, 0),
+                 'right': (width * .45, 0, 0, 0)}
+        crop = crops[mode]
         bitmap = page.render(scale=scale, crop=crop)
     else:
         scale = min(1.5, 1600 / width, 2200 / height, math.sqrt(3200000 / (width * height)))
@@ -50,7 +54,7 @@ try:
     png = out.getvalue()
     if len(png) > 3 * 1024 * 1024:
         raise ValueError('Rendered page exceeds 3 MiB; review the PDF externally')
-    result = {'page': index, 'pages': count, 'region': mode if mode in ('top', 'bottom') else 'full', 'scale': scale, 'image': base64.b64encode(png).decode('ascii')}
+    result = {'page': index, 'pages': count, 'region': mode if mode in ('top', 'bottom', 'left', 'right') else 'full', 'scale': scale, 'image': base64.b64encode(png).decode('ascii')}
     if mode == 'geometry':
         # This is an advisory check of selectable text geometry, not an image or
         # semantic assessment. Limit work even on PDFs with pathological text.

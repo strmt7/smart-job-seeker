@@ -30,7 +30,7 @@ where
         .as_u64()
         .filter(|n| (1..=30).contains(n))
         .ok_or("Invalid PDF page count")?;
-    if !matches!(region, "full" | "top" | "bottom")
+    if !matches!(region, "full" | "top" | "bottom" | "left" | "right")
         || rendered["region"].as_str() != Some(region)
         || rendered["page"].as_u64() != Some(page as u64)
         || page as u64 >= pages
@@ -80,7 +80,12 @@ where
 pub fn requested_region(value: Option<&Value>) -> Result<&str, String> {
     match value {
         None => Ok("full"),
-        Some(Value::String(region)) if matches!(region.as_str(), "full" | "top" | "bottom") => {
+        Some(Value::String(region))
+            if matches!(
+                region.as_str(),
+                "full" | "top" | "bottom" | "left" | "right"
+            ) =>
+        {
             Ok(region)
         }
         _ => Err("Invalid page region".into()),
@@ -95,8 +100,10 @@ pub fn start(
     page: usize,
     region: String,
 ) -> Result<(), String> {
-    if !matches!(region.as_str(), "full" | "top" | "bottom")
-        || page >= 30
+    if !matches!(
+        region.as_str(),
+        "full" | "top" | "bottom" | "left" | "right"
+    ) || page >= 30
         || bytes.len() > 10 * 1024 * 1024
         || !bytes.starts_with(b"%PDF-")
     {
@@ -314,9 +321,41 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
+    fn live_model_transcribes_fictional_columns() {
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let address = "127.0.0.1:11434".parse().unwrap();
+        let bytes = include_bytes!("../tests/fictional-columns.pdf");
+        for (region, expected, absent) in [
+            ("left", "rust developer", "safety training"),
+            ("right", "safety training", "rust developer"),
+        ] {
+            let result = transcribe(
+                bytes,
+                0,
+                region,
+                |bytes, page| crate::pdf_extract::render_page_region(bytes, page, region),
+                |image| {
+                    crate::visual_review::generate_vision(address, &model, image, TRANSCRIBE_PROMPT)
+                },
+            )
+            .unwrap();
+            let text = result["text"].as_str().unwrap().to_lowercase();
+            println!("Fictional {region} transcription: {text}");
+            assert!(text.contains(expected));
+            assert!(!text.contains(absent));
+            assert_eq!(result["region"], region);
+        }
+    }
+
+    #[test]
     fn region_selection_rejects_unknown_and_non_string_values() {
         assert_eq!(requested_region(None).unwrap(), "full");
         assert_eq!(requested_region(Some(&json!("bottom"))).unwrap(), "bottom");
+        assert_eq!(requested_region(Some(&json!("left"))).unwrap(), "left");
+        assert_eq!(requested_region(Some(&json!("right"))).unwrap(), "right");
         for value in [json!(null), json!(4), json!("unknown")] {
             assert!(requested_region(Some(&value)).is_err());
         }

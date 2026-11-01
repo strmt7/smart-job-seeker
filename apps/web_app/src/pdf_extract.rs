@@ -248,7 +248,7 @@ pub fn render_page_region(
     page: usize,
     region: &str,
 ) -> Result<serde_json::Value, String> {
-    if !matches!(region, "full" | "top" | "bottom") {
+    if !matches!(region, "full" | "top" | "bottom" | "left" | "right") {
         return Err("Invalid page region".into());
     }
     render_page_inner(bytes, page, region)
@@ -400,6 +400,19 @@ mod tests {
         );
         assert!((top_width as u64 * top_height as u64) <= 3_200_000);
         assert!((bottom_width as u64 * bottom_height as u64) <= 3_200_000);
+        let left = super::render_page_region(bytes, 0, "left").unwrap();
+        let right = super::render_page_region(bytes, 0, "right").unwrap();
+        let (lw, lh) = size(&left);
+        let (rw, rh) = size(&right);
+        assert_eq!(left["region"], "left");
+        assert_eq!(right["region"], "right");
+        assert_ne!(left["image"], right["image"]);
+        assert!(
+            (lw as f64 / left["scale"].as_f64().unwrap())
+                + (rw as f64 / right["scale"].as_f64().unwrap())
+                > width as f64 / full_scale
+        );
+        assert!((lw as u64 * lh as u64) <= 3_200_000 && (rw as u64 * rh as u64) <= 3_200_000);
         assert!(super::render_page_region(bytes, 0, "unknown").is_err());
     }
 
