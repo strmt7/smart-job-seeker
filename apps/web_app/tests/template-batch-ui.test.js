@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf('function batchTemplateSuggestions(');
-const end = source.indexOf('function showDocument(', start);
+const end = source.indexOf('function pdfExtractionCoverageNotice(', start);
 assert.ok(start >= 0 && end > start);
 function node(tag, text = '') {
   return {tag, textContent:text, disabled:false, children:[], handlers:{},
@@ -15,6 +15,7 @@ async function fixture(failSecond = false) {
   const calls=[], notices=[], changes=[], text={value:'Built dashboards\nLed research',selectionStart:0,selectionEnd:29}, jobSelect={value:'job'}, busy=[];
   const context={element:(tag,text)=>node(tag,text), TextEncoder, setTimeout:f=>f(), notify:message=>notices.push(message),
     api:async(path,body)=>{calls.push({path,body});if(failSecond && path.endsWith('-start') && body.before==='Led research')throw Error('Model unavailable');return path.endsWith('-start')?{task_id:body.before}:{status:'complete',document_id:'doc',job_id:'job',before:body.task_id,digest:'a'.repeat(64),suggestion:{text:`Revised ${body.task_id}`,sources:['Fictional source']}};}};
+  context.followTemplateSuggestion=task=>context.api('/api/documents/template-suggest-status',{task_id:task});
   const create=vm.runInNewContext(`(${source.slice(start,end)})`,context);
   const section=create({text,documentResult:{id:'doc'},jobSelect,changes,renderQueue:()=>{},isBusy:()=>false,setBusy:value=>busy.push(value)});
   await section.children[0].handlers.click();

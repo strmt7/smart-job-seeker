@@ -32,42 +32,13 @@ jobs:
         run: |
           node --check apps/web_app/web/app.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/visual-review-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/letter-export-recovery-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/template-edit-recovery-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/application-check-recovery-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/draft-recovery-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/visual-dense-retry-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/partial-fill-visual-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/search-coverage-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/fit-badge-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/fit-batch-failure-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/fit-read-retry-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/fit-split-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/fit-dimensions-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/attachment-name-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/document-review-coverage-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/single-search-recovery-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/search-plan-recovery-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/tests/search-plan-binding-ui.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $uiTests = @(Get-ChildItem apps/web_app/tests -Filter '*-ui.test.js' | Sort-Object Name)
+          if ($uiTests.Count -eq 0) { throw 'No UI tests found' }
+          foreach ($test in $uiTests) {
+            Write-Host "Running $($test.Name)"
+            node $test.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           ./apps/web_app/scripts/test-grade-local-evaluation.ps1
           ./apps/web_app/scripts/test-build-paths.ps1
           ./apps/web_app/scripts/test-install-package.ps1

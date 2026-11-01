@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
 const helpers=source.slice(source.indexOf('function visualComparisonStatus('),source.indexOf('function showAutomaticFit('));
-const start=source.indexOf(' async function inspectVisual(targetSelector=null){'),end=source.indexOf('\n visualButton.addEventListener',start);
+const start=source.indexOf(' async function inspectVisual(targetSelector=null,destination=null){'),end=source.indexOf('\n visualButton.addEventListener',start);
 assert.ok(start>=0&&end>start);
 async function run(secondDom='matches',fresh='same',finalChange=false,finalUnavailable=false){
  const messages=[],storage=new Map(),polls=new Map(),panel={isConnected:true,replaceChildren(){},append(item){if(item?.text)messages.push(item.text);}};

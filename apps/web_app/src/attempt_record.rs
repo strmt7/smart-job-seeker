@@ -2542,17 +2542,17 @@ mod tests {
             dir: root.path().to_path_buf(),
             sequence: 0,
         };
-        assert!(record_initial_inspection(
+        let error = record_initial_inspection(
             &mut record,
             "https://example.invalid",
             &[],
             Some("not base64!"),
             2
         )
-        .is_err());
+        .unwrap_err();
         let meta: Value =
             serde_json::from_slice(&fs::read(root.path().join("attempt.json")).unwrap()).unwrap();
-        assert_eq!(meta["status"], "manual_review");
+        assert_eq!(meta["status"], "manual_review", "record error: {error}");
         let events = fs::read_to_string(root.path().join("events.jsonl")).unwrap();
         let event: Value = serde_json::from_str(events.trim()).unwrap();
         assert_eq!(event["type"], "capture_incomplete");
