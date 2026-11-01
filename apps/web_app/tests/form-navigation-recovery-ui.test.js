@@ -1,0 +1,20 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const a=source.split('\n').find(line=>line.startsWith('function pendingFormNavigation()'));
+const b=source.split('\n').find(line=>line.startsWith('function recoverNavigationPointer('));
+assert.ok(a && b);
+const values=new Map(),context={sessionStorage:{getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)}};
+const recover=vm.runInNewContext(`${a}\n${b}\nrecoverNavigationPointer`,context);
+assert.equal(recover({active:false,navigation:{task:'fictional-task',job:'fictional-job'}}),true);
+assert.deepEqual(JSON.parse(values.get('waypoint-form-navigation')),{task:'fictional-task',job:'fictional-job'});
+recover({active:false,navigation:{task:'new-task',job:'new-job'}});
+assert.deepEqual(JSON.parse(values.get('waypoint-form-navigation')),{task:'new-task',job:'new-job'});
+assert.equal(recover({active:true,navigation:{task:'ignored',job:'ignored'}}),false);
+assert.equal(JSON.parse(values.get('waypoint-form-navigation')).task,'new-task');
+assert.ok(source.includes('const recoveredNavigation=recoverNavigationPointer(result);if(!result.active && !pendingFormNavigation()'));
+assert.ok(source.includes('if(recoveredNavigation && !formNavigationFollowing)retry.click()'));
+const review=source.split('\n').find(line=>line.startsWith('async function recoverReviewSession()'));
+const panel={replaceChildren(){},append(){}};const resumed=[];
+function element(tag,text){return {tag,text,addEventListener(_event,fn){this.fn=fn;},click(){this.fn();}};}
+values.clear();Object.assign(context,{document:{querySelector:()=>panel},element,api:async()=>({active:false,navigation:{task:'lost-response',job:'job'}}),reviewSessionChecked:false,activeReviewSession:null,pendingFormInspection:()=>null,setWorkspaceView(){},renderReviewQueue(){},formNavigationFollowing:false,followFormNavigation:async(task,job)=>{resumed.push([task,job]);},notify:message=>{throw Error(message);}});
+(async()=>{const run=vm.runInNewContext(`${a}\n${b}\n${review}\nrecoverReviewSession`,context);await run();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(resumed,[['lost-response','job']]);console.log('Form navigation recovery UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

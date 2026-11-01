@@ -5759,6 +5759,7 @@ fn serve(
                 .as_ref()
                 .filter(|current| current.created.elapsed() <= current.ttl);
             let pending_inspection = form_task::pending()?;
+            let pending_navigation = form_links::pending()?;
             json_reply(
                 stream,
                 "200 OK",
@@ -5767,7 +5768,7 @@ fn serve(
                         json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible})
                     }
                     None => {
-                        json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job}))})
+                        json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job})),"navigation":pending_navigation.map(|(task,job)| json!({"task":task,"job":job}))})
                     }
                 },
             );

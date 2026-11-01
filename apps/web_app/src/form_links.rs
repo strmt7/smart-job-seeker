@@ -59,6 +59,16 @@ pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
 }
 
+/// Recover a navigation whose start response was lost while its session is
+/// temporarily owned by the worker.
+pub fn pending() -> Result<Option<(String, String)>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Navigation unavailable")?
+        .as_ref()
+        .map(|task| (task.id.clone(), task.job_id.as_str().to_owned())))
+}
+
 pub(crate) fn protected_reasons(
     job: &waypoint_domain::JobIdentityId,
 ) -> Result<Vec<String>, String> {
@@ -520,6 +530,25 @@ mod tests {
             rx,
             failure: None,
         });
+        assert_eq!(
+            pending().unwrap(),
+            Some(("fictional-navigation".into(), job_id.as_str().into()))
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = "{}";
+        write!(client, "POST /api/form/session-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let state: serde_json::Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(state["active"], false);
+        assert_eq!(state["navigation"]["task"], "fictional-navigation");
+        assert_eq!(state["navigation"]["job"], job_id.as_str());
         assert_eq!(
             protected_reasons(&job_id).unwrap(),
             vec![
