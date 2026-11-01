@@ -20,6 +20,19 @@ $targetRoot = (Resolve-Path -LiteralPath $targetPath).Path
 $testRoot = Join-Path $targetRoot ('waypoint-installer-fixture-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
+    $shortcutFunction = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-WaypointShortcutPath' }, $true)
+    if (-not $shortcutFunction) { throw 'Start Menu shortcut path helper is missing.' }
+    Invoke-Expression $shortcutFunction.Extent.Text
+    $redirectedPrograms = Join-Path $testRoot 'Redirected Programs'
+    New-Item -ItemType Directory -Path $redirectedPrograms | Out-Null
+    if ((Get-WaypointShortcutPath $redirectedPrograms) -ne (Join-Path $redirectedPrograms 'Waypoint.lnk')) { throw 'Redirected Programs folder was not used.' }
+    $actualPrograms = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+    if ((Get-WaypointShortcutPath $actualPrograms) -ne (Join-Path $actualPrograms 'Waypoint.lnk')) { throw 'The current Windows Programs folder was not accepted.' }
+    foreach ($badPath in @('', 'relative', (Join-Path $testRoot 'missing'))) {
+        $rejected = $false
+        try { Get-WaypointShortcutPath $badPath | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Unavailable Programs folder was accepted.' }
+    }
     $installer = Join-Path $testRoot 'install.ps1'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-package.ps1') -Destination $installer
     $app = Join-Path $testRoot 'app'

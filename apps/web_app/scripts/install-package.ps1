@@ -213,8 +213,18 @@ try {
     $freeBytes = [WaypointInstallerPath]::AvailableBytes($existingDestination)
     Assert-InstallSpace $sourceBytes $freeBytes
 } catch { throw "Could not confirm sufficient installation space; nothing was copied. $($_.Exception.Message)" }
-$shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Waypoint.lnk'
-if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcut)) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
+function Get-WaypointShortcutPath([string]$ProgramsDirectory) {
+    if (-not $ProgramsDirectory -or -not [IO.Path]::IsPathRooted($ProgramsDirectory) -or
+        -not (Test-Path -LiteralPath $ProgramsDirectory -PathType Container)) {
+        throw 'The current user Start Menu Programs folder is unavailable. Use -NoShortcut to install without a shortcut.'
+    }
+    return Join-Path $ProgramsDirectory 'Waypoint.lnk'
+}
+$shortcut = $null
+if (-not $NoShortcut) {
+    $shortcut = Get-WaypointShortcutPath ([Environment]::GetFolderPath([Environment+SpecialFolder]::Programs))
+    if (Test-Path -LiteralPath $shortcut) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
+}
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null
 try {
     # Enumerate with Force: wildcard expansion otherwise omits hidden package
