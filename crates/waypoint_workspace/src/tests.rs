@@ -75,6 +75,16 @@ fn lever_secondary_location_can_satisfy_location_filter() {
     assert_eq!(ranked.strict.len(), 1);
     assert!(ranked.strict[0].unknown_constraints.is_empty());
     assert!(ranked.excluded.is_empty());
+    let partial = CampaignConstraints {
+        locations: vec!["San Francisco".into()],
+        ..Default::default()
+    };
+    let ranked = ws.ranked(&partial, &[], 100).unwrap();
+    assert!(ranked.excluded.is_empty());
+    assert!(ranked.strict[0]
+        .unknown_constraints
+        .iter()
+        .any(|reason| reason.contains("location component matches")));
 }
 
 #[test]

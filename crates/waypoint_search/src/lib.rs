@@ -189,6 +189,23 @@ pub fn check_constraints_with_remote(
                     .lines()
                     .any(|candidate| candidate.trim().eq_ignore_ascii_case(allowed.trim()))
             });
+        let partial_location =
+            c.locations
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .any(|allowed| {
+                    observed.lines().any(|candidate| {
+                        let candidate = candidate.trim();
+                        candidate
+                            .split(',')
+                            .map(str::trim)
+                            .any(|part| !part.is_empty() && part.eq_ignore_ascii_case(allowed))
+                            || allowed.split(',').map(str::trim).any(|part| {
+                                !part.is_empty() && part.eq_ignore_ascii_case(candidate)
+                            })
+                    })
+                });
         if remote == Some(true) {
             // A source's remote flag and office location do not establish the
             // jurisdictions from which this particular job can be performed.
@@ -204,7 +221,11 @@ pub fn check_constraints_with_remote(
                 ConstraintOutcome::Unknown("job does not state a location".into()),
             ));
         } else if !listed_match {
-            let outcome = if remote.is_none() {
+            let outcome = if partial_location {
+                ConstraintOutcome::Unknown(
+                    "a location component matches, but the full location is ambiguous".into(),
+                )
+            } else if remote.is_none() {
                 ConstraintOutcome::Unknown(format!("location '{location}' is outside the allowed set and remote status is not established"))
             } else {
                 ConstraintOutcome::Fail(format!("location '{location}' not in allowed set"))
@@ -479,6 +500,35 @@ mod tests {
                     && matches!(value, ConstraintOutcome::Pass | ConstraintOutcome::Fail(_))));
             }
         }
+    }
+
+    #[test]
+    fn partial_location_components_require_review() {
+        for (allowed, advertised) in [
+            ("Berlin", "Berlin, Germany"),
+            ("Berlin, Germany", "Berlin"),
+            ("Germany", "Berlin, Germany"),
+            ("Paris", "Paris, Texas"),
+        ] {
+            let c = CampaignConstraints {
+                locations: vec![allowed.into()],
+                ..Default::default()
+            };
+            let outcomes =
+                check_constraints_with_remote(&c, &[], None, None, Some(false), advertised);
+            assert!(
+                matches!(&outcomes[..], [(name, ConstraintOutcome::Unknown(_))] if name == "location"),
+                "{allowed:?} {advertised:?}"
+            );
+        }
+        let c = CampaignConstraints {
+            locations: vec!["York".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints_with_remote(&c, &[], None, None, Some(false), "New York, NY")[0].1,
+            ConstraintOutcome::Fail(_)
+        ));
     }
 
     #[test]
