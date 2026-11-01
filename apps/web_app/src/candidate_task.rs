@@ -2115,6 +2115,7 @@ mod tests {
             listing.job["employer"] = json!("Example");
             listing.job["description"] = json!("Original fictional description");
             listing.job["extraction"] = json!("local_model");
+            listing.job["valid_through_evidence"] = json!("2026-11-30T23:59:00+01:00");
             listing.job["partial_structured_fields"] = json!(["requisition_id"]);
             listing.job["extraction_warnings"] = json!(["Verify the recovered identity"]);
             listing.job["other_roles_status"] = json!("review");
@@ -2134,6 +2135,11 @@ mod tests {
         let first: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(first["status"], "complete");
+        assert_eq!(first["saved"]["existing"], false);
+        assert_eq!(
+            first["job"]["valid_through_evidence"],
+            "2026-11-30T23:59:00+01:00"
+        );
         #[cfg(windows)]
         {
             assert_eq!(first["capture"]["saved"], false);
@@ -2189,7 +2195,7 @@ mod tests {
             url: "https://example.org/job".into(),
             rx,
             result: Some(Ok(Arc::new(InspectedListing {
-                job: json!({"url":"https://example.org/job","title":"Engineer","employer":"Example","description":"New fictional description","extraction":"local_model","observed_section":{"text":"Full fictional role section","truncated":false}}),
+                job: json!({"url":"https://example.org/job","title":"Engineer","employer":"Example","description":"New fictional description","extraction":"local_model","valid_through_evidence":"2020-01-01","observed_section":{"text":"Full fictional role section","truncated":false}}),
                 capture: ListingCapture {
                     metadata: json!({"source_url":"https://example.org/job","structured_source_status":"unavailable"}),
                     segments: vec![],
@@ -2200,6 +2206,7 @@ mod tests {
         let preview: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(preview["saved"]["existing"], true);
+        assert_eq!(preview["job"]["valid_through_evidence"], "2020-01-01");
         assert_eq!(
             preview["previous_description"]["text"],
             "Original fictional description"

@@ -1406,3 +1406,11 @@ Focused field navigation now checks tracked attachments after scrolling, using t
 The same local browser fixture now selects a fictional file in an actual file input and confirms that the focused check reports it retained; after the test removes its staged copy, the check reports one failed attachment. This does not establish behavior for employer-side uploads or files cleared by a site.
 
 The local fixture also cleared the file input while the staged file still existed. The next focused check reported a failed attachment, and the attempt record retained the corresponding capture. This exercises a native file input in a local fixture; custom and remote employer upload widgets remain unverified.
+
+Structured listing deadlines now show a review cue when a current-URL capture states a deadline that has passed. Date-only values receive a conservative 48-hour window from UTC midnight; timestamps must include a timezone, and malformed values do not trigger the cue. The listing is not automatically removed or classified closed. Focused interface tests cover offsets, invalid dates, the date-only boundary and captures from another URL; employer data and the system clock can still be wrong.
+
+For a newly saved structured listing, the same advisory also appears in the single-listing notification or selected-listings inspection log. It is suppressed for an already-saved listing and model-extracted job details because the result may not describe the saved job's current evidence. Focused date and inspection-queue simulations passed; this does not verify employer deadlines or establish that a role is closed.
+
+A fictional inspection API test confirmed that the result carries the deadline and distinguishes a new listing from a reinspection; a simulated 100-item queue confirmed the advisory appears in its log. These checks do not validate provider data or the complete rendered workflow.
+
+An isolated browser fixture rendered the saved-listing date component with fictional expired dates. The matching source showed the advisory; the mismatched source showed a source warning without the deadline advisory, and both remained visible. This was a component fixture, not the complete app or an employer-page check.
