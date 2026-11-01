@@ -968,6 +968,12 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
             {
                 context["visual_task_id"] = json!(task_id);
             }
+            if let Some(complete) = value["coverage_complete"].as_bool() {
+                context["coverage_complete"] = json!(complete);
+            }
+            if let Some(truncated) = value["comparisons_truncated"].as_bool() {
+                context["comparisons_truncated"] = json!(truncated);
+            }
         }
         // Later events may record that a previously captured page changed.
         contexts.insert(name.to_owned(), context);
@@ -2043,7 +2049,7 @@ mod tests {
         record.event(json!({"type":"page_capture_changed","time":125,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"attachment_viewport","time":126,"field_label":"Resume","screenshot":"screenshots/0025.png"})).unwrap();
         let visual_id = "0123456789abcdef0123456789abcdef";
-        record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png"})).unwrap();
+        record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png","coverage_complete":false,"comparisons_truncated":true})).unwrap();
         write_visual_result(
             &record.visual_result_path(visual_id).unwrap(),
             visual_id,
@@ -2053,6 +2059,8 @@ mod tests {
         .unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
         assert_eq!(first["contexts"]["0003.png"]["visual_task_id"], visual_id);
+        assert_eq!(first["contexts"]["0003.png"]["coverage_complete"], false);
+        assert_eq!(first["contexts"]["0003.png"]["comparisons_truncated"], true);
         assert_eq!(
             saved_visual_result(&ws, &job, "screens-fixture", visual_id).unwrap()["status"],
             "complete"
