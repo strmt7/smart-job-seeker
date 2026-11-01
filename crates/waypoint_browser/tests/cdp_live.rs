@@ -57,6 +57,23 @@ fn failed_navigation_does_not_return_an_inspected_form() {
 }
 
 #[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn verification_rejects_hidden_and_transparent_text_fields() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_hidden_verification.html"))
+        .unwrap();
+    driver.verify_text_value("#visible", "Example").unwrap();
+    driver.verify_text_value("#offscreen", "Example").unwrap();
+    for selector in ["#hidden", "#transparent", "#invisible"] {
+        assert!(
+            driver.verify_text_value(selector, "Example").is_err(),
+            "accepted {selector}"
+        );
+    }
+}
+
+#[test]
 #[ignore = "launches one local browser and a fictional local HTTP server"]
 fn http_error_page_is_not_treated_as_an_application_form() {
     use std::io::{Read, Write};
