@@ -1830,6 +1830,89 @@ impl CdpDriver {
         Ok((!text.is_empty() && text.len() <= 500).then_some(text))
     }
 
+    /// Read rendered label text, excluding controls and hidden descendants.
+    fn rendered_form_label(&mut self, node: u64) -> Result<Option<String>, DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Ok(None);
+        }
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Label disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || this.tagName !== 'LABEL') return null;
+            const walker = document.createTreeWalker(this, NodeFilter.SHOW_TEXT), parts = [];
+            let text = walker.nextNode(), count = 0, size = 0;
+            while (text) {
+                if (++count > 512) return null;
+                let parent = text.parentElement, visible = !!parent;
+                for (let depth = 0; visible && parent; depth++, parent = parent.parentElement) {
+                    if (depth > 64 || ['INPUT','TEXTAREA','SELECT','BUTTON','SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName) || (parent.getAttribute('aria-hidden') || '').toLowerCase() === 'true') { visible = false; break; }
+                    const style = getComputedStyle(parent);
+                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || !parent.getClientRects().length) { visible = false; break; }
+                    if (parent === this) break;
+                }
+                if (visible) { const value = text.nodeValue || ''; size += value.length; if (size > 2000) return null; parts.push(value); }
+                text = walker.nextNode();
+            }
+            const value = parts.join(' ').trim().replace(/\s+/g,' ');
+            return value && value.length <= 500 ? value : null;
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty() && text.len() <= 500)
+            .map(str::to_owned))
+    }
+
+    /// Detect a common unannotated choice widget: one editable input, a hidden
+    /// companion and a nearby list-like container. This is a conservative hint.
+    fn unannotated_choice_hint(&mut self, node: u64) -> Result<Option<bool>, DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Field disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || !(this instanceof HTMLInputElement)) return null;
+            let parent = this.parentElement;
+            for (let depth = 0; parent && depth < 2; depth++, parent = parent.parentElement) {
+                if (['FORM','BODY','FIELDSET'].includes(parent.tagName)) break;
+                const editable = parent.querySelectorAll('input:not([type="hidden" i]),textarea,select');
+                if (editable.length !== 1 || editable[0] !== this) break;
+                if (!parent.querySelector('input[type="hidden" i]')) continue;
+                const nodes = parent.querySelectorAll('[role],[class],[id]');
+                if (nodes.length > 100) return null;
+                for (const node of nodes) {
+                    if (node === this || node.tagName === 'INPUT') continue;
+                    const role = (node.getAttribute('role') || '').toLowerCase();
+                    if (role === 'listbox' || role === 'option') return true;
+                    const tokens = ((node.getAttribute('class') || '') + ' ' + (node.getAttribute('id') || '')).toLowerCase().split(/[^a-z0-9]+/);
+                    if (tokens.some(token => ['dropdown','autocomplete','suggestion','suggestions','listbox'].includes(token))) return true;
+                }
+            }
+            return false;
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result.pointer("/result/value").and_then(Value::as_bool))
+    }
+
     /// Find nearby rendered text for an otherwise unnamed textarea. This is
     /// advisory context, not an accessible association or permission to fill.
     fn rendered_unassociated_question(&mut self, node: u64) -> Result<Option<String>, DriverError> {
@@ -2306,8 +2389,12 @@ impl CdpDriver {
         let datalists = static_datalists(root);
         let mut controls = vec![];
         let mut hidden_selectors = std::collections::HashSet::new();
+        let mut possible_choice_nodes = std::collections::HashSet::new();
         let mut labels: HashMap<String, String> = HashMap::new();
+        let mut duplicate_labels = std::collections::HashSet::new();
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
+        let mut label_nodes: HashMap<String, u64> = HashMap::new();
+        let mut wrapping_label_nodes: HashMap<u64, u64> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
         let mut radio_form_owners: HashMap<u64, u64> = HashMap::new();
         type GroupContext = (String, Option<String>, Option<u64>, bool);
@@ -2329,6 +2416,67 @@ impl CdpDriver {
             // Captchas hide in ordinary markup (a div, an iframe), not only in
             // form controls, so every node is checked.
             let attrs = attributes(node);
+            if let Some(children) = node
+                .get("children")
+                .and_then(Value::as_array)
+                .filter(|children| (3..=20).contains(&children.len()))
+            {
+                let mut editable = Vec::new();
+                let mut has_hidden = false;
+                let mut has_list_hint = false;
+                for child in children {
+                    let tag = child
+                        .get("nodeName")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    let attributes = attributes(child);
+                    if tag == "input" {
+                        let kind = attributes
+                            .get("type")
+                            .map(String::as_str)
+                            .unwrap_or("text")
+                            .to_ascii_lowercase();
+                        if kind == "hidden" {
+                            has_hidden = true;
+                        } else if matches!(
+                            kind.as_str(),
+                            "text" | "search" | "email" | "tel" | "url"
+                        ) {
+                            if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                editable.push(id);
+                            }
+                        }
+                    } else {
+                        let role = attributes
+                            .get("role")
+                            .map(|value| value.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        let tokens = format!(
+                            "{} {}",
+                            attributes.get("class").map(String::as_str).unwrap_or(""),
+                            attributes.get("id").map(String::as_str).unwrap_or("")
+                        )
+                        .to_ascii_lowercase();
+                        has_list_hint |= matches!(role.as_str(), "listbox" | "option")
+                            || tokens
+                                .split(|ch: char| !ch.is_ascii_alphanumeric())
+                                .any(|token| {
+                                    matches!(
+                                        token,
+                                        "dropdown"
+                                            | "autocomplete"
+                                            | "suggestion"
+                                            | "suggestions"
+                                            | "listbox"
+                                    )
+                                });
+                    }
+                }
+                if has_hidden && has_list_hint && editable.len() == 1 {
+                    possible_choice_nodes.insert(editable[0]);
+                }
+            }
             if !hidden {
                 if let Some(roots) = node.get("shadowRoots").and_then(Value::as_array) {
                     let relevant: Vec<_> = roots
@@ -2534,9 +2682,15 @@ impl CdpDriver {
                 });
                 let label_text = label_text.split_whitespace().collect::<Vec<_>>().join(" ");
                 if let Some(for_id) = attrs.get("for") {
+                    if labels.contains_key(for_id) {
+                        duplicate_labels.insert(for_id.clone());
+                    }
                     labels
                         .entry(for_id.clone())
                         .or_insert_with(|| label_text.clone());
+                    if let Some(label_node) = node.get("nodeId").and_then(Value::as_u64) {
+                        label_nodes.entry(for_id.clone()).or_insert(label_node);
+                    }
                 }
                 if !label_text.is_empty() {
                     walk(node, false, &mut |child, _| {
@@ -2550,6 +2704,10 @@ impl CdpDriver {
                                 wrapping_labels
                                     .entry(id)
                                     .or_insert_with(|| label_text.clone());
+                                if let Some(label_node) = node.get("nodeId").and_then(Value::as_u64)
+                                {
+                                    wrapping_label_nodes.entry(id).or_insert(label_node);
+                                }
                             }
                             return false;
                         }
@@ -3008,6 +3166,8 @@ impl CdpDriver {
 
         let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
         let mut checked_section_headings: HashMap<u64, Option<String>> = HashMap::new();
+        let mut checked_labels: HashMap<u64, Option<String>> = HashMap::new();
+        let mut unannotated_choice_checks = 0usize;
         let mut unassociated_question_count = 0usize;
         for control in controls {
             let selector = selector_for(&control);
@@ -3060,7 +3220,10 @@ impl CdpDriver {
                         .join(" ")
                 })
             });
-            if referenced_label.as_ref().is_some_and(Option::is_none) {
+            if referenced_label
+                .as_ref()
+                .is_some_and(|value| value.as_ref().is_none_or(|text| text.trim().is_empty()))
+            {
                 walls.push("a field has an unresolved or ambiguous accessible label".into());
             }
             let has_usable_label = referenced_label
@@ -3083,7 +3246,14 @@ impl CdpDriver {
                     .is_some_and(|value| !value.trim().is_empty());
             let mut label = referenced_label
                 .flatten()
-                .or_else(|| control.attrs.get("aria-label").cloned())
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    control
+                        .attrs
+                        .get("aria-label")
+                        .filter(|value| !value.trim().is_empty())
+                        .cloned()
+                })
                 .or_else(|| labels.get(&id).cloned())
                 .or_else(|| wrapping_labels.get(&control.node_id).cloned())
                 .or_else(|| control.attrs.get("placeholder").cloned())
@@ -3096,6 +3266,52 @@ impl CdpDriver {
                     }
                 })
                 .unwrap_or_else(|| "unlabelled field".into());
+            let mut label_unverified = false;
+            if !control.attrs.contains_key("aria-labelledby")
+                && control
+                    .attrs
+                    .get("aria-label")
+                    .is_none_or(|value| value.trim().is_empty())
+            {
+                let label_node = if labels.contains_key(&id) {
+                    label_nodes.get(&id)
+                } else {
+                    wrapping_label_nodes.get(&control.node_id)
+                };
+                if let Some(label_node) = label_node {
+                    let rendered = if let Some(rendered) = checked_labels.get(label_node) {
+                        rendered.clone()
+                    } else if checked_labels.len() < 64 {
+                        let rendered = self
+                            .with_review_timeout(|driver| driver.rendered_form_label(*label_node))
+                            .ok()
+                            .flatten();
+                        checked_labels.insert(*label_node, rendered.clone());
+                        rendered
+                    } else {
+                        None
+                    };
+                    if let Some(rendered) = rendered {
+                        label = rendered;
+                    } else {
+                        label_unverified = true;
+                    }
+                } else if labels.contains_key(&id) || wrapping_labels.contains_key(&control.node_id)
+                {
+                    label_unverified = true;
+                }
+                if duplicate_labels.contains(&id)
+                    || label_nodes
+                        .get(&id)
+                        .zip(wrapping_label_nodes.get(&control.node_id))
+                        .is_some_and(|(first, second)| first != second)
+                {
+                    label_unverified = true;
+                }
+            }
+            if label_unverified {
+                label = format!("Unverified label (review): {label}");
+            }
             let unassociated_textarea = control.tag == "textarea" && !has_usable_label;
             if unassociated_textarea && unassociated_question_count < 16 {
                 unassociated_question_count += 1;
@@ -3217,8 +3433,29 @@ impl CdpDriver {
                 }
                 continue;
             }
-            let sensitive =
-                unassociated_textarea || is_sensitive_label(&label) || input_type == "password";
+            let may_be_unannotated_choice = if possible_choice_nodes.contains(&control.node_id) {
+                if unannotated_choice_checks < 64 {
+                    unannotated_choice_checks += 1;
+                    self.with_review_timeout(|driver| {
+                        driver.unannotated_choice_hint(control.node_id)
+                    })
+                    .ok()
+                    .flatten()
+                    .unwrap_or(true)
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+            if may_be_unannotated_choice {
+                walls.push(format!("a custom control needs manual review: {label}"));
+            }
+            let sensitive = label_unverified
+                || may_be_unannotated_choice
+                || unassociated_textarea
+                || is_sensitive_label(&label)
+                || input_type == "password";
             if input_type == "radio" {
                 if let (Some((fieldset_id, legend, group_ref)), Some(name)) = (
                     radio_containers.get(&control.node_id),

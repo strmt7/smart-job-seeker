@@ -748,6 +748,61 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn unannotated_choice_with_hidden_companion_requires_manual_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_unannotated_choice.html"))
+        .unwrap();
+    let location = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector.contains("location"))
+        .unwrap();
+    let reference = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector.contains("reference"))
+        .unwrap();
+    assert_eq!(location.label, "Location");
+    assert!(location.sensitive);
+    assert!(!reference.sensitive);
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.starts_with("a custom control needs manual review: Location")));
+    assert!(driver.trace.iter().all(|event| !event.contains("clicked")
+        && !event.contains("typed")
+        && !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
+fn rendered_labels_exclude_hidden_status_and_control_contents() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_rendered_labels.html")).unwrap();
+    let labels: Vec<_> = live
+        .schema
+        .fields
+        .iter()
+        .map(|field| field.label.as_str())
+        .collect();
+    assert_eq!(
+        &labels[..4],
+        ["Current city", "Email", "Preferred region", "Postal code"]
+    );
+    assert!(labels[4].starts_with("Unverified label (review):"));
+    assert!(live.schema.fields[..4].iter().all(|field| !field.sensitive));
+    assert!(live.schema.fields[4].sensitive);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn unassociated_questions_are_advisory_and_never_auto_filled() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

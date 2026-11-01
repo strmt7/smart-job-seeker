@@ -26,3 +26,22 @@ manual. The resource-gated local model again suggested the four fictional
 profile values, and the CAPTCHA wall remained. No field was filled or control
 clicked, and the model was unloaded. This single page does not establish
 correct association on other layouts.
+
+## Rendered labels and an unannotated choice hint
+
+Form inspection now reads rendered label text while excluding controls and
+hidden descendants. If the label cannot be checked, or multiple labels are
+ambiguous, the field is marked for manual review. A separate bounded structural
+hint detects an editable input with a hidden companion and nearby list-like
+container; it also keeps the field manual. This hint can miss other widget
+implementations and can flag unrelated markup. It does not select an option.
+
+In a subsequent read-only inspection of the same page, the location label no
+longer included hidden loading and no-result messages, and the location input
+was flagged as a possible custom control. The CAPTCHA wall remained; the local
+model suggested the same four fictional profile values for other fields. No
+employer field was filled or control clicked. The model was unloaded afterward.
+The 71 local browser fixtures passed before the final empty-label and duplicate
+label refinements; focused label and choice fixtures passed afterward. Browser
+and web Clippy passed. A separate fictional preview check confirmed that the
+flagged choice did not receive a profile suggestion.

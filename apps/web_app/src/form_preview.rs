@@ -2720,6 +2720,33 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a browser against a fictional form"]
+    fn unannotated_choice_does_not_receive_a_profile_suggestion() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_unannotated_choice.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let location = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Location")
+            .unwrap();
+        assert!(location.sensitive);
+        let selector = location.selector.clone();
+        let preview =
+            suggest_without_model(live, &json!({"city":"Example City"}), "offline").unwrap();
+        assert!(preview
+            .suggestions
+            .iter()
+            .all(|mapping| mapping.field_selector != selector));
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_structure_is_read_only() {
         let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")
