@@ -5806,6 +5806,24 @@ fn serve(
                 resident_model()?.ok_or("No eligible already-loaded local model is available")?;
             let task_id = random_id()?;
             let digest = draft_context_digest(ws, &id, kind)?;
+            let reviewed_template = if let Some(text) = body["reviewed_template_text"].as_str() {
+                if body["template_reviewed"] != true {
+                    return Err("Review the transcription before redrafting".into());
+                }
+                let previous = body["template_draft_id"]
+                    .as_str()
+                    .ok_or("Original draft is required")?;
+                let cached = draft_task::poll(previous)?;
+                Some(draft_task::reviewed_template(
+                    &cached,
+                    id.as_str(),
+                    kind,
+                    &digest,
+                    text,
+                )?)
+            } else {
+                None
+            };
             draft_task::start(
                 task_id.clone(),
                 model,
@@ -5821,6 +5839,7 @@ fn serve(
                     selection_listing,
                     instructions,
                     template,
+                    reviewed_template,
                 },
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));

@@ -22,6 +22,7 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
         .as_ref()
         .map(|task| (task.id.clone(), task.job_id.clone())))
 }
+#[derive(Clone)]
 pub struct Inputs {
     pub job_id: String,
     pub digest: String,
@@ -34,6 +35,7 @@ pub struct Inputs {
     pub selection_listing: String,
     pub instructions: String,
     pub template: Option<(String, Vec<u8>)>,
+    pub reviewed_template: Option<(String, Value)>,
 }
 pub(crate) fn extract_template(
     name: &str,
@@ -106,6 +108,36 @@ where
     ))
 }
 
+pub fn reviewed_template(
+    cached: &Value,
+    job: &str,
+    kind: &str,
+    digest: &str,
+    reviewed: &str,
+) -> Result<(String, Value), String> {
+    if cached["status"] != "complete"
+        || cached["job_id"].as_str() != Some(job)
+        || cached["kind"].as_str() != Some(kind)
+        || cached["digest"].as_str() != Some(digest)
+    {
+        return Err("The transcription is no longer current for this job and template".into());
+    }
+    if reviewed.trim().is_empty()
+        || reviewed.len() > 12_000
+        || reviewed
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err("Reviewed transcription must contain at most 12,000 bytes of text".into());
+    }
+    let mut vision = cached["draft"]["template_vision"]
+        .as_object()
+        .cloned()
+        .ok_or("The draft has no scanned template transcription")?;
+    vision.insert("reviewed_text".into(), json!(reviewed));
+    Ok((reviewed.to_owned(), Value::Object(vision)))
+}
+
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = {
         let mut task = TASK.lock().map_err(|_| "Draft state unavailable")?;
@@ -126,7 +158,16 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
-            let (template, template_coverage, template_vision) = match &input.template {
+            let (template, template_coverage, template_vision) = if let Some((reviewed, vision)) = &input.reviewed_template {
+                let (_, bytes) = input.template.as_ref().ok_or("Selected template is unavailable")?;
+                let (selectable, coverage) = match crate::pdf_extract::extract_with_coverage(bytes) {
+                    Ok((text, coverage)) => (text, Some(coverage)),
+                    Err(error) if error == "PDF extraction failed: No selectable text was found; scanned PDFs need OCR" || error == "PDF extractor returned invalid text" => (String::new(), None),
+                    Err(error) => return Err(error),
+                };
+                let text = if selectable.is_empty() { reviewed.clone() } else { format!("{reviewed}\n{selectable}") };
+                (text, coverage, Some(vision.clone()))
+            } else { match &input.template {
                 Some((name, bytes)) => match extract_template(name, bytes) {
                     Ok((text, coverage)) => (text, coverage, None),
                     Err(error)
@@ -173,7 +214,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                     Err(error) => return Err(error),
                 },
                 None => (String::new(), None, None),
-            };
+            }};
             let template: String = template.chars().take(8000).collect();
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                 .map_err(|e| e.to_string())?
@@ -1250,6 +1291,7 @@ mod tests {
             selection_listing: "Role".into(),
             instructions: String::new(),
             template: None,
+            reviewed_template: None,
         };
         let draft = generate_with_selection(&mut model, &input, &"t".repeat(1000)).unwrap();
         assert_eq!(draft["selection"]["used_in_draft"], 2);
@@ -1285,6 +1327,28 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_transcription_requires_matching_draft_context() {
+        let cached = json!({"status":"complete", "job_id":"job", "kind":"cv", "digest":"current", "draft":{"template_vision":{"text":"Original", "page":1, "image":"image"}}});
+        let (text, vision) =
+            reviewed_template(&cached, "job", "cv", "current", "Corrected").unwrap();
+        assert_eq!(text, "Corrected");
+        assert_eq!(vision["text"], "Original");
+        assert_eq!(vision["reviewed_text"], "Corrected");
+        assert!(reviewed_template(&cached, "other", "cv", "current", "Corrected").is_err());
+        assert!(reviewed_template(&cached, "job", "cv", "stale", "Corrected").is_err());
+        assert!(reviewed_template(&cached, "job", "cv", "current", " ").is_err());
+        assert!(reviewed_template(&cached, "job", "cv", "current", &"x".repeat(12001)).is_err());
+        assert!(reviewed_template(
+            &json!({"status":"complete", "job_id":"job", "kind":"cv", "digest":"current"}),
+            "job",
+            "cv",
+            "current",
+            "Corrected"
+        )
+        .is_err());
+    }
+
+    #[test]
     #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
     fn live_scanned_template_draft_uses_local_vision() {
         let model = crate::resident_model()
@@ -1306,10 +1370,16 @@ mod tests {
                 "fictional.pdf".into(),
                 include_bytes!("../tests/fictional-scanned-cv.pdf").to_vec(),
             )),
+            reviewed_template: None,
         };
-        start("fictional-scanned-draft".into(), model, input).unwrap();
+        start(
+            "fictional-scanned-draft".into(),
+            model.clone(),
+            input.clone(),
+        )
+        .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
-        loop {
+        let first = loop {
             let result = poll("fictional-scanned-draft").unwrap();
             if result["status"] != "running" {
                 assert_eq!(result["status"], "complete", "{result}");
@@ -1360,9 +1430,42 @@ mod tests {
                     "Fictional template transcription: {}",
                     draft["template_vision"]["text"]
                 );
-                break;
+                break result;
             }
             assert!(std::time::Instant::now() < deadline, "draft did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        };
+        let mut corrected_input = input;
+        corrected_input.reviewed_template = Some(
+            reviewed_template(
+                &first,
+                "fictional-scanned-draft",
+                "cv",
+                "fixture",
+                "Reviewed fictional template style",
+            )
+            .unwrap(),
+        );
+        start("fictional-corrected-draft".into(), model, corrected_input).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        loop {
+            let result = poll("fictional-corrected-draft").unwrap();
+            if result["status"] != "running" {
+                assert_eq!(result["status"], "complete", "{result}");
+                assert_eq!(
+                    result["draft"]["template_vision"]["reviewed_text"],
+                    "Reviewed fictional template style"
+                );
+                assert_eq!(
+                    result["draft"]["template_vision"]["image"],
+                    first["draft"]["template_vision"]["image"]
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "corrected draft did not finish"
+            );
             std::thread::sleep(std::time::Duration::from_millis(300));
         }
     }
@@ -1425,6 +1528,7 @@ mod tests {
                     .into(),
             instructions: "Be concise and retain the supplied experience.".into(),
             template: None,
+            reviewed_template: None,
         };
         let result = generate_with_selection(&mut llm, &input, "");
         println!("fictional prioritized draft: {result:?}");
@@ -1473,6 +1577,7 @@ mod tests {
             selection_listing: "Frontend engineer: improve accessibility for disabled users".into(),
             instructions: "Be concise.".into(),
             template: None,
+            reviewed_template: None,
         };
         let draft = generate_with_selection(&mut model, &input, "")
             .expect("local model should draft a fictional CV");
