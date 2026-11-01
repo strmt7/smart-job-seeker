@@ -204,6 +204,25 @@ pub(crate) fn json_prefix(text: &str, max_bytes: usize) -> &str {
     }
     &text[..end]
 }
+
+/// Maximum JSON string suffix within a serialized byte budget, preserving UTF-8.
+pub(crate) fn json_suffix(text: &str, max_bytes: usize) -> &str {
+    let mut used = 2usize;
+    let mut start = text.len();
+    for (index, character) in text.char_indices().rev() {
+        let cost = match character {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+            c if c <= '\u{1f}' => 6,
+            c => c.len_utf8(),
+        };
+        if used + cost > max_bytes {
+            break;
+        }
+        used += cost;
+        start = index;
+    }
+    &text[start..]
+}
 pub fn poll(id: &str) -> Result<Value, String> {
     let tasks = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
     let Some(task) = tasks.as_ref().filter(|t| t.id == id) else {
@@ -1144,6 +1163,9 @@ mod tests {
         let prefix = json_prefix(&source, 30);
         assert!(serde_json::to_string(prefix).unwrap().len() <= 30);
         assert!(source.starts_with(prefix));
+        let suffix = json_suffix(&source, 30);
+        assert!(serde_json::to_string(suffix).unwrap().len() <= 30);
+        assert!(source.ends_with(suffix));
     }
     impl Inference for Fake {
         fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {

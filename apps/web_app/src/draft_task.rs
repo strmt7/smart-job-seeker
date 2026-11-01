@@ -273,24 +273,10 @@ fn sample_template_style(template: &str) -> (String, bool) {
         return (full.to_owned(), false);
     }
     let middle = template.floor_char_boundary(template.len() / 2);
-    let mut suffix_start = template.len();
-    let mut suffix_bytes = 2usize;
-    for (index, character) in template.char_indices().rev() {
-        let cost = match character {
-            '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
-            c if c <= '\u{1f}' => 6,
-            c => c.len_utf8(),
-        };
-        if suffix_bytes + cost > 200 {
-            break;
-        }
-        suffix_bytes += cost;
-        suffix_start = index;
-    }
     let pieces = [
         crate::answer_task::json_prefix(template, 200),
         crate::answer_task::json_prefix(&template[middle..], 200),
-        &template[suffix_start..],
+        crate::answer_task::json_suffix(template, 200),
     ];
     let sample = pieces.join("\n[...]\n");
     (
