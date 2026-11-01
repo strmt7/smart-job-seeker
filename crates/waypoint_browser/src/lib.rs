@@ -1737,11 +1737,58 @@ impl CdpDriver {
 
     /// Retry one read-only observation if the page replaced a node while it was
     /// being inspected. The failed observation may have missed a review wall.
-    fn inspect_after_navigation(&mut self) -> Result<LiveForm, DriverError> {
-        let first = self.inspect_current();
+    fn inspect_with_retry(&mut self) -> Result<LiveForm, DriverError> {
+        let first = self.inspect_current_once();
         retry_changed_inspection(first, || {
             self.cdp.pump(Duration::from_millis(100));
-            self.inspect_current()
+            self.inspect_current_once()
+        })
+    }
+
+    fn inspect_current_once(&mut self) -> Result<LiveForm, DriverError> {
+        let current_url = self.current_url()?;
+        let (schema, mut walls) = self.read_form(&current_url)?;
+        if current_url.starts_with("https://") || current_url.starts_with("http://") {
+            let frame_tree = self.cdp.call("Page.getFrameTree", json!({})).ok();
+            let frame = frame_tree
+                .as_ref()
+                .and_then(|tree| tree.pointer("/frameTree/frame/id"))
+                .and_then(Value::as_str);
+            let loader = frame_tree
+                .as_ref()
+                .and_then(|tree| tree.pointer("/frameTree/frame/loaderId"))
+                .and_then(Value::as_str);
+            let status = frame.zip(loader).and_then(|(frame, loader)| {
+                let observed = self.cdp.events.iter().rev().find_map(|(name, event)| {
+                    (name == "Network.responseReceived"
+                        && event.pointer("/params/frameId").and_then(Value::as_str) == Some(frame)
+                        && event.pointer("/params/loaderId").and_then(Value::as_str)
+                            == Some(loader))
+                    .then(|| event.pointer("/params/status").and_then(Value::as_u64))
+                    .flatten()
+                });
+                if let Some(code) = observed {
+                    self.document_status = Some((frame.to_owned(), loader.to_owned(), code));
+                    Some(code)
+                } else {
+                    self.document_status
+                        .as_ref()
+                        .filter(|(saved_frame, saved_loader, _)| {
+                            saved_frame == frame && saved_loader == loader
+                        })
+                        .map(|(_, _, code)| *code)
+                }
+            });
+            match status {
+                Some(code @ 400..=599) => walls.push(format!("The page returned HTTP {code}; manual review is required")),
+                Some(200..=299) => (),
+                _ => walls.push("The main page response status could not be verified; manual review is required".into()),
+            }
+        }
+        Ok(LiveForm {
+            origin: schema.origin.clone(),
+            schema,
+            walls,
         })
     }
 
@@ -4368,7 +4415,7 @@ impl BrowserDriver for CdpDriver {
                 break;
             }
         }
-        let mut result = self.inspect_after_navigation()?;
+        let mut result = self.inspect_with_retry()?;
         // Client-rendered forms may appear in stages. If the initial inspection
         // is empty, allow a later nonempty schema one further observation to
         // settle, while retaining any previously observed review walls.
@@ -4382,7 +4429,7 @@ impl BrowserDriver for CdpDriver {
                     Duration::from_millis(750)
                         .min(dynamic_deadline.saturating_duration_since(Instant::now())),
                 );
-                let mut next = self.inspect_after_navigation()?;
+                let mut next = self.inspect_with_retry()?;
                 let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
                 retain_observed_walls(result.walls, &mut next);
                 result = next;
@@ -4435,50 +4482,7 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
-        let current_url = self.current_url()?;
-        let (schema, mut walls) = self.read_form(&current_url)?;
-        if current_url.starts_with("https://") || current_url.starts_with("http://") {
-            let frame_tree = self.cdp.call("Page.getFrameTree", json!({})).ok();
-            let frame = frame_tree
-                .as_ref()
-                .and_then(|tree| tree.pointer("/frameTree/frame/id"))
-                .and_then(Value::as_str);
-            let loader = frame_tree
-                .as_ref()
-                .and_then(|tree| tree.pointer("/frameTree/frame/loaderId"))
-                .and_then(Value::as_str);
-            let status = frame.zip(loader).and_then(|(frame, loader)| {
-                let observed = self.cdp.events.iter().rev().find_map(|(name, event)| {
-                    (name == "Network.responseReceived"
-                        && event.pointer("/params/frameId").and_then(Value::as_str) == Some(frame)
-                        && event.pointer("/params/loaderId").and_then(Value::as_str)
-                            == Some(loader))
-                    .then(|| event.pointer("/params/status").and_then(Value::as_u64))
-                    .flatten()
-                });
-                if let Some(code) = observed {
-                    self.document_status = Some((frame.to_owned(), loader.to_owned(), code));
-                    Some(code)
-                } else {
-                    self.document_status
-                        .as_ref()
-                        .filter(|(saved_frame, saved_loader, _)| {
-                            saved_frame == frame && saved_loader == loader
-                        })
-                        .map(|(_, _, code)| *code)
-                }
-            });
-            match status {
-                Some(code @ 400..=599) => walls.push(format!("The page returned HTTP {code}; manual review is required")),
-                Some(200..=299) => (),
-                _ => walls.push("The main page response status could not be verified; manual review is required".into()),
-            }
-        }
-        Ok(LiveForm {
-            origin: schema.origin.clone(),
-            schema,
-            walls,
-        })
+        self.inspect_with_retry()
     }
 
     fn text_value_snapshot(
