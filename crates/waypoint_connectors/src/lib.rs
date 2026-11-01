@@ -267,20 +267,48 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
         .collect())
 }
 
+/// Preserve list-item boundaries for downstream requirement extraction.
+fn lever_list_text(input: &str) -> String {
+    let bounded: String = input.chars().take(200_000).collect();
+    let lower = bounded.to_ascii_lowercase();
+    let mut result = Vec::new();
+    let mut start = 0;
+    for _ in 0..2000 {
+        let Some(relative) = lower[start..].find("</li>") else {
+            break;
+        };
+        let end = start + relative + 5;
+        let item = description_text(&bounded[start..end]);
+        if !item.is_empty() {
+            result.push(item);
+        }
+        start = end;
+    }
+    let remainder = description_text(&bounded[start..]);
+    if !remainder.is_empty() {
+        result.push(remainder);
+    }
+    result.join("\n").chars().take(100_000).collect()
+}
+
 /// Combine the board's introduction, titled requirement lists and additional
 /// text. Prefer plaintext representations where provided; cap stored text.
 fn lever_description(job: &LeverPosting) -> Option<String> {
     const LIMIT: usize = 100_000;
     let mut text = String::new();
     let mut used = 0;
-    let mut append = |part: Option<&str>| {
+    let mut append = |part: Option<&str>, list: bool| {
         if used >= LIMIT {
             return;
         }
         let Some(part) = part.filter(|part| !part.trim().is_empty()) else {
             return;
         };
-        let clean = description_text(part);
+        let clean = if list {
+            lever_list_text(part)
+        } else {
+            description_text(part)
+        };
         if clean.is_empty() {
             return;
         }
@@ -297,16 +325,18 @@ fn lever_description(job: &LeverPosting) -> Option<String> {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .or(job.description.as_deref()),
+        false,
     );
     for list in job.lists.as_deref().unwrap_or(&[]).iter().take(100) {
-        append(list.text.as_deref());
-        append(list.content.as_deref());
+        append(list.text.as_deref(), false);
+        append(list.content.as_deref(), true);
     }
     append(
         job.additional_plain
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .or(job.additional.as_deref()),
+        false,
     );
     if text.is_empty() {
         None
@@ -657,7 +687,7 @@ mod tests {
         let rows = parse_lever("example", data).unwrap();
         assert_eq!(
             rows[0].description.as_deref(),
-            Some("Build tools.\nRequirements\nRust experience SQL knowledge\nApply in English.")
+            Some("Build tools.\nRequirements\nRust experience\nSQL knowledge\nApply in English.")
         );
         assert_eq!(rows[1].description.as_deref(), Some("HTML fallback"));
     }

@@ -2346,6 +2346,46 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a resource-gated local qwen3.5:9b model"]
+    fn live_requirement_audit_reads_separate_lever_bullets() {
+        let payload = r#"[{"id":"fixture","text":"Engineer","lists":[{"text":"Requirements","content":"<ul><li>Python experience</li><li>SQL experience</li><li>PhD in chemistry</li></ul>"}]}]"#;
+        let listing = waypoint_connectors::parse_lever("fixture", payload)
+            .unwrap()
+            .remove(0)
+            .description
+            .unwrap();
+        let facts = vec!["Used Python to clean laboratory data".to_owned()];
+        let raw = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"Python experience","importance":"required","status":"supported","fact_index":1,"explanation":"Python"}]});
+        let baseline = validate(raw.clone(), &facts, "", &listing).unwrap();
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let (_, result, report) =
+            audit_missing_requirements(&mut model, raw, baseline, &facts, "", &listing);
+        println!(
+            "Fictional bullet audit: {report}, rubric: {}",
+            result["rubric"]
+        );
+        assert_eq!(report["status"], "completed");
+        let rubric = result["rubric"].as_array().unwrap();
+        for term in ["sql", "phd"] {
+            assert!(
+                rubric.iter().any(|item| item["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| text.to_lowercase().contains(term))
+                    && item["status"] == "unknown"),
+                "missing {term}: {rubric:?}"
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_requirement_audit_finds_missing_fictional_qualifications() {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")

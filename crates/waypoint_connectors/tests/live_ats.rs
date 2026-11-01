@@ -105,7 +105,14 @@ fn captured_lever_descriptions_include_requirement_sections() {
         if expected.is_empty() {
             continue;
         }
-        assert!(row.description.as_deref().unwrap_or("").contains(&expected));
+        let flattened = row
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(flattened.contains(&expected));
         checked += 1;
     }
     assert!(checked > 0);
