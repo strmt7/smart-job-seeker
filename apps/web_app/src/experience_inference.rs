@@ -337,7 +337,18 @@ mod tests {
         let mut informed = ExperienceInference::new(&mut llm, &[item]);
         let (with_memory, _, _) =
             crate::suggestions::suggest_with_review(&mut informed, &schema, &profile).unwrap();
-        for (name, mappings) in [("baseline", baseline), ("with memory", with_memory)] {
+        let same_platform_item = ExperienceMatch {
+            same_platform: true,
+            ..informed.experiences[0].clone()
+        };
+        let mut same_platform = ExperienceInference::new(&mut llm, &[same_platform_item]);
+        let (with_same_platform_memory, _, _) =
+            crate::suggestions::suggest_with_review(&mut same_platform, &schema, &profile).unwrap();
+        for (name, mappings) in [
+            ("baseline", baseline),
+            ("with memory", with_memory),
+            ("with same-platform memory", with_same_platform_memory),
+        ] {
             let selectors: Vec<_> = mappings
                 .iter()
                 .map(|item| item.field_selector.as_str())
@@ -352,6 +363,44 @@ mod tests {
                 "{name} mapped third-party email"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
+    fn resource_gated_experience_comparison() {
+        let id = "fictional-experience-evaluation";
+        crate::model_start::start(id.into(), "qwen3.5:9b".into()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
+        let result = loop {
+            let result = crate::model_start::poll(id).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "model startup timed out; check runtime status"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        assert_eq!(result["status"], "complete", "{result}");
+        struct Unload(bool);
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                if self.0 {
+                    let request = br#"{"model":"qwen3.5:9b","keep_alive":0}"#;
+                    let _ = waypoint_inference::ollama::http_request(
+                        "127.0.0.1:11434".parse().unwrap(),
+                        "POST",
+                        "/api/generate",
+                        Some(request),
+                        10_000,
+                    );
+                }
+            }
+        }
+        let _unload = Unload(result["model"]["already_running"] != true);
+        live_experience_comparison_on_fictional_contacts();
     }
 
     #[test]
