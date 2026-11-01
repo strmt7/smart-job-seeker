@@ -1198,26 +1198,37 @@ fn unique_requirement_context<'a>(listing: &'a str, excerpt: &str) -> Option<&'a
 /// Multiple durations in one fact can refer to different skills. A language
 /// model's repeated agreement does not establish which duration applies.
 fn duration_mentions(text: &str) -> usize {
-    let words: Vec<_> = text
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    words
-        .windows(2)
-        .filter(|pair| {
-            let unit = pair[1];
-            let number = pair[0];
-            (unit.eq_ignore_ascii_case("year")
-                || unit.eq_ignore_ascii_case("years")
-                || unit.eq_ignore_ascii_case("month")
-                || unit.eq_ignore_ascii_case("months"))
-                && (number.chars().all(|c| c.is_ascii_digit())
-                    || [
-                        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-                        "ten", "eleven", "twelve", "half",
-                    ]
-                    .iter()
-                    .any(|word| number.eq_ignore_ascii_case(word)))
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| {
+            matches!(
+                word.to_lowercase().as_str(),
+                "year"
+                    | "years"
+                    | "yr"
+                    | "yrs"
+                    | "month"
+                    | "months"
+                    | "mo"
+                    | "mos"
+                    | "jahr"
+                    | "jahre"
+                    | "jahren"
+                    | "monat"
+                    | "monate"
+                    | "monaten"
+                    | "ans"
+                    | "année"
+                    | "années"
+                    | "mois"
+                    | "año"
+                    | "años"
+                    | "mes"
+                    | "meses"
+                    | "ano"
+                    | "anos"
+                    | "anno"
+                    | "anni"
+            )
         })
         .count()
 }
@@ -1264,9 +1275,12 @@ fn check_qualification_judgments_with_source(
     for item in criteria.iter_mut() {
         let multiple_durations = item["source"] == "listing"
             && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
-            && item["excerpt"]
-                .as_str()
-                .is_some_and(|excerpt| duration_mentions(excerpt) > 0)
+            && item["excerpt"].as_str().is_some_and(|excerpt| {
+                duration_mentions(excerpt) > 0
+                    || verification_text
+                        .and_then(|source| unique_requirement_context(source, excerpt))
+                        .is_some_and(|context| duration_mentions(context) > 0)
+            })
             && item["fact_index"]
                 .as_u64()
                 .and_then(|n| usize::try_from(n).ok())
@@ -2794,6 +2808,9 @@ mod tests {
         }
         assert_eq!(duration_mentions("7 years Java and three years Python"), 2);
         assert_eq!(duration_mentions("Seven years of Python"), 1);
+        assert_eq!(duration_mentions("fifteen years Java, 2 yrs Python"), 2);
+        assert_eq!(duration_mentions("5 Jahre Java, 18 Monate Python"), 2);
+        assert_eq!(duration_mentions("an engineer with Python experience"), 0);
         let facts = vec!["Seven years Java and three years Python".to_owned()];
         let listing = "Required: five years Python experience.";
         let value = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years Python experience","importance":"required","status":"supported","fact_index":1,"explanation":"Experience"}]});
@@ -2803,6 +2820,12 @@ mod tests {
         assert_eq!(checked["rubric"][0]["status"], "unknown");
         assert_eq!(checked["qualification_check"]["duration_review"], 1);
         assert_eq!(checked["score_range"], json!({"lower":0,"upper":100}));
+        let short = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"Python","importance":"required","status":"supported","fact_index":1,"explanation":"Experience"}]});
+        let initial = validate(short.clone(), &facts, "", listing).unwrap();
+        let (_, checked) =
+            check_qualification_judgments(&mut NoCalls, short, initial, &facts, "", listing);
+        assert_eq!(checked["rubric"][0]["status"], "unknown");
+        assert_eq!(checked["qualification_check"]["duration_review"], 1);
     }
 
     #[test]
@@ -4148,6 +4171,11 @@ mod tests {
                     && item["status"] != "supported"),
             "years in another skill must not satisfy Python experience: {mixed_result}"
         );
+        let abbreviated =
+            vec!["Fifteen years of Java experience and 3 yrs of Python experience.".into()];
+        let abbreviated_result = assess(&mut model, &abbreviated, "", listing).unwrap();
+        println!("Abbreviated mixed-skill assessment: {abbreviated_result}");
+        assert!(abbreviated_result["rubric"].as_array().unwrap().iter().any(|item| item["excerpt"].as_str().is_some_and(|text| text.to_lowercase().contains("five years")) && item["status"] != "supported"), "abbreviated durations must not transfer experience between skills: {abbreviated_result}");
     }
 
     #[test]
