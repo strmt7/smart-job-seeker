@@ -20,6 +20,8 @@ pub struct RawPosting {
     pub employer: String,
     pub location: String,
     pub remote: bool,
+    #[serde(default)]
+    pub remote_evidence: Option<bool>,
     pub posted_at: Option<String>,
     /// Text supplied by the board, if the listing includes it.
     pub description: Option<String>,
@@ -104,14 +106,10 @@ struct AshbyPosting {
     #[serde(default)]
     #[allow(dead_code)]
     employment_type_sniffed: Option<String>,
-    #[serde(default = "default_false", rename = "isRemote")]
-    is_remote: bool,
+    #[serde(default, rename = "isRemote")]
+    is_remote: Option<bool>,
     #[serde(default, rename = "descriptionPlain")]
     description_plain: Option<String>,
-}
-
-fn default_false() -> bool {
-    false
 }
 
 /// Bounded, best-effort text for matching, not a general HTML renderer.
@@ -240,6 +238,7 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
                 employer: board.to_string(),
                 location: j.location.name,
                 remote: false,
+                remote_evidence: None,
                 posted_at: j.updated_at,
                 description: j.content.as_deref().map(description_text),
                 content_hash_source: format!("gh://{board}/{}", req.unwrap_or_default()),
@@ -264,6 +263,17 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
             employer: company.to_string(),
             location: j.categories.location,
             remote: j.categories.workplace_type.eq_ignore_ascii_case("remote"),
+            remote_evidence: match j
+                .categories
+                .workplace_type
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "remote" => Some(true),
+                "on-site" | "onsite" => Some(false),
+                _ => None,
+            },
             posted_at: j.created_at.map(|ms| format!("unix:{ms}")),
             description: j.description_plain.as_deref().map(description_text),
             content_hash_source: format!("lv://{company}/{}", j.id),
@@ -295,7 +305,8 @@ pub fn parse_ashby(org: &str, payload: &str) -> Result<Vec<RawPosting>, Connecto
             title: j.title,
             employer: org.to_string(),
             location: j.location.clone().unwrap_or_default(),
-            remote: j.is_remote,
+            remote: j.is_remote.unwrap_or(false),
+            remote_evidence: j.is_remote,
             posted_at: j.published_at,
             description: j.description_plain.as_deref().map(description_text),
             content_hash_source: format!("ab://{org}/{}", j.id),
@@ -369,6 +380,7 @@ pub fn parse_jobicy(payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
                 .unwrap_or("")
                 .into(),
             remote: true,
+            remote_evidence: Some(true),
             posted_at: job
                 .get("pubDate")
                 .and_then(|v| v.as_str())

@@ -911,12 +911,13 @@ impl Workspace {
         // provenance), so "same requisition, changed title/location" is
         // detected as a new observation rather than a silent no-op.
         let content = format!(
-            "{}|{}|{}|{}|{:?}",
+            "{}|{}|{}|{}|{:?}|{:?}",
             posting.title,
             posting.employer,
             posting.location,
             posting.content_hash_source,
-            posting.description
+            posting.description,
+            posting.remote_evidence
         );
         let hash = sha256_hex(content.as_bytes());
         let now = now_unix.to_string();
@@ -939,6 +940,8 @@ impl Workspace {
                     posted_at: posting.posted_at.clone(),
                 };
                 self.store.upsert_job(&job)?;
+                self.store
+                    .set_job_remote_evidence(&id, &hash, posting.remote_evidence)?;
                 self.store
                     .set_job_description(&id, posting.description.as_deref())?;
                 self.store.find_possible_duplicates(&job)?;
@@ -999,6 +1002,8 @@ impl Workspace {
                         }
                     }
                 }
+                self.store
+                    .set_job_remote_evidence(&id, &hash, posting.remote_evidence)?;
                 Ok(true)
             }
         }
@@ -1013,14 +1018,14 @@ impl Workspace {
     ) -> Result<RankedResults, WorkspaceError> {
         let mut results = RankedResults::default();
         let matcher = EvidenceMatcher::new(profile_skills);
-        self.store
-            .visit_jobs_with_descriptions(|job, description| {
+        self.store.visit_jobs_with_descriptions_and_remote(
+            |job, description, remote_evidence| {
                 let outcomes = check_constraints_with_remote(
                     constraints,
                     &[],  // adapters do not claim languages the payload never states
                     None, // nor salaries it never states
                     None, // nor sponsorship promises
-                    job.remote.then_some(true), // false also represents missing source data
+                    remote_evidence.or_else(|| job.remote.then_some(true)),
                     &job.location,
                 );
                 let reasons: Vec<String> = outcomes
@@ -1062,7 +1067,8 @@ impl Workspace {
                 } else {
                     results.excluded.push(ExcludedJob { job, reasons });
                 }
-            })?;
+            },
+        )?;
         results.strict.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)

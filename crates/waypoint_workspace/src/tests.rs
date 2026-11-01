@@ -40,6 +40,51 @@ fn fetcher_all() -> StaticFetcher {
 }
 
 #[test]
+fn discovery_preserves_explicit_remote_evidence_across_updates() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let targets = [DiscoveryTarget::new("ashby", "ashby")];
+    let payload = |remote: &str| {
+        format!(
+            r#"{{"jobs":[{{"id":"role-1","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/role-1","location":"Geneva"{remote}}}]}}"#
+        )
+    };
+    let constraints = CampaignConstraints {
+        remote_only: true,
+        ..Default::default()
+    };
+    for (remote, expected) in [
+        (r#", "isRemote": false"#, "excluded"),
+        ("", "unknown"),
+        (r#", "isRemote": true"#, "remote"),
+    ] {
+        let fetcher = StaticFetcher::default().route(ASHBY_URL, &payload(remote));
+        let outcome = ws.discover(&targets, &fetcher, 100);
+        assert_eq!(outcome.inserted + outcome.updated, 1);
+        let ranked = ws.ranked(&constraints, &[], 100).unwrap();
+        match expected {
+            "excluded" => {
+                assert_eq!(ranked.excluded.len(), 1);
+                let mut changed = ws.jobs().unwrap().remove(0);
+                changed.content_hash = Some("different-revision".into());
+                ws.store.upsert_job(&changed).unwrap();
+                let stale = ws.ranked(&constraints, &[], 100).unwrap();
+                assert!(stale.excluded.is_empty());
+                assert!(stale.strict[0]
+                    .unknown_constraints
+                    .iter()
+                    .any(|reason| reason.contains("remote status not established")));
+            }
+            "unknown" => assert!(ranked.strict[0]
+                .unknown_constraints
+                .iter()
+                .any(|reason| reason.contains("remote status not established"))),
+            "remote" => assert!(ranked.strict[0].unknown_constraints.is_empty()),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
 fn ranked_results_surface_unknown_remote_status() {
     let mut ws = Workspace::in_memory().unwrap();
     ws.test_insert_job("fixture-remote", "Engineer", "Example");
@@ -444,15 +489,30 @@ fn ranked_separates_strict_results_from_the_excluded_bucket() {
     assert!(all.strict[0].matched_skills.contains(&"rust".to_string()));
     assert!(!all.strict[0].matched_skills.contains(&"sqlite".to_string()));
 
-    // Remote-only: exactly one posting states remote, so exactly one is strict.
+    // Remote-only: Lever states remote, Ashby states non-remote, Greenhouse is unknown.
     let remote_only = CampaignConstraints {
         remote_only: true,
         ..CampaignConstraints::default()
     };
     let r1 = ws.ranked(&remote_only, &skills, 1_758_900_100).unwrap();
-    assert_eq!(r1.strict.len(), 1, "only the lever posting states remote");
-    assert_eq!(r1.strict[0].job.source, "lever");
-    assert_eq!(r1.excluded.len(), 3, "exclusions are visible, never silent");
+    assert_eq!(r1.strict.len(), 3);
+    assert!(r1
+        .strict
+        .iter()
+        .any(|row| row.job.source == "lever" && row.unknown_constraints.is_empty()));
+    assert_eq!(
+        r1.strict
+            .iter()
+            .filter(|row| row.job.source == "greenhouse"
+                && row
+                    .unknown_constraints
+                    .iter()
+                    .any(|reason| reason.contains("remote status not established")))
+            .count(),
+        2
+    );
+    assert_eq!(r1.excluded.len(), 1);
+    assert_eq!(r1.excluded[0].job.source, "ashby");
     assert!(
         r1.excluded
             .iter()

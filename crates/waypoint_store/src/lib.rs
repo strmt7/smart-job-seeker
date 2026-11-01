@@ -297,6 +297,14 @@ const MIGRATIONS: &[&str] = &[
        WHERE c.status='missing_employer' AND length(CAST(trim(j.requisition_id) AS BLOB))>=3
      );
      UPDATE meta SET value='31' WHERE key='schema_version';",
+    // v32 — source-provided remote status, bound to the listing revision.
+    "CREATE TABLE job_remote_evidence (
+       job_id TEXT PRIMARY KEY REFERENCES jobs(id),
+       content_hash TEXT NOT NULL,
+       remote INTEGER NOT NULL CHECK(remote IN (0, 1))
+     );
+     UPDATE meta SET value='32' WHERE key='schema_version';",
+
 ];
 
 pub mod documents;
@@ -783,6 +791,41 @@ impl Store {
         rows.collect()
     }
 
+    /// Record source evidence for the exact listing revision; older revisions never match.
+    pub fn set_job_remote_evidence(
+        &self,
+        id: &JobIdentityId,
+        hash: &str,
+        remote: Option<bool>,
+    ) -> Result<(), rusqlite::Error> {
+        if let Some(remote) = remote {
+            self.conn.execute("INSERT INTO job_remote_evidence(job_id,content_hash,remote) VALUES(?1,?2,?3) ON CONFLICT(job_id) DO UPDATE SET content_hash=excluded.content_hash,remote=excluded.remote", params![id.as_str(), hash, remote as i64])?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM job_remote_evidence WHERE job_id=?1",
+                params![id.as_str()],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn visit_jobs_with_descriptions_and_remote(
+        &self,
+        mut visit: impl FnMut(StoredJob, Option<String>, Option<bool>),
+    ) -> Result<(), rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at,d.content,e.remote FROM jobs j LEFT JOIN job_descriptions d ON d.job_id=j.id LEFT JOIN job_remote_evidence e ON e.job_id=j.id AND e.content_hash=j.content_hash ORDER BY COALESCE(j.last_seen,'') DESC, j.id ASC")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let remote: Option<i64> = row.get(14)?;
+            visit(
+                Self::row_to_job(row)?,
+                row.get(13)?,
+                remote.map(|value| value != 0),
+            );
+        }
+        Ok(())
+    }
+
     /// Visit jobs and their optional descriptions in the same order as all_jobs.
     /// Rows are processed one at a time so descriptions are not accumulated in memory.
     pub fn visit_jobs_with_descriptions(
@@ -1220,7 +1263,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "31");
+        assert_eq!(version, "32");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
