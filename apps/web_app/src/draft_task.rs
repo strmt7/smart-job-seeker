@@ -239,7 +239,6 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                     None => (String::new(), None, None),
                 }
             };
-            let template: String = template.chars().take(8000).collect();
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                 .map_err(|e| e.to_string())?
                 .with_resident_context();
@@ -263,6 +262,40 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+/// Use the same bounded prompt budget while exposing style from more than the
+/// opening of a long template. Samples are guidance, not complete document text.
+fn sample_template_style(template: &str) -> (String, bool) {
+    let full = crate::answer_task::json_prefix(template, 700);
+    if full.len() == template.len() {
+        return (full.to_owned(), false);
+    }
+    let middle = template.floor_char_boundary(template.len() / 2);
+    let mut suffix_start = template.len();
+    let mut suffix_bytes = 2usize;
+    for (index, character) in template.char_indices().rev() {
+        let cost = match character {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+            c if c <= '\u{1f}' => 6,
+            c => c.len_utf8(),
+        };
+        if suffix_bytes + cost > 200 {
+            break;
+        }
+        suffix_bytes += cost;
+        suffix_start = index;
+    }
+    let pieces = [
+        crate::answer_task::json_prefix(template, 200),
+        crate::answer_task::json_prefix(&template[middle..], 200),
+        &template[suffix_start..],
+    ];
+    let sample = pieces.join("\n[...]\n");
+    (
+        crate::answer_task::json_prefix(&sample, 700).to_owned(),
+        true,
+    )
 }
 
 fn generate_with_selection(
@@ -344,21 +377,22 @@ fn generate_with_selection(
         }
     }
     let instructions = crate::answer_task::json_prefix(&input.instructions, 500);
-    let template_excerpt = crate::answer_task::json_prefix(template, 700);
+    let (template_excerpt, template_sampled) = sample_template_style(template);
     selection["used_in_draft"] = json!(qualification_count);
     selection["draft_fact_budget_omitted"] =
         json!(over_limit + selected.len() - qualification_count);
     selection["contact_omitted"] = json!(input.contact_facts.len() - contact_used);
     selection["job_truncated"] = json!(job_truncated);
     selection["instructions_truncated"] = json!(instructions.len() < input.instructions.len());
-    selection["template_truncated"] = json!(template_excerpt.len() < template.len());
+    selection["template_truncated"] = json!(template_sampled);
+    selection["template_sampled_sections"] = json!(template_sampled);
     let mut draft = generate(
         llm,
         &job,
         &input.kind,
         &facts,
         instructions,
-        template_excerpt,
+        &template_excerpt,
     )?;
     draft["selection"] = selection;
     Ok(draft)
@@ -1376,6 +1410,30 @@ mod tests {
     }
     struct Fake {
         calls: usize,
+    }
+
+    #[test]
+    fn long_template_sampling_is_bounded_and_covers_separate_sections() {
+        let template = format!(
+            "OPENING{}{}{}ENDING",
+            "a".repeat(900),
+            "MIDDLE ".repeat(30),
+            "z".repeat(850)
+        );
+        let (sample, shortened) = sample_template_style(&template);
+        assert!(shortened);
+        assert!(sample.contains("OPENING"));
+        assert!(sample.contains("MIDDLE"));
+        assert!(sample.contains("ENDING"));
+        assert!(serde_json::to_string(&sample).unwrap().len() <= 700);
+        let escaped = format!("{}TAIL", "\"é\\\n".repeat(1000));
+        let (sample, shortened) = sample_template_style(&escaped);
+        assert!(shortened);
+        assert!(serde_json::to_string(&sample).unwrap().len() <= 700);
+        assert_eq!(
+            sample_template_style("Short template"),
+            ("Short template".into(), false)
+        );
     }
 
     #[test]
