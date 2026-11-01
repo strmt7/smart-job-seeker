@@ -49,23 +49,35 @@ const CHANGED_DURING_INSPECTION: &str =
     "The page changed during inspection; review the form manually";
 
 fn retry_changed_inspection(
-    first: Result<LiveForm, DriverError>,
-    retry: impl FnOnce() -> Result<LiveForm, DriverError>,
+    mut result: Result<LiveForm, DriverError>,
+    mut retry: impl FnMut(usize) -> Result<LiveForm, DriverError>,
 ) -> Result<LiveForm, DriverError> {
-    match first {
-        Err(error) if is_disappeared_node_error(&error.0) => {
-            let mut result = retry()?;
-            if !result
-                .walls
-                .iter()
-                .any(|wall| wall == CHANGED_DURING_INSPECTION)
-            {
-                result.walls.push(CHANGED_DURING_INSPECTION.into());
+    let mut changed = false;
+    for attempt in 0..3 {
+        match result {
+            Err(ref error) if is_disappeared_node_error(&error.0) => {
+                changed = true;
+                result = retry(attempt);
             }
-            Ok(result)
+            _ => break,
         }
-        result => result,
     }
+    let mut form = result.map_err(|error| {
+        if is_disappeared_node_error(&error.0) {
+            DriverError("The page kept changing during inspection; review it manually".into())
+        } else {
+            error
+        }
+    })?;
+    if changed
+        && !form
+            .walls
+            .iter()
+            .any(|wall| wall == CHANGED_DURING_INSPECTION)
+    {
+        form.walls.push(CHANGED_DURING_INSPECTION.into());
+    }
+    Ok(form)
 }
 
 /// Frame contents are outside the current form reader's inspection boundary.
@@ -1762,12 +1774,13 @@ impl CdpDriver {
         Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
     }
 
-    /// Retry one read-only observation if the page replaced a node while it was
+    /// Retry bounded read-only observations if the page replaced a node while it was
     /// being inspected. The failed observation may have missed a review wall.
     fn inspect_with_retry(&mut self) -> Result<LiveForm, DriverError> {
         let first = self.inspect_current_once();
-        retry_changed_inspection(first, || {
-            self.cdp.pump(Duration::from_millis(100));
+        retry_changed_inspection(first, |attempt| {
+            self.cdp
+                .pump(Duration::from_millis([100, 250, 500][attempt]));
             self.inspect_current_once()
         })
     }
@@ -5703,7 +5716,7 @@ mod traversal_tests {
     use super::*;
 
     #[test]
-    fn changed_inspection_retries_once_and_keeps_manual_review_wall() {
+    fn changed_inspection_retries_boundedly_and_keeps_manual_review_wall() {
         let form = || LiveForm {
             origin: "https://example.invalid".into(),
             schema: waypoint_applications::form_mapping::FormSchema {
@@ -5716,16 +5729,33 @@ mod traversal_tests {
         };
         let stale =
             || DriverError("DOM.resolveNode: protocol error No node with given id found".into());
-        let result = retry_changed_inspection(Err(stale()), || Ok(form())).unwrap();
+        let mut attempts = 0;
+        let result = retry_changed_inspection(Err(stale()), |_| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(stale())
+            } else {
+                Ok(form())
+            }
+        })
+        .unwrap();
+        assert_eq!(attempts, 3);
         assert!(result
             .walls
             .iter()
             .any(|wall| wall == CHANGED_DURING_INSPECTION));
         assert!(result.walls.iter().any(|wall| wall == "captcha present"));
-        assert!(retry_changed_inspection(Err(stale()), || Err(stale())).is_err());
+        let mut attempts = 0;
+        let error = retry_changed_inspection(Err(stale()), |_| {
+            attempts += 1;
+            Err(stale())
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 3);
+        assert!(error.0.contains("review it manually"));
         assert!(retry_changed_inspection(
             Err(DriverError("browser disconnected".into())),
-            || panic!("unexpected retry")
+            |_| panic!("unexpected retry")
         )
         .is_err());
     }
