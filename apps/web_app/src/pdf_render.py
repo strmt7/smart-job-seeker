@@ -32,21 +32,25 @@ try:
     width, height = page.get_size()
     if not all(math.isfinite(v) and 1 <= v <= 20000 for v in (width, height)):
         raise ValueError('Unsupported PDF page dimensions')
-    scale = min(1.5, 1600 / width, 2200 / height, math.sqrt(3200000 / (width * height)))
-    bitmap = page.render(scale=scale)
-    image = bitmap.to_pil()
     if mode in ('top', 'bottom'):
-        width_px, height_px = image.size
-        if mode == 'top':
-            image = image.crop((0, 0, width_px, math.ceil(height_px * 0.55)))
-        else:
-            image = image.crop((0, math.floor(height_px * 0.45), width_px, height_px))
+        # Render the crop directly, preserving the same bounded bitmap budget
+        # while giving the selected region more source pixels when possible.
+        region_height = height * 0.55
+        scale = min(2.25, 1598 / width, 2198 / region_height,
+                    math.sqrt(3100000 / (width * region_height)))
+        removed = height * 0.45
+        crop = (0, removed, 0, 0) if mode == 'top' else (0, 0, 0, removed)
+        bitmap = page.render(scale=scale, crop=crop)
+    else:
+        scale = min(1.5, 1600 / width, 2200 / height, math.sqrt(3200000 / (width * height)))
+        bitmap = page.render(scale=scale)
+    image = bitmap.to_pil()
     out = io.BytesIO()
     image.save(out, format='PNG', optimize=False)
     png = out.getvalue()
     if len(png) > 3 * 1024 * 1024:
         raise ValueError('Rendered page exceeds 3 MiB; review the PDF externally')
-    result = {'page': index, 'pages': count, 'region': mode if mode in ('top', 'bottom') else 'full', 'image': base64.b64encode(png).decode('ascii')}
+    result = {'page': index, 'pages': count, 'region': mode if mode in ('top', 'bottom') else 'full', 'scale': scale, 'image': base64.b64encode(png).decode('ascii')}
     if mode == 'geometry':
         # This is an advisory check of selectable text geometry, not an image or
         # semantic assessment. Limit work even on PDFs with pathological text.

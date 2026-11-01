@@ -367,7 +367,7 @@ mod tests {
     #[test]
     #[ignore = "requires the local PDF renderer"]
     fn renders_overlapping_regions_of_the_requested_page() {
-        let bytes = include_bytes!("../tests/fictional-scanned-cv.pdf");
+        let bytes = include_bytes!("../tests/fictional-document-overlap.pdf");
         let full = super::render_page_region(bytes, 0, "full").unwrap();
         let top = super::render_page_region(bytes, 0, "top").unwrap();
         let bottom = super::render_page_region(bytes, 0, "bottom").unwrap();
@@ -389,10 +389,17 @@ mod tests {
         let (width, height) = size(&full);
         let (top_width, top_height) = size(&top);
         let (bottom_width, bottom_height) = size(&bottom);
-        assert_eq!((top_width, bottom_width), (width, width));
+        let full_scale = full["scale"].as_f64().unwrap();
+        let top_scale = top["scale"].as_f64().unwrap();
+        let bottom_scale = bottom["scale"].as_f64().unwrap();
+        assert!(top_scale > full_scale && bottom_scale > full_scale);
+        assert!(top_width > width && bottom_width > width);
         assert!(
-            top_height < height && bottom_height < height && top_height + bottom_height > height
+            (top_height as f64 / top_scale) + (bottom_height as f64 / bottom_scale)
+                > height as f64 / full_scale
         );
+        assert!((top_width as u64 * top_height as u64) <= 3_200_000);
+        assert!((bottom_width as u64 * bottom_height as u64) <= 3_200_000);
         assert!(super::render_page_region(bytes, 0, "unknown").is_err());
     }
 
