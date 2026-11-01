@@ -253,6 +253,7 @@ pub fn suggest_with_review(
                 FormFieldType::Checkbox => "checkbox",
                 FormFieldType::File => "file",
                 FormFieldType::Date => "date",
+                FormFieldType::Month => "month",
             };
             let index = schema.fields.iter().position(|candidate| candidate.selector == field.selector).expect("field belongs to schema");
             json!({"selector":model_field_selector(schema, index),"label":field.label,"type":kind,"autocomplete":field.autocomplete})

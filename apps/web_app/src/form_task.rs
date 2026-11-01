@@ -88,6 +88,7 @@ fn has_required_data_entry_form(fields: &[waypoint_applications::form_mapping::F
                         | FormFieldType::Select { .. }
                         | FormFieldType::MultiSelect { .. }
                         | FormFieldType::Date
+                        | FormFieldType::Month
                 )
         })
         .take(2)

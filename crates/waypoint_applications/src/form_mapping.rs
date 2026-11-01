@@ -19,6 +19,7 @@ pub enum FormFieldType {
     Checkbox,
     File,
     Date,
+    Month,
     Radio { options: Vec<String> },
 }
 
@@ -114,6 +115,20 @@ pub fn valid_multi_select(options: &[String], values: &[String]) -> bool {
                 .iter()
                 .any(|previous| previous.trim().eq_ignore_ascii_case(value.trim()))
         })
+}
+
+/// Accept the year and month syntax used by native month inputs.
+pub fn valid_iso_month(value: &str) -> bool {
+    let b = value.as_bytes();
+    b.len() == 7
+        && b[4] == b'-'
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || c.is_ascii_digit())
+        && value[0..4].parse::<u32>().is_ok_and(|year| year > 0)
+        && value[5..7]
+            .parse::<u32>()
+            .is_ok_and(|month| (1..=12).contains(&month))
 }
 
 /// Accept a complete Gregorian calendar date in the format used by native date inputs.
@@ -219,6 +234,7 @@ pub fn validate_mapping(
                 PacketValue::Text(text),
             ) => text_fits_field(f, text),
             (FormFieldType::Date, PacketValue::Date(date)) => valid_iso_date(date),
+            (FormFieldType::Month, PacketValue::Date(date)) => valid_iso_month(date),
             (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::Select { options }, PacketValue::Text(t)) => options.contains(t),
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -333,6 +349,24 @@ mod tests {
             ],
             multi_step: false,
             steps: 1,
+        }
+    }
+
+    #[test]
+    fn native_month_requires_a_valid_four_digit_year_and_month() {
+        for valid in ["2020-01", "9999-12"] {
+            assert!(valid_iso_month(valid));
+        }
+        for invalid in [
+            "0000-01",
+            "2020-00",
+            "2020-13",
+            "20-01",
+            "2020-1",
+            "2020-01-01",
+            "é020-01",
+        ] {
+            assert!(!valid_iso_month(invalid));
         }
     }
 

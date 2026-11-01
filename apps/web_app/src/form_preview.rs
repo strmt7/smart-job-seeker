@@ -244,7 +244,7 @@ fn check_existing_value(
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                 PacketValue::Text(_),
             )
-            | (FormFieldType::Date, PacketValue::Date(_)) => {
+            | (FormFieldType::Date | FormFieldType::Month, PacketValue::Date(_)) => {
                 let snapshot = driver
                     .text_value_snapshot(&field.selector)
                     .map_err(|error| error.to_string())?;
@@ -279,7 +279,7 @@ fn check_existing_value(
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
             PacketValue::Text(text),
         )
-        | (FormFieldType::Date, PacketValue::Date(text)) => driver
+        | (FormFieldType::Date | FormFieldType::Month, PacketValue::Date(text)) => driver
             .ensure_text_replaceable(&field.selector, text)
             .map_err(|error| format!("{} needs manual review: {error}", field.label)),
         (FormFieldType::Select { .. }, PacketValue::Text(label)) => driver
@@ -413,6 +413,9 @@ pub fn apply_reviewed_text_fields_with_replacements(
             ) => waypoint_applications::form_mapping::text_fits_field(field, text),
             (FormFieldType::Date, PacketValue::Date(value)) => {
                 waypoint_applications::form_mapping::valid_iso_date(value)
+            }
+            (FormFieldType::Month, PacketValue::Date(value)) => {
+                waypoint_applications::form_mapping::valid_iso_month(value)
             }
             (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -596,7 +599,7 @@ pub fn verify_filled_field(
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
             PacketValue::Text(value),
         )
-        | (FormFieldType::Date, PacketValue::Date(value)) => {
+        | (FormFieldType::Date | FormFieldType::Month, PacketValue::Date(value)) => {
             driver.verify_text_value(selector, value)
         }
         (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
@@ -2616,6 +2619,35 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("standard autocomplete")));
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn month_field_is_detected_filled_and_verified_without_submission() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-month.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = browser.open(url.as_str()).unwrap();
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == "#start")
+            .unwrap();
+        assert_eq!(field.field_type, FormFieldType::Month);
+        let fill = |selector: &str, value: &str| BrowserCommand::Fill {
+            selector: selector.into(),
+            value: PacketValue::Date(value.into()),
+        };
+        assert!(browser.execute(&fill("#start", "2019-12")).is_err());
+        assert_eq!(browser.text_value_snapshot("#start").unwrap().value, "");
+        assert!(browser.execute(&fill("#start", "2023-02-01")).is_err());
+        browser.execute(&fill("#start", "2023-02")).unwrap();
+        browser.verify_text_value("#start", "2023-02").unwrap();
+        assert!(browser.execute(&fill("#day", "2023-02")).is_err());
+        assert_eq!(browser.text_value_snapshot("#day").unwrap().value, "");
+        assert!(browser.trace.iter().all(|line| !line.contains("submitted")));
     }
 
     #[test]

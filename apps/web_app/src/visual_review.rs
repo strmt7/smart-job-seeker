@@ -455,7 +455,7 @@ pub fn crosscheck_live_values(
                     FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                     PacketValue::Text(value),
                 )) => driver.verify_text_value(&field.selector, value),
-                Some((FormFieldType::Date, PacketValue::Date(value))) => {
+                Some((FormFieldType::Date | FormFieldType::Month, PacketValue::Date(value))) => {
                     driver.verify_text_value(&field.selector, value)
                 }
                 Some((FormFieldType::Checkbox, PacketValue::Bool(value))) => {

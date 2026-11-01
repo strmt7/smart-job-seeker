@@ -737,6 +737,11 @@ fn reviewed_form_answers(
                     {
                         PacketValue::Date(value.clone())
                     }
+                    FormFieldType::Month
+                        if waypoint_applications::form_mapping::valid_iso_month(value) =>
+                    {
+                        PacketValue::Date(value.clone())
+                    }
                     FormFieldType::Select { options } | FormFieldType::Radio { options }
                         if options
                             .iter()
@@ -4957,6 +4962,7 @@ fn serve(
                         | waypoint_applications::form_mapping::FormFieldType::Email
                         | waypoint_applications::form_mapping::FormFieldType::TextArea
                         | waypoint_applications::form_mapping::FormFieldType::Date
+                        | waypoint_applications::form_mapping::FormFieldType::Month
                 )
             {
                 return Err("This field requires manual handling".into());
@@ -5076,6 +5082,7 @@ fn serve(
                                 | waypoint_applications::form_mapping::FormFieldType::Email
                                 | waypoint_applications::form_mapping::FormFieldType::TextArea
                                 | waypoint_applications::form_mapping::FormFieldType::Date
+                                | waypoint_applications::form_mapping::FormFieldType::Month
                                 | waypoint_applications::form_mapping::FormFieldType::MultiSelect { .. }
                                 | waypoint_applications::form_mapping::FormFieldType::Radio { .. }
                                 | waypoint_applications::form_mapping::FormFieldType::Checkbox
@@ -7067,6 +7074,16 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        selector: "#month".into(),
+                        label: "Employment start month".into(),
+                        field_type: FormFieldType::Month,
+                        required: false,
+                        sensitive: false,
+                        editing_mode: None,
+                        max_length_utf16: None,
+                        autocomplete: None,
+                    },
+                    FormField {
                         selector: "#skills".into(),
                         label: "Skills".into(),
                         field_type: FormFieldType::MultiSelect {
@@ -7115,6 +7132,19 @@ mod tests {
         .is_ok());
         assert!(reviewed_form_answers(
             &json!([{"selector":"#start","value":"2029-02-29"}]),
+            &preview
+        )
+        .is_err());
+        assert!(
+            reviewed_form_answers(&json!([{"selector":"#month","value":"2026-11"}]), &preview)
+                .is_ok()
+        );
+        assert!(
+            reviewed_form_answers(&json!([{"selector":"#month","value":"2026-13"}]), &preview)
+                .is_err()
+        );
+        assert!(reviewed_form_answers(
+            &json!([{"selector":"#month","value":"2026-11-01"}]),
             &preview
         )
         .is_err());
