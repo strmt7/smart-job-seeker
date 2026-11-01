@@ -881,6 +881,36 @@ fn listing_capture_view(metadata: &[u8], count: usize) -> String {
     html
 }
 
+/// Extract the bounded page text from a source-only capture without claiming
+/// that it matches the current job or that a truncated capture is complete.
+fn source_only_text(metadata: Option<&[u8]>) -> (&'static str, Option<String>, Option<String>) {
+    let Some(metadata) = metadata else {
+        return ("unavailable", None, None);
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(metadata) else {
+        return ("invalid", None, None);
+    };
+    let url = value["source_url"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    match value["page_text_status"].as_str() {
+        Some(status @ ("captured" | "truncated")) => match value["page_text"].as_str() {
+            Some(text) if text.len() <= 32_000 => (
+                if status == "captured" {
+                    "captured"
+                } else {
+                    "truncated"
+                },
+                Some(text.to_owned()),
+                url,
+            ),
+            _ => ("invalid", None, url),
+        },
+        _ => ("unavailable", None, url),
+    }
+}
+
 impl AttemptRecord {
     pub fn start(
         ws: &Workspace,
@@ -920,6 +950,12 @@ impl AttemptRecord {
                 .ok()
                 .and_then(|capture| capture["source_url"].as_str().map(str::to_owned))
         });
+        let (source_text_status, source_text, source_url) =
+            source_only_text(source_only.as_deref());
+        let source_matches_current_url = source_url
+            .as_deref()
+            .zip(job.canonical_url.as_deref())
+            .map(|(source, current)| source == current);
         let capture_matches_current_url = capture_source_url
             .as_deref()
             .zip(job.canonical_url.as_deref())
@@ -961,6 +997,9 @@ impl AttemptRecord {
             "description": description,
             "page_capture_available": captured.is_some(),
             "source_only_metadata_available": source_only.is_some(),
+            "source_only_text_status": source_text_status,
+            "source_only_source_url": source_url,
+            "source_only_matches_current_url": source_matches_current_url,
             "page_capture_source_url": capture_source_url,
             "page_capture_matches_current_url": capture_matches_current_url,
             "note": "Workspace listing text as saved at the start of this attempt; it may have been extracted or pasted and is not a capture of the original page."
@@ -977,6 +1016,9 @@ impl AttemptRecord {
         if let Some(source) = source_only {
             fs::write(dir.join("original-job-source-metadata.json"), source)
                 .map_err(|e| e.to_string())?;
+        }
+        if let Some(text) = source_text {
+            fs::write(dir.join("original-job-source-text.txt"), text).map_err(|e| e.to_string())?;
         }
         if let Some((metadata, segments)) = captured {
             let source_dir = dir.join("original-job-page");
@@ -2056,6 +2098,22 @@ mod tests {
     }
 
     #[test]
+    fn source_only_text_reports_missing_truncated_and_invalid_capture() {
+        assert_eq!(source_only_text(None).0, "unavailable");
+        assert_eq!(source_only_text(Some(b"invalid")).0, "invalid");
+        assert_eq!(
+            source_only_text(Some(
+                br#"{"page_text_status":"truncated","page_text":"Fictional"}"#
+            ))
+            .0,
+            "truncated"
+        );
+        let oversized =
+            json!({"page_text_status":"captured","page_text":"x".repeat(32_001)}).to_string();
+        assert_eq!(source_only_text(Some(oversized.as_bytes())).0, "invalid");
+    }
+
+    #[test]
     fn attempt_archives_the_saved_listing_and_source() {
         let root = tempfile::tempdir().unwrap();
         let mut ws = Workspace::open(root.path()).unwrap();
@@ -2081,8 +2139,25 @@ mod tests {
         .unwrap();
         #[cfg(windows)]
         {
-            let first_source = br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0}"#;
+            let first_source = br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0,"page_text_status":"truncated","page_text":"Source-only fictional text"}"#;
             assert!(ws.save_job_source_only(&id, first_source).unwrap());
+            let source_only_record = AttemptRecord::start(&ws, &id, "source-only", 122)
+                .unwrap()
+                .unwrap();
+            let source_only_listing: Value = serde_json::from_slice(
+                &fs::read(source_only_record.dir.join("original-job.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(source_only_listing["page_capture_available"], false);
+            assert_eq!(source_only_listing["source_only_text_status"], "truncated");
+            assert_eq!(
+                fs::read_to_string(source_only_record.dir.join("original-job-source-text.txt"))
+                    .unwrap(),
+                "Source-only fictional text"
+            );
+            let source_path = source_only_record.dir.canonicalize().unwrap();
+            assert!(source_path.starts_with(root.path().canonicalize().unwrap()));
+            fs::remove_dir_all(source_path).unwrap();
             let png = b"\x89PNG\r\n\x1a\nfictional-data".to_vec();
             let metadata=json!({"requested_url":"https://example.org/redirect/2","source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
             assert!(ws
@@ -2109,6 +2184,12 @@ mod tests {
         #[cfg(windows)]
         {
             assert_eq!(listing["source_only_metadata_available"], true);
+            assert_eq!(listing["source_only_text_status"], "truncated");
+            assert_eq!(listing["source_only_matches_current_url"], true);
+            assert_eq!(
+                fs::read_to_string(record.dir.join("original-job-source-text.txt")).unwrap(),
+                "Source-only fictional text"
+            );
             assert_eq!(
                 listing["page_capture_requested_url"],
                 "https://example.org/redirect/2"
@@ -2119,7 +2200,7 @@ mod tests {
             );
             assert_eq!(
                 fs::read(record.dir.join("original-job-source-metadata.json")).unwrap(),
-                br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0}"#
+                br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0,"page_text_status":"truncated","page_text":"Source-only fictional text"}"#
             );
             assert_eq!(listing["page_capture_available"], true);
             assert_eq!(listing["page_capture_matches_current_url"], true);
