@@ -112,17 +112,17 @@ struct ReviewSession {
     staged_files: Vec<tempfile::TempDir>,
     // Attachment verification is scoped to the inspection session in which
     // the control was observed; later wizard sections can reuse selectors.
-    attachments: Vec<(String, std::path::PathBuf, String)>,
+    attachments: Vec<(String, std::path::PathBuf, String, String)>,
     last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
 }
 
 fn current_attachment_groups(
-    attachments: &[(String, std::path::PathBuf, String)],
+    attachments: &[(String, std::path::PathBuf, String, String)],
     inspection: &str,
 ) -> Vec<(String, Vec<std::path::PathBuf>)> {
     let mut groups: Vec<(String, Vec<std::path::PathBuf>)> = Vec::new();
-    for (selector, path, _) in attachments.iter().filter(|(_, _, id)| id == inspection) {
+    for (selector, path, _, _) in attachments.iter().filter(|(_, _, id, _)| id == inspection) {
         if let Some((_, paths)) = groups.iter_mut().find(|(key, _)| key == selector) {
             paths.push(path.clone());
         } else {
@@ -130,6 +130,34 @@ fn current_attachment_groups(
         }
     }
     groups
+}
+
+fn staged_file_matches(path: &std::path::Path, expected_sha256: &str) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_DOCUMENT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() > MAX_DOCUMENT
+    {
+        return false;
+    }
+    waypoint_domain::sha256_hex(&bytes) == expected_sha256
+}
+
+fn staged_attachments_unchanged(
+    attachments: &[(String, std::path::PathBuf, String, String)],
+    inspection: &str,
+    selector: &str,
+) -> bool {
+    attachments
+        .iter()
+        .filter(|(field, _, id, _)| field == selector && id == inspection)
+        .all(|(_, path, _, digest)| staged_file_matches(path, digest))
 }
 
 struct SavedFormAnswer {
@@ -3957,10 +3985,11 @@ fn serve(
                     break;
                 }
                 checked_attachments += paths.len();
-                if current
-                    .driver
-                    .with_review_timeout(|driver| driver.verify_local_files(selector, paths))
-                    .is_err()
+                if !staged_attachments_unchanged(&current.attachments, &current.id, selector)
+                    || current
+                        .driver
+                        .with_review_timeout(|driver| driver.verify_local_files(selector, paths))
+                        .is_err()
                 {
                     failed_attachments += paths.len();
                 }
@@ -5340,10 +5369,11 @@ fn serve(
                 .collect();
             let mut attachment_changed = false;
             for (selector, paths) in current_attachment_groups(&current.attachments, &current.id) {
-                if current
-                    .driver
-                    .verify_local_files(&selector, &paths)
-                    .is_err()
+                if !staged_attachments_unchanged(&current.attachments, &current.id, &selector)
+                    || current
+                        .driver
+                        .verify_local_files(&selector, &paths)
+                        .is_err()
                 {
                     attachment_changed = true;
                     current.preview.manual_review.push(format!(
@@ -5585,6 +5615,9 @@ fn serve(
                 Vec::new()
             };
             if !previous.is_empty() {
+                if !staged_attachments_unchanged(&current.attachments, &current.id, selector) {
+                    return Err("A staged document changed; review the field manually".into());
+                }
                 current
                     .driver
                     .verify_local_files(selector, &previous)
@@ -5717,9 +5750,15 @@ fn serve(
                 .map_err(|e| e.to_string())?;
             let path = dir.path().join(&name);
             std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+            let document_sha256 = waypoint_domain::sha256_hex(&bytes);
+            if !staged_file_matches(&path, &document_sha256) {
+                return Err(
+                    "The staged document changed; review the document before attaching".into(),
+                );
+            }
             files.push(path.clone());
             let grant_id = random_id()?;
-            let payload = json!({"selector":selector,"document_id":document_id,"document_sha256":waypoint_domain::sha256_hex(&bytes)}).to_string();
+            let payload = json!({"selector":selector,"document_id":document_id,"document_sha256":document_sha256}).to_string();
             ws.record_consumed_prefill_grant(&waypoint_store::prefill_grants::PrefillGrantRecord {
                 id: grant_id.clone(),
                 job_id: current.job_id.as_str().into(),
@@ -5747,14 +5786,26 @@ fn serve(
                     "Document attachment may be incomplete; review the form: {error}"
                 ));
             }
+            if !staged_file_matches(&path, &document_sha256)
+                || !staged_attachments_unchanged(&current.attachments, &current.id, selector)
+            {
+                ws.mark_manual_review(&current.job_id, "Application needs manual review", now())
+                    .map_err(|e| e.to_string())?;
+                return Err(
+                    "A staged document changed while attaching; inspect the form manually".into(),
+                );
+            }
             if !multiple {
-                current.attachments.retain(|(previous, _, inspection)| {
+                current.attachments.retain(|(previous, _, inspection, _)| {
                     previous != selector || inspection != &current.id
                 });
             }
-            current
-                .attachments
-                .push((selector.to_owned(), path, current.id.clone()));
+            current.attachments.push((
+                selector.to_owned(),
+                path,
+                current.id.clone(),
+                document_sha256,
+            ));
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name,"attachment_name":name}))?;
                 let screenshot = current
@@ -6429,17 +6480,67 @@ fn serve_loop(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn staged_attachment_digest_detects_same_size_changes_and_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resume.pdf");
+        std::fs::write(&path, b"original").unwrap();
+        let attachments = vec![(
+            "#upload".into(),
+            path.clone(),
+            "current".into(),
+            waypoint_domain::sha256_hex(b"original"),
+        )];
+        assert!(super::staged_attachments_unchanged(
+            &attachments,
+            "current",
+            "#upload"
+        ));
+        std::fs::write(&path, b"modified").unwrap();
+        assert!(!super::staged_attachments_unchanged(
+            &attachments,
+            "current",
+            "#upload"
+        ));
+        assert!(super::staged_attachments_unchanged(
+            &attachments,
+            "old",
+            "#upload"
+        ));
+        std::fs::remove_file(path).unwrap();
+        assert!(!super::staged_attachments_unchanged(
+            &attachments,
+            "current",
+            "#upload"
+        ));
+    }
+    #[test]
     fn attachment_groups_preserve_order_and_exclude_old_inspections() {
         use std::path::PathBuf;
         let attachments = vec![
-            ("#files".into(), PathBuf::from("one.pdf"), "current".into()),
-            ("#files".into(), PathBuf::from("old.pdf"), "old".into()),
+            (
+                "#files".into(),
+                PathBuf::from("one.pdf"),
+                "current".into(),
+                "a".into(),
+            ),
+            (
+                "#files".into(),
+                PathBuf::from("old.pdf"),
+                "old".into(),
+                "b".into(),
+            ),
             (
                 "#other".into(),
                 PathBuf::from("other.pdf"),
                 "current".into(),
+                "c".into(),
             ),
-            ("#files".into(), PathBuf::from("two.pdf"), "current".into()),
+            (
+                "#files".into(),
+                PathBuf::from("two.pdf"),
+                "current".into(),
+                "d".into(),
+            ),
         ];
         assert_eq!(
             super::current_attachment_groups(&attachments, "current"),
@@ -10170,6 +10271,7 @@ mod tests {
                 "#earlier-upload".into(),
                 staged_path.clone(),
                 "previous-inspection".into(),
+                waypoint_domain::sha256_hex(&std::fs::read(&staged_path).unwrap()),
             ));
             session.as_mut().unwrap().filled = false;
             let (mut stream, _) = listener.accept().unwrap();
