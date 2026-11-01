@@ -37,14 +37,10 @@ pub fn build(
     boundary: &str,
 ) -> Result<Vec<u8>, String> {
     let email = recipient.trim();
-    if email.len() > 254
-        || email.chars().any(|c| c.is_whitespace() || c.is_control())
-        || email.matches('@').count() != 1
-        || email.starts_with('@')
-        || email.ends_with('@')
-        || email.contains(['<', '>', ',', ';', '"'])
-    {
-        return Err("Enter one valid recipient email address".into());
+    if !crate::smtp_handoff::address_valid(email) {
+        return Err(
+            "Enter one supported ASCII recipient address (for example, name@example.com)".into(),
+        );
     }
     if subject.trim().is_empty()
         || subject.len() > 200
@@ -102,6 +98,31 @@ mod tests {
         assert!(!is_pdf_attachment("resume.docx", b"%PDF-fictional"));
         assert!(!is_pdf_attachment("resume.pdf", b"not a PDF"));
     }
+    #[test]
+    fn draft_recipient_matches_transport_address_rules() {
+        for invalid in [
+            "a..b@example.org",
+            ".a@example.org",
+            "a@example..org",
+            "a@-example.org",
+            "a@ex_ample.org",
+            "é@example.org",
+            "a@example.org,b@example.org",
+        ] {
+            assert!(
+                build(invalid, "Subject", "Body", &[], "boundary").is_err(),
+                "accepted {invalid}"
+            );
+        }
+        for valid in ["first.last+jobs@example.org", "o'neil@example.org"] {
+            assert!(crate::smtp_handoff::address_valid(valid));
+            let draft =
+                String::from_utf8(build(valid, "Subject", "Body", &[], "boundary").unwrap())
+                    .unwrap();
+            assert!(draft.starts_with(&format!("To: {valid}\r\n")));
+        }
+    }
+
     #[test]
     fn email_is_unsent_and_rejects_header_injection() {
         let draft = build(
