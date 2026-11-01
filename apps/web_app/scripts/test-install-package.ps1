@@ -1,4 +1,19 @@
 $ErrorActionPreference = 'Stop'
+$sourceInstaller = Join-Path $PSScriptRoot 'install-package.ps1'
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($sourceInstaller, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw 'Installer could not be parsed.' }
+$spaceCheck = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-InstallSpace' }, $true)
+if (-not $spaceCheck) { throw 'Installer disk-space check is missing.' }
+Invoke-Expression $spaceCheck.Extent.Text
+Assert-InstallSpace 100 ([UInt64](512MB) + 100)
+$rejectedSpace = $false
+try { Assert-InstallSpace 100 ([UInt64](512MB) + 99) } catch { $rejectedSpace = $_.Exception.Message -match 'Insufficient destination disk space' }
+if (-not $rejectedSpace) { throw 'Insufficient disk space was not rejected.' }
+$rejectedOverflow = $false
+try { Assert-InstallSpace ([UInt64]::MaxValue) ([UInt64]::MaxValue) } catch { $rejectedOverflow = $true }
+if (-not $rejectedOverflow) { throw 'Overflowing package size was not rejected.' }
 $targetPath = Join-Path $PSScriptRoot '../../../target'
 New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
 $targetRoot = (Resolve-Path -LiteralPath $targetPath).Path

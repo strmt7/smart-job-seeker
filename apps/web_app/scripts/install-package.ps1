@@ -29,6 +29,13 @@ public static class WaypointInstallerPath {
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern bool GetDiskFreeSpaceEx(string path, out ulong available, out ulong total, out ulong free);
+    public static ulong AvailableBytes(string path) {
+        ulong available, total, free;
+        if (!GetDiskFreeSpaceEx(path, out available, out total, out free)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return available;
+    }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint size, uint flags);
     public static string ResolveDirectory(string path) {
         using (var handle = CreateFile(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
@@ -154,6 +161,24 @@ if ($ollamaFiles.Count -gt 0) {
     }
     if ($expectedOllama.Count -ne 0) { throw 'The bundled Ollama inventory was not fully verified.' }
 }
+# Refuse to start a large copy when the destination cannot hold the package
+# plus a small reserve. Free space may still change after this check.
+function Assert-InstallSpace([UInt64]$PackageBytes, [UInt64]$AvailableBytes) {
+    $reserve = [UInt64](512MB)
+    if ($PackageBytes -gt [UInt64]::MaxValue - $reserve -or $AvailableBytes -lt ($PackageBytes + $reserve)) {
+        throw "Insufficient destination disk space. The package requires $PackageBytes bytes plus a 512 MiB reserve; $AvailableBytes bytes are available."
+    }
+}
+$existingDestination = $InstallDirectory
+while (-not (Test-Path -LiteralPath $existingDestination -PathType Container)) {
+    $existingDestination = [IO.Path]::GetDirectoryName($existingDestination)
+    if (-not $existingDestination) { throw 'Could not determine the destination disk.' }
+}
+try {
+    $sourceBytes = [UInt64]((Get-ChildItem -LiteralPath $source -File -Force -Recurse -ErrorAction Stop | Measure-Object -Property Length -Sum).Sum)
+    $freeBytes = [WaypointInstallerPath]::AvailableBytes($existingDestination)
+    Assert-InstallSpace $sourceBytes $freeBytes
+} catch { throw "Could not confirm sufficient installation space; nothing was copied. $($_.Exception.Message)" }
 $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Waypoint.lnk'
 if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcut)) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null
