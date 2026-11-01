@@ -164,6 +164,33 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn fieldset_context_distinguishes_applicant_and_reference_email() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_contact_sections.html"))
+        .unwrap();
+    let field = |selector: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|field| field.selector == selector)
+            .unwrap()
+    };
+    assert_eq!(field("#self").label, "Applicant contact — Email");
+    assert_eq!(field("#reference").label, "Professional reference — Email");
+    assert_eq!(
+        field("#manager").label,
+        "Professional reference — Manager email"
+    );
+    assert_ne!(field("#self").label, field("#reference").label);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn verification_rejects_hidden_choices() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver

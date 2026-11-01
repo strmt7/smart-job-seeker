@@ -1366,32 +1366,27 @@ mod tests {
             .with_resident_context();
         let mut llm =
             crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
-        let fields = [
-            ("#self", "Your email address"),
-            ("#manager", "Current manager email address"),
-            ("#reference", "Reference email address"),
-            ("#generic", "Where can we reach you?"),
-        ]
-        .into_iter()
-        .map(
-            |(selector, label)| waypoint_applications::form_mapping::FormField {
-                selector: selector.into(),
-                label: label.into(),
-                field_type: FormFieldType::Email,
-                required: true,
-                sensitive: false,
-                editing_mode: None,
-                max_length_utf16: None,
-                autocomplete: Some("email".into()),
-            },
-        )
-        .collect();
-        let schema = FormSchema {
-            origin: "https://example.invalid".into(),
-            fields,
-            multi_step: false,
-            steps: 1,
-        };
+        use waypoint_applications::driver::BrowserDriver;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_contact_sections.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let schema = driver.open(&url).unwrap().schema;
+        assert!(schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#self" && field.label == "Applicant contact — Email"));
+        assert!(schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#reference"
+                && field.label == "Professional reference — Email"));
+        let offline = suggest_exact(&schema, &json!({"email":"avery@example.invalid"})).unwrap();
+        assert!(!offline
+            .iter()
+            .any(|item| item.field_selector == "#reference" || item.field_selector == "#manager"));
         let (mappings, warnings, review) =
             suggest_with_review(&mut llm, &schema, &json!({"email":"avery@example.invalid"}))
                 .unwrap();
@@ -1402,6 +1397,10 @@ mod tests {
         assert!(!mappings
             .iter()
             .any(|item| item.field_selector == "#manager" || item.field_selector == "#reference"));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     /// Run only after externally checking memory and loading the selected model

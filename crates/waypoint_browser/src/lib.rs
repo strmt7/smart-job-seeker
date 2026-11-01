@@ -1401,6 +1401,7 @@ impl CdpDriver {
         let mut labels: HashMap<String, String> = HashMap::new();
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
+        let mut field_containers: HashMap<u64, (String, Option<String>)> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
@@ -1659,11 +1660,19 @@ impl CdpDriver {
                     .filter(|_| !legend.is_empty() || group_ref.is_some())
                 {
                     walk(node, false, &mut |child, _| {
-                        if child
+                        let child_tag = child
                             .get("nodeName")
                             .and_then(Value::as_str)
-                            .is_some_and(|name| name.eq_ignore_ascii_case("input"))
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        if tag == "fieldset"
+                            && matches!(child_tag.as_str(), "input" | "textarea" | "select")
                         {
+                            if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                field_containers.insert(id, (legend.clone(), group_ref.clone()));
+                            }
+                        }
+                        if child_tag == "input" {
                             if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
                                 radio_containers
                                     .insert(id, (fieldset_id, legend.clone(), group_ref.clone()));
@@ -1939,7 +1948,11 @@ impl CdpDriver {
                 }
             }
         }
-        for (_, _, group_ref) in radio_containers.values() {
+        for group_ref in radio_containers
+            .values()
+            .map(|(_, _, group_ref)| group_ref)
+            .chain(field_containers.values().map(|(_, group_ref)| group_ref))
+        {
             if let Some(ids) = group_ref.as_ref().filter(|s| s.len() <= 512) {
                 for id in ids.split_whitespace().take(16) {
                     if wanted.len() < 160 {
@@ -2034,7 +2047,7 @@ impl CdpDriver {
             if referenced_label.as_ref().is_some_and(Option::is_none) {
                 walls.push("a field has an unresolved or ambiguous accessible label".into());
             }
-            let label = referenced_label
+            let mut label = referenced_label
                 .flatten()
                 .or_else(|| control.attrs.get("aria-label").cloned())
                 .or_else(|| labels.get(&id).cloned())
@@ -2049,6 +2062,39 @@ impl CdpDriver {
                     }
                 })
                 .unwrap_or_else(|| "unlabelled field".into());
+            if input_type != "radio" {
+                if let Some((legend, group_ref)) = field_containers.get(&control.node_id) {
+                    let group = if let Some(ids) = group_ref {
+                        let parts: Vec<_> = ids.split_whitespace().collect();
+                        if ids.len() <= 512 && !parts.is_empty() && parts.len() <= 16 {
+                            parts
+                                .iter()
+                                .map(|id| referenced.get(*id).and_then(Option::as_ref))
+                                .collect::<Option<Vec<_>>>()
+                                .map(|parts| {
+                                    parts
+                                        .into_iter()
+                                        .map(String::as_str)
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(legend.clone())
+                    };
+                    match group.filter(|group| !group.trim().is_empty() && group.len() <= 500) {
+                        Some(group) if !label.eq_ignore_ascii_case(&group) => {
+                            label = format!("{group} — {label}")
+                        }
+                        Some(_) => {}
+                        None => walls.push(
+                            "a field group has an unresolved or ambiguous accessible label".into(),
+                        ),
+                    }
+                }
+            }
 
             if input_type == "password" {
                 walls.push("login required (page asks for a password)".into());
