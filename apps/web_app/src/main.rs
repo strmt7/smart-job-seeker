@@ -5553,12 +5553,14 @@ fn serve(
                         }
                     };
                     let fresh_screenshot = capture(&mut current.driver);
-                    let (verified, unconfirmed) = visual_review::crosscheck_live_values(
-                        &mut current.driver,
-                        &current.preview,
-                        &current.completed_selectors,
-                        &mut result["visual_review"],
-                    );
+                    let (verified, unconfirmed) = current.driver.with_review_timeout(|driver| {
+                        visual_review::crosscheck_live_values(
+                            driver,
+                            &current.preview,
+                            &current.completed_selectors,
+                            &mut result["visual_review"],
+                        )
+                    });
                     let final_screenshot = if verified + unconfirmed == 0 {
                         fresh_screenshot.clone()
                     } else {

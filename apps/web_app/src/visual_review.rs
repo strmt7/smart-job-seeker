@@ -426,7 +426,24 @@ pub fn crosscheck_live_values(
     completed: &[String],
     result: &mut Value,
 ) -> (usize, usize) {
+    crosscheck_live_values_with_budget(
+        driver,
+        preview,
+        completed,
+        result,
+        std::time::Duration::from_secs(4),
+    )
+}
+
+fn crosscheck_live_values_with_budget(
+    driver: &mut dyn waypoint_applications::driver::BrowserDriver,
+    preview: &crate::form_preview::FormPreview,
+    completed: &[String],
+    result: &mut Value,
+    budget: std::time::Duration,
+) -> (usize, usize) {
     use waypoint_applications::form_mapping::{BrowserCommand, FormFieldType, PacketValue};
+    let started = std::time::Instant::now();
     let Some(comparisons) = result["comparisons"].as_array_mut() else {
         return (0, 0);
     };
@@ -443,7 +460,7 @@ pub fn crosscheck_live_values(
             .iter()
             .filter(|field| normalized_label(&field.label) == normalized_label(label))
             .collect();
-        let check = if !stop && matching.len() == 1 {
+        let check = if !stop && started.elapsed() < budget && matching.len() == 1 {
             let field = matching[0];
             let mapping = preview.suggestions.iter().find(|mapping| {
                 mapping.field_selector == field.selector
@@ -931,6 +948,20 @@ mod tests {
         };
         let mut result = json!({"comparisons":[{"label":"Email","expected":"fixture","status":"matches_transcription"},{"label":"Name","expected":"fixture","status":"matches_transcription"}]});
         let mut driver = Driver { calls: 0 };
+        let mut exhausted = result.clone();
+        assert_eq!(
+            crosscheck_live_values_with_budget(
+                &mut driver,
+                &preview,
+                &["#Email".into(), "#Name".into()],
+                &mut exhausted,
+                std::time::Duration::ZERO,
+            ),
+            (0, 2)
+        );
+        assert_eq!(driver.calls, 0);
+        assert_eq!(exhausted["comparisons"][0]["status"], "unobserved");
+        assert_eq!(exhausted["comparisons"][1]["dom_status"], "unconfirmed");
         assert_eq!(
             crosscheck_live_values(
                 &mut driver,

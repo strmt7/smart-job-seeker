@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Bounded visual cross-check — 2026-11-01
+
+- The live-value checks following a visual review stop starting new checks after four seconds and use the browser's one-second per-command review timeout. Remaining visual matches are reported as unconfirmed. A fictional driver test covered an exhausted budget and an earlier verification failure. Individual browser operations can contain multiple commands, so four seconds is not a hard wall-clock deadline. No local model or employer site was used.
+
 ## Focused visual review of choices — 2026-11-01
 
 - Focused visual review now asks the local model to report checkbox, radio and select states as well as entered text, and explicitly excludes placeholders. A fictional local service test verified the request and comparison path. The modified prompt has not been evaluated with a real model, and visual transcription remains advisory and subject to live-value cross-checks and manual review.
