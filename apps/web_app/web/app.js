@@ -467,6 +467,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
    target.append(element('p','The selected value was visually checked.','review-label'));
   }catch(error){target.append(element('p',`Selected value needs manual review: ${error.message}`,'review-label'));}finally{verify.disabled=false;}});
  }
+ let choicePage=0;
  choicesButton.addEventListener('click',async()=>{
   choicesButton.disabled=true;choicesPanel.replaceChildren(element('p','Inspecting visible choice controls…','footnote'));
   try{
@@ -475,9 +476,10 @@ function showFormPreview(job,result){setWorkspaceView('applications');
    choicesPanel.replaceChildren();
    if(inventory.pending_selected){const pending=inventory.pending_selected,review=element('section','','choice-review-item');review.append(element('p',`A selected value needs visual review: ${pending.option}`,'review-label'));addSelectedReview(pending.selector,pending.option,review);choicesPanel.append(review);}
    if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom choices were detected.','footnote'));
-   for(const choice of inventory.choices.slice(0,15)){
+   choicePage=Math.min(choicePage,Math.max(0,Math.ceil(inventory.choices.length/15)-1));
+   for(const choice of inventory.choices.slice(choicePage*15,choicePage*15+15)){
     const section=element('section','','choice-review-item'),optionChecks=new Map();section.append(element('strong',choice.label || 'Unlabelled choice'));
-    if(!choice.expanded)section.append(element('p','Options are not currently available from this control. Open it in a visible browser, then inspect again.','review-label'));
+    if(!choice.expanded)section.append(element('p','Options are not currently available. Use the visual check below to review opening this control when available, or open it in a visible browser and inspect again.','review-label'));
     else if(!Array.isArray(choice.options)||!choice.options.length)section.append(element('p','No rendered options could be read.','review-label'));
     else{const list=element('ul','');for(const option of choice.options.slice(0,30)){
      const row=element('li',option),check=element('button','Check option with local vision'),feedback=element('span','','review-label'),actions=element('div','');check.type='button';
@@ -578,6 +580,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
     }
     choicesPanel.append(section);
    }
+   if(inventory.choices.length>15){const nav=element('div','','multi-paging'),previous=element('button','Previous choices'),next=element('button','Next choices');previous.type=next.type='button';previous.disabled=choicePage===0;next.disabled=(choicePage+1)*15>=inventory.choices.length;previous.addEventListener('click',()=>{if(previous.disabled)return;choicePage--;choicesButton.click();});next.addEventListener('click',()=>{if(next.disabled)return;choicePage++;choicesButton.click();});nav.append(previous,element('span',`Choices ${choicePage*15+1}–${Math.min((choicePage+1)*15,inventory.choices.length)} of ${inventory.choices.length}`),next);choicesPanel.append(nav);}
    if(inventory.incomplete)choicesPanel.append(element('p','Some page scopes or controls could not be inspected.','review-label'));
   }catch(error){choicesPanel.replaceChildren(element('p',`Custom choices could not be inspected: ${error.message}`,'review-label'));}finally{choicesButton.disabled=false;}
  });panel.append(choicesButton,choicesPanel);

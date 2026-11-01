@@ -11,6 +11,7 @@ class Node {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children=children; }
   addEventListener(name, fn) { this.listeners[name]=fn; }
+  click() { return this.listeners.click?.(); }
 }
 const panel = new Node('panel');
 const element = (tag, text='') => new Node(tag, text);
@@ -131,5 +132,13 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   const resumed=run(new Node('panel'),{session_id:'session'},element,resumedApi);await resumed.choicesButton.listeners.click();
   const resumedSection=resumed.choicesPanel.children[0];await resumedSection.children[3].listeners.click();
   assert.equal(inventoryCalls,2);assert.ok(resumedSection.children[4].children.some(item=>item.text==='Show later options'));
+  let pagesRead=0;
+  const many=Array.from({length:31},(_,i)=>({label:`Choice ${i+1}`,selector:`#choice-${i}`,expanded:false,options:[]}));
+  const paged=run(new Node('panel'),{session_id:'session'},element,async(path)=>{assert.equal(path,'/api/form/custom-choices');pagesRead++;return {choices:many,incomplete:false,snapshot_digest:'e'.repeat(64)}});
+  await paged.choicesButton.listeners.click();assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 1');
+  let nav=paged.choicesPanel.children.at(-1);assert.match(nav.children[1].text,/Choices 1–15 of 31/);nav.children[2].click();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 16');nav=paged.choicesPanel.children.at(-1);nav.children[2].click();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 31');nav=paged.choicesPanel.children.at(-1);assert.equal(nav.children[2].disabled,true);nav.children[0].click();await new Promise(resolve=>setImmediate(resolve));assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 16');assert.equal(pagesRead,4);
+  many.splice(10);nav=paged.choicesPanel.children.at(-1);nav.children[2].click();await new Promise(resolve=>setImmediate(resolve));assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 1');assert.equal(paged.choicesPanel.children.length,10);
   console.log('Custom choice review UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
