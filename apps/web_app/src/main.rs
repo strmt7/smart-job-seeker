@@ -2507,7 +2507,7 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
-                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"]})
+                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
                     }
                     Ok(value) => json!({"id":id.as_str(),"status":value["status"]}),
                     Err(_) => json!({"id":id.as_str(),"status":"unavailable"}),
@@ -7499,7 +7499,7 @@ mod tests {
         let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","status":"contradicted","excerpt":"Fictional remote-only preference"}]});
         ws.save_fit_assessment(
             &id,
-            json!({"input_digest":digest,"assessment":assessment,"model":"fixture"})
+            json!({"input_digest":digest,"assessment":assessment,"model":"fixture","user_review":{"score":75,"score_range":{"lower":50,"upper":100},"decisions":[{"private":"Fictional private review"}]}})
                 .to_string()
                 .as_bytes(),
         )
@@ -7519,6 +7519,12 @@ mod tests {
             json["results"][0]["preference_coverage"],
             "possible_conflict"
         );
+        assert_eq!(json["results"][0]["review_score"], 75);
+        assert_eq!(
+            json["results"][0]["review_range"],
+            json!({"lower":50,"upper":100})
+        );
+        assert!(!response.contains("Fictional private review"));
         assert!(!response.contains("Fictional remote-only preference"));
     }
 

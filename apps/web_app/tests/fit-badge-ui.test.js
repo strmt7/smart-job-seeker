@@ -14,8 +14,14 @@ assert.equal(label(-1, {lower: 0, upper: 100}), 'Estimate unavailable');
 assert.match(label(75,{lower:50,upper:100},'needs_review'), /check preferences/);
 assert.match(label(75,{lower:50,upper:100},'possible_conflict'), /possible preference conflict/);
 assert.doesNotMatch(label(75,{lower:50,upper:100},'included'), /check preferences|conflict/);
-assert.ok(source.includes('fitBadgeLabel(item.score,item.score_range,item.preference_coverage)'), 'batch badges must use their stored range');
-assert.ok(source.includes('fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage)'), 'new assessments must use their range');
+assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(item.score,item.score_range,item.preference_coverage)'), 'batch badges must use their stored range');
+assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage)'), 'new assessments must use their range');
+const reviewedLine = source.split('\n').find(value => value.startsWith('function fitBadgeWithReview('));
+const reviewed = vm.runInNewContext(`(${reviewedLine})`);
+assert.equal(reviewed('50% AI',75,{lower:50,upper:100}),'50% AI · Reviewed 75% (50–100%)');
+assert.equal(reviewed('50% AI',50,{lower:0,upper:100}),'50% AI · Reviewed: insufficient evidence');
+assert.equal(reviewed('50% AI',null,null),'50% AI');
+assert.equal(reviewed('50% AI',101,{lower:0,upper:100}),'50% AI · Review unavailable');
 const scoreLine = source.split('\n').find(value => value.startsWith('function fitRubricScore('));
 assert.ok(scoreLine, 'temporary correction calculation must exist');
 const calculate = vm.runInNewContext(`(${scoreLine})`);
@@ -28,7 +34,7 @@ assert.equal(JSON.stringify(calculate(rubric)), JSON.stringify({score:64,lower:4
 rubric[0].status='unknown';
 assert.equal(JSON.stringify(calculate(rubric)), JSON.stringify({score:43,lower:0,upper:86}));
 assert.equal(calculate([{importance:'required',status:'invented'}]), null);
-assert.ok(source.includes('does not change the job badge'), 'temporary edits must be clearly labelled');
+assert.ok(source.includes('beside the unchanged AI estimate on the job badge'), 'temporary edits must be clearly labelled');
 assert.ok(source.includes('fitReviewControls(a.rubric,'), 'assessment must expose the controls');
 const controlsLine = source.split('\n').find(value => value.startsWith('function fitReviewControls('));
 function fakeNode(tag,text='') { return {tag,textContent:text,children:[],listeners:{},append(...nodes){this.children.push(...nodes);},setAttribute(){},addEventListener(event,callback){this.listeners[event]=callback;}}; }
