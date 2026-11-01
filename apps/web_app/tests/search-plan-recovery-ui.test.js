@@ -18,6 +18,7 @@ async function fixture(saved, active, current = true) {
             if (selector === '#search-phrases') return panel;
             if (selector === '#web-search input[name=query]') return field;
             if (selector === '#jobicy-search input[name=keyword]') return field;
+            if (selector === '#web-search-batch textarea[name=queries]') return field;
             throw Error(`Unexpected selector ${selector}`);
         } },
         sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },

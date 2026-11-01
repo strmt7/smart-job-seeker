@@ -14,6 +14,7 @@ const context = {
     document: { querySelector(selector) {
         if (selector === '#jobicy-search input[name=keyword]') return keyword;
         if (selector === '#web-search input[name=query]') return web;
+        if (selector === '#web-search-batch textarea[name=queries]') return web;
         if (selector === '#jobicy-search') return form;
         throw Error(`Unexpected selector ${selector}`);
     } },

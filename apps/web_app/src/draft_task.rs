@@ -400,7 +400,8 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                 model,
                 crate::resident_model,
             );
-            let mut draft = generate_with_selection(&mut llm, &input, &template)?;
+            let mut draft =
+                generate_with_selection(&mut llm, &input, &template, template_vision.as_ref())?;
             draft["template_pdf_coverage"] = json!(template_coverage);
             draft["template_vision"] = json!(template_vision);
             Ok(draft)
@@ -454,13 +455,60 @@ fn focused_template_style(template: &str, focus: Option<&str>) -> Result<(String
     Ok((combined, true))
 }
 
+fn scanned_template_style(
+    template: &str,
+    vision: Option<&Value>,
+    focus: Option<&str>,
+) -> Result<(String, bool, Vec<usize>), String> {
+    if focus.is_some() || crate::answer_task::json_prefix(template, 700).len() == template.len() {
+        let (sample, shortened) = focused_template_style(template, focus)?;
+        return Ok((sample, shortened, Vec::new()));
+    }
+    let Some(vision) = vision.filter(|v| {
+        v["reviewed_pages"]
+            .as_array()
+            .is_some_and(|p| !p.is_empty())
+    }) else {
+        let (sample, shortened) = focused_template_style(template, None)?;
+        return Ok((sample, shortened, Vec::new()));
+    };
+    let current = vision["reviewed_text"]
+        .as_str()
+        .or_else(|| vision["text"].as_str())
+        .ok_or("Template transcription is unavailable")?;
+    let mut pages = retained_pages(vision, current)?;
+    pages.sort_by_key(|(page, _)| *page);
+    if pages.len() > 3
+        || pages.windows(2).any(|p| p[0].0 == p[1].0)
+        || pages
+            .iter()
+            .any(|(_, text)| text.trim().is_empty() || !template.contains(text.trim()))
+    {
+        return Err("Scanned template style pages could not be verified".into());
+    }
+    let mut pieces = vec![crate::answer_task::json_prefix(template, 80).to_owned()];
+    for (_, text) in &pages {
+        pieces.push(crate::answer_task::json_prefix(text.trim(), 180).to_owned());
+    }
+    let sample = pieces.join("\n[...]\n");
+    if crate::answer_task::json_prefix(&sample, 700).len() != sample.len() {
+        return Err("Scanned template style sample exceeds its budget".into());
+    }
+    Ok((
+        sample,
+        true,
+        pages.into_iter().map(|(page, _)| page + 1).collect(),
+    ))
+}
+
 fn generate_with_selection(
     llm: &mut dyn Inference,
     input: &Inputs,
     template: &str,
+    vision: Option<&Value>,
 ) -> Result<Value, String> {
-    let (template_excerpt, template_sampled) =
-        focused_template_style(template, input.template_style_focus.as_deref())?;
+    let (template_excerpt, template_sampled, sampled_pages) =
+        scanned_template_style(template, vision, input.template_style_focus.as_deref())?;
     let (mut selected, mut selection) = crate::fit_task::select_semantic_facts(
         llm,
         &input.facts,
@@ -544,6 +592,7 @@ fn generate_with_selection(
     selection["template_truncated"] = json!(template_sampled);
     selection["template_sampled_sections"] = json!(template_sampled);
     selection["template_user_focused"] = json!(input.template_style_focus.is_some());
+    selection["template_sampled_scanned_pages"] = json!(sampled_pages);
     if !template_excerpt.is_empty() {
         selection["template_style_sample"] = json!(template_excerpt);
         selection["template_extracted_chars"] = json!(template.chars().count());
@@ -983,6 +1032,27 @@ mod tests {
         );
         assert!(merge_scanned_page(pages.clone(), 0, "Scanned page").is_err());
         assert!(merge_scanned_page(pages, 3, "Scanned page").is_err());
+    }
+
+    #[test]
+    fn long_scanned_template_samples_every_retained_page_within_budget() {
+        let first = format!("FIRST {}", "a\"é".repeat(400));
+        let second = format!("SECOND {}", "b".repeat(1200));
+        let third = format!("THIRD {}   ", "c".repeat(1200));
+        let template = format!("{first}\n{second}\n{third}").trim().to_owned();
+        let vision = json!({"page":2,"text":second,"reviewed_pages":[{"page":3,"text":third},{"page":1,"text":first}]});
+        let (sample, shortened, pages) =
+            scanned_template_style(&template, Some(&vision), None).unwrap();
+        assert!(shortened);
+        assert_eq!(pages, vec![1, 2, 3]);
+        assert!(sample.contains("FIRST") && sample.contains("SECOND") && sample.contains("THIRD"));
+        assert!(serde_json::to_string(&sample).unwrap().len() <= 700);
+        let (_, _, pages) =
+            scanned_template_style(&template, Some(&vision), Some("SECOND")).unwrap();
+        assert!(pages.is_empty());
+        let mut invalid = vision.clone();
+        invalid["reviewed_pages"][0]["text"] = json!("not in the template");
+        assert!(scanned_template_style(&template, Some(&invalid), None).is_err());
     }
 
     #[test]
@@ -1679,7 +1749,7 @@ mod tests {
             template_style_focus: None,
             template_scan_page: None,
         };
-        let draft = generate_with_selection(&mut model, &input, &"t".repeat(1000)).unwrap();
+        let draft = generate_with_selection(&mut model, &input, &"t".repeat(1000), None).unwrap();
         assert_eq!(draft["selection"]["used_in_draft"], 2);
         assert_eq!(draft["selection"]["draft_used_facts"], json!(&facts[..2]));
         assert_eq!(draft["selection"]["selected_facts"], json!(facts));
@@ -1692,10 +1762,25 @@ mod tests {
             draft["selection"]["template_style_sample"],
             sample_template_style(&"t".repeat(1000)).0
         );
+        let first = format!("FIRST {}", "a".repeat(900));
+        let second = format!("SECOND {}", "b".repeat(900));
+        let combined = format!("{first}\n{second}");
+        let vision = json!({"page":2,"text":second,"reviewed_pages":[{"page":1,"text":first}]});
+        let combined_draft =
+            generate_with_selection(&mut Fake { calls: 0 }, &input, &combined, Some(&vision))
+                .unwrap();
+        assert_eq!(
+            combined_draft["selection"]["template_sampled_scanned_pages"],
+            json!([1, 2])
+        );
+        let style = combined_draft["selection"]["template_style_sample"]
+            .as_str()
+            .unwrap();
+        assert!(style.contains("FIRST") && style.contains("SECOND"));
         let mut with_focus = input.clone();
         with_focus.template_style_focus = Some("tttttt".into());
         let focused =
-            generate_with_selection(&mut Fake { calls: 0 }, &with_focus, &"t".repeat(1000))
+            generate_with_selection(&mut Fake { calls: 0 }, &with_focus, &"t".repeat(1000), None)
                 .unwrap();
         assert_eq!(focused["selection"]["template_user_focused"], true);
         assert!(focused["selection"]["template_style_sample"]
@@ -1703,14 +1788,17 @@ mod tests {
             .unwrap()
             .starts_with("tttttt"));
         with_focus.template_style_focus = Some("not present".into());
-        assert!(
-            generate_with_selection(&mut Fake { calls: 0 }, &with_focus, &"t".repeat(1000))
-                .is_err()
-        );
+        assert!(generate_with_selection(
+            &mut Fake { calls: 0 },
+            &with_focus,
+            &"t".repeat(1000),
+            None
+        )
+        .is_err());
         let mut prioritized = input;
         prioritized.priority_facts = vec![facts[7].clone()];
         let prioritized_draft =
-            generate_with_selection(&mut Fake { calls: 0 }, &prioritized, "").unwrap();
+            generate_with_selection(&mut Fake { calls: 0 }, &prioritized, "", None).unwrap();
         assert_eq!(
             prioritized_draft["selection"]["draft_used_facts"][0],
             facts[7]
@@ -1721,7 +1809,7 @@ mod tests {
         );
         prioritized.priority_facts = vec![facts[5].clone(), facts[6].clone(), facts[7].clone()];
         assert!(
-            generate_with_selection(&mut Fake { calls: 0 }, &prioritized, "")
+            generate_with_selection(&mut Fake { calls: 0 }, &prioritized, "", None)
                 .unwrap_err()
                 .contains("exceed")
         );
@@ -1806,13 +1894,17 @@ mod tests {
         };
         let mut next = input;
         next.template_scan_page = Some(0);
+        let long_reviewed = format!(
+            "Previously reviewed fictional page {}",
+            "Rust services. ".repeat(80)
+        );
         next.reviewed_template = Some(
             reviewed_template(
                 &first,
                 "fictional-selected-page",
                 "cv",
                 "fixture",
-                "Previously reviewed fictional page",
+                &long_reviewed,
             )
             .unwrap(),
         );
@@ -1830,6 +1922,10 @@ mod tests {
                 assert_eq!(
                     result["draft"]["template_vision"]["other_pages_not_transcribed"],
                     0
+                );
+                assert_eq!(
+                    result["draft"]["selection"]["template_sampled_scanned_pages"],
+                    json!([1, 2])
                 );
                 assert!(result["draft"]["selection"]["template_style_sample"]
                     .as_str()
@@ -2032,7 +2128,7 @@ mod tests {
             template_style_focus: None,
             template_scan_page: None,
         };
-        let result = generate_with_selection(&mut llm, &input, "");
+        let result = generate_with_selection(&mut llm, &input, "", None);
         println!("fictional prioritized draft: {result:?}");
         let draft = result.expect("local model did not produce a valid draft");
         assert_eq!(draft["selection"]["draft_used_facts"][0], priority);
@@ -2083,7 +2179,7 @@ mod tests {
             template_style_focus: None,
             template_scan_page: None,
         };
-        let draft = generate_with_selection(&mut model, &input, "")
+        let draft = generate_with_selection(&mut model, &input, "", None)
             .expect("local model should draft a fictional CV");
         println!("fictional document selection: {}", draft);
         let used = draft["facts"].as_array().unwrap();

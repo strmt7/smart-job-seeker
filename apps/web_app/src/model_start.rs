@@ -11,12 +11,12 @@ static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 #[cfg(any(windows, test))]
 const GIB: u64 = 1024 * 1024 * 1024;
 #[cfg(any(windows, test))]
-const MAX_MODEL_BYTES: u64 = 10 * GIB;
+const MAX_MODEL_BYTES: u64 = 12 * GIB;
 
 #[cfg(any(windows, test))]
 pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Result<(), String> {
     if size == 0 || size > MAX_MODEL_BYTES {
-        return Err("Model file size is unavailable or exceeds the 10 GiB startup limit".into());
+        return Err("Model file size is unavailable or exceeds the 12 GiB startup limit".into());
     }
     let needed_system = size.checked_add(8 * GIB).ok_or("Invalid model size")?;
     if system_available < needed_system {
@@ -78,7 +78,7 @@ pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
         .as_u64()
         .filter(|size| *size >= GIB && *size <= MAX_MODEL_BYTES)
         .ok_or_else(|| {
-            "The installed model size is outside the supported 1–10 GiB range or unavailable".into()
+            "The installed model size is outside the supported 1–12 GiB range or unavailable".into()
         })
 }
 
@@ -251,7 +251,11 @@ mod tests {
         let spacious = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":GIB}]});
         assert!(resource_gate(9 * GIB, 20 * GIB, &spacious).is_ok());
         assert!(resource_gate(10 * GIB, 20 * GIB, &spacious).is_ok());
-        assert!(resource_gate(10 * GIB + 1, 20 * GIB, &spacious).is_err());
+        assert!(resource_gate(10 * GIB + GIB / 2, 20 * GIB, &spacious).is_ok());
+        assert!(resource_gate(11 * GIB, 20 * GIB, &spacious).is_err());
+        let larger_gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":24*GIB,"used_bytes":GIB}]});
+        assert!(resource_gate(12 * GIB, 20 * GIB, &larger_gpu).is_ok());
+        assert!(resource_gate(12 * GIB + 1, 21 * GIB, &larger_gpu).is_err());
         assert!(resource_gate(9 * GIB, 16 * GIB, &spacious).is_err());
         let system_error = resource_gate(6 * GIB, 13 * GIB, &gpu).unwrap_err();
         assert!(
@@ -314,7 +318,7 @@ mod tests {
             json!({"models":[{"name":"fixture","size":9*GIB,"details":{"format":"gguf"}}]});
         assert_eq!(installed_size(&larger, "fixture").unwrap(), 9 * GIB);
         let too_large =
-            json!({"models":[{"name":"fixture","size":10*GIB+1,"details":{"format":"gguf"}}]});
+            json!({"models":[{"name":"fixture","size":12*GIB+1,"details":{"format":"gguf"}}]});
         assert!(installed_size(&too_large, "fixture").is_err());
         assert!(installed_size(&one, "other").is_err());
         assert!(installed_size(

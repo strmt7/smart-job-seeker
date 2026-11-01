@@ -364,24 +364,47 @@ pub fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut pos = 0;
     loop {
-        let line_end = body[pos..].windows(2).position(|w| w == b"\r\n")? + pos;
+        let line_end = body
+            .get(pos..)?
+            .windows(2)
+            .position(|w| w == b"\r\n")?
+            .checked_add(pos)?;
         let size_str = std::str::from_utf8(&body[pos..line_end]).ok()?;
         let size = usize::from_str_radix(size_str.trim().split(';').next()?, 16).ok()?;
         pos = line_end + 2;
         if size == 0 {
-            return Some(out);
+            let rest = body.get(pos..)?;
+            return (rest.starts_with(b"\r\n") || rest.windows(4).any(|w| w == b"\r\n\r\n"))
+                .then_some(out);
         }
-        if pos + size > body.len() {
+        let end = pos.checked_add(size)?;
+        let after = end.checked_add(2)?;
+        if body.get(end..after)? != b"\r\n" {
             return None;
         }
-        out.extend_from_slice(&body[pos..pos + size]);
-        pos += size + 2;
+        out.extend_from_slice(body.get(pos..end)?);
+        pos = after;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunked_stream_requires_complete_delimiters_at_every_boundary() {
+        let body = b"4\r\nWiki\r\n5;example=1\r\npedia\r\n0\r\n\r\n";
+        for end in 0..body.len() {
+            assert_eq!(decode_chunked(&body[..end]), None, "partial boundary {end}");
+        }
+        assert_eq!(decode_chunked(body).as_deref(), Some(&b"Wikipedia"[..]));
+        assert!(decode_chunked(b"4\r\nWikiXX0\r\n\r\n").is_none());
+        assert!(decode_chunked(b"ffffffffffffffff\r\n").is_none());
+        assert_eq!(
+            decode_chunked(b"1\r\na\r\n0\r\nX-Trace: yes\r\n\r\n").as_deref(),
+            Some(&b"a"[..])
+        );
+    }
 
     #[test]
     fn url_parsing_defaults_and_rejections() {

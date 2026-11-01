@@ -17,6 +17,7 @@ const batchEnd = source.indexOf('\nasync function followWebBatch(', batchStart);
 assert.ok(batchStart >= 0 && batchEnd > batchStart, 'batch coverage summary must exist');
 const batchSummary = vm.runInNewContext(`(${source.slice(batchStart, batchEnd)})`);
 const mixed = batchSummary({status:'complete',processed:3,total:5,coverage:{succeeded_pages:2,failed_pages:1,unattempted_pages:2,limited_pages:1,pages_with_unresponsive_engines:1,pages_with_unknown_engine_availability:1}});
+assert.match(mixed,/Search stopped early/);
 assert.match(mixed, /3 of 5 pages attempted.*2 succeeded, 1 failed, 2 not attempted/);
 assert.match(mixed, /1 page had limited results.*1 page reported unavailable engines.*1 page did not report engine availability/);
 assert.match(batchSummary({status:'complete',processed:0,total:2,cancelled:true,coverage:{succeeded_pages:0,failed_pages:0,unattempted_pages:2}}), /stopped.*0 succeeded, 0 failed, 2 not attempted/);

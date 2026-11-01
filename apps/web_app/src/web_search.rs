@@ -33,6 +33,11 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
         let path = format!("{}/", url.path());
         url.set_path(&path);
     }
+    if is_wiby(&url) {
+        let mut search = url.join("json/").map_err(|_| "Invalid provider path")?;
+        search.query_pairs_mut().append_pair("q", query.trim());
+        return Ok(search);
+    }
     let mut search = url.join("search").map_err(|_| "Invalid provider path")?;
     search
         .query_pairs_mut()
@@ -41,11 +46,69 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
     Ok(search)
 }
 
-pub(crate) fn fetch(url: &Url) -> Result<String, String> {
+fn is_wiby(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("wiby.me")
+        && url.port().is_none()
+        && url.path() == "/"
+}
+
+fn is_wiby_request(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("wiby.me")
+        && url.port().is_none()
+        && url.path() == "/json/"
+}
+
+pub(crate) fn page_parameter(url: &Url) -> &'static str {
+    if is_wiby_request(url) {
+        "p"
+    } else {
+        "pageno"
+    }
+}
+
+pub(crate) fn parse_provider(
+    payload: &str,
+    url: &Url,
+    excluded: &std::collections::HashSet<String>,
+) -> Result<Value, String> {
+    if !is_wiby_request(url) {
+        return parse_excluding(payload, excluded);
+    }
+    let data: Value =
+        serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
+    let entries = data
+        .as_array()
+        .ok_or("Provider returned no results array")?;
+    if entries.len() > 500 {
+        return Err("Provider returned too many results".into());
+    }
+    let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("URL"),"title":item.get("Title"),"content":item.get("Snippet").or_else(|| item.get("Description")),"engine":"Wiby"})).collect();
+    let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
+    parsed["provider"] = json!("wiby");
+    Ok(parsed)
+}
+
+pub(crate) struct FetchError {
+    pub message: String,
+    pub stop_batch: bool,
+}
+
+impl From<String> for FetchError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            stop_batch: false,
+        }
+    }
+}
+
+pub(crate) fn fetch(url: &Url) -> Result<String, FetchError> {
     let response = if url.scheme() == "http" {
         let port = url
             .port_or_known_default()
-            .ok_or("Missing local provider port")?;
+            .ok_or_else(|| FetchError::from("Missing local provider port".to_owned()))?;
         let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         let target = format!(
             "{}{}",
@@ -56,18 +119,30 @@ pub(crate) fn fetch(url: &Url) -> Result<String, String> {
     } else {
         waypoint_net::get_capped(url.as_str(), 15000, 2 * 1024 * 1024)
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| FetchError::from(e.to_string()))?;
+    if response.status == 429 {
+        return Err(FetchError {
+            message: "Search provider rate limited this request (HTTP 429)".into(),
+            stop_batch: true,
+        });
+    }
     if response.status == 403 {
-        return Err(
-            "Provider refused JSON search; its administrator may need to enable JSON output".into(),
-        );
+        return Err(FetchError {
+            message: "Provider refused JSON search (HTTP 403)".into(),
+            stop_batch: true,
+        });
     }
     if !(200..300).contains(&response.status) {
-        return Err(format!("Search provider returned HTTP {}", response.status));
+        return Err(FetchError::from(format!(
+            "Search provider returned HTTP {}",
+            response.status
+        )));
     }
-    String::from_utf8(response.body).map_err(|_| "Provider returned non-UTF-8 output".into())
+    String::from_utf8(response.body)
+        .map_err(|_| FetchError::from("Provider returned non-UTF-8 output".to_owned()))
 }
 
+#[cfg(test)]
 pub(crate) fn parse(payload: &str) -> Result<Value, String> {
     parse_excluding(payload, &std::collections::HashSet::new())
 }
@@ -129,6 +204,16 @@ pub(crate) fn parse_excluding(
     payload: &str,
     excluded: &std::collections::HashSet<String>,
 ) -> Result<Value, String> {
+    let prefix: String = payload
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .chars()
+        .take(32)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if prefix.starts_with("<!doctype html") || prefix.starts_with("<html") {
+        return Err("Provider returned an HTML page instead of JSON; check whether its JSON search API is enabled or choose another provider".into());
+    }
     let data: Value =
         serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
     let results = data
@@ -293,8 +378,12 @@ pub fn start(id: String, instance: String, query: String) -> Result<(), String> 
     *tasks = Some(Task { id, rx });
     drop(tasks);
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| fetch(&url).and_then(|body| parse(&body)))
-            .unwrap_or_else(|_| Err("Web search stopped unexpectedly".into()));
+        let result = std::panic::catch_unwind(|| {
+            fetch(&url)
+                .map_err(|error| error.message)
+                .and_then(|body| parse_provider(&body, &url, &std::collections::HashSet::new()))
+        })
+        .unwrap_or_else(|_| Err("Web search stopped unexpectedly".into()));
         let _ = tx.send(result);
     });
     Ok(())
@@ -349,6 +438,53 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires live Wiby network access"]
+    fn live_wiby_search_returns_unverified_candidates() {
+        let url = request_url("https://wiby.me/", "software engineer jobs").unwrap();
+        let payload = fetch(&url).map_err(|error| error.message).unwrap();
+        let result = parse_provider(&payload, &url, &std::collections::HashSet::new()).unwrap();
+        assert_eq!(result["provider"], "wiby");
+        let results = result["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        println!(
+            "provider results={}, usable https candidates={}",
+            result["results_reported"],
+            results.len()
+        );
+    }
+    #[test]
+    fn wiby_search_normalizes_results_and_uses_its_page_parameter() {
+        let url = request_url("https://wiby.me/", "software engineer jobs").unwrap();
+        assert_eq!(url.path(), "/json/");
+        assert_eq!(page_parameter(&url), "p");
+        let raw = json!([
+            {"URL":"https://example.org/careers", "Title":"Fictional opening", "Snippet":"Apply here"},
+            {"URL":"http://example.org/old", "Title":"Untrusted HTTP"},
+            {"URL":"https://127.0.0.1/private", "Title":"Private host"}
+        ]).to_string();
+        let result = parse_provider(&raw, &url, &std::collections::HashSet::new()).unwrap();
+        assert_eq!(result["provider"], "wiby");
+        assert_eq!(result["results"].as_array().unwrap().len(), 1);
+        assert_eq!(result["results_rejected"], 2);
+        assert_eq!(result["results"][0]["engines"][0], "Wiby");
+        assert!(parse_provider("{}", &url, &std::collections::HashSet::new()).is_err());
+        assert_eq!(
+            page_parameter(&request_url("https://example.org/", "role").unwrap()),
+            "pageno"
+        );
+    }
+    #[test]
+    fn html_provider_response_reports_actionable_failure_without_page_contents() {
+        let error = parse(" \n<!DOCTYPE html><html><body>private provider response</body></html>")
+            .unwrap_err();
+        assert!(error.contains("HTML page instead of JSON"));
+        assert!(!error.contains("private provider response"));
+        assert_eq!(
+            parse("not json").unwrap_err(),
+            "Provider returned invalid JSON"
+        );
+    }
     #[test]
     fn query_and_results_are_bounded_and_untrusted_urls_rejected() {
         let url = request_url("http://127.0.0.1:8080/", "\"engineer\" remote").unwrap();

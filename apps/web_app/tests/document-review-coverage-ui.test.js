@@ -8,13 +8,14 @@ const node = (tag,text='',className='') => ({tag,textContent:text,className,chil
 const notice=source.split('\n').find(value=>value.startsWith('function pdfExtractionCoverageNotice('));
 const render = vm.runInNewContext(`${notice}\n(${line})`,{element:node,document:{createElement:tag=>node(tag)}});
 const panel=node('div');
-render(panel,{total_bytes:60000,presented_bytes:44416,attempted_sections:8,failed_sections:1,limited_sections:1,omitted_excerpts:2,truncated:true,stopped:null,excerpts:[],coverage:{pages:1,pages_without_selectable_text:[],pages_with_images_and_text:[1]}});
+render(panel,{total_bytes:60000,presented_bytes:44416,attempted_sections:8,failed_sections:1,limited_sections:1,omitted_excerpts:2,rejected_excerpts:3,truncated:true,stopped:null,excerpts:[],coverage:{pages:1,pages_without_selectable_text:[],pages_with_images_and_text:[1]}});
 const text=panel.children.map(item=>item.textContent).join('\n');
 assert.match(text,/page 1 also contains images/);
 assert.match(text,/Attempted through byte 44416 of 60000/);
 assert.match(text,/Some document text was not attempted/);
 assert.match(text,/One or more sections could not be reviewed/);
-assert.match(text,/per-section limit in 1 section; 2 additional distinct excerpts/);
+assert.match(text,/at least 12 suggestions in 1 section; it may have missed more\. 2 additional distinct excerpts/);
+assert.match(text,/3 model suggestions were discarded because they were not exact/);
 console.log('Document review coverage checks passed.');
 
 const partial=node('div');

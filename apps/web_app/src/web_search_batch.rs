@@ -159,7 +159,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             let mut page_url = url.clone();
             page_url
                 .query_pairs_mut()
-                .append_pair("pageno", &page.to_string());
+                .append_pair(crate::web_search::page_parameter(&url), &page.to_string());
             requests.push((query.clone(), page, page_url));
         }
     }
@@ -213,12 +213,13 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            let result = std::panic::catch_unwind(|| {
-                crate::web_search::fetch(&url)
-                    .and_then(|body| crate::web_search::parse_excluding(&body, &seen))
-            })
-            .unwrap_or_else(|_| Err("Search stopped unexpectedly".into()))
-            .map(|mut data| {
+            let (result, provider_stop) =
+                std::panic::catch_unwind(|| match crate::web_search::fetch(&url) {
+                    Ok(body) => (crate::web_search::parse_provider(&body, &url, &seen), false),
+                    Err(error) => (Err(error.message), error.stop_batch),
+                })
+                .unwrap_or_else(|_| (Err("Search stopped unexpectedly".into()), false));
+            let result = result.map(|mut data| {
                 limit_reached = retain_batch_budget(&mut data, &mut seen);
                 data
             });
@@ -232,7 +233,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
                 worker_unreported.store(true, Ordering::Release);
                 return;
             }
-            if limit_reached {
+            if limit_reached || provider_stop {
                 break;
             }
         }
@@ -837,6 +838,57 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         provider.join().unwrap();
+    }
+
+    #[test]
+    fn rate_limit_stops_remaining_batch_without_retry() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = listener.try_clone().unwrap();
+        let provider = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        });
+        start(
+            "limited-provider".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec!["first role".into(), "second role".into()],
+            2,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = poll("limited-provider", acknowledged).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["coverage"]["attempted_pages"], 1);
+                assert_eq!(result["coverage"]["failed_pages"], 1);
+                assert_eq!(result["coverage"]["unattempted_pages"], 3);
+                assert!(result["history"][0]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("429"));
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        provider.join().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
     #[test]
     fn results_are_replayed_until_acknowledged_and_completion_is_recoverable() {

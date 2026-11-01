@@ -27,6 +27,7 @@ struct ReviewResult {
     progress: ReviewProgress,
     limited_sections: usize,
     omitted_excerpts: usize,
+    rejected_excerpts: usize,
     stopped: Option<String>,
 }
 pub struct ModelLease;
@@ -109,7 +110,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
         Some(outcome) => {
             let value = match outcome {
                 Ok(review) => {
-                    json!({"status":"complete","excerpts":review.excerpts,"coverage":review.coverage,"truncated":review.progress.presented_bytes < review.progress.total_bytes,"total_bytes":review.progress.total_bytes,"presented_bytes":review.progress.presented_bytes,"attempted_sections":review.progress.attempted_sections,"failed_sections":review.progress.failed_sections,"limited_sections":review.limited_sections,"omitted_excerpts":review.omitted_excerpts,"stopped":review.stopped})
+                    json!({"status":"complete","excerpts":review.excerpts,"coverage":review.coverage,"truncated":review.progress.presented_bytes < review.progress.total_bytes,"total_bytes":review.progress.total_bytes,"presented_bytes":review.progress.presented_bytes,"attempted_sections":review.progress.attempted_sections,"failed_sections":review.progress.failed_sections,"limited_sections":review.limited_sections,"omitted_excerpts":review.omitted_excerpts,"rejected_excerpts":review.rejected_excerpts,"stopped":review.stopped})
                 }
                 Err(error) => json!({"status":"failed","error":error}),
             };
@@ -130,7 +131,7 @@ fn suggest(
     const CHUNK: usize = 6000;
     const OVERLAP: usize = 512;
     const MAX_SECTIONS: usize = 8;
-    const MAX_EXCERPTS: usize = 48;
+    const MAX_EXCERPTS: usize = 128;
     if text.is_empty() {
         return Err("No document text was found".into());
     }
@@ -142,6 +143,7 @@ fn suggest(
     let mut excerpts = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let (mut start, mut limited_sections, mut omitted_excerpts) = (0usize, 0usize, 0usize);
+    let mut rejected_excerpts = 0;
     let mut stopped = None;
     while start < text.len() && progress.attempted_sections < MAX_SECTIONS {
         let end = text.floor_char_boundary((start + CHUNK).min(text.len()));
@@ -172,10 +174,14 @@ fn suggest(
             }
         };
         match validated_excerpts(&response, source) {
-            Ok(items) => {
+            Ok((items, rejected)) => {
+                rejected_excerpts += rejected;
+                if items.is_empty() && rejected > 0 {
+                    progress.failed_sections += 1;
+                }
                 if response["excerpts"]
                     .as_array()
-                    .is_some_and(|entries| entries.len() == 12)
+                    .is_some_and(|entries| entries.len() >= 12)
                 {
                     limited_sections += 1;
                 }
@@ -212,32 +218,38 @@ fn suggest(
         progress,
         limited_sections,
         omitted_excerpts,
+        rejected_excerpts,
         stopped,
     })
 }
 
-fn validated_excerpts(response: &Value, source: &str) -> Result<Vec<String>, String> {
+fn validated_excerpts(response: &Value, source: &str) -> Result<(Vec<String>, usize), String> {
     let entries = response
         .get("excerpts")
         .and_then(Value::as_array)
         .ok_or("Model did not return an excerpts array")?;
-    if entries.len() > 12 {
+    // The prompt requests at most 12, but some models exceed that request.
+    // Validate their extra suggestions instead of discarding the whole section,
+    // while keeping work bounded even for a malformed response.
+    if entries.len() > 128 {
         return Err("Model returned too many excerpts".into());
     }
     let mut excerpts = Vec::new();
+    let mut rejected = 0;
     for entry in entries {
-        let excerpt = entry
-            .as_str()
-            .ok_or("Model returned a non-text excerpt")?
-            .trim();
+        let Some(excerpt) = entry.as_str().map(str::trim) else {
+            rejected += 1;
+            continue;
+        };
         if excerpt.len() < 3 || excerpt.len() > 500 || !source.contains(excerpt) {
-            return Err("Model returned an excerpt not found exactly in the document".into());
+            rejected += 1;
+            continue;
         }
         if !excerpts.iter().any(|s| s == excerpt) {
             excerpts.push(excerpt.to_owned());
         }
     }
-    Ok(excerpts)
+    Ok((excerpts, rejected))
 }
 
 #[cfg(test)]
@@ -245,6 +257,97 @@ mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     struct Fake(Value);
+    #[test]
+    #[ignore = "requires a private local PDF fixture, PDF runtime and resource-gated resident model"]
+    fn live_private_cv_review_diagnostic() {
+        struct Observed<T> {
+            inner: T,
+            exact: usize,
+            rejected: usize,
+            structured_errors: usize,
+            other_errors: usize,
+        }
+        impl<T: Inference> Inference for Observed<T> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let result = self.inner.generate_structured(schema, prompt, max);
+                match &result {
+                    Ok((response, _)) => {
+                        let source: String = serde_json::from_str(
+                            prompt.split_once("Document (untrusted data): ").unwrap().1,
+                        )
+                        .unwrap();
+                        if let Some(entries) = response.get("excerpts").and_then(Value::as_array) {
+                            for entry in entries {
+                                if entry.as_str().is_some_and(|s| {
+                                    let s = s.trim();
+                                    (3..=500).contains(&s.len()) && source.contains(s)
+                                }) {
+                                    self.exact += 1;
+                                } else {
+                                    self.rejected += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(InferenceError::StructuredOutputFailed(_)) => self.structured_errors += 1,
+                    Err(_) => self.other_errors += 1,
+                }
+                result
+            }
+        }
+        let path = std::env::var_os("WAYPOINT_PUBLIC_CV_FIXTURE").expect("fixture path required");
+        let bytes = std::fs::read(path).expect("fixture unavailable");
+        let (text, _) = crate::document_extract::extract_for_model("fixture.pdf", &bytes)
+            .expect("extraction failed");
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+            .unwrap()
+            .with_resident_context();
+        let mut observed = Observed {
+            inner: crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            ),
+            exact: 0,
+            rejected: 0,
+            structured_errors: 0,
+            other_errors: 0,
+        };
+        let result = suggest(&mut observed, &text, |_| {});
+        println!(
+            "review_ok={} exact={} rejected={} structured_errors={} other_errors={}",
+            result.is_ok(),
+            observed.exact,
+            observed.rejected,
+            observed.structured_errors,
+            observed.other_errors
+        );
+        let review = result.expect("private fixture review failed");
+        println!(
+            "sections={} failed={} retained={} rejected={} overall_omitted={}",
+            review.progress.attempted_sections,
+            review.progress.failed_sections,
+            review.excerpts.len(),
+            review.rejected_excerpts,
+            review.omitted_excerpts
+        );
+        assert!(!review.excerpts.is_empty());
+        assert!(review.excerpts.iter().all(|excerpt| text.contains(excerpt)));
+        // An excessively large or otherwise malformed response is counted as a failed
+        // section, so its individual entries are not included in this total.
+        assert!(review.rejected_excerpts <= observed.rejected);
+    }
     #[test]
     #[ignore = "requires a resource-gated resident model and local PDF runtime"]
     fn live_reviews_available_text_from_partly_scanned_pdf() {
@@ -282,6 +385,7 @@ mod tests {
                 },
                 limited_sections: 0,
                 omitted_excerpts: 0,
+                rejected_excerpts: 0,
                 stopped: None,
             })),
             progress: ReviewProgress::default(),
@@ -338,6 +442,24 @@ mod tests {
         );
         let mut model = Fake(json!({"excerpts":["Built Python systems"]}));
         assert!(suggest(&mut model, "Built Rust systems in 2024", |_| {}).is_err());
+        let mut model = Fake(json!({"excerpts":["Built Rust systems", "invented", 42]}));
+        let result = suggest(&mut model, "Built Rust systems in 2024", |_| {}).unwrap();
+        assert_eq!(result.excerpts, ["Built Rust systems"]);
+        assert_eq!(result.rejected_excerpts, 2);
+        assert_eq!(result.progress.failed_sections, 0);
+        let mut extra = vec![json!("invented"); 12];
+        extra.push(json!("Built Rust systems"));
+        let result = suggest(
+            &mut Fake(json!({"excerpts":extra})),
+            "Built Rust systems in 2024",
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(result.excerpts, ["Built Rust systems"]);
+        assert_eq!(result.rejected_excerpts, 12);
+        assert_eq!(result.limited_sections, 1);
+        let mut oversized = Fake(json!({"excerpts":vec!["Built Rust systems"; 129]}));
+        assert!(suggest(&mut oversized, "Built Rust systems in 2024", |_| {}).is_err());
     }
 
     #[test]
@@ -414,7 +536,7 @@ mod tests {
                 let excerpts: Vec<_> = source
                     .lines()
                     .filter(|line| line.starts_with("qualification "))
-                    .take(12)
+                    .take(20)
                     .collect();
                 Ok((
                     json!({"excerpts":excerpts}),
@@ -430,7 +552,7 @@ mod tests {
             .map(|i| format!("qualification {i:04}: fictional professional experience\n"))
             .collect::<String>();
         let result = suggest(&mut Many, &text, |_| {}).unwrap();
-        assert_eq!(result.excerpts.len(), 48);
+        assert_eq!(result.excerpts.len(), 128);
         assert_eq!(result.progress.attempted_sections, 8);
         assert_eq!(result.progress.failed_sections, 0);
         assert_eq!(result.limited_sections, 8);

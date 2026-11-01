@@ -2307,6 +2307,7 @@ fn serve(
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/web-search/batch-start" => {
+            check_search_plan_binding(ws, &body)?;
             let provider = body["provider"].as_str().ok_or("missing provider")?;
             let queries = body["queries"]
                 .as_array()
