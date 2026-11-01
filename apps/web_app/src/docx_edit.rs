@@ -117,6 +117,10 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
     Ok(blocks)
 }
 
+fn invalid_text_character(ch: char) -> bool {
+    ch.is_control() || matches!(ch, '\u{fffe}' | '\u{ffff}')
+}
+
 pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String> {
     if docx.len() > 10 * 1024 * 1024 {
         return Err("DOCX exceeds 10 MiB".into());
@@ -124,11 +128,12 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
     if before.is_empty()
         || before.len() > 1000
         || after.len() > 4000
-        || before.chars().any(char::is_control)
-        || after.chars().any(char::is_control)
+        || before.chars().any(invalid_text_character)
+        || after.chars().any(invalid_text_character)
     {
         return Err(
-            "Use a nonempty single-line original and replacement within the size limits".into(),
+            "Use a nonempty single-line original and XML-valid replacement within the size limits"
+                .into(),
         );
     }
     let mut archive =
@@ -283,6 +288,18 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
 mod tests {
     use super::*;
     use std::io::Read;
+    #[test]
+    fn rejects_xml_invalid_characters_before_opening_the_archive() {
+        for ch in ['\u{fffe}', '\u{ffff}'] {
+            let invalid = format!("Name{ch}");
+            assert!(replace(b"not a DOCX", "Name", &invalid)
+                .unwrap_err()
+                .contains("XML-valid"));
+            assert!(replace(b"not a DOCX", &invalid, "Name")
+                .unwrap_err()
+                .contains("XML-valid"));
+        }
+    }
     #[test]
     fn replacement_preserves_unedited_parts_and_handles_split_runs() {
         let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Research </w:t></w:r><w:r><w:t>engineer &amp; scientist</w:t></w:r></w:p></w:body></w:document>"#;
