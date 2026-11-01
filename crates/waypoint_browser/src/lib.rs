@@ -1669,7 +1669,8 @@ impl CdpDriver {
                             .unwrap_or("")
                             .to_ascii_lowercase();
                         if named_field_group
-                            && matches!(child_tag.as_str(), "input" | "textarea" | "select")
+                            && (matches!(child_tag.as_str(), "input" | "textarea" | "select")
+                                || supported_editing_host(&child_tag, &attributes(child)))
                         {
                             if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
                                 let groups = field_containers.entry(id).or_default();

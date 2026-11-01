@@ -212,6 +212,26 @@ fn accessible_group_context_distinguishes_applicant_and_reference() {
         field("#manager").label,
         "Professional reference — Contact details — Manager email"
     );
+    let editor = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Professional reference — Contact details — Notes")
+        .unwrap();
+    assert_eq!(editor.field_type, FormFieldType::TextArea);
+    let original_schema = live.schema.schema_hash_input();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#change-context".into(),
+        })
+        .unwrap();
+    let updated = driver.inspect_current().unwrap();
+    assert!(updated
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Emergency contact — Contact details — Notes"));
+    assert_ne!(original_schema, updated.schema.schema_hash_input());
     assert!(driver
         .trace
         .iter()
