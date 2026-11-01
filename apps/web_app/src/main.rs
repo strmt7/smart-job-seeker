@@ -171,6 +171,22 @@ fn random_id() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+fn draft_request_id(value: &Value) -> Result<Option<String>, String> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(id)
+            if id.len() == 34
+                && id.starts_with("b-")
+                && id[2..]
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
+        {
+            Ok(Some(id.clone()))
+        }
+        _ => Err("Invalid draft request identifier".into()),
+    }
+}
+
 fn required_attempt_record(
     ws: &Workspace,
     job: &JobIdentityId,
@@ -5889,7 +5905,17 @@ fn serve(
             let facts = fit_semantic_pool(&all_facts, &selection_listing);
             let model =
                 resident_model()?.ok_or("No eligible already-loaded local model is available")?;
-            let task_id = random_id()?;
+            let task_id = match draft_request_id(&body["request_id"])? {
+                Some(id) => id,
+                None => random_id()?,
+            };
+            if ws
+                .generated_draft(&task_id, &id)
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                return Err("Draft request identifier already exists".into());
+            }
             let digest = draft_context_digest(ws, &id, kind)?;
             let reviewed_template = if let Some(text) = body["reviewed_template_text"].as_str() {
                 if body["template_reviewed"] != true {
@@ -7217,6 +7243,20 @@ mod tests {
         assert_eq!(reopened["result"], result);
     }
 
+    #[test]
+    fn draft_request_id_requires_a_bounded_random_identifier() {
+        assert!(draft_request_id(&Value::Null).unwrap().is_none());
+        assert_eq!(
+            draft_request_id(&json!("b-0123456789abcdef0123456789abcdef"))
+                .unwrap()
+                .as_deref(),
+            Some("b-0123456789abcdef0123456789abcdef")
+        );
+        for invalid in ["b-short", "../file", "b-0123456789ABCDEF0123456789abcdef"] {
+            assert!(draft_request_id(&json!(invalid)).is_err());
+        }
+    }
+
     #[cfg(all(windows, feature = "sqlcipher"))]
     #[test]
     #[ignore = "requires a resource-gated resident local model"]
@@ -7250,12 +7290,14 @@ mod tests {
             let added = manual_job::add(&mut ws, &json!({"url":format!("https://example.org/role-{index}"),"title":title,"employer":"Fictional employer","description":"Build and test Rust services."}), 1).unwrap();
             let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
             ws.set_state(&id, ApplicationState::Shortlisted).unwrap();
+            let request_id = format!("b-{index:032x}");
             let started = request(
                 &mut ws,
                 "/api/draft/start",
-                json!({"id":id.as_str(),"kind":"cv","priority_ids":[]}),
+                json!({"id":id.as_str(),"kind":"cv","priority_ids":[],"request_id":request_id}),
             );
             let task = started["task_id"].as_str().unwrap();
+            assert_eq!(task, request_id);
             let deadline = Instant::now() + Duration::from_secs(240);
             loop {
                 let result = request(&mut ws, "/api/draft/status", json!({"task_id":task}));
