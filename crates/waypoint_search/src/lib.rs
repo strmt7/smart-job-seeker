@@ -52,6 +52,25 @@ pub fn check_constraints(
     remote: bool,
     location: &str,
 ) -> Vec<(String, ConstraintOutcome)> {
+    check_constraints_with_remote(
+        c,
+        job_languages,
+        job_salary,
+        sponsorship_stated,
+        Some(remote),
+        location,
+    )
+}
+
+/// Evaluate remote status without interpreting an absent source value as false.
+pub fn check_constraints_with_remote(
+    c: &CampaignConstraints,
+    job_languages: &[String],
+    job_salary: Option<&Amount>,
+    sponsorship_stated: Option<bool>,
+    remote: Option<bool>,
+    location: &str,
+) -> Vec<(String, ConstraintOutcome)> {
     let mut out = Vec::new();
 
     if !c.language_required.is_empty() {
@@ -146,12 +165,19 @@ pub fn check_constraints(
         }
     }
 
-    if c.remote_only && !remote {
-        out.push((
-            "remote".into(),
-            ConstraintOutcome::Fail("not remote".into()),
-        ));
-    } else if !c.locations.is_empty() && !remote {
+    if c.remote_only {
+        match remote {
+            Some(false) => out.push((
+                "remote".into(),
+                ConstraintOutcome::Fail("not remote".into()),
+            )),
+            None => out.push((
+                "remote".into(),
+                ConstraintOutcome::Unknown("remote status not established".into()),
+            )),
+            Some(true) => {}
+        }
+    } else if !c.locations.is_empty() && remote != Some(true) {
         let observed = location.trim();
         if observed.is_empty() {
             out.push((
@@ -163,10 +189,12 @@ pub fn check_constraints(
             .iter()
             .any(|allowed| observed.eq_ignore_ascii_case(allowed.trim()))
         {
-            out.push((
-                "location".into(),
-                ConstraintOutcome::Fail(format!("location '{location}' not in allowed set")),
-            ));
+            let outcome = if remote.is_none() {
+                ConstraintOutcome::Unknown(format!("location '{location}' is outside the allowed set and remote status is not established"))
+            } else {
+                ConstraintOutcome::Fail(format!("location '{location}' not in allowed set"))
+            };
+            out.push(("location".into(), outcome));
         }
     }
 
@@ -374,6 +402,40 @@ mod tests {
             .iter()
             .any(|(_, o)| matches!(o, ConstraintOutcome::Unknown(_))));
         assert!(!r.iter().any(|(_, o)| matches!(o, ConstraintOutcome::Pass)));
+    }
+
+    #[test]
+    fn unknown_remote_status_is_not_a_known_mismatch() {
+        let remote_only = CampaignConstraints {
+            remote_only: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints_with_remote(&remote_only, &[], None, None, None, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        assert!(matches!(
+            check_constraints_with_remote(&remote_only, &[], None, None, Some(false), "")[0].1,
+            ConstraintOutcome::Fail(_)
+        ));
+        assert!(
+            check_constraints_with_remote(&remote_only, &[], None, None, Some(true), "").is_empty()
+        );
+        let locations = CampaignConstraints {
+            locations: vec!["Zurich".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints_with_remote(&locations, &[], None, None, None, "Geneva")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        assert!(matches!(
+            check_constraints_with_remote(&locations, &[], None, None, Some(false), "Geneva")[0].1,
+            ConstraintOutcome::Fail(_)
+        ));
+        assert!(
+            check_constraints_with_remote(&locations, &[], None, None, None, "Zurich").is_empty()
+        );
     }
 
     #[test]

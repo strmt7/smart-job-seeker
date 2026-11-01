@@ -40,6 +40,37 @@ fn fetcher_all() -> StaticFetcher {
 }
 
 #[test]
+fn ranked_results_surface_unknown_remote_status() {
+    let mut ws = Workspace::in_memory().unwrap();
+    ws.test_insert_job("fixture-remote", "Engineer", "Example");
+    let mut job = ws.jobs().unwrap().remove(0);
+    job.remote = false;
+    job.location = "Geneva".into();
+    ws.store.upsert_job(&job).unwrap();
+    let constraints = CampaignConstraints {
+        remote_only: true,
+        ..Default::default()
+    };
+    let ranked = ws.ranked(&constraints, &[], 1).unwrap();
+    assert!(ranked.excluded.is_empty());
+    assert_eq!(ranked.strict.len(), 1);
+    assert!(ranked.strict[0]
+        .unknown_constraints
+        .iter()
+        .any(|reason| reason.contains("remote status not established")));
+    let constraints = CampaignConstraints {
+        locations: vec!["Zurich".into()],
+        ..Default::default()
+    };
+    let ranked = ws.ranked(&constraints, &[], 1).unwrap();
+    assert!(ranked.excluded.is_empty());
+    assert!(ranked.strict[0]
+        .unknown_constraints
+        .iter()
+        .any(|reason| reason.contains("remote status is not established")));
+}
+
+#[test]
 fn description_changes_update_matches_without_losing_shortlist() {
     let mut ws = Workspace::in_memory().unwrap();
     let payload = |description: &str| {

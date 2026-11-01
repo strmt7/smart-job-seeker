@@ -26,7 +26,7 @@ use waypoint_inference::ResourceBudgets;
 use waypoint_policy::PermissionRegistry;
 use waypoint_search::coverage::{CoverageReport, SourceFetchState, SourceStatus};
 use waypoint_search::{
-    check_constraints, dedup_decision, freshness, identity_key, CampaignConstraints,
+    check_constraints_with_remote, dedup_decision, freshness, identity_key, CampaignConstraints,
     ConstraintOutcome, DedupDecision, EvidenceMatcher, Freshness,
 };
 use waypoint_store::{Store, StoreError, StoredJob};
@@ -1015,12 +1015,12 @@ impl Workspace {
         let matcher = EvidenceMatcher::new(profile_skills);
         self.store
             .visit_jobs_with_descriptions(|job, description| {
-                let outcomes = check_constraints(
+                let outcomes = check_constraints_with_remote(
                     constraints,
                     &[],  // adapters do not claim languages the payload never states
                     None, // nor salaries it never states
                     None, // nor sponsorship promises
-                    job.remote,
+                    job.remote.then_some(true), // false also represents missing source data
                     &job.location,
                 );
                 let reasons: Vec<String> = outcomes
