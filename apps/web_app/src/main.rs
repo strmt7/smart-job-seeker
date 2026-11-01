@@ -8111,6 +8111,7 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_iframe_scroll.html");
         let html = std::fs::read_to_string(fixture).unwrap().replace("</body></html>", "<style>@keyframes fixturemove{from{transform:translateX(0)}to{transform:translateX(110px)}}body.animate #marker{animation:fixturemove 0.35s infinite linear}#marker{position:fixed;top:250px;left:0;width:30px;height:30px;background:#a01}</style><div id='marker'></div><input id='fixture-upload' type='file'><button id='arm-animation' type='button' onclick=\"document.body.classList.add('animate')\">Animate fictional marker</button></body></html>");
+        let html = html.replace("<input id='fixture-upload' type='file'>", "<input id='fixture-upload' type='file'><button id='clear-upload' type='button' onclick=\"document.querySelector('#fixture-upload').value=''\">Clear fictional upload</button>");
         let mut fixture_file = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
         fixture_file.write_all(html.as_bytes()).unwrap();
         fixture_file.flush().unwrap();
@@ -8243,6 +8244,7 @@ mod tests {
             (selector.as_str(), true),
             (selector.as_str(), true),
             (selector.as_str(), true),
+            (selector.as_str(), true),
         ]
         .into_iter()
         .enumerate()
@@ -8253,12 +8255,28 @@ mod tests {
                     .unwrap()
                     .driver
                     .execute(&BrowserCommand::Click {
+                        selector: "#clear-upload".into(),
+                    })
+                    .unwrap();
+            }
+            if step == 4 {
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
+                    .attach_local_files("#fixture-upload", std::slice::from_ref(&attachment))
+                    .unwrap();
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
+                    .execute(&BrowserCommand::Click {
                         selector: "#arm-change".into(),
                     })
                     .unwrap();
                 std::thread::sleep(Duration::from_millis(200));
             }
-            if step == 4 {
+            if step == 5 {
                 let driver = &mut session.as_mut().unwrap().driver;
                 driver
                     .execute(&BrowserCommand::Fill {
@@ -8273,7 +8291,7 @@ mod tests {
                     .unwrap();
                 std::thread::sleep(Duration::from_millis(200));
             }
-            if step == 5 {
+            if step == 6 {
                 let current = session.as_mut().unwrap();
                 std::fs::remove_file(&attachment).unwrap();
                 let driver = &mut current.driver;
@@ -8323,13 +8341,18 @@ mod tests {
                 assert!(response.contains("\"unverified_attachments\":0"));
             }
             if step == 3 {
-                assert!(response.contains("\"value_retained\":false"));
+                assert!(attachment.is_file());
+                assert!(response.contains("\"failed_attachments\":1"));
+                assert!(response.contains("\"unverified_attachments\":0"));
             }
             if step == 4 {
+                assert!(response.contains("\"value_retained\":false"));
+            }
+            if step == 5 {
                 assert!(response.contains("\"value_retained\":true"));
                 assert!(response.contains("Far email"));
             }
-            if step == 5 {
+            if step == 6 {
                 assert!(
                     response.contains("\"visual_freshness\":\"changed\""),
                     "{response}"
@@ -8361,6 +8384,14 @@ mod tests {
                 .join(event["screenshot"].as_str().unwrap())
                 .is_file());
         }
+        let failed_uploads: Vec<_> = captures
+            .iter()
+            .filter(|event| event["failed_attachments"] == 1)
+            .collect();
+        assert!(failed_uploads.len() >= 2);
+        assert!(failed_uploads.iter().all(|event| record_dir
+            .join(event["screenshot"].as_str().unwrap())
+            .is_file()));
         let changed = events
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
