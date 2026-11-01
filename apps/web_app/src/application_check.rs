@@ -1502,6 +1502,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: autocomplete.map(str::to_owned),
         };

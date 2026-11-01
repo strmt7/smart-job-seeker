@@ -45,6 +45,9 @@ pub struct FormField {
     /// HTML maxlength for native text controls, measured in UTF-16 code units.
     #[serde(default)]
     pub max_length_utf16: Option<u32>,
+    /// HTML minlength for nonempty native text values, in UTF-16 code units.
+    #[serde(default)]
+    pub min_length_utf16: Option<u32>,
     /// Bounded HTML pattern supplied by the page, not executable model instructions.
     #[serde(default)]
     pub pattern: Option<String>,
@@ -83,6 +86,9 @@ impl FormSchema {
             if let Some(pattern) = &f.pattern {
                 parts.push(format!("pattern|{pattern:?}"));
             }
+            if let Some(minimum) = f.min_length_utf16 {
+                parts.push(format!("min_length_utf16|{minimum}"));
+            }
         }
         parts.join("\n")
     }
@@ -90,9 +96,14 @@ impl FormSchema {
 
 /// HTML text field limits count UTF-16 code units, not bytes or Unicode scalars.
 pub fn text_fits_field(field: &FormField, text: &str) -> bool {
+    let length = text.encode_utf16().count();
     field
         .max_length_utf16
-        .is_none_or(|limit| text.encode_utf16().count() <= limit as usize)
+        .is_none_or(|limit| length <= limit as usize)
+        && (text.is_empty()
+            || field
+                .min_length_utf16
+                .is_none_or(|limit| length >= limit as usize))
 }
 
 /// A typed value a packet can supply.
@@ -359,6 +370,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: None,
                 },
@@ -370,6 +382,7 @@ mod tests {
                     sensitive: true,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: None,
                 },
@@ -383,6 +396,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: None,
                 },
@@ -390,6 +404,19 @@ mod tests {
             multi_step: false,
             steps: 1,
         }
+    }
+
+    #[test]
+    fn native_minimum_counts_utf16_and_allows_empty_optional_values() {
+        let mut field = schema().fields.remove(0);
+        field.required = false;
+        field.min_length_utf16 = Some(3);
+        field.max_length_utf16 = Some(4);
+        assert!(text_fits_field(&field, ""));
+        assert!(!text_fits_field(&field, "😀"));
+        assert!(text_fits_field(&field, "A😀"));
+        assert!(text_fits_field(&field, "😀😀"));
+        assert!(!text_fits_field(&field, "A😀😀"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub struct Inputs {
     pub available_facts: usize,
     pub instructions: String,
     pub max_length_utf16: Option<u32>,
+    pub min_length_utf16: Option<u32>,
 }
 struct Task {
     id: String,
@@ -484,9 +485,20 @@ fn generate_for_context(
             "The form does not allow a non-empty answer; review this field manually".into(),
         );
     }
+    if input
+        .min_length_utf16
+        .zip(input.max_length_utf16)
+        .is_some_and(|(min, max)| min > max)
+    {
+        return Err(
+            "The page's minimum length exceeds its maximum; review this field manually".into(),
+        );
+    }
     let limit_instruction = input.max_length_utf16.map_or_else(String::new, |limit| {
         format!(" The final answer must fit the page limit of {limit} UTF-16 code units, including spaces and punctuation; some characters use two units. Be concise without adding facts.")
     });
+    let minimum_instruction = input.min_length_utf16.map_or_else(String::new, |minimum| format!(" A nonempty answer must be at least {minimum} UTF-16 code units. Never invent facts to reach the minimum; return empty text if the evidence cannot support a suitable answer."));
+    let limit_instruction = format!("{limit_instruction}{minimum_instruction}");
     let data = json!({"question":input.question,"listing":input.listing,"facts":input.facts,"writing_preferences":input.instructions});
     let voice_instruction = if template {
         " The first candidate fact contains the original template passage. Unless writing preferences explicitly request otherwise, preserve its grammatical person and tense: if it begins with I, keep I; if it omits a subject pronoun, do not introduce I or we. Rewrite only the original passage: other candidate facts are context and must not be introduced as new experiences or qualifications unless the writing preferences explicitly request them."
@@ -558,10 +570,14 @@ fn generate_for_context(
         match llm.generate_structured("application_answer_style", &repair_prompt, 900) {
             Ok((value, _)) => match validate(&value, &input.facts) {
                 Ok(mut answer)
-                    if input.max_length_utf16.is_none_or(|limit| {
-                        answer["text"]
-                            .as_str()
-                            .is_some_and(|text| text.encode_utf16().count() <= limit as usize)
+                    if answer["text"].as_str().is_some_and(|text| {
+                        let length = text.encode_utf16().count();
+                        input
+                            .max_length_utf16
+                            .is_none_or(|limit| length <= limit as usize)
+                            && input
+                                .min_length_utf16
+                                .is_none_or(|minimum| length >= minimum as usize)
                     }) =>
                 {
                     answer["evidence_check"] = check_evidence(llm, &answer);
@@ -576,10 +592,23 @@ fn generate_for_context(
                     return Ok(answer);
                 }
                 Ok(_) => {
-                    last_error = format!(
-                        "the answer exceeds the {} UTF-16 code unit limit",
-                        input.max_length_utf16.unwrap_or(0)
-                    )
+                    let length = value["text"]
+                        .as_str()
+                        .map_or(0, |text| text.encode_utf16().count());
+                    last_error = if input
+                        .min_length_utf16
+                        .is_some_and(|minimum| length < minimum as usize)
+                    {
+                        format!(
+                            "the answer is shorter than the {} UTF-16 code unit minimum",
+                            input.min_length_utf16.unwrap_or(0)
+                        )
+                    } else {
+                        format!(
+                            "the answer exceeds the {} UTF-16 code unit limit",
+                            input.max_length_utf16.unwrap_or(0)
+                        )
+                    };
                 }
                 Err(error) => last_error = error,
             },
@@ -632,6 +661,7 @@ mod tests {
         facts.extend((0..21).map(|i| format!("Fact {i} {}", "x".repeat(500))));
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: String::new(),
             selector: String::new(),
             digest: String::new(),
@@ -706,6 +736,7 @@ mod tests {
             available_facts: 1,
             instructions: String::new(),
             max_length_utf16: None,
+            min_length_utf16: None,
         };
         for mode in ["invalid", "structured"] {
             let mut model = Model { mode, drafts: 0 };
@@ -1064,6 +1095,7 @@ mod tests {
         facts.push("Built web interfaces usable by people who rely on screen readers.".into());
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "fictional".into(),
             selector: "#q".into(),
             digest: "fixture".into(),
@@ -1136,6 +1168,7 @@ mod tests {
         };
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "fictional".into(),
             selector: "#experience".into(),
             digest: "fixture".into(),
@@ -1161,6 +1194,7 @@ mod tests {
         recording.responses.clear();
         let supported = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "fictional".into(),
             selector: "#skills".into(),
             digest: "fixture".into(),
@@ -1249,6 +1283,7 @@ mod tests {
             available_facts: 1,
             instructions: "Write concisely.".into(),
             max_length_utf16: None,
+            min_length_utf16: None,
         };
         let answer =
             generate(&mut model, &input).expect("local model should repair the invalid citation");
@@ -1272,6 +1307,7 @@ mod tests {
         let facts: Vec<String> = (0..8).map(|i| format!("{i}{}", "x".repeat(999))).collect();
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "s".into(),
             selector: "#q".into(),
             digest: "d".into(),
@@ -1386,6 +1422,7 @@ mod tests {
             available_facts: 1,
             instructions: String::new(),
             max_length_utf16: Some(3),
+            min_length_utf16: None,
         };
         let mut model = LengthModel {
             style_calls: 0,
@@ -1406,6 +1443,78 @@ mod tests {
         assert!(generate(&mut model, &input)
             .unwrap_err()
             .contains("does not allow"));
+    }
+
+    #[test]
+    fn answer_minimum_is_prompted_and_repaired_without_silent_short_output() {
+        struct Model {
+            styles: usize,
+            always_short: bool,
+        }
+        impl Inference for Model {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let value = match schema {
+                    "application_answer" => {
+                        assert!(prompt.contains("at least 4 UTF-16"));
+                        json!({"text":"A😀","facts":[1]})
+                    }
+                    "application_answer_style" => {
+                        self.styles += 1;
+                        if self.styles == 2 {
+                            assert!(prompt.contains("shorter than the 4 UTF-16"));
+                        }
+                        json!({"text":if self.styles == 1 || self.always_short { "A😀" } else { "AB😀" },"facts":[1]})
+                    }
+                    _ => json!({"claims":[]}),
+                };
+                Ok((
+                    value,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let mut input = Inputs {
+            session_id: "s".into(),
+            selector: "q".into(),
+            digest: "d".into(),
+            question: "Question".into(),
+            listing: "Job".into(),
+            facts: vec!["Fact".into()],
+            available_facts: 1,
+            instructions: String::new(),
+            min_length_utf16: Some(4),
+            max_length_utf16: Some(5),
+        };
+        let mut model = Model {
+            styles: 0,
+            always_short: false,
+        };
+        assert_eq!(generate(&mut model, &input).unwrap()["text"], "AB😀");
+        assert_eq!(model.styles, 2);
+        let mut failed = Model {
+            styles: 0,
+            always_short: true,
+        };
+        assert!(generate(&mut failed, &input)
+            .unwrap_err()
+            .contains("shorter than the 4 UTF-16"));
+        assert_eq!(failed.styles, 2);
+        input.max_length_utf16 = Some(3);
+        assert!(generate(&mut model, &input)
+            .unwrap_err()
+            .contains("minimum length exceeds"));
     }
 
     #[test]
@@ -1495,12 +1604,14 @@ mod tests {
                 available_facts: 1,
                 instructions: String::new(),
                 max_length_utf16: Some(limit),
+                min_length_utf16: Some(20),
             };
             let result = generate_with_selection(&mut model, input).unwrap();
             println!("fictional limit {limit}: {result}");
             let text = result["text"].as_str().unwrap();
             assert!(!text.trim().is_empty());
             assert!(text.encode_utf16().count() <= limit as usize);
+            assert!(text.encode_utf16().count() >= 20);
             assert_eq!(result["length"]["used_utf16"], text.encode_utf16().count());
             assert!(!result["sources"].as_array().unwrap().is_empty());
         }
@@ -1611,6 +1722,7 @@ mod tests {
     fn invalid_revision_gets_one_bounded_repair() {
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "s".into(),
             selector: "#q".into(),
             digest: "d".into(),
@@ -1671,6 +1783,7 @@ mod tests {
         }
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "s".into(),
             selector: "q".into(),
             digest: "d".into(),
@@ -1697,6 +1810,7 @@ mod tests {
     fn two_passes_require_valid_sources() {
         let input = Inputs {
             max_length_utf16: None,
+            min_length_utf16: None,
             session_id: "s".into(),
             selector: "#a".into(),
             digest: "d".into(),

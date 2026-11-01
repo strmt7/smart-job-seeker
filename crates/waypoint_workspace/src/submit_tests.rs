@@ -26,6 +26,7 @@ fn answerable_schema() -> FormSchema {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             },
@@ -37,6 +38,7 @@ fn answerable_schema() -> FormSchema {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             },
@@ -191,6 +193,7 @@ fn a_changed_form_voids_the_approval_and_sends_nothing() {
         sensitive: false,
         editing_mode: None,
         max_length_utf16: None,
+        min_length_utf16: None,
         pattern: None,
         autocomplete: None,
     });
@@ -227,6 +230,7 @@ fn a_sensitive_field_is_never_auto_answered_and_does_not_burn_the_approval() {
         sensitive: true,
         editing_mode: None,
         max_length_utf16: None,
+        min_length_utf16: None,
         pattern: None,
         autocomplete: None,
     });
@@ -269,6 +273,7 @@ fn a_required_field_the_packet_cannot_answer_blocks_before_any_write() {
         sensitive: false,
         editing_mode: None,
         max_length_utf16: None,
+        min_length_utf16: None,
         pattern: None,
         autocomplete: None,
     });
@@ -456,6 +461,7 @@ fn the_fill_plan_only_claims_what_the_packet_really_answers() {
         sensitive: true,
         editing_mode: None,
         max_length_utf16: None,
+        min_length_utf16: None,
         pattern: None,
         autocomplete: None,
     });

@@ -295,6 +295,8 @@ pub fn suggest_with_review(
             let index = schema.fields.iter().position(|candidate| candidate.selector == field.selector).expect("field belongs to schema");
             let mut description = json!({"selector":model_field_selector(schema, index),"label":field.label,"type":kind,"autocomplete":field.autocomplete});
             if let Some(pattern) = &field.pattern { description["pattern"] = json!(pattern); }
+            if let Some(minimum) = field.min_length_utf16 { description["min_length_utf16"] = json!(minimum); }
+            if let Some(maximum) = field.max_length_utf16 { description["max_length_utf16"] = json!(maximum); }
             description
         }).collect();
     let mut start = 0;
@@ -785,6 +787,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: autocomplete.map(str::to_owned),
         })
@@ -832,6 +835,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: autocomplete.map(str::to_owned),
         })
@@ -914,6 +918,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: autocomplete.map(str::to_owned),
         };
@@ -1035,6 +1040,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         };
@@ -1269,6 +1275,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: None,
                 },
@@ -1280,6 +1287,7 @@ mod tests {
                     sensitive: true,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: None,
                 },
@@ -1559,6 +1567,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });
@@ -1688,6 +1697,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });
@@ -1789,6 +1799,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: Some("email".into()),
         });
@@ -1829,6 +1840,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });
@@ -1936,6 +1948,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });
@@ -2034,6 +2047,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2117,6 +2131,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: Some("email".into()),
         });
@@ -2128,6 +2143,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });
@@ -2254,6 +2270,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: Some("email".into()),
         });
@@ -2296,6 +2313,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2356,6 +2374,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2404,11 +2423,14 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
             .collect();
         schema.fields[0].pattern = Some("[A-Z]{2}-[0-9]{3}".into());
+        schema.fields[0].min_length_utf16 = Some(3);
+        schema.fields[0].max_length_utf16 = Some(7);
         let mut model = Recording(Vec::new());
         suggest_with_review(
             &mut model,
@@ -2419,6 +2441,8 @@ mod tests {
         assert_eq!(model.0.len(), 2);
         assert!(model.0[0].contains("Form fields: [\n  {"));
         assert!(model.0[0].contains("[A-Z]{2}-[0-9]{3}"));
+        assert!(model.0[0].contains("\"min_length_utf16\": 3"));
+        assert!(model.0[0].contains("\"max_length_utf16\": 7"));
         assert!(model.0[1].contains("Form fields: [{"));
         assert!(model
             .0
@@ -2464,6 +2488,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2517,6 +2542,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: (index == 5 || index == 6).then(|| "email".into()),
             })
@@ -2560,6 +2586,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2593,6 +2620,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2661,6 +2689,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2695,6 +2724,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2727,6 +2757,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });
@@ -2759,6 +2790,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         });

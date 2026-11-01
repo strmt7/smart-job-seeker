@@ -939,6 +939,13 @@ fn prepare_reviewed_fill(
                 if let waypoint_applications::form_mapping::PacketValue::Text(text) = &mapping.value
                 {
                     if !waypoint_applications::form_mapping::text_fits_field(field, text) {
+                        if !text.is_empty()
+                            && field.min_length_utf16.is_some_and(|minimum| {
+                                text.encode_utf16().count() < minimum as usize
+                            })
+                        {
+                            return Err(format!("The answer for {} is shorter than the page's {} UTF-16-unit minimum; revise it before filling", field.label, field.min_length_utf16.unwrap_or(0)));
+                        }
                         return Err(format!("The answer for {} exceeds the page's {} UTF-16-unit limit; shorten it before filling", field.label, field.max_length_utf16.unwrap_or(0)));
                     }
                 }
@@ -1016,6 +1023,7 @@ fn answer_inputs(
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","session":session.id,"schema":session.preview.schema.schema_hash_input(),"selector":selector,"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
         max_length_utf16: field.max_length_utf16,
+        min_length_utf16: field.min_length_utf16,
         session_id: session.id.clone(),
         selector: selector.to_owned(),
         digest,
@@ -1150,6 +1158,7 @@ fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","job_id":id.as_str(),"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
         max_length_utf16: None,
+        min_length_utf16: None,
         session_id: id.as_str().to_owned(),
         selector: "email_body".into(),
         digest,
@@ -8523,6 +8532,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8536,6 +8546,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8547,6 +8558,7 @@ mod tests {
                         sensitive: true,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8558,6 +8570,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8569,6 +8582,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8580,6 +8594,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8591,6 +8606,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8604,6 +8620,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        min_length_utf16: None,
                         pattern: None,
                         autocomplete: None,
                     },
@@ -8711,6 +8728,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -8740,7 +8758,7 @@ mod tests {
     #[test]
     fn reviewed_fill_respects_native_utf16_limit_before_filling() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
-        let preview = form_preview::FormPreview {
+        let mut preview = form_preview::FormPreview {
             schema: FormSchema {
                 origin: "https://example.org".into(),
                 fields: vec![FormField {
@@ -8751,6 +8769,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: Some(3),
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: None,
                 }],
@@ -8773,6 +8792,19 @@ mod tests {
         .err()
         .unwrap();
         assert!(error.contains("3 UTF-16-unit limit"));
+        preview.schema.fields[0].min_length_utf16 = Some(3);
+        let error = prepare_reviewed_fill(
+            &preview,
+            &json!({"answers":[{"selector":"#answer","value":"😀"}]}),
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains("3 UTF-16-unit minimum"));
+        assert!(prepare_reviewed_fill(
+            &preview,
+            &json!({"answers":[{"selector":"#answer","value":"A😀"}]})
+        )
+        .is_ok());
     }
     #[test]
     fn queued_template_suggestion_requires_its_original_context() {

@@ -2105,8 +2105,11 @@ fn native_text_limits_are_observed_in_the_live_schema() {
             .unwrap()
     };
     assert_eq!(field("Name").max_length_utf16, Some(3));
+    assert_eq!(field("Name").min_length_utf16, Some(2));
     assert_eq!(field("Answer").max_length_utf16, Some(5));
+    assert_eq!(field("Answer").min_length_utf16, Some(4));
     assert_eq!(field("Invalid limit").max_length_utf16, None);
+    assert_eq!(field("Invalid limit").min_length_utf16, None);
     let mut changed = live.schema.clone();
     changed
         .fields
@@ -2115,6 +2118,17 @@ fn native_text_limits_are_observed_in_the_live_schema() {
         .unwrap()
         .max_length_utf16 = Some(4);
     assert_ne!(changed.schema_hash_input(), live.schema.schema_hash_input());
+    let mut changed_minimum = live.schema.clone();
+    changed_minimum
+        .fields
+        .iter_mut()
+        .find(|f| f.label == "Name")
+        .unwrap()
+        .min_length_utf16 = Some(1);
+    assert_ne!(
+        changed_minimum.schema_hash_input(),
+        live.schema.schema_hash_input()
+    );
 }
 
 #[test]

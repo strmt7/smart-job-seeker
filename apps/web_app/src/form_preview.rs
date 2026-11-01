@@ -809,10 +809,16 @@ fn build_preview(
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
             ) && !waypoint_applications::form_mapping::text_fits_field(field, text)
             {
-                manual_review.push(format!(
-                    "Suggested value exceeds field limit: {}",
-                    field.label
-                ));
+                let too_short = !text.is_empty()
+                    && field
+                        .min_length_utf16
+                        .is_some_and(|minimum| text.encode_utf16().count() < minimum as usize);
+                let reason = if too_short {
+                    "Suggested value is shorter than field minimum: "
+                } else {
+                    "Suggested value exceeds field limit: "
+                };
+                manual_review.push(format!("{reason}{}", field.label));
                 return false;
             }
         }
@@ -857,6 +863,7 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
             "Conflicting suggestions need review: ",
             "Invalid or duplicate suggestion needs review: ",
             "Suggested value exceeds field limit: ",
+            "Suggested value is shorter than field minimum: ",
         ] {
             if let Some(label) = reason.strip_prefix(prefix) {
                 let fields: Vec<_> = preview
@@ -1190,6 +1197,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -1327,6 +1335,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -1393,6 +1402,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         };
@@ -1807,6 +1817,16 @@ mod tests {
                 .as_deref(),
             Some("[A-Za-z]+")
         );
+        assert_eq!(
+            first
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == "#given")
+                .unwrap()
+                .min_length_utf16,
+            Some(2)
+        );
         assert!(first
             .manual_review
             .iter()
@@ -2175,6 +2195,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         })
@@ -2243,6 +2264,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })
@@ -2305,6 +2327,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         })
@@ -2359,6 +2382,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: None,
         })
@@ -2549,6 +2573,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: Some("given-name".into()),
                 }],
@@ -2613,6 +2638,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: Some("email".into()),
             }],
@@ -2666,6 +2692,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: Some("email".into()),
             }],
@@ -2743,6 +2770,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: Some("given-name".into()),
                 }],
@@ -3435,6 +3463,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: limit,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: Some(hint.into()),
             }
@@ -3480,6 +3509,48 @@ mod tests {
     }
 
     #[test]
+    fn undersized_profile_suggestion_is_withheld_for_review() {
+        let field = waypoint_applications::form_mapping::FormField {
+            selector: "#first".into(),
+            label: "First name".into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: Some(3),
+            pattern: None,
+            autocomplete: Some("given-name".into()),
+        };
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![field],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let mut preview =
+            suggest_without_model(live, &json!({"first_name":"😀"}), "No model").unwrap();
+        assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Suggested value is shorter than field minimum: First name"));
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#first".into(),
+            value: PacketValue::Text("A😀".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(!preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("shorter than field minimum")));
+    }
+
+    #[test]
     fn embedded_frame_keeps_reviewable_main_fields_but_requires_stable_warning() {
         let field = waypoint_applications::form_mapping::FormField {
             selector: "#first".into(),
@@ -3489,6 +3560,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            min_length_utf16: None,
             pattern: None,
             autocomplete: Some("given-name".into()),
         };
@@ -3538,6 +3610,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    min_length_utf16: None,
                     pattern: None,
                     autocomplete: Some("given-name".into()),
                 }],
@@ -3573,6 +3646,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                min_length_utf16: None,
                 pattern: None,
                 autocomplete: None,
             })

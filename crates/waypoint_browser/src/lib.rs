@@ -3755,6 +3755,7 @@ impl CdpDriver {
                             sensitive: sensitive || is_sensitive_label(&group_label),
                             editing_mode: None,
                             max_length_utf16: None,
+                            min_length_utf16: None,
                             pattern: None,
                             autocomplete: None,
                         });
@@ -3801,6 +3802,7 @@ impl CdpDriver {
                             sensitive: true,
                             editing_mode: None,
                             max_length_utf16: None,
+                            min_length_utf16: None,
                             pattern: None,
                             autocomplete: None,
                         });
@@ -3885,6 +3887,19 @@ impl CdpDriver {
                     control
                         .attrs
                         .get("maxlength")
+                        .and_then(|value| value.trim().parse::<u32>().ok())
+                } else {
+                    None
+                },
+                min_length_utf16: if control.tag == "textarea"
+                    || (control.tag == "input"
+                        && matches!(
+                            input_type.as_str(),
+                            "text" | "email" | "search" | "tel" | "url"
+                        )) {
+                    control
+                        .attrs
+                        .get("minlength")
                         .and_then(|value| value.trim().parse::<u32>().ok())
                 } else {
                     None
