@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
 const start=source.indexOf(' const reviewableFields=');
-const end=source.indexOf('\n for(const reason of result.manual_review)',start);
+const end=source.indexOf('\n for(const reason of visibleFormReviewReasons(result))',start);
 assert.ok(start>=0 && end>start);
 function node(tag,text=''){return {tag,textContent:text,style:{},children:[],value:'',checked:false,disabled:false,append(...items){this.children.push(...items);},addEventListener(name,fn){this[name]=fn;},setAttribute(){}};}
 (async()=>{

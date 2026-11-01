@@ -1068,3 +1068,7 @@ A subsequent live preview returned no suggestions because a changing page blocke
 ### Manual field review explanation (2026-11-01)
 
 Initial and rescanned form responses now identify selectors needing model review or affected by unavailable model review. The interface explains that AI review needs attention and directs the user to the browser; other sensitive fields retain a separate manual-handling message. The same server-side restrictions still apply. A focused UI check, 19 form-preview unit tests, web Clippy and formatting passed. The new explanation has not been observed in a rendered browser. No application was submitted.
+
+### Rendered manual-review panel (2026-11-01)
+
+A mocked local-backend Edge check rendered the form panel at 1,200 and 390 pixels. It confirmed separate AI-review and sensitive-field explanations without horizontal overflow or page errors. The fixture used a placeholder screenshot, not an employer page. It exposed duplicate display of an identical model warning; the panel now omits that duplicate only when the corresponding field explanation is shown, retaining other warnings. All UI checks passed. The mock server's missing favicon produced a 404 and was excluded from the console check. No application was submitted.
