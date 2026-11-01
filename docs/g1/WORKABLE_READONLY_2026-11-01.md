@@ -129,6 +129,17 @@ approval recording, local-model visual review or employer pages. A successful
 display check is not proof of server-side retention, and a site can run its own
 handlers during any interaction.
 
+The review panel can now request a local-model visual check of a custom-choice
+label. The task is bound to the observed URL, form schema, review walls,
+choice inventory and screenshot; a changed snapshot or image is reported as
+stale. The check is advisory and does not authorize or click the control.
+On a fictional local fixture, resource-gated `gemma4:12b-it-qat` read the Job
+location label and the full start-and-poll flow passed. A separate fixture
+changed the label after capture and the result became stale. Screenshot and
+result recording report failure when no disk-backed attempt record is present.
+The model was unloaded afterward. This single fixture does not establish
+visual reliability on real employer pages or support for automatic selection.
+
 ## Staged rendering follow-up
 
 If the first inspection is empty, the bounded retry now checks for one unchanged

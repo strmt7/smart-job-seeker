@@ -65,6 +65,7 @@ nav a.active{padding:22px 0}
 .web-candidate a{color:#116b70;font-weight:700}.web-candidate .footnote{padding:4px 0}.web-candidate button{padding:7px 10px;background:#e8f3f1;color:#115c60}
 .search-phrase{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 0;border-top:1px solid #dce5e3;font-size:13px}.search-phrase span{flex:1;min-width:130px}.search-phrase button{padding:6px 9px;background:#e8f3f1;color:#115c60}
 .application-link{margin:12px 0;padding:12px;border:1px solid #c8dedc;border-radius:6px;background:#f1f8f6;overflow-wrap:anywhere}.application-link button{margin-top:8px}
+.choice-review-item + .choice-review-item{margin-top:16px;padding-top:14px;border-top:1px solid #c8dedc}
 
 .match-details{margin:10px 0;font-size:13px;color:#475a68}.match-details summary{cursor:pointer;color:#116b70;font-weight:700}.match-details ul{padding-left:20px}.match-details li{overflow-wrap:anywhere}.match-details button{background:#e8f3f1;color:#115c60;padding:7px 10px}.fit-output{overflow-wrap:anywhere}
 

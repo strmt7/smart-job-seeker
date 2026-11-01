@@ -1430,6 +1430,22 @@ fn check_answer_page(session: &mut ReviewSession) -> Result<(), String> {
     Ok(())
 }
 
+fn custom_choice_snapshot(
+    driver: &mut waypoint_browser::CdpDriver,
+) -> Result<(waypoint_browser::CustomChoices, String), String> {
+    let live = driver
+        .inspect_current()
+        .map_err(|error| error.to_string())?;
+    let url = driver.current_url().map_err(|error| error.to_string())?;
+    let choices = driver
+        .page_custom_choices()
+        .map_err(|error| error.to_string())?;
+    let digest = Sha256Digest::of(
+        &json!({"url":url,"schema":live.schema,"walls":live.walls,"choices":choices}).to_string(),
+    );
+    Ok((choices, digest.as_str().to_owned()))
+}
+
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3918,11 +3934,92 @@ fn serve(
                 .as_mut()
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
-            let choices = current
+            let (choices, digest) = custom_choice_snapshot(&mut current.driver)?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest}),
+            );
+        }
+        "/api/form/custom-choice-vision-start" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"]
+                .as_str()
+                .filter(|value| !value.is_empty() && value.len() <= 4096)
+                .ok_or("Invalid choice selector")?;
+            let expected = body["snapshot_digest"]
+                .as_str()
+                .filter(|value| value.len() == 64)
+                .ok_or("Missing choice snapshot")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let (inventory, digest) = custom_choice_snapshot(&mut current.driver)?;
+            if digest != expected {
+                return Err("The page changed; inspect choices again".into());
+            }
+            let matches: Vec<_> = inventory
+                .choices
+                .iter()
+                .filter(|choice| choice.selector == selector)
+                .collect();
+            if matches.len() != 1 {
+                return Err("The choice is unavailable or ambiguous".into());
+            }
+            let label = matches[0].label.clone();
+            let normalized = |value: &str| {
+                value
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+            };
+            let ambiguous = label == "Unlabelled choice"
+                || inventory
+                    .choices
+                    .iter()
+                    .filter(|choice| normalized(&choice.label) == normalized(&label))
+                    .count()
+                    != 1;
+            let image = current
                 .driver
-                .page_custom_choices()
-                .map_err(|error| error.to_string())?;
-            json_reply(stream, "200 OK", json!(choices));
+                .with_review_timeout(|driver| driver.screenshot_field_context(selector))
+                .map_err(|error| format!("Could not capture the choice: {error}"))?;
+            if custom_choice_snapshot(&mut current.driver)?.1 != digest {
+                return Err("The page changed during capture; inspect choices again".into());
+            }
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"custom_choice_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory choice crop; no control was clicked."}))).is_ok());
+            let revision = control_vision::begin_pending(ws, &current.job_id, &task_id, now())?;
+            if let Err(error) = control_vision::start(control_vision::Request {
+                id: task_id.clone(),
+                session: current.id.clone(),
+                rank_task: "custom-choice".into(),
+                control_index: 0,
+                job_id: current.job_id.as_str().into(),
+                pending_revision: revision,
+                model,
+                selector: selector.into(),
+                digest,
+                image: image.clone(),
+                label,
+                ambiguous,
+                capture_saved,
+                choice: true,
+            }) {
+                control_vision::finish_pending(ws, &current.job_id, &task_id, revision)?;
+                return Err(error);
+            }
+            current.created = Instant::now();
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":task_id,"screenshot":image,"capture_saved":capture_saved}),
+            );
         }
         "/api/form/control-rank-pending" => {
             json_reply(stream, "200 OK", control_rank::pending()?);
@@ -4234,6 +4331,7 @@ fn serve(
                 label,
                 ambiguous,
                 capture_saved,
+                choice: false,
             }) {
                 control_vision::finish_pending(ws, &current.job_id, &task_id, pending_revision)?;
                 return Err(error);
@@ -4256,18 +4354,31 @@ fn serve(
                 if let Some(current) = current {
                     current.created = Instant::now();
                     if result["status"] == "complete" {
-                        let current_snapshot = control_rank::snapshot(&mut current.driver)
-                            .ok()
-                            .map(|(_, digest)| digest);
+                        let choice = result["choice"] == true;
+                        let current_snapshot = if choice {
+                            custom_choice_snapshot(&mut current.driver).map(|(_, digest)| digest)
+                        } else {
+                            control_rank::snapshot(&mut current.driver).map(|(_, digest)| digest)
+                        }
+                        .ok();
                         let image = result["selector"].as_str().and_then(|selector| {
                             current
                                 .driver
-                                .with_review_timeout(|driver| driver.screenshot_control(selector))
+                                .with_review_timeout(|driver| {
+                                    if choice {
+                                        driver.screenshot_field_context(selector)
+                                    } else {
+                                        driver.screenshot_control(selector)
+                                    }
+                                })
                                 .ok()
                         });
-                        let final_snapshot = control_rank::snapshot(&mut current.driver)
-                            .ok()
-                            .map(|(_, digest)| digest);
+                        let final_snapshot = if choice {
+                            custom_choice_snapshot(&mut current.driver).map(|(_, digest)| digest)
+                        } else {
+                            control_rank::snapshot(&mut current.driver).map(|(_, digest)| digest)
+                        }
+                        .ok();
                         let same = control_vision::capture_is_current(
                             result["snapshot_digest"].as_str(),
                             current_snapshot.as_deref(),
@@ -4294,7 +4405,7 @@ fn serve(
                             }
                         }
                         if result["result_saved"].is_null() {
-                            let saved = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"control_visual_result","time":now(),"task_id":id,"label":result["label"],"buttons":result["buttons"],"comparison":result["comparison"],"note":"Model transcription is advisory and does not prove a button's effect."})).is_ok());
+                            let saved = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"control_visual_result","time":now(),"task_id":id,"label":result["label"],"buttons":result["buttons"],"comparison":result["comparison"],"note":"Model transcription is advisory and does not prove a control's effect."})).is_ok());
                             result["result_saved"] = json!(saved);
                         } else if !same && !previously_stale {
                             let saved = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"control_visual_stale","time":now(),"task_id":id})).is_ok());

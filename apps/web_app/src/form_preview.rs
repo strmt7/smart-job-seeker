@@ -2608,6 +2608,110 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+        let selector = result["choices"][0]["selector"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let digest = result["snapshot_digest"].as_str().unwrap().to_owned();
+        let stale_body = json!({"session_id":"fixture-session","selector":selector,"snapshot_digest":"0".repeat(64)}).to_string();
+        let mut stale_client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stale_client,"POST /api/form/custom-choice-vision-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{stale_body}",stale_body.len()).unwrap();
+        let (mut stale_server, _) = listener.accept().unwrap();
+        let error = crate::serve(
+            &mut stale_server,
+            &mut ws,
+            &mut session,
+            "fixture-token",
+            port,
+        )
+        .unwrap_err();
+        assert!(error.contains("page changed"), "{error}");
+        drop(stale_server);
+        drop(stale_client);
+        if std::env::var_os("WAYPOINT_TEST_CHOICE_VISION").is_some() {
+            let body = json!({"session_id":"fixture-session","selector":selector,"snapshot_digest":digest}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/custom-choice-vision-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let started: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            let task_id = started["task_id"].as_str().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            loop {
+                let body = json!({"task_id":task_id}).to_string();
+                let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                write!(client,"POST /api/form/control-vision-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+                let (mut server, _) = listener.accept().unwrap();
+                crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+                drop(server);
+                let mut response = String::new();
+                client.read_to_string(&mut response).unwrap();
+                let status: Value =
+                    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+                if status["status"] != "running" {
+                    assert_eq!(status["status"], "complete", "{status}");
+                    assert_eq!(status["choice"], true);
+                    assert_eq!(status["comparison"], "label_observed", "{status}");
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "vision task timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+        let image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_field_context(&selector)
+            .unwrap();
+        let job_id = session.as_ref().unwrap().job_id.clone();
+        let revision =
+            crate::control_vision::begin_pending(&ws, &job_id, "choice-vision-fixture", 2).unwrap();
+        crate::control_vision::set_choice_fixture(
+            "choice-vision-fixture",
+            "fixture-session",
+            job_id.as_str(),
+            revision,
+            (&selector, &digest, &image, "Job location"),
+        );
+        let poll = |ws: &mut Workspace, session: &mut Option<crate::ReviewSession>| -> Value {
+            let body = json!({"task_id":"choice-vision-fixture"}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/control-vision-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, session, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let fresh = poll(&mut ws, &mut session);
+        assert_eq!(fresh["choice"], true);
+        assert_eq!(fresh["comparison"], "label_observed");
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&BrowserCommand::Click {
+                selector: "#change-label".into(),
+            })
+            .unwrap();
+        let stale = poll(&mut ws, &mut session);
+        assert_eq!(stale["comparison"], "stale");
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     #[test]

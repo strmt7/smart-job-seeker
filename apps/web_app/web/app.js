@@ -406,7 +406,37 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  panel.replaceChildren(element('h3',`Form review: ${job.title} · ${job.employer}`));
  panel.append(element('p',`${result.visible ? 'Visible browser open. You can handle sign-in, CAPTCHA and other sections yourself.' : 'Headless browser open.'} Waypoint does not press submit; websites may transmit information as you type.`));
  const choicesButton=element('button','Inspect custom choices'),choicesPanel=element('div','','application-link');choicesButton.type='button';choicesPanel.setAttribute('aria-live','polite');
- choicesButton.addEventListener('click',async()=>{choicesButton.disabled=true;choicesPanel.replaceChildren(element('p','Inspecting visible choice controls…','footnote'));try{const inventory=await api('/api/form/custom-choices',{session_id:result.session_id});if(!Array.isArray(inventory.choices))throw new Error('Invalid choice inventory');choicesPanel.replaceChildren();if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom choices were detected.','footnote'));for(const choice of inventory.choices.slice(0,15)){const section=element('section','');section.append(element('strong',choice.label || 'Unlabelled choice'));if(!choice.expanded)section.append(element('p','Options are not currently available from this control. Open it in a visible browser, then inspect again.','review-label'));else if(!Array.isArray(choice.options) || !choice.options.length)section.append(element('p','No rendered options could be read.','review-label'));else{const list=element('ul','');for(const option of choice.options.slice(0,30))list.append(element('li',option));section.append(list);}section.append(element('p','Only currently rendered options can be shown; additional options may exist. Nothing was selected.','footnote'));choicesPanel.append(section);}if(inventory.incomplete)choicesPanel.append(element('p','Some page scopes or controls could not be inspected.','review-label'));}catch(error){choicesPanel.replaceChildren(element('p',`Custom choices could not be inspected: ${error.message}`,'review-label'));}finally{choicesButton.disabled=false;}});panel.append(choicesButton,choicesPanel);
+ choicesButton.addEventListener('click',async()=>{
+  choicesButton.disabled=true;choicesPanel.replaceChildren(element('p','Inspecting visible choice controls…','footnote'));
+  try{
+   const inventory=await api('/api/form/custom-choices',{session_id:result.session_id});
+   if(!Array.isArray(inventory.choices)||typeof inventory.snapshot_digest!=='string')throw new Error('Invalid choice inventory');
+   choicesPanel.replaceChildren();
+   if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom choices were detected.','footnote'));
+   for(const choice of inventory.choices.slice(0,15)){
+    const section=element('section','','choice-review-item');section.append(element('strong',choice.label || 'Unlabelled choice'));
+    if(!choice.expanded)section.append(element('p','Options are not currently available from this control. Open it in a visible browser, then inspect again.','review-label'));
+    else if(!Array.isArray(choice.options)||!choice.options.length)section.append(element('p','No rendered options could be read.','review-label'));
+    else{const list=element('ul','');for(const option of choice.options.slice(0,30))list.append(element('li',option));section.append(list);}
+    section.append(element('p','Only currently rendered options can be shown; additional options may exist. Nothing was selected.','footnote'));
+    const visual=element('button','Check choice with local vision'),visualResult=element('div','','answer-draft');visual.type='button';
+    visual.addEventListener('click',async()=>{
+     visual.disabled=true;visualResult.replaceChildren(element('p','Checking the visible label locally…','footnote'));
+     try{
+      let pending;try{pending=JSON.parse(sessionStorage.getItem('waypoint-choice-vision')||'null');}catch(_){}
+      if(pending && (pending.session!==result.session_id || pending.selector!==choice.selector))throw new Error('Another choice visual check is pending');
+      if(!pending){const active=await api('/api/form/control-vision-pending',{});if(active.active){if(active.choice!==true || active.session_id!==result.session_id)throw new Error('Another control visual check is pending');pending={task:active.task_id,session:result.session_id,selector:choice.selector};}else{const started=await api('/api/form/custom-choice-vision-start',{session_id:result.session_id,selector:choice.selector,snapshot_digest:inventory.snapshot_digest});pending={task:started.task_id,session:result.session_id,selector:choice.selector};}sessionStorage.setItem('waypoint-choice-vision',JSON.stringify(pending));}
+      let outcome;do{await new Promise(resolve=>setTimeout(resolve,1000));outcome=await api('/api/form/control-vision-status',{task_id:pending.task});}while(outcome.status==='running');
+      sessionStorage.removeItem('waypoint-choice-vision');if(outcome.status!=='complete'||outcome.choice!==true||outcome.session_id!==result.session_id||outcome.label!==choice.label)throw new Error(outcome.error || 'Choice visual check does not match this control; inspect again');
+      visualResult.replaceChildren(element('p',outcome.comparison==='label_observed'?'The local model observed the label. Review the live control; this does not verify its action.':'The label could not be reliably verified. Review the live control manually.','review-label'));
+      if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured choice control';image.src=`data:image/png;base64,${outcome.screenshot}`;visualResult.append(image);}
+      if(outcome.capture_saved===false || outcome.result_saved===false)visualResult.append(element('p','The visual evidence could not be saved to the application record.','review-label'));
+     }catch(error){visualResult.replaceChildren(element('p',`Choice visual check unavailable: ${error.message}`,'review-label'));}finally{visual.disabled=false;}
+    });section.append(visual,visualResult);choicesPanel.append(section);
+   }
+   if(inventory.incomplete)choicesPanel.append(element('p','Some page scopes or controls could not be inspected.','review-label'));
+  }catch(error){choicesPanel.replaceChildren(element('p',`Custom choices could not be inspected: ${error.message}`,'review-label'));}finally{choicesButton.disabled=false;}
+ });panel.append(choicesButton,choicesPanel);
  const sessionEstimate=element('p','','session-estimate'),sessionAlert=element('p','','review-label');sessionAlert.setAttribute('role','status');panel.append(sessionEstimate,sessionAlert);let sessionTimer=null;
  function updateSessionEstimate(seconds){clearInterval(sessionTimer);sessionAlert.textContent='';if(!Number.isFinite(seconds)||seconds<0||seconds>3600){sessionEstimate.textContent='Session time is unavailable. The browser session may expire.';return;}const deadline=Date.now()+seconds*1000;const tick=()=>{if(!panel.isConnected||panel.disabled){clearInterval(sessionTimer);return;}const remaining=Math.max(0,Math.ceil((deadline-Date.now())/1000));if(remaining===0){sessionEstimate.textContent='Estimated session time has elapsed.';sessionAlert.textContent='The review session may have expired. Inspect the application again before continuing.';clearInterval(sessionTimer);}else sessionEstimate.textContent=`Estimated session time remaining: ${remaining} seconds. The server determines whether the session is still active.`;};tick();if(Date.now()<deadline)sessionTimer=setInterval(tick,1000);}
  updateSessionEstimate(result.expires_in_seconds);
