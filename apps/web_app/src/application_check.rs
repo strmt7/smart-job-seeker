@@ -311,7 +311,8 @@ fn email_contact_note(
         None => serde_json::json!({"page_text_status":"unavailable"}),
     };
     crate::candidate_task::add_page_text_contacts(&mut inventory, &metadata);
-    let count = inventory["contacts"].as_array()?.len();
+    let contacts = inventory["contacts"].as_array()?;
+    let count = contacts.len();
     if count == 0 {
         return None;
     }
@@ -319,7 +320,14 @@ fn email_contact_note(
         || inventory["text_status"] != "captured"
         || inventory["omitted"].as_u64().unwrap_or(0) > 0
         || inventory["link_limit_reached"] == true;
-    Some(format!("The listing has {}{count} email contact{}; verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, if count == 1 { "it" } else { "any" }))
+    let addresses: Vec<_> = contacts
+        .iter()
+        .filter_map(|contact| contact["address"].as_str())
+        .collect();
+    if addresses.len() != count {
+        return None;
+    }
+    Some(format!("The listing has {}{count} email contact{}: {}. Verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, addresses.join(", "), if count == 1 { "it" } else { "any" }))
 }
 
 fn classify_fields(
@@ -689,8 +697,9 @@ mod tests {
         )
         .unwrap();
         assert!(note.contains("1 email contact"));
-        assert!(note.contains("verify whether it accepts applications"));
-        assert!(!note.contains("jobs@example.org"));
+        assert!(note.contains("Verify whether it accepts applications"));
+        assert!(note.contains("jobs@example.org"));
+        assert!(!note.contains("subject=ignored"));
         let many: Vec<_> = (0..9)
             .map(|i| link(&format!("mailto:job{i}@example.org")))
             .collect();
@@ -702,7 +711,7 @@ mod tests {
         let text_only =
             super::email_contact_note(None, Some(("Apply to jobs@example.org", true))).unwrap();
         assert!(text_only.contains("at least 1 email contact"));
-        assert!(!text_only.contains("jobs@example.org"));
+        assert!(text_only.contains("jobs@example.org"));
     }
 
     #[test]
@@ -1549,8 +1558,11 @@ mod tests {
         let requests = server.join().unwrap();
         assert!(review);
         assert!(message.contains("2 email contacts"), "{message}");
+        assert!(message.contains("careers@example.invalid"));
+        assert!(message.contains("access@example.invalid"));
+        assert!(!message.contains("subject=ignored"));
         assert!(
-            message.contains("verify whether any accepts applications"),
+            message.contains("Verify whether any accepts applications"),
             "{message}"
         );
         assert!(requests.iter().any(|request| request.starts_with("GET ")));
@@ -1578,8 +1590,10 @@ mod tests {
         let (text, truncated) = browser.page_text_bounded(32_000).unwrap();
         let message = super::email_contact_note(Some(&links), Some((&text, truncated))).unwrap();
         assert!(message.contains("2 email contacts"));
-        assert!(message.contains("verify whether any accepts applications"));
-        assert!(!message.contains("careers@example.invalid"));
+        assert!(message.contains("Verify whether any accepts applications"));
+        assert!(message.contains("careers@example.invalid"));
+        assert!(message.contains("access@example.invalid"));
+        assert!(!message.contains("subject=ignored"));
         assert!(browser
             .trace
             .iter()
