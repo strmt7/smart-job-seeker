@@ -807,6 +807,18 @@ fn validate_suggestions(
                     || hint_matches_applicant_label(&field.label, candidate)
             });
             let hint = autocomplete_profile_key(field);
+            // A postal autocomplete token can identify the requested component
+            // even when the visible label is unfamiliar or in another language.
+            // It is still only a hint: matching it does not establish that the
+            // label refers to the applicant or that the supplied value is complete.
+            if hint.is_some_and(|hint| {
+                matches!(
+                    hint,
+                    "address" | "city" | "region" | "postal_code" | "country"
+                ) && hint != key
+            }) {
+                return None;
+            }
             if direct.is_some_and(|direct| direct != key || hint.is_some_and(|hint| hint != direct))
             {
                 return None;
@@ -1803,6 +1815,68 @@ mod tests {
         .unwrap();
         assert_eq!(mapped.len(), 1);
         assert!(invalid.is_empty());
+    }
+    #[test]
+    fn postal_autocomplete_rejects_incompatible_model_components() {
+        let mut schema = form();
+        schema.fields[0].label = "Anschrift".into();
+        let profile = json!({"address":"10 Example Street","city":"Example City","postal_code":"12345","country":"Germany"});
+        for (hint, correct, incorrect) in [
+            ("street-address", "address", "city"),
+            ("address-level2", "city", "address"),
+            ("postal-code", "postal_code", "city"),
+            ("country-name", "country", "address"),
+        ] {
+            schema.fields[0].autocomplete = Some(format!("shipping {hint}"));
+            let response = |key| json!({"mappings":[{"selector":"#candidate","profile_key":key}]});
+            let (mapped, invalid, _) =
+                validate_suggestions(&schema, profile.as_object().unwrap(), &response(incorrect))
+                    .unwrap();
+            assert!(mapped.is_empty(), "{hint}");
+            assert!(invalid.contains("#candidate"), "{hint}");
+            let (mapped, invalid, _) =
+                validate_suggestions(&schema, profile.as_object().unwrap(), &response(correct))
+                    .unwrap();
+            assert_eq!(mapped.len(), 1, "{hint}");
+            assert!(invalid.is_empty(), "{hint}");
+        }
+    }
+    #[test]
+    #[ignore = "starts one browser on a fictional multilingual address form"]
+    fn browser_postal_hint_blocks_wrong_model_component() {
+        use waypoint_applications::driver::BrowserDriver;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("address.html");
+        std::fs::write(&path, r#"<!doctype html><html lang="de"><body><form><label for="address">Anschrift</label><input id="address" autocomplete="street-address" required></form></body></html>"#).unwrap();
+        let url = url::Url::from_file_path(path.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Anschrift")
+            .unwrap();
+        assert_eq!(field.autocomplete.as_deref(), Some("street-address"));
+        let selector = field.selector.clone();
+        let mut model = FakeInference {
+            response: json!({"mappings":[{"selector":selector,"profile_key":"city"}],"manual_review":[]}),
+            last_prompt: String::new(),
+        };
+        let (mapped, warnings, _) =
+            suggest_with_review(&mut model, &live.schema, &json!({"city":"Example City"})).unwrap();
+        assert!(mapped.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("required field(s) have no suggestion")),
+            "{warnings:?}"
+        );
+        assert_eq!(driver.text_value_snapshot(&selector).unwrap().value, "");
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("typed") && !event.contains("submitted")));
     }
     #[test]
     fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
