@@ -405,19 +405,25 @@ mod tests {
     fn live_model_detects_overlapping_document_text() {
         let bytes = include_bytes!("../tests/fictional-document-overlap.pdf");
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").unwrap();
-        assert_eq!(
-            crate::resident_model().unwrap().as_deref(),
-            Some(model.as_str())
-        );
-        let addr = "127.0.0.1:11434".parse().unwrap();
         let prompt = visual_prompt("Fictional candidate document for a software engineering role.");
         let report = inspect(bytes, crate::pdf_extract::render_page_for_review, |image| {
-            crate::visual_review::generate_vision(addr, &model, image, &prompt)
+            crate::visual_review::benchmark_vision(&model, image, &prompt)
         })
         .unwrap();
         eprintln!("Visual qualification report: {report}");
         assert_eq!(report["complete"], true);
         assert_eq!(report["pages"], 2);
+        assert_eq!(
+            report["findings"][0]["text_geometry"]["overlapping_pairs"],
+            0
+        );
+        assert!(
+            report["findings"][1]["text_geometry"]["overlapping_pairs"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert!(needs_followup(&json!({"report":report})));
         assert!(
             report["findings"][1]["issues"]
                 .as_array()

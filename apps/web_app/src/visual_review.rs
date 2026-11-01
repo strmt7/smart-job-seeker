@@ -684,6 +684,35 @@ pub(crate) fn generate_vision(
     generate_vision_with_context(addr, model, image, prompt, None)
 }
 
+#[cfg(test)]
+pub(crate) fn benchmark_vision(model: &str, image: &str, prompt: &str) -> Result<Value, String> {
+    let Some(address) = std::env::var("WAYPOINT_VISION_BENCHMARK_ADDR").ok() else {
+        if crate::resident_model()?.as_deref() != Some(model) {
+            return Err("Expected a preloaded eligible model".into());
+        }
+        return generate_vision("127.0.0.1:11434".parse().unwrap(), model, image, prompt);
+    };
+    let addr: std::net::SocketAddr = address.parse().map_err(|_| "Invalid benchmark address")?;
+    if addr.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) {
+        return Err("Benchmark address must be literal loopback".into());
+    }
+    let (status, bytes) =
+        waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000)?;
+    let ps: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid benchmark status")?;
+    let models = ps["models"]
+        .as_array()
+        .ok_or("Missing benchmark model status")?;
+    if status != 200
+        || models.len() != 1
+        || models[0]["name"] != model
+        || models[0]["context_length"] != 2048
+        || models[0]["size_vram"] != 0
+    {
+        return Err("Expected one CPU-resident benchmark model with 2048 context".into());
+    }
+    generate_vision_with_context(addr, model, image, prompt, Some(2048))
+}
+
 fn generate_vision_with_context(
     addr: std::net::SocketAddr,
     model: &str,
@@ -1238,41 +1267,10 @@ mod tests {
         use base64::Engine;
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".into());
-        let isolated = std::env::var("WAYPOINT_VISION_BENCHMARK_ADDR").ok();
-        let addr: std::net::SocketAddr = isolated
-            .as_deref()
-            .unwrap_or("127.0.0.1:11434")
-            .parse()
-            .unwrap();
-        assert_eq!(addr.ip().to_string(), "127.0.0.1");
-        if isolated.is_none() {
-            assert_eq!(
-                crate::resident_model().unwrap().as_deref(),
-                Some(model.as_str())
-            );
-        } else {
-            let (status, bytes) =
-                waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000)
-                    .unwrap();
-            let ps: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(status, 200);
-            assert!(ps["models"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|item| item["name"] == model
-                    && item["context_length"] == 2048
-                    && item["size_vram"] == 0));
-        }
         let image = base64::engine::general_purpose::STANDARD
             .encode(include_bytes!("../tests/fictional-styled-document.png"));
         let prompt = "Read the job title on this fictional document and describe the type style of each word in that title. Return JSON with title and styles. Do not guess if unclear.";
-        let result = if isolated.is_some() {
-            generate_vision_with_context(addr, &model, &image, prompt, Some(2048))
-        } else {
-            generate_vision(addr, &model, &image, prompt)
-        }
-        .unwrap();
+        let result = benchmark_vision(&model, &image, prompt).unwrap();
         println!("Fictional document visual result: {result}");
         assert_eq!(result["title"], "Sénior Systems Engineer");
         assert_eq!(result["styles"]["Sénior"], "bold");

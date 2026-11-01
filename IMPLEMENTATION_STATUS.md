@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Two-page document review with local vision — 2026-11-01
+
+- With `gemma4:12b-it-q4_K_M` preloaded on CPU in an isolated Ollama instance, the actual PDF rendering and document-review pipeline inspected both pages of the fictional overlap fixture (SHA-256 `6c41494555775507cded703bf707ac0dc52c14be72c86d70612f9706f7b3fe60`). The model reported an overlap or legibility issue on the second page; selectable-text geometry independently found overlapping characters there, and the application kept the document for follow-up. The first page had no geometric overlaps. This is one constructed case, not a measure of general document-review accuracy.
+- The live test took 50.10 seconds after preload with four CPU threads and a 2048-token context; available memory remained at least 16.92 GiB and returned to 26.8 GiB after the isolated runtime stopped. The shared runtime remained empty. The test-only loopback harness and native output are retained under `target/waypoint-gemma-overlap-followup.ps1` and `target/model-eval/isolated-gemma-overlap-followup-20261101`; production GPU eligibility is unchanged. Focused document-review tests and lint also passed.
+
 ## Fictional document vision probe — 2026-11-01
 
 - An isolated Ollama 0.40.13 instance ran `qwen3.5:9b` (model ID prefix `c97eb11d70b1`) on CPU with four threads, a 2048-token context and no GPU layers. The shared Ollama service was not used. A single direct JSON request took 43 seconds including loading; available system memory stayed at or above 19.73 GiB and returned to 26.4 GiB afterward.
