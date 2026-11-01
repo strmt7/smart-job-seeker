@@ -1096,3 +1096,7 @@ A single debug-build, in-memory run rechecked 10,000 fictional indexed jobs with
 ### Duplicate recheck scheduling (2026-11-01)
 
 The duplicate indexer now reports whether a step compared a job or only advanced an empty scan page. Both the background worker and idle fallback wait two seconds after comparisons, 200 ms after an empty page while more work remains, and 30 seconds when idle; lock contention and errors retain their slower retry. This avoids spending two seconds on every empty 64-record page without adding concurrent comparisons. Tests cover scan, comparison, phase transition and idle scheduling, including the SQLCipher store; 87 store tests, web Clippy and formatting passed. The new elapsed time and resource use have not been measured on a large encrypted workspace. No application was submitted.
+
+### Encrypted title-level recheck timing (2026-11-01)
+
+A single debug-build SQLCipher disk run of the same 10,000-fictional-job fixture, with 10 affected titles and distinct employers, took 162 calls and 1.058 seconds of active work; the slowest call took 24.2 ms. It excludes production delays, descriptions and crowded employers and does not measure peak memory, concurrent load or worst-case behavior. The test created and removed its own fictional encrypted database. Web Clippy and formatting passed. No application was submitted.

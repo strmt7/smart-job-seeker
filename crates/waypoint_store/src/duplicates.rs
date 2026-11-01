@@ -1445,6 +1445,10 @@ mod tests {
     #[ignore = "bounded fictional workspace timing fixture"]
     fn measure_title_level_recheck_over_indexed_jobs() {
         let store = Store::in_memory().unwrap();
+        measure_title_level_recheck(&store);
+    }
+
+    fn measure_title_level_recheck(store: &Store) {
         store.conn.execute_batch("BEGIN").unwrap();
         for index in 0..10_000 {
             let id = format!("job-{index:05}");
@@ -1490,6 +1494,30 @@ mod tests {
             assert!(steps <= 170);
         }
         println!("10,000 fictional indexed jobs, 10 affected titles: {steps} bounded steps, total {:?}, slowest {:?}; distinct employers, no descriptions or production delays", start.elapsed(), max_step);
+    }
+
+    #[cfg(feature = "sqlcipher")]
+    #[test]
+    #[ignore = "bounded encrypted disk workspace timing fixture"]
+    fn measure_encrypted_title_level_recheck_over_indexed_jobs() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = root.join(format!(
+            "waypoint-title-timing-{}-{nonce}.sqlite",
+            std::process::id()
+        ));
+        assert!(!path.exists() && path.starts_with(&root));
+        {
+            let store = Store::open_encrypted(&path, &[17; 32]).unwrap();
+            measure_title_level_recheck(&store);
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
