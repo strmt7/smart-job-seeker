@@ -7,3 +7,5 @@ assert.match(describe({status:'pending',previous_decision:{status:'same',preferr
 assert.equal(describe({status:'same',previous_decision:{status:'same'}},'a'),null);
 assert.equal(describe({status:'pending'},'a'),null);
 console.log('Duplicate review context checks passed.');
+
+assert.match(source,/keep_or_first:job.id,other:otherId,same,revision:pair.revision/);

@@ -9,6 +9,7 @@ pub struct PossibleDuplicate {
     pub job_a: String,
     pub job_b: String,
     pub score: u32,
+    pub revision: i64,
     pub reason: String,
     pub status: String,
     pub preferred_job: Option<String>,
@@ -456,10 +457,10 @@ impl Store {
                 });
             let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=CASE WHEN possible_duplicates.status='pending' AND possible_duplicates.reason LIKE 'Listing changed after duplicate review; review again.%' THEN 'Listing changed after duplicate review; review again. ' || excluded.reason ELSE excluded.reason END", params![job_a,job_b,score,reason])?;
-            let (status, preferred_job, stored_reason) = self.conn.query_row(
-                "SELECT status,preferred_job,reason FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
+            let (status, preferred_job, stored_reason, revision) = self.conn.query_row(
+                "SELECT status,preferred_job,reason,revision FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
                 params![job_a, job_b],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?, r.get(3)?)),
             )?;
             let previous_decision = if status == "pending"
                 && stored_reason.starts_with("Listing changed after duplicate review;")
@@ -472,6 +473,7 @@ impl Store {
                 job_a: job_a.into(),
                 job_b: job_b.into(),
                 score,
+                revision,
                 reason: stored_reason,
                 status,
                 preferred_job,
@@ -670,7 +672,7 @@ impl Store {
     }
 
     pub fn possible_duplicates(&self) -> rusqlite::Result<Vec<PossibleDuplicate>> {
-        let mut stmt = self.conn.prepare("SELECT job_a,job_b,score,reason,status,preferred_job FROM possible_duplicates WHERE status <> 'different' ORDER BY job_a,job_b")?;
+        let mut stmt = self.conn.prepare("SELECT job_a,job_b,score,reason,status,preferred_job,revision FROM possible_duplicates WHERE status <> 'different' ORDER BY job_a,job_b")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -679,11 +681,12 @@ impl Store {
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get(5)?,
+                row.get(6)?,
             ))
         })?;
         let mut result = Vec::new();
         for row in rows {
-            let (job_a, job_b, score, reason, status, preferred_job) = row?;
+            let (job_a, job_b, score, reason, status, preferred_job, revision) = row?;
             let previous_decision = if status == "pending"
                 && reason.starts_with("Listing changed after duplicate review;")
             {
@@ -695,6 +698,7 @@ impl Store {
                 job_a,
                 job_b,
                 score,
+                revision,
                 reason,
                 status,
                 preferred_job,
@@ -715,6 +719,18 @@ impl Store {
             (second, first)
         };
         self.conn.query_row("SELECT 1 FROM possible_duplicates WHERE job_a=?1 AND job_b=?2 AND status='pending'", params![a,b], |_| Ok(())).optional().map(|v|v.is_some())
+    }
+
+    pub fn decide_duplicate_at_revision(
+        &self,
+        a: &str,
+        b: &str,
+        same: bool,
+        revision: i64,
+    ) -> rusqlite::Result<bool> {
+        let preferred = a;
+        let (a, b) = if a < b { (a, b) } else { (b, a) };
+        Ok(self.conn.execute("UPDATE possible_duplicates SET status=?3,preferred_job=?4 WHERE job_a=?1 AND job_b=?2 AND status='pending' AND revision=?5", params![a,b,if same {"same"} else {"different"},if same {Some(preferred)} else {None},revision])? == 1)
     }
 
     pub fn decide_duplicate(&self, a: &str, b: &str, same: bool) -> rusqlite::Result<bool> {
@@ -753,6 +769,39 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn duplicate_decision_rejects_stale_pending_revision_and_replay() {
+        let mut store = Store::in_memory().unwrap();
+        let mut first = job("a", "Engineer", "Example", None);
+        let second = job("b", "Engineer", "Example", None);
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        let initial = store.possible_duplicates().unwrap()[0].revision;
+        first.title = "Senior Engineer".into();
+        store.upsert_job(&first).unwrap();
+        let fresh = store.possible_duplicates().unwrap()[0].revision;
+        assert!(fresh > initial);
+        assert!(!store
+            .decide_duplicate_at_revision("a", "b", false, initial)
+            .unwrap());
+        assert!(store.pending_duplicate_pair("a", "b").unwrap());
+        store
+            .set_job_description(&first.id, Some("New fictional duties"))
+            .unwrap();
+        assert!(!store
+            .decide_duplicate_at_revision("a", "b", false, fresh)
+            .unwrap());
+        let current = store.possible_duplicates().unwrap()[0].revision;
+        assert!(store
+            .decide_duplicate_at_revision("a", "b", false, current)
+            .unwrap());
+        assert!(!store
+            .decide_duplicate_at_revision("a", "b", true, current)
+            .unwrap());
     }
 
     #[test]

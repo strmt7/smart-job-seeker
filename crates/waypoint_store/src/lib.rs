@@ -343,6 +343,18 @@ const MIGRATIONS: &[&str] = &[
     // v34 — bound the latest prior duplicate decision lookup.
     "CREATE INDEX duplicate_reopen_pair_latest ON duplicate_reopen_log(job_a,job_b,id DESC);
      UPDATE meta SET value='34' WHERE key='schema_version';",
+    // v35 — bind duplicate decisions to listing revisions, even while pending.
+    "ALTER TABLE possible_duplicates ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0);
+     CREATE TRIGGER duplicate_revision_job AFTER UPDATE ON jobs
+       WHEN OLD.title IS NOT NEW.title OR OLD.employer IS NOT NEW.employer OR OLD.location IS NOT NEW.location OR OLD.canonical_url IS NOT NEW.canonical_url OR OLD.content_hash IS NOT NEW.content_hash OR OLD.remote IS NOT NEW.remote OR OLD.source IS NOT NEW.source OR OLD.requisition_id IS NOT NEW.requisition_id
+       BEGIN UPDATE possible_duplicates SET revision=revision+1 WHERE job_a=NEW.id OR job_b=NEW.id; END;
+     CREATE TRIGGER duplicate_revision_description_update AFTER UPDATE ON job_descriptions
+       WHEN OLD.content IS NOT NEW.content
+       BEGIN UPDATE possible_duplicates SET revision=revision+1 WHERE job_a=NEW.job_id OR job_b=NEW.job_id; END;
+     CREATE TRIGGER duplicate_revision_description_insert AFTER INSERT ON job_descriptions
+       WHEN NEW.content IS NOT NULL
+       BEGIN UPDATE possible_duplicates SET revision=revision+1 WHERE job_a=NEW.job_id OR job_b=NEW.job_id; END;
+     UPDATE meta SET value='35' WHERE key='schema_version';",
 
 ];
 
@@ -1310,7 +1322,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "34");
+        assert_eq!(version, "35");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

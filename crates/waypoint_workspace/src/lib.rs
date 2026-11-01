@@ -739,6 +739,18 @@ impl Workspace {
         Ok(self.store.pending_duplicate_pair(a.as_str(), b.as_str())?)
     }
 
+    pub fn decide_duplicate_at_revision(
+        &self,
+        a: &JobIdentityId,
+        b: &JobIdentityId,
+        same: bool,
+        revision: i64,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .decide_duplicate_at_revision(a.as_str(), b.as_str(), same, revision)?)
+    }
+
     pub fn decide_duplicate(
         &self,
         a: &JobIdentityId,

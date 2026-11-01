@@ -1892,11 +1892,18 @@ fn serve(
             let b = JobIdentityId::new(body["other"].as_str().ok_or("missing other job")?)
                 .map_err(|e| e.to_string())?;
             let same = body["same"].as_bool().ok_or("missing decision")?;
+            let revision = body["revision"]
+                .as_i64()
+                .filter(|revision| *revision > 0)
+                .ok_or("Refresh the duplicate pair before deciding")?;
             if !ws
-                .decide_duplicate(&a, &b, same)
+                .decide_duplicate_at_revision(&a, &b, same, revision)
                 .map_err(|e| e.to_string())?
             {
-                return Err("Duplicate pair not found".into());
+                return Err(
+                    "Duplicate pair changed or was already decided; refresh and review it again"
+                        .into(),
+                );
             }
             json_reply(stream, "200 OK", json!({"ok":true}));
         }
@@ -8395,6 +8402,72 @@ mod tests {
         let pool = fit_semantic_pool(&facts, &format!("{question}\n{listing}"));
         assert!(pool[..20].contains(&facts[59]));
         assert!(pool.len() <= 60);
+    }
+
+    #[test]
+    fn duplicate_decision_rejects_listing_changed_since_state_read() {
+        use waypoint_store::StoredJob;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            for id in ["first", "second"] {
+                ws.import_manual_job(
+                    StoredJob {
+                        id: JobIdentityId::new(id).unwrap(),
+                        title: "Engineer".into(),
+                        employer: "Example".into(),
+                        location: "Berlin".into(),
+                        state: ApplicationState::Discovered,
+                        canonical_url: Some(format!("https://example.org/{id}")),
+                        content_hash: None,
+                        first_seen: None,
+                        last_seen: None,
+                        remote: false,
+                        source: "user_supplied_url".into(),
+                        requisition_id: None,
+                        posted_at: None,
+                    },
+                    Some("Fictional duties"),
+                )
+                .unwrap();
+            }
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+            drop(stream);
+            let mut changed = ws
+                .job(&JobIdentityId::new("first").unwrap())
+                .unwrap()
+                .unwrap();
+            changed.title = "Senior Engineer".into();
+            ws.import_job(changed).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            if let Err(error) = serve(&mut stream, &mut ws, &mut None, "test-token", port) {
+                json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            }
+            assert!(ws
+                .pending_duplicate_pair(
+                    &JobIdentityId::new("first").unwrap(),
+                    &JobIdentityId::new("second").unwrap()
+                )
+                .unwrap());
+        });
+        let mut get = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(get, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\n\r\n").unwrap();
+        let mut response = String::new();
+        get.read_to_string(&mut response).unwrap();
+        let state: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let revision = state["duplicates"][0]["revision"].as_i64().unwrap();
+        let body =
+            json!({"keep_or_first":"first","other":"second","same":false,"revision":revision})
+                .to_string();
+        let mut post = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(post, "POST /api/duplicates/decide HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let mut response = String::new();
+        post.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Duplicate pair changed or was already decided"));
+        worker.join().unwrap();
     }
 
     #[test]
