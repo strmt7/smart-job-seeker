@@ -1478,6 +1478,24 @@ mod tests {
         assert!(!mappings
             .iter()
             .any(|item| item.field_selector == "#manager" || item.field_selector == "#reference"));
+        let mut phone_schema = schema.clone();
+        for field in &mut phone_schema.fields {
+            field.label = field
+                .label
+                .replace("Email", "Phone")
+                .replace("email", "phone");
+            field.field_type = FormFieldType::Text;
+            field.autocomplete = Some("tel".into());
+        }
+        let (phones, warnings, review) =
+            suggest_with_review(&mut llm, &phone_schema, &json!({"phone":"+12025550123"})).unwrap();
+        println!(
+            "Fictional phone mappings: {phones:?}; warnings: {warnings:?}; manual: {review:?}"
+        );
+        assert!(phones.iter().any(|item| item.field_selector == "#self"));
+        assert!(!phones.iter().any(|item| item.field_selector == "#manager"
+            || item.field_selector == "#reference"
+            || item.field_selector == "#generic"));
         assert!(driver
             .trace
             .iter()
