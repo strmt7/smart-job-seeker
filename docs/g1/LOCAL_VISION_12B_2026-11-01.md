@@ -31,3 +31,20 @@ All tests used the app's existing resource and residency checks, a 4,096-token
 context and one local browser at a time. Results can vary between runs. Keep
 these cases for future model and prompt evaluation; neither a successful DOM
 check nor exact transcription establishes overall application correctness.
+
+## Placeholder prompt experiment
+
+Four additional fictional pages displayed the same email as either an entered
+value or a placeholder, using black or gray text. Chromium screenshots of the
+black entered value and the black placeholder were byte-identical (SHA-256
+`48fc9dbb084d479c5eb2ee375e3cba0f4ab3822a26216248694d67160b8ed330`).
+The images were created locally and are not included in the repository.
+
+With one response per image, a shortened version of the current transcription
+prompt reported the email in all four cases, including both placeholders. A
+second, deliberately cautious prompt omitted all observations in all four
+cases, including genuinely entered values. These results do not establish
+general prompt performance, but the identical-image pair demonstrates that
+pixels alone cannot distinguish those two page states. The cautious prompt was
+not adopted; the live-value check remains necessary, and an unavailable or
+unconfirmed check must remain a manual-review case.
