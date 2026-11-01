@@ -365,6 +365,9 @@ mod tests {
             .choices
             .iter()
             .any(|choice| choice.selector == selector && choice.expanded));
+        for option in ["Missing", "Duplicate"] {
+            assert!(request(&mut ws, &mut session, "/api/form/custom-choice-option-vision-start", json!({"session_id":"choice-session","selector":selector,"option":option,"snapshot_digest":digest})).is_err());
+        }
         let image = session
             .as_mut()
             .unwrap()
@@ -379,6 +382,39 @@ mod tests {
             .unwrap()
             .screenshot_with_name(&image)
             .unwrap();
+        let option_revision =
+            crate::control_vision::begin_pending(&ws, &job, "option-visual", now()).unwrap();
+        let option_image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_base64()
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .record
+            .as_mut()
+            .unwrap()
+            .screenshot_with_name(&option_image)
+            .unwrap();
+        crate::control_vision::set_option_fixture(
+            "option-visual",
+            "choice-session",
+            job.as_str(),
+            option_revision,
+            (&selector, &digest, &option_image, "Berlin"),
+        );
+        let option_review = request(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-status",
+            json!({"task_id":"option-visual"}),
+        )
+        .unwrap();
+        assert_eq!(option_review["comparison"], "label_observed");
+        assert!(session.as_ref().unwrap().pending_choice_visual.is_some());
+        assert!(request(&mut ws, &mut session, "/api/form/custom-choice-open", json!({"session_id":"choice-session","visual_task_id":"option-visual","reviewed":true,"source_reviewed":true})).is_err());
         let revision =
             crate::control_vision::begin_pending(&ws, &job, "choice-after", now()).unwrap();
         crate::control_vision::set_choice_fixture(

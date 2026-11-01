@@ -20,8 +20,9 @@ const api = async (path, body) => {
   calls.push(path);
   if(path==='/api/form/custom-choices'){assert.equal(body.session_id,'session');return inventory;}
   if(path==='/api/form/control-vision-pending')return {active:false};
+  if(path==='/api/form/custom-choice-option-vision-start'){assert.equal(body.selector,'#location');assert.equal(body.option,'Berlin');return {task_id:'option-vision'};}
   if(path==='/api/form/custom-choice-vision-start'){assert.equal(body.selector,'#location');assert.equal(body.snapshot_digest,inventory.snapshot_digest);return {task_id:'vision'};}
-  if(path==='/api/form/control-vision-status')return {status:'complete',choice:true,session_id:'session',label:'Job location',comparison:'label_observed',capture_saved:true,result_saved:true};
+  if(path==='/api/form/control-vision-status')return body.task_id==='option-vision'?{status:'complete',rank_task_id:'custom-choice-option',session_id:'session',label:'Berlin',comparison:'label_observed',capture_saved:true,result_saved:true}:{status:'complete',choice:true,session_id:'session',label:'Job location',comparison:'label_observed',capture_saved:true,result_saved:true};
   throw new Error(`Unexpected request ${path}`);
 };
 const stored = new Map();
@@ -41,6 +42,10 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   await visual.listeners.click();
   assert.match(visualResult.children[0].text,/local model observed the label/);
   assert.deepEqual(calls,['/api/form/custom-choices','/api/form/control-vision-pending','/api/form/custom-choice-vision-start','/api/form/control-vision-status']);
+  assert.equal(stored.size,0);
+  const optionRow=choicesPanel.children[0].children[1].children[0];
+  await optionRow.children[0].listeners.click();
+  assert.match(optionRow.children[1].textContent,/observed this option/);
   assert.equal(stored.size,0);
   const actionCalls=[];
   const closed={choices:[{label:'Job location',selector:'#location',expanded:false,options:[]}],incomplete:false,snapshot_digest:'b'.repeat(64),can_open:true};

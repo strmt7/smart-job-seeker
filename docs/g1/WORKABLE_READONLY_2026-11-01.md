@@ -161,3 +161,16 @@ browser fixture exercised the approval, recording, replay and follow-up gate.
 Its visual results were simulated for this test. This does not establish safe
 behavior on arbitrary employer pages: page scripts can have side effects, and
 no real employer control was opened or application submitted in this check.
+
+## Visible option transcription
+
+An expanded choice can be checked for one uniquely rendered option using the
+local vision model. The full viewport is captured because a field-context crop
+on the fictional fixture omitted the list: `gemma4:12b-it-qat` returned only
+the control text from that crop. On the same fixture, a viewport capture let
+the model transcribe `Berlin` among the visible options. This was a single
+local-model probe, not a measurement of general accuracy; the application
+pipeline and its one-use separation were checked with simulated vision results.
+Option checks are advisory and do not select or authorize an option. A changed
+snapshot, unreadable option, duplicate label or unavailable evidence requires
+review. The model was unloaded after the probe.

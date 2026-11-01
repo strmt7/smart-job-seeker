@@ -417,7 +417,23 @@ function showFormPreview(job,result){setWorkspaceView('applications');
     const section=element('section','','choice-review-item');section.append(element('strong',choice.label || 'Unlabelled choice'));
     if(!choice.expanded)section.append(element('p','Options are not currently available from this control. Open it in a visible browser, then inspect again.','review-label'));
     else if(!Array.isArray(choice.options)||!choice.options.length)section.append(element('p','No rendered options could be read.','review-label'));
-    else{const list=element('ul','');for(const option of choice.options.slice(0,30))list.append(element('li',option));section.append(list);}
+    else{const list=element('ul','');for(const option of choice.options.slice(0,30)){
+     const row=element('li',option),check=element('button','Check option with local vision'),feedback=element('span','','review-label');check.type='button';
+     check.addEventListener('click',async()=>{
+      check.disabled=true;feedback.textContent='Checking option…';
+      try{
+       let pending,recoveredUnknown=false;try{pending=JSON.parse(sessionStorage.getItem('waypoint-choice-option-vision')||'null');}catch(_){}
+       if(pending){if(pending.session!==result.session_id || pending.selector!==choice.selector || pending.option!==option)throw new Error('Another option check is pending');}
+       else{const active=await api('/api/form/control-vision-pending',{});if(active.active){if(active.rank_task_id!=='custom-choice-option' || active.session_id!==result.session_id)throw new Error('Another control visual check is pending');recoveredUnknown=true;pending={task:active.task_id,session:result.session_id,selector:choice.selector,option,recoveredUnknown:true};}else{const started=await api('/api/form/custom-choice-option-vision-start',{session_id:result.session_id,selector:choice.selector,option,snapshot_digest:inventory.snapshot_digest});pending={task:started.task_id,session:result.session_id,selector:choice.selector,option};}sessionStorage.setItem('waypoint-choice-option-vision',JSON.stringify(pending));}
+       let outcome;do{await new Promise(resolve=>setTimeout(resolve,1000));outcome=await api('/api/form/control-vision-status',{task_id:pending.task});}while(outcome.status==='running');sessionStorage.removeItem('waypoint-choice-option-vision');
+       if(recoveredUnknown || pending.recoveredUnknown)throw new Error('A previous check was recovered without its target; check this option again');
+       if(outcome.status!=='complete' || outcome.rank_task_id!=='custom-choice-option' || outcome.session_id!==result.session_id || outcome.label!==option)throw new Error(outcome.error || 'The visual result does not match this option');
+       feedback.textContent=outcome.comparison==='label_observed'?'The local model observed this option. No option was selected.':'The option could not be reliably verified; review it manually.';
+       if(outcome.capture_saved!==true || outcome.result_saved!==true)feedback.textContent+=' Visual evidence was not saved.';
+       if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured open choice';image.src=`data:image/png;base64,${outcome.screenshot}`;feedback.append(image);}
+      }catch(error){feedback.textContent=`Option check unavailable: ${error.message}`;}finally{check.disabled=false;}
+     });row.append(check,feedback);list.append(row);
+    }section.append(list);}
     section.append(element('p','Only currently rendered options can be shown; additional options may exist. Nothing was selected.','footnote'));
     const visual=element('button','Check choice with local vision'),visualResult=element('div','','answer-draft');visual.type='button';
     visual.addEventListener('click',async()=>{

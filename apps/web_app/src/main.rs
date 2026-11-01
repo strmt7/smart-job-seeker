@@ -3949,7 +3949,8 @@ fn serve(
                 json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest,"can_open":can_open}),
             );
         }
-        "/api/form/custom-choice-vision-start" => {
+        "/api/form/custom-choice-vision-start" | "/api/form/custom-choice-option-vision-start" => {
+            let option_review = path == "/api/form/custom-choice-option-vision-start";
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let selector = body["selector"]
                 .as_str()
@@ -3975,7 +3976,27 @@ fn serve(
             if matches.len() != 1 {
                 return Err("The choice is unavailable or ambiguous".into());
             }
-            let label = matches[0].label.clone();
+            let label = if option_review {
+                let option = body["option"]
+                    .as_str()
+                    .filter(|value| {
+                        !value.is_empty() && value.len() <= 200 && *value == value.trim()
+                    })
+                    .ok_or("Invalid choice option")?;
+                if !matches[0].expanded
+                    || matches[0]
+                        .options
+                        .iter()
+                        .filter(|value| value.as_str() == option)
+                        .count()
+                        != 1
+                {
+                    return Err("Choice option is unavailable or ambiguous; inspect again".into());
+                }
+                option.to_owned()
+            } else {
+                matches[0].label.clone()
+            };
             let normalized = |value: &str| {
                 value
                     .split_whitespace()
@@ -3983,16 +4004,31 @@ fn serve(
                     .join(" ")
                     .to_lowercase()
             };
-            let ambiguous = label == "Unlabelled choice"
-                || inventory
-                    .choices
+            let ambiguous = if option_review {
+                matches[0]
+                    .options
                     .iter()
-                    .filter(|choice| normalized(&choice.label) == normalized(&label))
+                    .filter(|option| normalized(option) == normalized(&label))
                     .count()
-                    != 1;
+                    != 1
+            } else {
+                label == "Unlabelled choice"
+                    || inventory
+                        .choices
+                        .iter()
+                        .filter(|choice| normalized(&choice.label) == normalized(&label))
+                        .count()
+                        != 1
+            };
             let image = current
                 .driver
-                .with_review_timeout(|driver| driver.screenshot_field_context(selector))
+                .with_review_timeout(|driver| {
+                    if option_review {
+                        driver.screenshot_base64()
+                    } else {
+                        driver.screenshot_field_context(selector)
+                    }
+                })
                 .map_err(|error| format!("Could not capture the choice: {error}"))?;
             if custom_choice_snapshot(&mut current.driver)?.1 != digest {
                 return Err("The page changed during capture; inspect choices again".into());
@@ -4006,7 +4042,12 @@ fn serve(
             if let Err(error) = control_vision::start(control_vision::Request {
                 id: task_id.clone(),
                 session: current.id.clone(),
-                rank_task: "custom-choice".into(),
+                rank_task: if option_review {
+                    "custom-choice-option"
+                } else {
+                    "custom-choice"
+                }
+                .into(),
                 control_index: 0,
                 job_id: current.job_id.as_str().into(),
                 pending_revision: revision,
@@ -4043,6 +4084,7 @@ fn serve(
             let evidence = control_vision::poll(task_id)?;
             if evidence["status"] != "complete"
                 || evidence["choice"] != true
+                || evidence["rank_task_id"] != "custom-choice"
                 || evidence["comparison"] != "label_observed"
                 || evidence["session_id"].as_str() != Some(id)
                 || evidence["capture_saved"] != true
@@ -4570,7 +4612,9 @@ fn serve(
                             current
                                 .driver
                                 .with_review_timeout(|driver| {
-                                    if choice {
+                                    if result["rank_task_id"] == "custom-choice-option" {
+                                        driver.screenshot_base64()
+                                    } else if choice {
                                         driver.screenshot_field_context(selector)
                                     } else {
                                         driver.screenshot_control(selector)
@@ -4654,6 +4698,7 @@ fn serve(
                     result["pending_finished"] = json!(true);
                 }
                 if result["choice"] == true
+                    && result["rank_task_id"] == "custom-choice"
                     && result["comparison"] == "label_observed"
                     && result["capture_saved"] == true
                     && result["result_saved"] == true
