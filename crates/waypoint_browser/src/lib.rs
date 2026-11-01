@@ -93,6 +93,9 @@ pub const EMBEDDED_SCOPE_LIMIT_REVIEW: &str =
 pub const NATIVE_DATALIST_REVIEW: &str =
     "A suggested datalist value needs manual review on the application page";
 
+/// A visible field is explicitly marked invalid by the site.
+pub const INVALID_FIELD_REVIEW_PREFIX: &str = "The application marks a field invalid; review it: ";
+
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct PageControl {
     pub label: String,
@@ -3555,6 +3558,14 @@ impl CdpDriver {
 
             if input_type == "password" {
                 walls.push("login required (page asks for a password)".into());
+            }
+
+            if control.attrs.get("aria-invalid").is_some_and(|value| {
+                let value = value.trim();
+                !value.is_empty() && !value.eq_ignore_ascii_case("false")
+            }) {
+                let short_label: String = label.chars().take(160).collect();
+                walls.push(format!("{INVALID_FIELD_REVIEW_PREFIX}{short_label}"));
             }
 
             let required = control.attrs.contains_key("required")

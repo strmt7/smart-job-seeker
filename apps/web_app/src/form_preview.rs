@@ -62,6 +62,7 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
         || reason == waypoint_browser::CLOSED_SHADOW_FORM_REVIEW
         || reason == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
         || reason == waypoint_browser::NATIVE_DATALIST_REVIEW
+        || reason.starts_with(waypoint_browser::INVALID_FIELD_REVIEW_PREFIX)
         || reason == "an unavailable field needs manual review"
         || reason == "a required hidden control needs manual review"
         || reason == "a required custom control needs manual review"
@@ -3338,6 +3339,39 @@ mod tests {
             &preview,
             &["captcha present".into()]
         ));
+    }
+
+    #[test]
+    fn site_invalid_field_remains_reviewable_but_change_requires_rescan() {
+        let warning = format!(
+            "{}First name",
+            waypoint_browser::INVALID_FIELD_REVIEW_PREFIX
+        );
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![waypoint_applications::form_mapping::FormField {
+                    selector: "#first".into(),
+                    label: "First name".into(),
+                    field_type: FormFieldType::Text,
+                    required: true,
+                    sensitive: false,
+                    editing_mode: None,
+                    max_length_utf16: None,
+                    autocomplete: Some("given-name".into()),
+                }],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![warning.clone()],
+        };
+        let preview =
+            suggest_without_model(live, &json!({"first_name":"Fictional"}), "No model").unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        assert!(preview.manual_review.contains(&warning));
+        assert!(same_reviewable_walls(&preview, &[warning]));
+        assert!(!same_reviewable_walls(&preview, &[]));
     }
 
     #[test]

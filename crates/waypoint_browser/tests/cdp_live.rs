@@ -79,6 +79,44 @@ fn aria_required_tokens_are_case_insensitive() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn aria_invalid_tracks_visible_fields_and_correction() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_aria_invalid.html")).unwrap();
+    let invalid: Vec<_> = live
+        .walls
+        .iter()
+        .filter(|wall| wall.starts_with(waypoint_browser::INVALID_FIELD_REVIEW_PREFIX))
+        .collect();
+    assert_eq!(invalid.len(), 2, "walls: {:?}", live.walls);
+    assert!(invalid.iter().any(|wall| wall.contains("Email address")));
+    assert!(invalid.iter().any(|wall| wall.contains("Full name")));
+    assert!(!invalid
+        .iter()
+        .any(|wall| wall.contains("Phone number") || wall.contains("Hidden field")));
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#email".into(),
+            value: PacketValue::Text("fictional@example.test".into()),
+        })
+        .unwrap();
+    let updated = driver.inspect_current().unwrap();
+    assert!(!updated.walls.iter().any(|wall| wall
+        .starts_with(waypoint_browser::INVALID_FIELD_REVIEW_PREFIX)
+        && wall.contains("Email address")));
+    assert!(updated.walls.iter().any(|wall| wall
+        .starts_with(waypoint_browser::INVALID_FIELD_REVIEW_PREFIX)
+        && wall.contains("Full name")));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn radio_group_required_is_inherited_by_its_options() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

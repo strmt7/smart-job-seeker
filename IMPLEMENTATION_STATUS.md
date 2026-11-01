@@ -1,3 +1,8 @@
+## Site-reported invalid fields — 2026-11-01
+
+- Form inspection now reports visible fields whose site-provided `aria-invalid` attribute indicates an error, including the field label. These warnings remain reviewable so other fields can still be prepared; if a warning changes, the existing review binding requires a fresh inspection. Hidden fields and explicit `false` values do not create this warning. This is not a general form-validity check: sites may show errors without this attribute, and absence of a warning does not mean a field is valid.
+- A real local browser inspected a fictional form, identified two visible invalid fields, ignored hidden and explicitly valid controls, filled one fictional field and verified its warning disappeared on rescan while the other remained. A focused preview test checked that a changed warning requires a rescan. No employer was contacted or application submitted.
+
 ## Template rewrite scope — 2026-11-01
 
 - With no writing instructions, template rewriting now supplies only the selected passage as candidate material; the job listing remains available for context. When instructions are present, other reviewed qualifications remain available because the instructions may request them. The editor reports omitted qualifications and warns when the initial or final draft cites additional sources, retaining first-pass citations even if the style pass drops them. Citations and evidence checks do not guarantee that all added claims are detected.
