@@ -2949,12 +2949,38 @@ mod tests {
                 .join(filename);
             let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
             let live = driver.open(url.as_str()).unwrap();
-            let preview = suggest_without_model(
+            let mut preview = suggest_without_model(
                 live,
                 &json!({"first_name":"Fictional","country":"Germany"}),
                 "No model",
             )
             .unwrap();
+            // The fixtures deliberately use labels such as "Name" and "Region"
+            // that do not establish the more specific autocomplete value. Model
+            // a user-reviewed correction rather than silently trusting the hint.
+            assert!(preview.suggestions.is_empty(), "{filename}");
+            let hint = if filename == "form_datalist.html" {
+                "country-name"
+            } else {
+                "given-name"
+            };
+            let field = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.autocomplete.as_deref() == Some(hint))
+                .unwrap_or_else(|| panic!("Missing {hint} field in {filename}"));
+            preview.suggestions.push(ProposedMapping {
+                field_selector: field.selector.clone(),
+                value: PacketValue::Text(
+                    if filename == "form_datalist.html" {
+                        "Germany"
+                    } else {
+                        "Fictional"
+                    }
+                    .into(),
+                ),
+            });
             assert_eq!(preview.suggestions.len(), 1);
             let selector = preview.suggestions[0].field_selector.clone();
             assert!(
