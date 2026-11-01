@@ -380,6 +380,12 @@ const MIGRATIONS: &[&str] = &[
        BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=NEW.id;
          DELETE FROM job_employer_indexed WHERE job_id=NEW.id; END;
      UPDATE meta SET value='40' WHERE key='schema_version';",
+    // v41 — recheck titles affected by engineering/engineer normalization.
+    // The background indexer processes these incrementally and preserves decisions.
+    "DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT id FROM jobs WHERE lower(title) LIKE '%engineering%'
+     );
+     UPDATE meta SET value='41' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1461,7 +1467,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "40");
+        assert_eq!(version, "41");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

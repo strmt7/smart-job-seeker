@@ -1,3 +1,8 @@
+## Engineering title duplicate review — 2026-11-01
+
+- Duplicate candidate matching now treats the standalone title terms `engineering` and `engineer` alike, so closely worded roles can be flagged even without a requisition or description. This creates a pending review pair; it does not merge jobs or establish that the roles are the same. Migration 41 queues affected existing titles for the existing bounded background recheck and preserves prior decisions. Candidate and comparison limits still apply.
+- The migration and pending holds were tested with fictional jobs in both ordinary SQLite and SQLCipher. The store suite passed 84 tests with one ignored, and web-app Clippy passed. Runtime and peak memory for a large existing database were not measured. No application was submitted.
+
 ## Earlier-field warnings through subsequent sections — 2026-11-01
 
 - The earlier-field review warning now carries forward through later navigations and rescans in the same review session, even when no additional fields were filled on the immediately preceding page. Repeated carry-forward does not duplicate the warning. Closing and starting a separate session does not carry this particular in-memory warning; saved manual-review reasons remain separate.

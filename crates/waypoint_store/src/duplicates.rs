@@ -80,7 +80,7 @@ fn title_terms(title: &str) -> BTreeSet<String> {
         .map(|word| match word.to_lowercase().as_str() {
             "sr" => "senior".into(),
             "jr" => "junior".into(),
-            "dev" | "developer" => "engineer".into(),
+            "dev" | "developer" | "engineering" => "engineer".into(),
             other => other.to_owned(),
         })
         .collect()
@@ -978,6 +978,44 @@ mod tests {
         assert!(store.duplicate_index_pending().unwrap());
         store.index_next_duplicate_job("").unwrap();
         assert_eq!(store.possible_duplicates().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn engineering_title_variants_are_rechecked_without_merging() {
+        assert_eq!(
+            title_score("Software Engineering", "Software Engineer"),
+            100
+        );
+        assert!(title_score("Software Engineering", "Marketing Director") < 65);
+        assert!(title_score("C++ Engineering", "C# Engineer") < 65);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..40] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for (id, title) in [("a", "Software Engineering"), ("b", "Software Engineer")] {
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,?2,'Example Labs','','\"discovered\"')", params![id,title]).unwrap();
+            conn.execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example'),(?1,'labs')",
+                [id],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [id])
+                .unwrap();
+        }
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("a")
+        );
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
     }
 
     #[test]
