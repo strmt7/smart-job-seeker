@@ -2636,6 +2636,19 @@ fn serve(
                     visual_review_file,
                 });
             }
+            if linked
+                .values()
+                .any(|(_, review)| document_visual::needs_followup(review))
+            {
+                record.status("manual_review", now())?;
+                ws.mark_manual_review(
+                    &id,
+                    "Email attachment visual review has findings or incomplete checks",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+                record.event(json!({"type":"document_visual_followup_needed","time":now(),"note":"A linked review contains findings or unavailable checks; inspect the PDF."}))?;
+            }
             if missing_visual {
                 record.status("manual_review", now())?;
                 ws.mark_manual_review(&id, "Email attachment needs visual review", now())
@@ -5254,6 +5267,22 @@ fn serve(
                         .into(),
                 );
             }
+            if visual_review
+                .as_ref()
+                .is_some_and(|(_, review)| document_visual::needs_followup(review))
+            {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Attached document visual review has findings or incomplete checks",
+                    now(),
+                )
+                .map_err(|e| e.to_string())?;
+                current.preview.manual_review.push("The linked visual review contains findings or unavailable checks; inspect the PDF".into());
+                if let Some(record) = &mut current.record {
+                    record.status("manual_review", now())?;
+                    record.event(json!({"type":"document_visual_followup_needed","time":now(),"note":"The linked review contains findings or unavailable checks; inspect the PDF."}))?;
+                }
+            }
             if provenance_incomplete {
                 ws.mark_manual_review(
                     &current.job_id,
@@ -7222,7 +7251,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let material = review.material("resume.pdf", b"%PDF-fictional").unwrap();
-            review.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(b"%PDF-fictional"),"context_sha256":Sha256Digest::of(&document_visual_context(&ws,&id).unwrap()).as_str(),"report":{"complete":true,"findings":[]}})).unwrap();
+            review.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(b"%PDF-fictional"),"context_sha256":Sha256Digest::of(&document_visual_context(&ws,&id).unwrap()).as_str(),"report":{"complete":true,"pages":1,"findings":[{"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Fictional overlap"}],"text_geometry":{"status":"checked","overlapping_pairs":1}}]}})).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap_err();
             assert!(error.contains("Review visual findings"));
@@ -7286,6 +7315,7 @@ mod tests {
         assert!(events.contains(&waypoint_domain::sha256_hex(mime)));
         assert!(events.contains("\"sent\":false"));
         assert!(events.contains("document_visual_review_linked"));
+        assert!(events.contains("document_visual_followup_needed"));
         let draft_link = events
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
@@ -9155,6 +9185,7 @@ mod tests {
             );
             assert!(events.contains("\"segments\":2"), "{events}");
             assert!(events.contains("document_visual_review_linked"));
+            assert!(events.contains("document_visual_followup_needed"));
             assert!(events.contains("attachment_verification_failed"));
             assert!(events.contains("visual_freshness_checked"));
             assert!(events.contains("visual_page_changed"));
@@ -9324,7 +9355,10 @@ mod tests {
                 .0;
             let captured: Vec<_> = event_values[incomplete + 1..capture_end]
                 .iter()
-                .filter(|event| event["type"] == "page_capture_segment")
+                .filter(|event| {
+                    event["type"] == "page_capture_segment"
+                        && event["capture_id"] == event_values[capture_end]["capture_id"]
+                })
                 .collect();
             assert_eq!(captured.len(), 2);
             for event in captured {

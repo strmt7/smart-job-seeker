@@ -114,6 +114,30 @@ where
         json!({"pages":total,"pages_inspected":findings.len(),"complete":findings.len()==total,"findings":findings,"document_sha256":waypoint_domain::sha256_hex(bytes)}),
     )
 }
+/// A completed model pass can still contain findings or lack a geometry check.
+pub fn needs_followup(review: &Value) -> bool {
+    let report = &review["report"];
+    let Some(pages) = report["pages"]
+        .as_u64()
+        .filter(|pages| *pages > 0 && *pages <= PAGE_LIMIT as u64)
+    else {
+        return true;
+    };
+    let Some(findings) = report["findings"]
+        .as_array()
+        .filter(|findings| findings.len() == pages as usize)
+    else {
+        return true;
+    };
+    findings.iter().enumerate().any(|(index, page)| {
+        page["page"].as_u64() != Some(index as u64 + 1)
+            || page["vision_status"] != "complete"
+            || !page["issues"].as_array().is_some_and(Vec::is_empty)
+            || page["text_geometry"]["status"] != "checked"
+            || page["text_geometry"]["overlapping_pairs"].as_u64() != Some(0)
+    })
+}
+
 pub fn start(
     id: String,
     model: String,
@@ -276,6 +300,23 @@ mod tests {
                 > 0
         );
     }
+    #[test]
+    fn followup_distinguishes_completed_review_from_clean_observations() {
+        let clean = json!({"report":{"pages":1,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}]}});
+        assert!(!needs_followup(&clean));
+        for page in [
+            json!({"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Clipped"}],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
+            json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":1}}),
+            json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"unavailable"}}),
+            json!({"page":2,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
+        ] {
+            assert!(needs_followup(
+                &json!({"report":{"pages":1,"findings":[page]}})
+            ));
+        }
+        assert!(needs_followup(&json!({"report":{"pages":1,"findings":[]}})));
+    }
+
     #[test]
     fn malformed_geometry_is_not_reported_as_checked() {
         let report = inspect(
