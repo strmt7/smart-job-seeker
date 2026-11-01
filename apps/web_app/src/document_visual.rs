@@ -142,11 +142,15 @@ pub fn start(
     id: String,
     model: String,
     bytes: Vec<u8>,
-    context: String,
+    context: crate::DocumentVisualContext,
     ws: &waypoint_workspace::Workspace,
     job: &waypoint_domain::JobIdentityId,
     name: &str,
 ) -> Result<(), String> {
+    let crate::DocumentVisualContext {
+        prompt: context,
+        digest: context_sha,
+    } = context;
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK
         .lock()
@@ -165,9 +169,6 @@ pub fn start(
     record.status("manual_review", crate::now())?;
     let material = record.material(name, &bytes)?;
     let document_sha = waypoint_domain::sha256_hex(&bytes);
-    let context_sha = waypoint_domain::Sha256Digest::of(&context)
-        .as_str()
-        .to_owned();
     record.event(json!({"type":"document_visual_started","time":crate::now(),"material":material,"document_sha256":document_sha,"context_sha256":context_sha,"model":model,"note":"Visual review is advisory and does not submit an application."}))?;
     *task = Some(Task {
         id: id.clone(),

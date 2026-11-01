@@ -456,13 +456,42 @@ fn draft_qualifications(
     Ok(facts)
 }
 
-fn document_visual_context(ws: &Workspace, job: &JobIdentityId) -> Result<String, String> {
+struct DocumentVisualContext {
+    prompt: String,
+    digest: String,
+}
+
+fn document_visual_context(
+    ws: &Workspace,
+    job: &JobIdentityId,
+) -> Result<DocumentVisualContext, String> {
     let (facts, _, listing, _) = fit_inputs(ws, job)?;
-    Ok(format!(
-        "Posting: {}\nReviewed qualifications: {}",
+    let posting = ws
+        .job(job)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
+    let description = ws
+        .job_description(job)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let facts_digest = ws.active_facts_digest().map_err(|e| e.to_string())?;
+    let profile = ws
+        .candidate_profile()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "{}".into());
+    let profile_value: Value =
+        serde_json::from_str(&profile).map_err(|_| "stored profile is invalid")?;
+    let instructions = profile_value["document_instructions"]
+        .as_str()
+        .unwrap_or("");
+    let digest = Sha256Digest::of(&json!({"version":"document-visual-context-v2","title":posting.title,"employer":posting.employer,"location":posting.location,"description":description,"facts_digest":facts_digest,"profile":profile_value}).to_string()).as_str().to_owned();
+    let prompt = format!(
+        "Posting: {}\nReviewed qualifications: {}\nDocument instructions: {}",
         listing.chars().take(5000).collect::<String>(),
-        facts.join(" | ").chars().take(5000).collect::<String>()
-    ))
+        facts.join(" | ").chars().take(5000).collect::<String>(),
+        instructions.chars().take(2000).collect::<String>()
+    );
+    Ok(DocumentVisualContext { prompt, digest })
 }
 
 fn verified_visual_review(
@@ -474,7 +503,7 @@ fn verified_visual_review(
     let review = attempt_record::document_visual_review(ws, job, attempt)?;
     let context = document_visual_context(ws, job)?;
     if review["document_sha256"].as_str() != Some(waypoint_domain::sha256_hex(bytes).as_str())
-        || review["context_sha256"].as_str() != Some(Sha256Digest::of(&context).as_str())
+        || review["context_sha256"].as_str() != Some(context.digest.as_str())
         || review["status"] != "complete"
         || review["report"]["complete"] != true
     {
@@ -3005,7 +3034,7 @@ fn serve(
                 ws,
                 &job,
                 &waypoint_domain::sha256_hex(&bytes),
-                Sha256Digest::of(&context).as_str(),
+                &context.digest,
             )?;
             json_reply(stream, "200 OK", candidates);
         }
@@ -7251,7 +7280,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let material = review.material("resume.pdf", b"%PDF-fictional").unwrap();
-            review.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(b"%PDF-fictional"),"context_sha256":Sha256Digest::of(&document_visual_context(&ws,&id).unwrap()).as_str(),"report":{"complete":true,"pages":1,"findings":[{"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Fictional overlap"}],"text_geometry":{"status":"checked","overlapping_pairs":1}}]}})).unwrap();
+            review.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(b"%PDF-fictional"),"context_sha256":document_visual_context(&ws,&id).unwrap().digest,"report":{"complete":true,"pages":1,"findings":[{"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Fictional overlap"}],"text_geometry":{"status":"checked","overlapping_pairs":1}}]}})).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap_err();
             assert!(error.contains("Review visual findings"));
@@ -7948,6 +7977,102 @@ mod tests {
         )
         .unwrap();
         assert_ne!(second, draft_context_digest(&ws, &id, "cv").unwrap());
+    }
+
+    #[test]
+    fn visual_review_context_tracks_unshown_source_and_candidate_changes() {
+        fn workspace(description: &str) -> (Workspace, JobIdentityId) {
+            let mut ws = Workspace::in_memory().unwrap();
+            let id = JobIdentityId::new("visual-context").unwrap();
+            ws.import_manual_job(
+                waypoint_store::StoredJob {
+                    id: id.clone(),
+                    title: "Engineer".into(),
+                    employer: "Example".into(),
+                    location: "Remote".into(),
+                    state: ApplicationState::Shortlisted,
+                    canonical_url: None,
+                    content_hash: None,
+                    first_seen: None,
+                    last_seen: None,
+                    remote: true,
+                    source: "fixture".into(),
+                    requisition_id: None,
+                    posted_at: None,
+                },
+                Some(description),
+            )
+            .unwrap();
+            for n in 0..25 {
+                ws.add_fact(
+                    &format!("Engineer qualification {n}"),
+                    FactOrigin::UserAttested,
+                )
+                .unwrap();
+            }
+            (ws, id)
+        }
+        let prefix = "x".repeat(9000);
+        let (mut ws, id) = workspace(&format!("{prefix} old"));
+        let (other, other_id) = workspace(&format!("{prefix} new"));
+        let baseline = document_visual_context(&ws, &id).unwrap();
+        let changed_listing = document_visual_context(&other, &other_id).unwrap();
+        assert_eq!(baseline.prompt, changed_listing.prompt);
+        assert_ne!(baseline.digest, changed_listing.digest);
+        ws.add_fact("Unselected extra qualification", FactOrigin::UserAttested)
+            .unwrap();
+        let changed_fact = document_visual_context(&ws, &id).unwrap();
+        assert_eq!(baseline.prompt, changed_fact.prompt);
+        assert_ne!(baseline.digest, changed_fact.digest);
+        ws.save_candidate_profile(
+            &json!({"document_instructions":"Fictional preference"}).to_string(),
+        )
+        .unwrap();
+        let changed_profile = document_visual_context(&ws, &id).unwrap();
+        assert_ne!(changed_fact.digest, changed_profile.digest);
+        assert!(changed_profile.prompt.contains("Fictional preference"));
+    }
+
+    #[test]
+    fn saved_visual_review_becomes_stale_after_fact_correction() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let id = JobIdentityId::new("visual-review-stale").unwrap();
+        ws.import_manual_job(
+            waypoint_store::StoredJob {
+                id: id.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: "Remote".into(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: None,
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: true,
+                source: "fixture".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional job"),
+        )
+        .unwrap();
+        let fact = ws
+            .add_fact("Fictional qualification", FactOrigin::UserAttested)
+            .unwrap();
+        let attempt = "0123456789abcdef0123456789abcdef";
+        let pdf = b"%PDF-fictional";
+        let mut record = attempt_record::AttemptRecord::start(&ws, &id, attempt, 1)
+            .unwrap()
+            .unwrap();
+        let material = record.material("resume.pdf", pdf).unwrap();
+        let context = document_visual_context(&ws, &id).unwrap();
+        record.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context.digest,"report":{"complete":true}})).unwrap();
+        assert!(verified_visual_review(&ws, &id, attempt, pdf).is_ok());
+        ws.correct_fact(&fact, "Corrected fictional qualification", 2)
+            .unwrap();
+        assert!(verified_visual_review(&ws, &id, attempt, pdf).is_err());
     }
 
     #[test]
@@ -8664,7 +8789,7 @@ mod tests {
                     .unwrap()
                     .unwrap();
             let material = review_record.material("fictional-cv.pdf", pdf).unwrap();
-            review_record.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":Sha256Digest::of(&document_visual_context(&ws,&id).unwrap()).as_str(),"report":{"complete":true,"findings":[]}})).unwrap();
+            review_record.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":document_visual_context(&ws,&id).unwrap().digest,"report":{"complete":true,"findings":[]}})).unwrap();
             let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
             let form = driver.open(&url).unwrap();
             assert!(driver

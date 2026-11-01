@@ -177,7 +177,7 @@ pub fn gmail_review(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Resul
                                 && visual["report"]["complete"] == true
                             {
                                 status = if visual["context_sha256"].as_str()
-                                    == Some(Sha256Digest::of(&visual_context).as_str())
+                                    == Some(visual_context.digest.as_str())
                                 {
                                     "current"
                                 } else {
