@@ -11,7 +11,7 @@
 ## Text-only datalist options — 2026-11-01
 
 - Native datalist options without a value attribute can be reviewed and selected when their value is a single unambiguous text node. The driver checks the live option value and rechecks it after input events; ambiguous whitespace or markup still requires manual review. The existing datalist review warning remains because retained text does not prove a site's internal selection state.
-- A fictional local-browser fixture exercised text-only choices, whitespace ambiguity and a choice that changes during input. The focused fixture and browser unit suite passed; no real employer site or local model was tested.
+- A fictional local-browser fixture exercised text-only choices, whitespace ambiguity and a choice that changes during input. A separate reviewed-prefill fixture exercised a text-only option through a one-use grant and verified its retained value. These fixtures and the browser unit suite passed; no real employer site or local model was tested.
 
 ## Native datalist choices — 2026-10-31
 

@@ -3413,13 +3413,14 @@ mod tests {
     fn reviewed_prefill_reaches_a_visible_embedded_form_after_hidden_frames() {
         use waypoint_domain::GrantId;
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        for filename in [
-            "form_iframe_controls.html",
-            "form_iframe_nested.html",
-            "form_shadow.html",
-            "form_mixed_scopes.html",
-            "form_four_scopes.html",
-            "form_datalist.html",
+        for (filename, text_option) in [
+            ("form_iframe_controls.html", false),
+            ("form_iframe_nested.html", false),
+            ("form_shadow.html", false),
+            ("form_mixed_scopes.html", false),
+            ("form_four_scopes.html", false),
+            ("form_datalist.html", false),
+            ("form_datalist.html", true),
         ] {
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../crates/waypoint_browser/tests/fixtures")
@@ -3445,12 +3446,20 @@ mod tests {
                 .schema
                 .fields
                 .iter()
-                .find(|field| field.autocomplete.as_deref() == Some(hint))
+                .find(|field| {
+                    if text_option {
+                        field.selector == "#text-option"
+                    } else {
+                        field.autocomplete.as_deref() == Some(hint)
+                    }
+                })
                 .unwrap_or_else(|| panic!("Missing {hint} field in {filename}"));
             preview.suggestions.push(ProposedMapping {
                 field_selector: field.selector.clone(),
                 value: PacketValue::Text(
-                    if filename == "form_datalist.html" {
+                    if text_option {
+                        "New Zealand"
+                    } else if filename == "form_datalist.html" {
                         "Germany"
                     } else {
                         "Fictional"
@@ -3463,7 +3472,8 @@ mod tests {
             assert!(
                 selector.starts_with("waypoint-frame:")
                     || selector.starts_with("waypoint-shadow:")
-                    || (filename == "form_datalist.html" && selector == "#region")
+                    || (filename == "form_datalist.html"
+                        && (selector == "#region" || selector == "#text-option"))
             );
             assert!(preview
                 .manual_review
@@ -3531,7 +3541,12 @@ mod tests {
                 driver
                     .verify_choice(&BrowserCommand::SelectOption {
                         selector: selector.clone(),
-                        label: "Germany".into(),
+                        label: if text_option {
+                            "New Zealand"
+                        } else {
+                            "Germany"
+                        }
+                        .into(),
                     })
                     .unwrap();
             } else {
