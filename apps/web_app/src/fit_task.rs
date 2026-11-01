@@ -4297,6 +4297,24 @@ mod tests {
             let result = assess(&mut model, &facts, preferences, listing);
             println!("repeatability run {run}: {result:?}");
             if let Ok(assessment) = result {
+                let items = assessment["rubric"].as_array().unwrap();
+                for (term, expected) in [
+                    ("Python", "supported"),
+                    ("SQL", "unknown"),
+                    ("accessibility", "supported"),
+                    ("cloud", "unknown"),
+                ] {
+                    assert!(
+                        items.iter().any(|item| {
+                            item["source"] == "listing"
+                                && item["excerpt"].as_str().is_some_and(|excerpt| {
+                                    excerpt.to_lowercase().contains(&term.to_lowercase())
+                                })
+                                && item["status"] == expected
+                        }),
+                        "missing or incorrect fictional criterion {term}: {assessment}"
+                    );
+                }
                 scores.push(assessment["score"].as_u64().unwrap());
                 let mut rubric: Vec<String> = assessment["rubric"]
                     .as_array()
