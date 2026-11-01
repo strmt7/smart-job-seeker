@@ -205,6 +205,15 @@ unloaded afterward. These few cases do not establish general accuracy; other
 options may be absent from a virtualized list, and the user must review the
 suggestion and visual evidence.
 
+On a further fictional probe, `gemma4:12b-it-qat` chose Lisbon for an answer
+rejecting Berlin, abstained when two locations were acceptable or sponsorship
+was unknown, and ignored an instruction-like option in one test each. The
+interface now displays the entire entered answer alongside the suggestion, so
+a short model-selected quotation cannot hide a qualification or negation. A
+button can start the existing visual check for the suggested option; it does
+not select it. These observations do not guarantee correct behavior on other
+questions. The model was unloaded after the probe.
+
 ## Reviewed option selection
 
 The web flow can select a uniquely rendered option after a saved, current

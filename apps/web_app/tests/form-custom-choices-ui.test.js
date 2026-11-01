@@ -53,6 +53,7 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   const answer=choicesPanel.children[0].children[5].children[0],suggest=choicesPanel.children[0].children[6],advice=choicesPanel.children[0].children[7];
   answer.value='I prefer Berlin';await suggest.listeners.click();
   assert.match(advice.children[0].text,/Berlin/);assert.equal(stored.size,0);
+  assert.match(advice.children[1].text,/I prefer Berlin/);await advice.children[3].listeners.click();assert.match(optionRow.children[1].textContent,/observed this option/);
   answer.value='I prefer Lisbon';answer.listeners.input();assert.equal(advice.children.length,0);
   const actionCalls=[];
   const closed={choices:[{label:'Job location',selector:'#location',expanded:false,options:[]}],incomplete:false,snapshot_digest:'b'.repeat(64),can_open:true};

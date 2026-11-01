@@ -426,13 +426,13 @@ function showFormPreview(job,result){setWorkspaceView('applications');
    if(inventory.pending_selected){const pending=inventory.pending_selected,review=element('section','','choice-review-item');review.append(element('p',`A selected value needs visual review: ${pending.option}`,'review-label'));addSelectedReview(pending.selector,pending.option,review);choicesPanel.append(review);}
    if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom choices were detected.','footnote'));
    for(const choice of inventory.choices.slice(0,15)){
-    const section=element('section','','choice-review-item');section.append(element('strong',choice.label || 'Unlabelled choice'));
+    const section=element('section','','choice-review-item'),optionChecks=new Map();section.append(element('strong',choice.label || 'Unlabelled choice'));
     if(!choice.expanded)section.append(element('p','Options are not currently available from this control. Open it in a visible browser, then inspect again.','review-label'));
     else if(!Array.isArray(choice.options)||!choice.options.length)section.append(element('p','No rendered options could be read.','review-label'));
     else{const list=element('ul','');for(const option of choice.options.slice(0,30)){
      const row=element('li',option),check=element('button','Check option with local vision'),feedback=element('span','','review-label'),actions=element('div','');check.type='button';
-     check.addEventListener('click',async()=>{
-      check.disabled=true;feedback.textContent='Checking option…';
+     const checkOption=async()=>{
+      if(check.disabled)return;check.disabled=true;feedback.textContent='Checking option…';
       try{
        let pending,recoveredUnknown=false;try{pending=JSON.parse(sessionStorage.getItem('waypoint-choice-option-vision')||'null');}catch(_){}
        if(pending){if(pending.session!==result.session_id || pending.selector!==choice.selector || pending.option!==option)throw new Error('Another option check is pending');}
@@ -460,7 +460,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
         });
        }
       }catch(error){feedback.textContent=`Option check unavailable: ${error.message}`;}finally{check.disabled=false;}
-     });row.append(check,feedback,actions);list.append(row);
+     };check.addEventListener('click',checkOption);optionChecks.set(option,optionChecks.has(option)?null:checkOption);row.append(check,feedback,actions);list.append(row);
     }section.append(list);}
     section.append(element('p','Only currently rendered options can be shown; additional options may exist.','footnote'));
     const visual=element('button','Check choice with local vision'),visualResult=element('div','','answer-draft');visual.type='button';
@@ -506,7 +506,8 @@ function showFormPreview(job,result){setWorkspaceView('applications');
        if(response.status!=='complete' || response.session_id!==result.session_id)throw new Error(response.error || 'Choice advice is unavailable');
        const option=response.advice?.option;if(option===null){advice.replaceChildren(element('p','No visible option could be suggested from this answer.'));return;}
        if(typeof option!=='string' || !choice.options.includes(option) || typeof response.advice?.evidence!=='string')throw new Error('Invalid option advice');
-       advice.replaceChildren(element('p',`Suggested visible option: ${option}`),element('p',`Based on your answer: ${response.advice.evidence}`),element('p','Suggestions can be wrong and other options may exist. Visually check the option and review it before selecting.'));
+       advice.replaceChildren(element('p',`Suggested visible option: ${option}`),element('p',`Based on your answer: ${requested}`),element('p','Suggestions can be wrong and other options may exist. Visually check the option and review it before selecting.'));
+       const checkSuggested=optionChecks.get(option);if(checkSuggested){const checkButton=element('button','Visually check suggested option');checkButton.type='button';checkButton.addEventListener('click',checkSuggested);advice.append(checkButton);}
       }catch(error){advice.replaceChildren(element('p',`Choice advice unavailable: ${error.message}`));}finally{suggest.disabled=false;}
      });
     }
