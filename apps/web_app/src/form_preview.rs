@@ -72,13 +72,14 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
 }
 
 pub const POST_CHOICE_VISUAL_REQUIRED: &str = "Visual review required after a choice action";
+pub const CHANGED_INFORMATIONAL_PREVIEW: &str = "The application changed during inspection; this view is informational only. Inspect again before filling.";
 
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
-    if preview
-        .manual_review
-        .iter()
-        .any(|reason| reason == "captcha present" || reason == POST_CHOICE_VISUAL_REQUIRED)
-        || fresh_walls.iter().any(|wall| !is_custom_review(wall))
+    if preview.manual_review.iter().any(|reason| {
+        reason == "captcha present"
+            || reason == POST_CHOICE_VISUAL_REQUIRED
+            || reason == CHANGED_INFORMATIONAL_PREVIEW
+    }) || fresh_walls.iter().any(|wall| !is_custom_review(wall))
     {
         return false;
     }

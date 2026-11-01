@@ -261,16 +261,41 @@ fn observed_platform(origin: &str) -> Option<waypoint_workspace::form_experience
 fn merge_final_inspection(
     preview: &mut form_preview::FormPreview,
     fresh: &waypoint_applications::driver::LiveForm,
-) -> Result<(), String> {
-    if fresh.origin != preview.schema.origin || fresh.schema != preview.schema {
+    profile: &serde_json::Value,
+    initial_walls: &[String],
+) -> Result<bool, String> {
+    if fresh.origin != preview.schema.origin {
         return Err("The application changed while preparing its review; inspect it again".into());
+    }
+    if fresh.schema != preview.schema {
+        let reason =
+            "The form changed during inspection; previous model suggestions were discarded";
+        let mut updated = form_preview::suggest_without_model(fresh.clone(), profile, reason)?;
+        updated.suggestions.clear();
+        updated.manual_review.retain(|item| {
+            item != &format!(
+                "{reason}; only exact labels or standard autocomplete hints are suggested"
+            )
+        });
+        updated.manual_review.push(reason.into());
+        form_preview::refresh_required_review(&mut updated);
+        updated
+            .manual_review
+            .push(form_preview::CHANGED_INFORMATIONAL_PREVIEW.into());
+        for wall in initial_walls {
+            if !updated.manual_review.contains(wall) {
+                updated.manual_review.push(wall.clone());
+            }
+        }
+        *preview = updated;
+        return Ok(true);
     }
     for wall in &fresh.walls {
         if !preview.manual_review.contains(wall) {
             preview.manual_review.push(wall.clone());
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 pub(crate) fn relevant_experiences(
@@ -516,6 +541,7 @@ pub fn start(
                 }
             }
             let observed_url = driver.current_url().map_err(|e| e.to_string())?;
+            let initial_walls = live.walls.clone();
             let relevant = relevant_experiences(&live.schema, &experiences);
             let mut preview = if let Some(model) = model {
                 let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -540,15 +566,17 @@ pub fn start(
             } else {
                 form_preview::suggest_without_model(live, &profile, &no_model_reason)?
             };
-            if let Some(warning) = navigation_warning {
-                preview.manual_review.push(warning);
-            }
             let fresh = driver.with_review_timeout(|browser| browser.inspect_current())
                 .map_err(|e| format!("Final form check failed; inspect it again: {e}"))?;
             if driver.current_url().map_err(|e| e.to_string())? != observed_url {
                 return Err("The application changed while preparing its review; inspect it again".into());
             }
-            merge_final_inspection(&mut preview, &fresh)?;
+            if merge_final_inspection(&mut preview, &fresh, &profile, &initial_walls)? {
+                used_revisions.clear();
+            }
+            if let Some(warning) = navigation_warning {
+                preview.manual_review.push(warning);
+            }
             Ok((driver, preview))
         }))
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
@@ -810,8 +838,11 @@ mod tests {
     }
 
     #[test]
-    fn final_inspection_preserves_late_walls_and_rejects_schema_changes() {
-        use waypoint_applications::{driver::LiveForm, form_mapping::FormSchema};
+    fn final_inspection_preserves_late_walls_and_blocks_changed_schema() {
+        use waypoint_applications::{
+            driver::LiveForm,
+            form_mapping::{FormField, FormFieldType, FormSchema},
+        };
         let schema = FormSchema {
             origin: "https://example.invalid".into(),
             fields: vec![],
@@ -829,7 +860,9 @@ mod tests {
             schema,
             walls: vec!["captcha present".into()],
         };
-        merge_final_inspection(&mut preview, &fresh).unwrap();
+        let profile = serde_json::json!({"first_name":"Avery"});
+        let initial = vec!["earlier wall".into()];
+        assert!(!merge_final_inspection(&mut preview, &fresh, &profile, &initial).unwrap());
         assert!(preview
             .manual_review
             .iter()
@@ -838,7 +871,7 @@ mod tests {
             .manual_review
             .iter()
             .any(|wall| wall == "earlier wall"));
-        merge_final_inspection(&mut preview, &fresh).unwrap();
+        merge_final_inspection(&mut preview, &fresh, &profile, &initial).unwrap();
         assert_eq!(
             preview
                 .manual_review
@@ -848,10 +881,39 @@ mod tests {
             1
         );
         fresh.schema.multi_step = true;
-        assert!(merge_final_inspection(&mut preview, &fresh).is_err());
+        fresh.schema.fields.push(FormField {
+            selector: "#first".into(),
+            label: "First name".into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some("given-name".into()),
+        });
+        assert!(merge_final_inspection(&mut preview, &fresh, &profile, &initial).unwrap());
+        assert_eq!(preview.schema, fresh.schema);
+        assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Required field needs review: First name"));
+        assert!(!preview.manual_review.iter().any(|reason| reason
+            .contains("only exact labels or standard autocomplete hints are suggested")));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|wall| wall == "earlier wall"));
+        assert!(!form_preview::same_reviewable_walls(&preview, &[]));
         fresh.schema = preview.schema.clone();
         fresh.origin = "https://other.invalid".into();
-        assert!(merge_final_inspection(&mut preview, &fresh).is_err());
+        assert!(merge_final_inspection(&mut preview, &fresh, &profile, &initial).is_err());
     }
 
     #[test]
@@ -1989,14 +2051,26 @@ mod tests {
                 match finished.result {
                     Ok((driver, preview)) => {
                         println!(
-                            "review returned: fields={} warnings={} captcha={}",
+                            "review returned: fields={} warnings={} captcha={} informational={}",
                             preview.schema.fields.len(),
                             preview.manual_review.len(),
                             preview
                                 .manual_review
                                 .iter()
-                                .any(|wall| wall == "captcha present")
+                                .any(|wall| wall == "captcha present"),
+                            preview
+                                .manual_review
+                                .iter()
+                                .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
                         );
+                        if preview
+                            .manual_review
+                            .iter()
+                            .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
+                        {
+                            assert!(preview.suggestions.is_empty());
+                            assert!(!form_preview::same_reviewable_walls(&preview, &[]));
+                        }
                         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
                             && !entry.contains("clicked")
                             && !entry.contains("submitted")));
