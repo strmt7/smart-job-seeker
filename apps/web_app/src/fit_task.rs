@@ -1195,6 +1195,33 @@ fn unique_requirement_context<'a>(listing: &'a str, excerpt: &str) -> Option<&'a
     Some(&listing[start..end])
 }
 
+/// Multiple durations in one fact can refer to different skills. A language
+/// model's repeated agreement does not establish which duration applies.
+fn duration_mentions(text: &str) -> usize {
+    let words: Vec<_> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    words
+        .windows(2)
+        .filter(|pair| {
+            let unit = pair[1];
+            let number = pair[0];
+            (unit.eq_ignore_ascii_case("year")
+                || unit.eq_ignore_ascii_case("years")
+                || unit.eq_ignore_ascii_case("month")
+                || unit.eq_ignore_ascii_case("months"))
+                && (number.chars().all(|c| c.is_ascii_digit())
+                    || [
+                        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+                        "ten", "eleven", "twelve", "half",
+                    ]
+                    .iter()
+                    .any(|word| number.eq_ignore_ascii_case(word)))
+        })
+        .count()
+}
+
 /// Reassess cited qualifications without showing the original judgment. A
 /// second model call is not proof of correctness; disagreements and failures
 /// are downgraded to unknown instead of being counted as supported or opposed.
@@ -1233,7 +1260,26 @@ fn check_qualification_judgments_with_source(
     let mut ambiguous = 0;
     let mut acronym_review = 0;
     let mut embedded_term_review = 0;
+    let mut duration_review = 0;
     for item in criteria.iter_mut() {
+        let multiple_durations = item["source"] == "listing"
+            && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
+            && item["excerpt"]
+                .as_str()
+                .is_some_and(|excerpt| duration_mentions(excerpt) > 0)
+            && item["fact_index"]
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|i| facts.get(i))
+                .is_some_and(|fact| duration_mentions(fact) > 1);
+        if multiple_durations {
+            item["status"] = json!("unknown");
+            item["fact_index"] = Value::Null;
+            item["explanation"] = json!("The cited fact contains multiple durations that may describe different skills; verify which duration applies to this requirement.");
+            duration_review += 1;
+            continue;
+        }
         let missing_acronym = item["source"] == "listing"
             && item["status"] == "supported"
             && item["excerpt"].as_str().is_some_and(|excerpt| {
@@ -1299,7 +1345,7 @@ fn check_qualification_judgments_with_source(
             ambiguous += 1;
         }
     }
-    let mut fallback = if ambiguous + acronym_review + embedded_term_review > 0 {
+    let mut fallback = if ambiguous + acronym_review + embedded_term_review + duration_review > 0 {
         match validate(original.clone(), facts, preferences, listing) {
             Ok(value) => value,
             Err(_) => return (original, fallback),
@@ -1319,8 +1365,8 @@ fn check_qualification_judgments_with_source(
         Some(json!({"id": index + 1, "requirement": excerpt, "job_context": context, "fact": fact}))
     }).collect();
     if items.is_empty() {
-        if ambiguous + acronym_review + embedded_term_review > 0 {
-            fallback["qualification_check"] = json!({"status":if acronym_review + embedded_term_review > 0 { "review_required" } else { "ambiguous_context" }, "checked":0, "downgraded":ambiguous + acronym_review + embedded_term_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "embedded_term_review":embedded_term_review, "reconciled":0});
+        if ambiguous + acronym_review + embedded_term_review + duration_review > 0 {
+            fallback["qualification_check"] = json!({"status":if acronym_review + embedded_term_review + duration_review > 0 { "review_required" } else { "ambiguous_context" }, "checked":0, "downgraded":ambiguous + acronym_review + embedded_term_review + duration_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "embedded_term_review":embedded_term_review, "duration_review":duration_review, "reconciled":0});
         }
         return (original, fallback);
     }
@@ -1437,7 +1483,7 @@ fn check_qualification_judgments_with_source(
     }
     match validate(original.clone(), facts, preferences, listing) {
         Ok(mut assessment) => {
-            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous + acronym_review + embedded_term_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "embedded_term_review":embedded_term_review, "reconciled":confirmed.len(), "retried":retried});
+            assessment["qualification_check"] = json!({"status": if valid { "completed" } else { "unavailable" }, "checked":items.len(), "downgraded":downgraded + ambiguous + acronym_review + embedded_term_review + duration_review, "ambiguous_context":ambiguous, "acronym_review":acronym_review, "embedded_term_review":embedded_term_review, "duration_review":duration_review, "reconciled":confirmed.len(), "retried":retried});
             (original, assessment)
         }
         Err(_) => (original, fallback),
@@ -2730,6 +2776,36 @@ mod tests {
     }
 
     #[test]
+    fn multiple_experience_durations_require_review_before_model_reconciliation() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct NoCalls;
+        impl Inference for NoCalls {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                panic!("ambiguous durations must not be promoted by another model judgment")
+            }
+        }
+        assert_eq!(duration_mentions("7 years Java and three years Python"), 2);
+        assert_eq!(duration_mentions("Seven years of Python"), 1);
+        let facts = vec!["Seven years Java and three years Python".to_owned()];
+        let listing = "Required: five years Python experience.";
+        let value = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years Python experience","importance":"required","status":"supported","fact_index":1,"explanation":"Experience"}]});
+        let initial = validate(value.clone(), &facts, "", listing).unwrap();
+        let (_, checked) =
+            check_qualification_judgments(&mut NoCalls, value, initial, &facts, "", listing);
+        assert_eq!(checked["rubric"][0]["status"], "unknown");
+        assert_eq!(checked["qualification_check"]["duration_review"], 1);
+        assert_eq!(checked["score_range"], json!({"lower":0,"upper":100}));
+    }
+
+    #[test]
     fn repeated_requirement_quote_never_uses_first_context_as_evidence() {
         use waypoint_inference::{CapabilityReport, UsageReport};
         struct NoCalls;
@@ -4009,6 +4085,68 @@ mod tests {
                     .is_some_and(|text| text.contains("five years"))
             }),
             "an independent experience requirement must remain visible: {result}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_job_fit_does_not_promote_shorter_experience() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let listing = "Fictional data engineer. Required: at least five years of professional Python experience.";
+        let facts = vec!["Three years of professional Python experience.".into()];
+        let result = assess(&mut model, &facts, "", listing).unwrap();
+        println!("Experience-level assessment: {result}");
+        let criteria = result["rubric"].as_array().unwrap();
+        assert!(
+            criteria.iter().any(|item| item["excerpt"]
+                .as_str()
+                .is_some_and(|text| text.to_lowercase().contains("five years"))),
+            "the duration requirement must be represented: {result}"
+        );
+        assert!(
+            criteria
+                .iter()
+                .filter(|item| item["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| text.to_lowercase().contains("five years")))
+                .all(|item| item["status"] != "supported"),
+            "three years must not prove five years: {result}"
+        );
+        let experienced = vec!["Seven years of professional Python experience.".into()];
+        let stronger = assess(&mut model, &experienced, "", listing).unwrap();
+        println!("Longer-experience assessment: {stronger}");
+        assert!(
+            stronger["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| text.to_lowercase().contains("five years"))
+                    && item["status"] == "supported"),
+            "seven years should support a five-year requirement: {stronger}"
+        );
+        let mixed = vec!["Seven years of professional Java experience and three years of professional Python experience.".into()];
+        let mixed_result = assess(&mut model, &mixed, "", listing).unwrap();
+        println!("Mixed-skill assessment: {mixed_result}");
+        assert!(
+            mixed_result["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| text.to_lowercase().contains("five years"))
+                    && item["status"] != "supported"),
+            "years in another skill must not satisfy Python experience: {mixed_result}"
         );
     }
 
