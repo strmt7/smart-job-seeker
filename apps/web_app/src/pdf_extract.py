@@ -16,12 +16,47 @@ try:
         raise ValueError("Encrypted PDFs are not supported")
     if len(reader.pages) > 30:
         raise ValueError("PDF exceeds the 30-page limit")
+    def image_resources(page):
+        # Inspect dictionaries only; never decode image streams. Forms may nest.
+        remaining = [256]
+        seen = set()
+        def visit(resources):
+            if resources is None:
+                return False
+            resources = resources.get_object()
+            objects = resources.get("/XObject")
+            if objects is None:
+                return False
+            for obj in objects.get_object().values():
+                remaining[0] -= 1
+                if remaining[0] < 0:
+                    raise ValueError("PDF image resource inventory exceeds limit")
+                key = (obj.idnum, obj.generation) if hasattr(obj, "idnum") else id(obj)
+                if key in seen:
+                    continue
+                seen.add(key)
+                obj = obj.get_object()
+                if obj.get("/Subtype") == "/Image":
+                    return True
+                if obj.get("/Subtype") == "/Form" and visit(obj.get("/Resources")):
+                    return True
+            return False
+        return visit(page.get("/Resources"))
+
     parts = []
     size = 0
     empty_pages = []
     structurally_blank_pages = []
+    mixed_image_pages = []
+    image_inventory_unknown_pages = []
     for index, page in enumerate(reader.pages, 1):
         text = page.extract_text() or ""
+        if text.strip():
+            try:
+                if image_resources(page):
+                    mixed_image_pages.append(index)
+            except Exception:
+                image_inventory_unknown_pages.append(index)
         if not text.strip():
             empty_pages.append(index)
             if "/Contents" not in page and "/Annots" not in page:
@@ -33,7 +68,7 @@ try:
     result = "\n".join(parts).strip()
     if not result:
         raise ValueError("No selectable text was found; scanned PDFs need OCR")
-    response = {"text": result, "page_count": len(reader.pages), "empty_text_pages": empty_pages, "structurally_blank_pages": structurally_blank_pages}
+    response = {"text": result, "page_count": len(reader.pages), "empty_text_pages": empty_pages, "structurally_blank_pages": structurally_blank_pages, "mixed_image_pages": mixed_image_pages, "image_inventory_unknown_pages": image_inventory_unknown_pages}
     sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
 except ImportError:
     print("PDF extraction requires pypdf in the configured local Python runtime")

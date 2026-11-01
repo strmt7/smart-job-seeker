@@ -217,9 +217,25 @@ pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value)
             .ok_or("PDF extractor returned invalid blank-page coverage")?;
         last = number;
     }
+    let mut image_lists = Vec::new();
+    for key in ["mixed_image_pages", "image_inventory_unknown_pages"] {
+        let list = result[key]
+            .as_array()
+            .filter(|list| list.len() <= pages as usize)
+            .ok_or("PDF extractor returned invalid image coverage")?;
+        let mut previous = 0;
+        for value in list {
+            let number = value
+                .as_u64()
+                .filter(|number| *number > previous && *number <= pages && !empty.contains(value))
+                .ok_or("PDF extractor returned invalid image coverage")?;
+            previous = number;
+        }
+        image_lists.push(list);
+    }
     Ok((
         text.to_owned(),
-        serde_json::json!({"pages":pages,"pages_without_selectable_text":empty,"structurally_blank_pages":blank}),
+        serde_json::json!({"pages":pages,"pages_without_selectable_text":empty,"structurally_blank_pages":blank,"pages_with_images_and_text":image_lists[0],"pages_with_unknown_image_inventory":image_lists[1]}),
     ))
 }
 
@@ -414,6 +430,22 @@ mod tests {
         );
         assert!((lw as u64 * lh as u64) <= 3_200_000 && (rw as u64 * rh as u64) <= 3_200_000);
         assert!(super::render_page_region(bytes, 0, "unknown").is_err());
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly configured local pypdf runtime"]
+    fn reports_selectable_pages_with_images() {
+        let bytes = include_bytes!("../tests/fictional-mixed-image-text.pdf");
+        let (text, coverage) = super::extract_with_coverage(bytes).unwrap();
+        assert!(!text.trim().is_empty());
+        assert_eq!(
+            coverage["pages_with_images_and_text"],
+            serde_json::json!([1])
+        );
+        assert_eq!(
+            coverage["pages_with_unknown_image_inventory"],
+            serde_json::json!([])
+        );
     }
 
     #[test]
