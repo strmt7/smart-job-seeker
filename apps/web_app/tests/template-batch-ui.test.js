@@ -15,7 +15,7 @@ async function fixture(failSecond = false) {
   const calls=[], notices=[], changes=[], text={value:'Built dashboards\nLed research',selectionStart:0,selectionEnd:29}, jobSelect={value:'job'}, busy=[];
   const context={element:(tag,text)=>node(tag,text), TextEncoder, setTimeout:f=>f(), notify:message=>notices.push(message),
     selectedFactsDetails:()=>null, factCrossCheckMessage:()=>'',
-    api:async(path,body)=>{calls.push({path,body});if(failSecond && path.endsWith('-start') && body.before==='Led research')throw Error('Model unavailable');return path.endsWith('-start')?{task_id:body.before}:{status:'complete',document_id:'doc',job_id:'job',before:body.task_id,digest:'a'.repeat(64),suggestion:{text:body.task_id==='Led research'?body.task_id:`Revised ${body.task_id}`,sources:['Fictional source'],evidence_check:body.task_id==='Led research'?{status:'invalid'}:{status:'completed',claims:[{status:'unsupported',excerpt:'Revised',explanation:'Not established'}]}}};}};
+    api:async(path,body)=>{calls.push({path,body});if(failSecond && path.endsWith('-start') && body.before==='Led research')throw Error('Model unavailable');return path.endsWith('-start')?{task_id:body.before}:{status:'complete',document_id:'doc',job_id:'job',before:body.task_id,digest:'a'.repeat(64),suggestion:{text:body.task_id==='Led research'?body.task_id:`Revised ${body.task_id}`,sources:['Fictional source'],first_person_opening_changed:body.task_id==='Led research',evidence_check:body.task_id==='Led research'?{status:'invalid'}:{status:'completed',claims:[{status:'unsupported',excerpt:'Revised',explanation:'Not established'}]}}};}};
   context.showAnswerEvidence=vm.runInNewContext(`(${source.split('\n').find(line=>line.startsWith('function showAnswerEvidence('))})`,context);
   context.showTemplateSuggestionReview=vm.runInNewContext(`(${source.split('\n').find(line=>line.startsWith('function showTemplateSuggestionReview('))})`,context);
   context.followTemplateSuggestion=task=>context.api('/api/documents/template-suggest-status',{task_id:task});
@@ -33,6 +33,7 @@ async function fixture(failSecond = false) {
   assert.ok(cards[0].children.some(item=>/unsupported: Revised/.test(item.textContent)));
   assert.ok(cards[0].children.some(item=>/has not been independently verified/.test(item.textContent)));
   assert.ok(cards[1].children.some(item=>/original passage unchanged/.test(item.textContent)));
+  assert.ok(cards[1].children.some(item=>/changed whether the passage begins/.test(item.textContent)));
   assert.ok(cards[1].children.some(item=>/unavailable or incomplete/.test(item.textContent)));
   const buttons=f.section.children[2].querySelectorAll('button');
   assert.equal(buttons.length,2);

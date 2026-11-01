@@ -1,3 +1,8 @@
+## Template voice review — 2026-11-01
+
+- Template drafting now asks both model passes to preserve the selected passage's grammatical person and tense unless the writing instructions request otherwise. The editor warns if the original and suggestion differ in whether they start with `I` or `we`. This narrow check does not detect other voice or tense changes, and the user must review the complete replacement.
+- The local 9B model retained first-person past tense in one fictional cover-letter example after the prompt change. It still introduced `I` into a fictional résumé passage that omitted a subject; the new warning flagged that change. In the most recent run, the evidence check for that résumé example returned `invalid`, so its existing live test failed even though the voice warning worked. The interface already reports an incomplete evidence check. This is a known unresolved model-quality limitation, not a successful evidence review. Minimum sampled available RAM was 19.69 GiB; the model was unloaded. No employer was contacted or application submitted. Local output is in `target/live_template_*-qwen-live.log`.
+
 ## Template suggestion review — 2026-11-01
 
 - The single-passage and batch template editors now show the local evidence check, qualification-selection limits and unavailable-check warnings already returned by the backend. They also identify unchanged suggestions. A supported judgment may rely on the selected passage, which is not independently verified; the interface says so. These judgments apply to the generated text and do not validate later edits or document layout.

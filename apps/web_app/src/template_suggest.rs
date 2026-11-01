@@ -115,14 +115,23 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     )];
     sources.extend(input.facts);
     let request=crate::answer_task::Inputs{max_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; do not add qualifications or details. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
-    let suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
+    let mut suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
     if suggestion["text"]
         .as_str()
         .is_none_or(|text| text.chars().any(char::is_control))
     {
         return Err("Model returned a multi-line or invalid replacement; review manually".into());
     }
+    let replacement = suggestion["text"].as_str().unwrap_or_default();
+    suggestion["first_person_opening_changed"] =
+        json!(first_person_opening(&input.before) != first_person_opening(replacement));
     Ok(suggestion)
+}
+
+fn first_person_opening(text: &str) -> bool {
+    text.split_whitespace()
+        .next()
+        .is_some_and(|word| word.eq_ignore_ascii_case("i") || word.eq_ignore_ascii_case("we"))
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK
@@ -212,6 +221,13 @@ mod tests {
         );
         assert_eq!(model.calls, 3);
         assert_eq!(result["evidence_check"]["status"], "invalid");
+        assert_eq!(result["first_person_opening_changed"], false);
+        let changed_voice = suggest(
+            &mut model,
+            input_with_passage("I researched", "I researched"),
+        )
+        .unwrap();
+        assert_eq!(changed_voice["first_person_opening_changed"], true);
         let mut without_reviewed_facts = input("Fictional research");
         without_reviewed_facts.facts.clear();
         let result = suggest(&mut model, without_reviewed_facts).unwrap();
@@ -392,6 +408,10 @@ mod tests {
         let text = result["text"].as_str().unwrap();
         let lower = text.to_lowercase();
         assert_ne!(text, passage, "the passage was not revised");
+        assert_eq!(
+            result["first_person_opening_changed"],
+            lower.starts_with("i ")
+        );
         assert!(
             text.len() < passage.len(),
             "the revision was not concise: {text}"
@@ -405,6 +425,42 @@ mod tests {
             "screen-reader detail was omitted: {text}"
         );
         assert_eq!(result["evidence_check"]["status"], "completed");
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_template_rewrite_preserves_first_person_past_tense() {
+        let passage =
+            "I collaborated with designers to improve the accessibility of web interfaces.";
+        let mut input = input_with_passage(passage, passage);
+        input.facts.clear();
+        input.listing = "Frontend developer: work with designers on accessibility.".into();
+        input.instructions = "Be concise.".into();
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let result = suggest(&mut model, input).unwrap();
+        println!("Fictional cover letter suggestion: {result}");
+        let text = result["text"].as_str().unwrap().to_lowercase();
+        assert!(text.starts_with("i "), "first person was lost: {text}");
+        assert!(
+            text.contains("collaborated") || text.contains("worked") || text.contains("partnered"),
+            "past-tense collaboration was lost: {text}"
+        );
+        assert!(
+            text.contains("design"),
+            "collaborators were omitted: {text}"
+        );
+        assert!(
+            text.contains("accessib"),
+            "accessibility was omitted: {text}"
+        );
     }
 
     #[test]
