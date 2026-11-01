@@ -1146,3 +1146,7 @@ PDF edits now distinguish a passage that is absent, repeated, or split across te
 ### Hosted PDF checks and second CV visual review (2026-11-01)
 
 The Windows PDF regression job for commit `bbcb169` passed, including the fictional passage-selection cases. The earlier `fe1084b` build-and-test and browser jobs passed, while its supply-chain audit failed with dependency advisories and a yanked dependency; its license-policy step did not run. A local crop of the second public CV's edited line was visually compared with the original: the shortened text appeared in the same position, with the surrounding line intact. This is one localized visual check and does not establish whole-document layout quality or generic PDF editing support. The CV and rendered crop remain outside the repository.
+
+### Transparent heading text (2026-11-01)
+
+Inferred section headings now exclude text inside zero-opacity descendants when collecting context for field mapping, with bounded text-node and ancestor traversal. A fictional local-browser fixture included conflicting hidden and transparent text; the expected applicant and reference labels remained distinct, and changing the visible heading changed the schema identity. The focused browser fixture, browser unit tests, Clippy and formatting passed. This does not detect every visual clipping or styling technique, and no real application or model was used.

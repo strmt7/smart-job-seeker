@@ -1964,7 +1964,24 @@ impl CdpDriver {
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Section heading disappeared".into()))?
             .to_owned();
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { if (!this.isConnected) return null; const text = this.innerText; return typeof text === 'string' && text.length <= 2000 ? text : null; }","returnByValue":true}));
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected) return null;
+            const walker = document.createTreeWalker(this, NodeFilter.SHOW_TEXT), parts = [];
+            let text = walker.nextNode(), count = 0, size = 0;
+            while (text) {
+                if (++count > 512) return null;
+                let parent = text.parentElement, visible = !!parent;
+                for (let depth = 0; visible && parent; depth++, parent = parent.parentElement) {
+                    if (depth > 64 || ['SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName)) { visible = false; break; }
+                    const style = getComputedStyle(parent);
+                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || !parent.getClientRects().length) { visible = false; break; }
+                    if (parent === this) break;
+                }
+                if (visible) { const value = text.nodeValue || ''; size += value.length; if (size > 2000) return null; parts.push(value); }
+                text = walker.nextNode();
+            }
+            return parts.join('');
+        }"#,"returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
