@@ -448,7 +448,7 @@ fn fit_source_coverage(
     let eligible = reviewed_total.saturating_sub(oversized);
     let bounded = eligible.min(500);
     Ok(
-        json!({"listing_used_chars":listing.chars().count(),"listing_total_chars":full_listing.chars().count(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count(),"reviewed_facts_total":reviewed_total,"reviewed_facts_bounded":bounded,"reviewed_facts_oversized":oversized,"reviewed_facts_over_limit":eligible.saturating_sub(bounded)}),
+        json!({"listing_used_chars":listing.chars().count(),"listing_total_chars":full_listing.chars().count(),"description_present":!description.trim().is_empty(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count(),"reviewed_facts_total":reviewed_total,"reviewed_facts_bounded":bounded,"reviewed_facts_oversized":oversized,"reviewed_facts_over_limit":eligible.saturating_sub(bounded)}),
     )
 }
 
@@ -735,7 +735,7 @@ fn read_fit_with_context(
             }
             let (facts, instructions, facts_digest) =
                 context.as_ref().ok_or("Candidate context unavailable")?;
-            let (_, _, digest) =
+            let (_, listing, digest) =
                 fit_assessment_digest(ws, job_id, facts, instructions, facts_digest)?;
             if value["input_digest"].as_str() == Some(digest.as_str()) {
                 let mut assessment = value["assessment"].clone();
@@ -749,6 +749,8 @@ fn read_fit_with_context(
                         fit_task::preference_coverage(&assessment)
                     };
                 assessment["preference_coverage"] = json!(coverage);
+                assessment["source_coverage"] =
+                    fit_source_coverage(ws, job_id, &listing, instructions)?;
                 assessment["requirement_coverage"] =
                     json!(fit_task::requirement_coverage(&assessment));
                 Ok(
@@ -2554,6 +2556,8 @@ fn serve(
                 } else if result["saved"].is_null() {
                     result["assessment"]["source_coverage"] =
                         fit_source_coverage(ws, &job_id, &listing, &instructions)?;
+                    result["assessment"]["requirement_coverage"] =
+                        json!(fit_task::requirement_coverage(&result["assessment"]));
                     if let Some(previous) = ws.fit_assessment(&job_id).map_err(|e| e.to_string())? {
                         let previous: Value = serde_json::from_slice(&previous).map_err(|_| {
                             "Previous saved assessment is invalid; it was not replaced"
@@ -7276,6 +7280,7 @@ mod tests {
             .unwrap();
         let (_, _, instructions, listing, before) = fit_assessment_inputs(&ws, &id).unwrap();
         let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
+        assert_eq!(coverage["description_present"], true);
         assert_eq!(coverage["listing_used_chars"], 8000);
         assert!(coverage["listing_total_chars"].as_u64().unwrap() > 8000);
         assert_eq!(coverage["instructions_used_chars"], 2000);
@@ -8077,6 +8082,18 @@ mod tests {
         assert_eq!(coverage["reviewed_facts_bounded"], 500);
         assert_eq!(coverage["reviewed_facts_oversized"], 1);
         assert_eq!(coverage["reviewed_facts_over_limit"], 2);
+    }
+
+    #[test]
+    fn fit_source_coverage_reports_missing_description() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/no-description","title":"Engineer","employer":"Example"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (_, _, instructions, listing, _) = fit_assessment_inputs(&ws, &id).unwrap();
+        let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
+        assert_eq!(coverage["description_present"], false);
+        let assessment = json!({"source_coverage":coverage,"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[{"source":"listing","importance":"required","status":"supported"}]});
+        assert_eq!(fit_task::requirement_coverage(&assessment), "incomplete");
     }
 
     #[cfg(windows)]

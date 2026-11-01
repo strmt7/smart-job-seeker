@@ -881,16 +881,21 @@ pub(crate) fn requirement_coverage(assessment: &Value) -> &'static str {
         "possible_conflict"
     } else if unknown {
         "needs_review"
-    } else if required == 0 {
-        "none_identified"
     } else if assessment["criteria_limit_reached"] == true
         || rubric.len() == 12
         || assessment["requirement_audit"]["status"] != "completed"
         || assessment["requirement_audit"]["listing_truncated"] != false
         || assessment["requirement_audit"]["criterion_limit_reached"] != false
         || assessment["requirement_audit"]["audit_limit_reached"] != false
+        || assessment["source_coverage"]["description_present"] != true
+        || !matches!(
+            (assessment["source_coverage"]["listing_used_chars"].as_u64(), assessment["source_coverage"]["listing_total_chars"].as_u64()),
+            (Some(used), Some(total)) if used > 0 && used == total
+        )
     {
         "incomplete"
+    } else if required == 0 {
+        "none_identified"
     } else {
         "supported"
     }
@@ -2279,12 +2284,18 @@ mod tests {
 
     #[test]
     fn required_job_coverage_exposes_unknown_conflict_and_missing_rubrics() {
-        let mut assessment = json!({"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[
+        let mut assessment = json!({"source_coverage":{"description_present":true,"listing_used_chars":100,"listing_total_chars":100},"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[
             {"source":"listing","importance":"required","status":"supported"},
             {"source":"listing","importance":"preferred","status":"unknown"},
             {"source":"preference","importance":"required","status":"contradicted"}
         ]});
         assert_eq!(requirement_coverage(&assessment), "supported");
+        assessment["source_coverage"]["description_present"] = json!(false);
+        assert_eq!(requirement_coverage(&assessment), "incomplete");
+        assessment["source_coverage"]["description_present"] = json!(true);
+        assessment["source_coverage"]["listing_used_chars"] = json!(99);
+        assert_eq!(requirement_coverage(&assessment), "incomplete");
+        assessment["source_coverage"]["listing_used_chars"] = json!(100);
         assessment["requirement_audit"]["status"] = json!("unavailable");
         assert_eq!(requirement_coverage(&assessment), "incomplete");
         assessment["requirement_audit"]["status"] = json!("completed");

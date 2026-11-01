@@ -10,4 +10,5 @@ function messages(coverage) { const output={nodes:[],append(node){this.nodes.pus
 assert.match(messages({reviewed_facts_total:503,reviewed_facts_bounded:500,reviewed_facts_oversized:1,reviewed_facts_over_limit:2}), /500 of 503.*1 exceeded.*2 exceeded.*not assessed/);
 assert.equal(messages({reviewed_facts_total:2,reviewed_facts_bounded:2,reviewed_facts_oversized:0,reviewed_facts_over_limit:0}), '');
 assert.match(messages({}), /coverage is unavailable.*reassess/);
+assert.match(messages({description_present:false}), /saved job has no description/);
 console.log('Fit source coverage UI checks passed.');
