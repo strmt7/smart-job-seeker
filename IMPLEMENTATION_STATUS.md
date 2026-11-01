@@ -1088,3 +1088,7 @@ Candidate title comparison now normalizes standalone uppercase Roman levels I–
 ### Existing title-level recheck (2026-11-01)
 
 Workspace migration v42 schedules a resumable background recheck so the Roman/numeric title comparison also reaches older jobs. Each title-level scan reads at most 64 IDs and titles and compares at most one candidate job per indexing step; existing decisions are preserved. Duplicate coverage remains pending, including for email handoff, until the cursor finishes. Fictional disk-backed migration tests covered rollback and reopening, including SQLCipher, and the email handoff guard was exercised. The store suite passed (86 passed, one ignored); web Clippy and formatting passed. Large-workspace runtime and peak memory were not measured, and bounded candidate comparison can still miss duplicates. No application was submitted.
+
+### Title-level recheck timing fixture (2026-11-01)
+
+A single debug-build, in-memory run rechecked 10,000 fictional indexed jobs with 10 affected titles and distinct employers. It took 162 calls, 243 ms total active time, and 5.3 ms for the slowest call on this host. The fixture had no descriptions, crowded employers or production scheduling delays; the actual worker waits two seconds between progressing steps, so its elapsed time would be much longer. This is not an encrypted-disk, peak-memory, worst-case or freeze-safety measurement. The ignored fixture is retained for repeatable investigation. Web Clippy and formatting passed; no application was submitted.

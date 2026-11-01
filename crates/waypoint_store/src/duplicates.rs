@@ -1388,6 +1388,57 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "bounded fictional workspace timing fixture"]
+    fn measure_title_level_recheck_over_indexed_jobs() {
+        let store = Store::in_memory().unwrap();
+        store.conn.execute_batch("BEGIN").unwrap();
+        for index in 0..10_000 {
+            let id = format!("job-{index:05}");
+            let title = if index % 1000 == 0 {
+                "Engineer II"
+            } else {
+                "Software Engineer"
+            };
+            let employer = format!("company{index}");
+            store.conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,?2,?3,'','\"discovered\"')", params![id,title,employer]).unwrap();
+            store
+                .conn
+                .execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [&id])
+                .unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,?2)",
+                    params![id, employer],
+                )
+                .unwrap();
+        }
+        store
+            .conn
+            .execute(
+                "INSERT INTO meta(key,value) VALUES('duplicate_title_level_cursor','')",
+                [],
+            )
+            .unwrap();
+        store.conn.execute_batch("COMMIT").unwrap();
+        let start = std::time::Instant::now();
+        let mut max_step = std::time::Duration::ZERO;
+        let mut steps = 0;
+        let mut after = String::new();
+        while store.duplicate_index_pending().unwrap() {
+            let step = std::time::Instant::now();
+            after = store
+                .index_next_duplicate_job(&after)
+                .unwrap()
+                .unwrap_or_default();
+            max_step = max_step.max(step.elapsed());
+            steps += 1;
+            assert!(steps <= 170);
+        }
+        println!("10,000 fictional indexed jobs, 10 affected titles: {steps} bounded steps, total {:?}, slowest {:?}; distinct employers, no descriptions or production delays", start.elapsed(), max_step);
+    }
+
+    #[test]
     #[ignore = "bounded in-memory duplicate-index timing fixture"]
     fn measure_duplicate_index_on_distinct_titles_and_long_descriptions() {
         let mut store = Store::in_memory().unwrap();
