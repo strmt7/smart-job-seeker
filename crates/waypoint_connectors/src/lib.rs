@@ -267,6 +267,20 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
         .collect())
 }
 
+/// Preserve literal characters in a provider's explicitly plain-text field.
+fn plain_description_text(input: &str) -> String {
+    let bounded: String = input.chars().take(200_000).collect();
+    bounded
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(100_000)
+        .collect()
+}
+
 /// Preserve list-item boundaries for downstream requirement extraction.
 fn lever_list_text(input: &str) -> String {
     let bounded: String = input.chars().take(200_000).collect();
@@ -297,7 +311,7 @@ fn lever_description(job: &LeverPosting) -> Option<String> {
     const LIMIT: usize = 100_000;
     let mut text = String::new();
     let mut used = 0;
-    let mut append = |part: Option<&str>, list: bool| {
+    let mut append = |part: Option<&str>, list: bool, plain: bool| {
         if used >= LIMIT {
             return;
         }
@@ -306,6 +320,8 @@ fn lever_description(job: &LeverPosting) -> Option<String> {
         };
         let clean = if list {
             lever_list_text(part)
+        } else if plain {
+            plain_description_text(part)
         } else {
             description_text(part)
         };
@@ -320,23 +336,27 @@ fn lever_description(job: &LeverPosting) -> Option<String> {
         used += excerpt.chars().count();
         text.push_str(&excerpt);
     };
+    let introduction = job
+        .description_plain
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
     append(
-        job.description_plain
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .or(job.description.as_deref()),
+        introduction.or(job.description.as_deref()),
         false,
+        introduction.is_some(),
     );
     for list in job.lists.as_deref().unwrap_or(&[]).iter().take(100) {
-        append(list.text.as_deref(), false);
-        append(list.content.as_deref(), true);
+        append(list.text.as_deref(), false, true);
+        append(list.content.as_deref(), true, false);
     }
+    let additional = job
+        .additional_plain
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
     append(
-        job.additional_plain
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .or(job.additional.as_deref()),
+        additional.or(job.additional.as_deref()),
         false,
+        additional.is_some(),
     );
     if text.is_empty() {
         None
@@ -432,7 +452,7 @@ pub fn parse_ashby(org: &str, payload: &str) -> Result<Vec<RawPosting>, Connecto
             remote: j.is_remote.unwrap_or(false),
             remote_evidence: j.is_remote,
             posted_at: j.published_at,
-            description: j.description_plain.as_deref().map(description_text),
+            description: j.description_plain.as_deref().map(plain_description_text),
             content_hash_source: format!("ab://{org}/{}", j.id),
         })
         .collect())
@@ -679,6 +699,24 @@ mod tests {
         let payload = r#"[{"id":"a","text":"Engineer","categories":{"location":"New York, NY","allLocations":["New York, NY","San Francisco, CA","  san francisco, CA "]}}]"#;
         let rows = parse_lever("example", payload).unwrap();
         assert_eq!(rows[0].location, "New York, NY\nSan Francisco, CA");
+    }
+
+    #[test]
+    fn provider_plain_text_keeps_angle_brackets_and_ampersands() {
+        let lever = r#"[{"id":"a","text":"Engineer","descriptionPlain":"Use Vec<T> and R&D.\nLatency < 5 ms","additionalPlain":"Review A & B"}]"#;
+        let rows = parse_lever("example", lever).unwrap();
+        assert_eq!(
+            rows[0].description.as_deref(),
+            Some("Use Vec<T> and R&D.\nLatency < 5 ms\nReview A & B")
+        );
+        let ashby =
+            r#"{"jobs":[{"id":"a","title":"Engineer","descriptionPlain":"Use Vec<T> and R&D."}]}"#;
+        assert_eq!(
+            parse_ashby("example", ashby).unwrap()[0]
+                .description
+                .as_deref(),
+            Some("Use Vec<T> and R&D.")
+        );
     }
 
     #[test]
