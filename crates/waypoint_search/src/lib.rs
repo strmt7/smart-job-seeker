@@ -302,8 +302,14 @@ pub enum Freshness {
 }
 
 pub fn freshness(observed_at_unix: i64, now_unix: i64, stale_after_seconds: i64) -> Freshness {
-    if observed_at_unix <= 0 {
-        return Freshness::Unknown; // never observed / unrecorded timestamp
+    if observed_at_unix <= 0
+        || now_unix <= 0
+        || observed_at_unix > now_unix
+        || stale_after_seconds < 0
+    {
+        // Missing timestamps, clock skew and invalid windows cannot establish
+        // that a listing was observed recently.
+        return Freshness::Unknown;
     }
     let age = now_unix - observed_at_unix;
     if age <= stale_after_seconds {
@@ -681,6 +687,11 @@ mod tests {
         // Zero/negative timestamps are unrecorded observations, never Fresh.
         assert!(matches!(freshness(0, 200, 300), Freshness::Unknown));
         assert!(matches!(freshness(-1, 200, 300), Freshness::Unknown));
+        assert_eq!(freshness(201, 200, 300), Freshness::Unknown);
+        assert_eq!(freshness(1, 0, 300), Freshness::Unknown);
+        assert_eq!(freshness(1, 200, -1), Freshness::Unknown);
+        assert_eq!(freshness(i64::MAX, i64::MIN, 300), Freshness::Unknown);
+        assert_eq!(freshness(200, 200, 0), Freshness::Fresh { age_seconds: 0 });
         // A real observation past its stale window is Stale.
         assert!(matches!(
             freshness(100, 10_000, 300),

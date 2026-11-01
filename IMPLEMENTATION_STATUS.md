@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Listing freshness — 2026-11-01
+
+- Future observations, an invalid current time, and negative freshness windows now report unknown instead of fresh or stale. Boundary and clock-skew cases passed in the search tests; the workspace suite also passed (46 tests, with two network tests ignored across its targets).
+
 ## Blank search constraints — 2026-11-01
 
 - Empty language and location entries no longer exclude listings. Language codes are trimmed before comparison, and an employer language list containing only blank entries remains unknown when a language is required. All 19 search-crate tests passed.
