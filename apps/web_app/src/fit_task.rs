@@ -1897,6 +1897,21 @@ fn compare_preferences_with_source(
     }
     match validate(original, facts, preferences, listing) {
         Ok(mut assessment) => {
+            if let (Some(source), Some(rubric)) =
+                (verification_text, assessment["rubric"].as_array_mut())
+            {
+                for item in rubric
+                    .iter_mut()
+                    .filter(|item| item["source"] == "preference")
+                {
+                    if let Some(context) = item["qualification"]
+                        .as_str()
+                        .and_then(|quote| unique_requirement_context(source, quote))
+                    {
+                        item["evidence_context"] = json!(context);
+                    }
+                }
+            }
             if !fallback["qualification_check"].is_null() {
                 assessment["qualification_check"] = fallback["qualification_check"].clone();
             }
@@ -5241,6 +5256,8 @@ mod tests {
         );
         assert_eq!(model.calls, 2);
         assert_eq!(result["rubric"][0]["status"], "supported");
+        assert_eq!(result["rubric"][0]["qualification"], "Remote role");
+        assert_eq!(result["rubric"][0]["evidence_context"], listing);
         assert_eq!(result["preference_comparison"]["retried"], true);
         let mut model = Fixture {
             calls: 0,
@@ -5560,6 +5577,7 @@ mod tests {
                 listing,
             );
             assert_eq!(result["rubric"][0]["status"], "unknown");
+            assert!(result["rubric"][0]["evidence_context"].is_null());
             assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
             assert!(result["rubric"][0]["explanation"]
                 .as_str()
@@ -5658,6 +5676,9 @@ mod tests {
             println!("Fictional location case: {result}");
             assert_eq!(result["preference_comparison"]["status"], "completed");
             assert_eq!(result["rubric"][0]["status"], expected, "listing={listing}");
+            let quote = result["rubric"][0]["qualification"].as_str().unwrap();
+            let context = result["rubric"][0]["evidence_context"].as_str().unwrap();
+            assert!(listing.contains(context) && context.contains(quote));
         }
     }
 

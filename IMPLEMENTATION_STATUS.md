@@ -1,3 +1,8 @@
+## Preference evidence context — 2026-11-01
+
+- Preference assessments now include bounded surrounding text from the verified original listing for a unique cited passage. The interface displays it alongside the exact quote when different; scoring is unchanged. Ambiguous quotes remain unknown, and older assessments do not gain context until reassessed. The context makes a citation easier to inspect but does not prove the model's interpretation.
+- In fictional local-model checks, reordered job requirements produced the same 71% score and 43–100% range, an unspecified remote region remained unknown, and explicit location alternatives were evaluated as expected. After the change, the location test also verified that each displayed context came from the original listing and contained its quote. The 9B model was unloaded; minimum sampled available RAM was 19.90, 20.36 and 19.95 GiB across these runs. Forty-nine fit tests, the preference-context UI check and web-app Clippy passed. No employer was contacted or application submitted. Local logs are under `target/live_*qwen-live.log`.
+
 ## Matching repeatability after evidence recovery — 2026-11-01
 
 - On one fictional job and candidate, the production-admitted `qwen3.5:9b` returned the same score, 82%, and the same rubric in three sequential assessments. The test now also checks that Python and accessibility are supported while SQL and cloud experience remain unknown, so identical but incorrect answers to those fixture requirements do not pass. A separate fictional case kept one year of SQL experience unknown against a five-year requirement and recognized six years of Python experience.
