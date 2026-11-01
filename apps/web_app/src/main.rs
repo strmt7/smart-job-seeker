@@ -3145,11 +3145,11 @@ fn serve(
                 .document_content(id)
                 .map_err(|e| e.to_string())?
                 .ok_or("document not found")?;
-            let text = document_extract::extract(&info.name, &bytes)?;
+            let (text, coverage) = document_extract::extract_for_review(&info.name, &bytes)?;
             json_reply(
                 stream,
                 "200 OK",
-                json!({"id":id,"name":info.name,"text":text}),
+                json!({"id":id,"name":info.name,"text":text,"coverage":coverage}),
             );
         }
         "/api/documents/suggest" => {

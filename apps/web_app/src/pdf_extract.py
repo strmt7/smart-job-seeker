@@ -1,5 +1,6 @@
 # Local PDF text worker. Input is stdin; output is UTF-8 stdout.
 import io
+import json
 import sys
 try:
     import pypdf.filters as filters
@@ -17,8 +18,11 @@ try:
         raise ValueError("PDF exceeds the 30-page limit")
     parts = []
     size = 0
-    for page in reader.pages:
+    empty_pages = []
+    for index, page in enumerate(reader.pages, 1):
         text = page.extract_text() or ""
+        if not text.strip():
+            empty_pages.append(index)
         size += len(text.encode("utf-8"))
         if size > 200000:
             raise ValueError("PDF text exceeds 200 KB")
@@ -26,7 +30,8 @@ try:
     result = "\n".join(parts).strip()
     if not result:
         raise ValueError("No selectable text was found; scanned PDFs need OCR")
-    sys.stdout.buffer.write(result.encode("utf-8"))
+    response = {"text": result, "page_count": len(reader.pages), "empty_text_pages": empty_pages}
+    sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
 except ImportError:
     print("PDF extraction requires pypdf in the configured local Python runtime")
     sys.exit(2)

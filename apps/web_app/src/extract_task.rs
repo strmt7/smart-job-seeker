@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::sync::Mutex;
 struct Task {
     id: String,
-    outcome: Option<Result<String, String>>,
+    outcome: Option<Result<(String, Option<Value>), String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
@@ -19,8 +19,9 @@ pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
     });
     drop(task);
     std::thread::spawn(move || {
-        let outcome = std::panic::catch_unwind(|| crate::document_extract::extract(&name, &bytes))
-            .unwrap_or_else(|_| Err("Document extraction stopped unexpectedly".into()));
+        let outcome =
+            std::panic::catch_unwind(|| crate::document_extract::extract_for_review(&name, &bytes))
+                .unwrap_or_else(|_| Err("Document extraction stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut() {
                 if task.id == id {
@@ -41,9 +42,9 @@ pub fn poll(id: &str) -> Result<Value, String> {
         .ok_or("Extraction task not found")?;
     match task.outcome.take() {
         None => Ok(json!({"status":"running"})),
-        Some(Ok(text)) => {
+        Some(Ok((text, coverage))) => {
             *tasks = None;
-            Ok(json!({"status":"complete","text":text}))
+            Ok(json!({"status":"complete","text":text,"coverage":coverage}))
         }
         Some(Err(error)) => {
             *tasks = None;
@@ -54,6 +55,32 @@ pub fn poll(id: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires an explicitly configured local pypdf runtime"]
+    fn background_pdf_extraction_reports_unreadable_pages() {
+        super::start(
+            "partial-fixture".into(),
+            "cv.pdf".into(),
+            include_bytes!("../tests/fictional-partial-text.pdf").to_vec(),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let result = super::poll("partial-fixture").unwrap();
+            if result["status"] != "running" {
+                assert_eq!(result["status"], "complete", "{result}");
+                assert_eq!(
+                    result["coverage"]["pages_without_selectable_text"],
+                    serde_json::json!([2])
+                );
+                assert!(result["text"].as_str().is_some_and(|text| !text.is_empty()));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     #[test]
     fn background_extraction_returns_text() {
         super::start(

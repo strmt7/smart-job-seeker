@@ -173,16 +173,54 @@ fn run(
         Ok(data)
     }
 }
-pub fn extract(bytes: &[u8]) -> Result<String, String> {
+/// Extract selectable text and identify pages where none was found.
+pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
     let data = run(
         bytes,
         bytes,
         include_str!("pdf_extract.py"),
         None,
-        200000,
+        1_300_000,
         true,
     )?;
-    String::from_utf8(data).map_err(|_| "PDF extractor returned invalid UTF-8".into())
+    let result: serde_json::Value =
+        serde_json::from_slice(&data).map_err(|_| "PDF extractor returned invalid data")?;
+    let text = result["text"]
+        .as_str()
+        .filter(|text| !text.trim().is_empty() && text.len() <= 200_000)
+        .ok_or("PDF extractor returned invalid text")?;
+    let pages = result["page_count"]
+        .as_u64()
+        .filter(|pages| (1..=30).contains(pages))
+        .ok_or("PDF extractor returned invalid page count")?;
+    let empty = result["empty_text_pages"]
+        .as_array()
+        .filter(|empty| empty.len() <= pages as usize)
+        .ok_or("PDF extractor returned invalid page coverage")?;
+    let mut previous = 0;
+    for page in empty {
+        let page = page
+            .as_u64()
+            .filter(|page| *page > previous && *page <= pages)
+            .ok_or("PDF extractor returned invalid page coverage")?;
+        previous = page;
+    }
+    Ok((
+        text.to_owned(),
+        serde_json::json!({"pages":pages,"pages_without_selectable_text":empty}),
+    ))
+}
+
+/// Consumers without coverage handling must not silently use an incomplete PDF.
+pub fn extract(bytes: &[u8]) -> Result<String, String> {
+    let (text, coverage) = extract_with_coverage(bytes)?;
+    if !coverage["pages_without_selectable_text"]
+        .as_array()
+        .is_some_and(Vec::is_empty)
+    {
+        return Err("Some PDF pages have no selectable text; review the extracted pages and use OCR or a text-based document".into());
+    }
+    Ok(text)
 }
 pub fn render_page(bytes: &[u8], page: usize) -> Result<serde_json::Value, String> {
     render_page_inner(bytes, page, false)
@@ -305,6 +343,34 @@ mod tests {
         assert!(super::render_page(&bytes, 30).is_err());
         assert!(super::render_page(b"%PDF-1.4 broken", 0).is_err());
     }
+    #[test]
+    #[ignore = "requires an explicitly configured local pypdf runtime"]
+    fn reports_pages_without_selectable_text() {
+        let partial = include_bytes!("../tests/fictional-partial-text.pdf");
+        let (text, coverage) = super::extract_with_coverage(partial).unwrap();
+        assert!(!text.is_empty());
+        assert_eq!(coverage["pages"], 2);
+        assert_eq!(
+            coverage["pages_without_selectable_text"],
+            serde_json::json!([2])
+        );
+        assert!(super::extract(partial)
+            .unwrap_err()
+            .contains("no selectable text"));
+        let (reviewed, report) =
+            crate::document_extract::extract_for_review("fictional.pdf", partial).unwrap();
+        assert_eq!(reviewed, text);
+        assert_eq!(report.unwrap(), coverage);
+        assert!(crate::document_extract::extract("fictional.pdf", partial).is_err());
+        let complete = include_bytes!("../tests/fictional-document-overlap.pdf");
+        let (_, complete_coverage) = super::extract_with_coverage(complete).unwrap();
+        assert_eq!(
+            complete_coverage["pages_without_selectable_text"],
+            serde_json::json!([])
+        );
+        assert!(super::extract(complete).is_ok());
+    }
+
     #[test]
     #[ignore = "requires an explicitly configured local pypdf runtime and fictional PDF"]
     fn extracts_fixture() {
