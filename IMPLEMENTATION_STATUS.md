@@ -1,3 +1,8 @@
+## Interrupted search provider context — 2026-11-01
+
+- Interrupted search checkpoints now retain the original provider URL, when it is at most 2,048 bytes, and show it alongside the prepared retry. The user still reviews the current provider before starting; it is not silently changed. Older checkpoints or longer provider URLs display that the original was not saved.
+- A real local backend and browser were tested with an isolated workspace and a fictional loopback search provider. The backend was stopped after one result while the next page was in flight, then restarted; it recovered two phrases and the original provider, preserved typed text, and made no automatic retry. The provider saw only the two intended test requests. Minimum sampled available RAM was 23.65 GiB, although this was not continuous peak measurement. Fourteen batch tests, a UI check and web-app Clippy passed. No employer was contacted or application submitted. The local harness and screenshot are under `target/search-recovery-real-backend*`.
+
 ## Interrupted search plan recovery — 2026-11-01
 
 - Wider-web batch checkpoints retain the approved phrase and page plan, including at the first checkpoint before a page is collected. After a restart, the interface can prepare phrases with failed or unsaved pages for the user to review and search again. It does not start a search automatically or replace text already entered in the form; rerunning repeats all requested pages for those phrases and replaces the displayed batch results. The interface warns about both.

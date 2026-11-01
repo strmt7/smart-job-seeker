@@ -15,6 +15,7 @@ struct Task {
     cancel: Arc<AtomicBool>,
     total: usize,
     plan: Vec<(String, u8)>,
+    provider: Option<String>,
     processed: usize,
     saved_processed: Option<usize>,
     checkpoint_failed: bool,
@@ -184,6 +185,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         cancel,
         total,
         plan,
+        provider: (provider.trim().len() <= 2048).then(|| provider.trim().to_owned()),
         processed: 0,
         saved_processed: None,
         checkpoint_failed: false,
@@ -392,6 +394,7 @@ pub fn persist_progress(ws: &waypoint_workspace::Workspace) -> Result<bool, Stri
         "status":"failed", "processed":task.processed, "total":task.total,
         "history":task.history, "history_saved":true, "recovered_partial":true,
         "plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),
+        "provider":task.provider,
         "error":"The app stopped before this search finished; another provider request may have been in progress"
     });
     let bytes =
@@ -510,6 +513,7 @@ mod tests {
                 ("fictional".into(), 2),
                 ("other".into(), 1),
             ],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -529,6 +533,7 @@ mod tests {
             let initial: Value =
                 serde_json::from_slice(&ws.latest_web_search().unwrap().unwrap().1).unwrap();
             assert_eq!(initial["processed"], 0);
+            assert_eq!(initial["provider"], "http://127.0.0.1:9876/");
             assert_eq!(initial["plan"].as_array().unwrap().len(), 3);
             tx.send(Message::Query(
                 "fictional".into(),
@@ -572,6 +577,7 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -626,6 +632,7 @@ mod tests {
             cancel: stop.clone(),
             total: 2,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -675,6 +682,7 @@ mod tests {
             cancel: stop.clone(),
             total: 3,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -745,6 +753,7 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 3,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -839,6 +848,7 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 1,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -874,6 +884,7 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
@@ -904,6 +915,7 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             plan: vec![],
+            provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
             saved_processed: None,
             checkpoint_failed: false,
