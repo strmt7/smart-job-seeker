@@ -59,6 +59,23 @@ No field was filled, no control clicked and no application submitted. The model
 was unloaded. This small comparison does not establish reliable loading, field
 coverage, visual accuracy, or support for these sites' application flows.
 
+## Advisory mappings on CAPTCHA-marked pages
+
+When an inspected page has fields and its only blocking wall is a detected
+CAPTCHA integration, the form preview can now display model or exact-match
+suggestions as advisory information. It still requires a fresh unblocked
+inspection before filling. The browser UI hides its fill control for this
+preview, and the backend rejects a fill against the old preview even if the
+wall later disappears. A fictional offline test covered both suggestion paths,
+the unchanged and disappeared wall, and an additional login wall. UI helper
+tests covered the fill control. In one subsequent read-only visit to the
+GoGlobal Workable page above, the resource-gated `gemma4:12b-it-qat` model
+received a fictional profile and returned **zero suggestions** for 12 detected
+fields; the CAPTCHA and custom-control review flags remained. The preview was
+blocked from filling both with the existing wall and if it later disappeared.
+No field was filled or clicked, and the model was unloaded. This does not
+solve a CAPTCHA or establish useful mapping coverage on that page.
+
 ## Staged rendering follow-up
 
 If the first inspection is empty, the bounded retry now checks for one unchanged

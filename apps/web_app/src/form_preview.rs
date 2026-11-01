@@ -70,7 +70,12 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
 }
 
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
-    if fresh_walls.iter().any(|wall| !is_custom_review(wall)) {
+    if preview
+        .manual_review
+        .iter()
+        .any(|reason| reason == "captcha present")
+        || fresh_walls.iter().any(|wall| !is_custom_review(wall))
+    {
         return false;
     }
     let mut expected: Vec<_> = preview
@@ -674,9 +679,18 @@ fn build_preview(
     profile: &Value,
     no_model_reason: &str,
 ) -> Result<FormPreview, String> {
-    let blocked =
-        live.walls.iter().any(|wall| !is_custom_review(wall)) || live.schema.fields.is_empty();
+    let captcha_advisory = !live.schema.fields.is_empty()
+        && live.walls.iter().any(|wall| wall == "captcha present")
+        && live
+            .walls
+            .iter()
+            .all(|wall| wall == "captcha present" || is_custom_review(wall));
+    let blocked = live.schema.fields.is_empty()
+        || (!captcha_advisory && live.walls.iter().any(|wall| !is_custom_review(wall)));
     let mut manual_review = live.walls;
+    if captcha_advisory {
+        manual_review.push("CAPTCHA integration detected. Suggestions are for review only; inspect the page again after resolving the obstacle before filling.".into());
+    }
     if live.schema.fields.is_empty() {
         manual_review.push("No form fields were detected; navigation, login, an embedded frame, or manual review may be required".into());
     }
@@ -2466,6 +2480,109 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("captcha")));
         assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    fn captcha_fields_are_advisory_and_require_a_fresh_unblocked_inspection() {
+        struct CompleteModel;
+        impl Inference for CompleteModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                Ok((
+                    json!({"mappings":[{"selector":"#candidate","profile_key":"first_name"}],"manual_review":[]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![waypoint_applications::form_mapping::FormField {
+                    selector: "#candidate".into(),
+                    label: "First name".into(),
+                    field_type: FormFieldType::Text,
+                    required: true,
+                    sensitive: false,
+                    editing_mode: None,
+                    max_length_utf16: None,
+                    autocomplete: Some("given-name".into()),
+                }],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec!["captcha present".into()],
+        };
+        let preview =
+            suggest_without_model(live.clone(), &json!({"first_name":"A"}), "offline").unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("review only")));
+        assert!(!same_reviewable_walls(&preview, &live.walls));
+        assert!(!same_reviewable_walls(&preview, &[]));
+        let modeled =
+            suggest_for_live_form(live.clone(), &mut CompleteModel, &json!({"first_name":"A"}))
+                .unwrap();
+        assert_eq!(modeled.suggestions.len(), 1);
+        assert!(!same_reviewable_walls(&modeled, &[]));
+
+        let mut mixed = live;
+        mixed.walls.push("login required".into());
+        let preview = suggest_without_model(mixed, &json!({"first_name":"A"}), "offline").unwrap();
+        assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    #[ignore = "read-only public page and resource-gated resident local vision-capable model"]
+    fn live_workable_captcha_preview_is_advisory_only() {
+        let model =
+            std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").expect("set the local model name");
+        assert_eq!(
+            crate::resident_model().unwrap().as_deref(),
+            Some(model.as_str())
+        );
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver
+            .open("https://apply.workable.com/goglobal/j/4905C591AD/apply/")
+            .unwrap();
+        assert!(!live.schema.fields.is_empty(), "page has no fields");
+        assert!(live.walls.iter().any(|wall| wall == "captcha present"));
+        let fields = live.schema.fields.len();
+        let mut llm =
+            waypoint_inference::ollama::OllamaInference::new("http://127.0.0.1:11434", model)
+                .unwrap()
+                .with_resident_context();
+        let preview = suggest_for_live_form(
+            live.clone(),
+            &mut llm,
+            &json!({
+                "first_name":"Alex", "last_name":"Example", "email":"alex@example.invalid"
+            }),
+        )
+        .unwrap();
+        println!(
+            "public read-only preview: fields={fields} suggestions={} walls={:?}",
+            preview.suggestions.len(),
+            live.walls
+        );
+        assert!(!same_reviewable_walls(&preview, &live.walls));
+        assert!(!same_reviewable_walls(&preview, &[]));
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
     }
 
     #[test]

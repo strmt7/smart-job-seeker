@@ -1,0 +1,13 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function formAllowsFill(');
+const end = source.indexOf('\n', start);
+assert.ok(start >= 0 && end > start);
+const allows = vm.runInNewContext(`(${source.slice(start, end)})`);
+assert.equal(allows({manual_review: ['captcha present']}), false);
+assert.equal(allows({manual_review: []}), true);
+assert.equal(allows({}), false);
+assert.ok(source.includes('if(formAllowsFill(result) && (result.suggestions.length || manualAnswers.length))'));
+console.log('CAPTCHA advisory fill-control checks passed.');
