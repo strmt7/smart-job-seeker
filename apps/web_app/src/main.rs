@@ -1156,7 +1156,7 @@ fn duplicate_search_inputs_page(
             job.requisition_id.as_deref().unwrap_or(""),
             description
         );
-        let short: String = full.chars().take(1800).collect();
+        let short = duplicate_search::sample_listing(&full);
         let shortened = short.len() < full.len();
         Ok((
             short,

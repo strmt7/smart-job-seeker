@@ -29,6 +29,23 @@ struct SearchResult {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+const OMITTED: &str = "\n[... omitted ...]\n";
+
+/// Keep the listing header and samples from later sections within a fixed
+/// character budget. The separator is not evidence from the original ad.
+pub(crate) fn sample_listing(text: &str) -> String {
+    let length = text.chars().count();
+    if length <= 1800 {
+        return text.to_owned();
+    }
+    let middle = length / 2;
+    let mut sample: String = text.chars().take(900).collect();
+    sample.push_str(OMITTED);
+    sample.extend(text.chars().skip(middle - 200).take(400));
+    sample.push_str(OMITTED);
+    sample.extend(text.chars().skip(length - 400));
+    sample
+}
 pub fn pending() -> Result<Value, String> {
     let task = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
     Ok(match task.as_ref() {
@@ -258,7 +275,7 @@ fn validate(
                 .as_str()
                 .filter(|s| !s.trim().is_empty() && s.len() <= 400)
                 .ok_or("Missing excerpt")?;
-            if !source.contains(text) {
+            if !source.split(OMITTED).any(|segment| segment.contains(text)) {
                 return Err("Model quoted text not present in a listing".into());
             }
             Ok(text.to_owned())
@@ -272,6 +289,24 @@ mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn samples_later_sections_without_treating_omissions_as_evidence() {
+        let listing = format!(
+            "{}MIDDLE-DUTY{}TAIL-REF",
+            "名".repeat(1200),
+            "職".repeat(1200)
+        );
+        let sample = sample_listing(&listing);
+        assert!(sample.contains("MIDDLE-DUTY"));
+        assert!(sample.ends_with("TAIL-REF"));
+        assert!(sample.chars().count() < 1800);
+        assert_eq!(sample_listing("A short listing"), "A short listing");
+        let candidates = vec![("id".into(), sample.clone())];
+        let valid = json!({"matches":[{"index":1,"reason":"same duties","target_excerpt":"MIDDLE-DUTY","candidate_excerpt":"TAIL-REF"}]});
+        assert!(validate(&valid, &sample, &candidates).is_ok());
+        let invalid = json!({"matches":[{"index":1,"reason":"fixture","target_excerpt":"[... omitted ...]","candidate_excerpt":"TAIL-REF"}]});
+        assert!(validate(&invalid, &sample, &candidates).is_err());
+    }
     #[test]
     fn oversized_unicode_and_escaped_listings_are_bounded_and_evidence_is_limited() {
         struct Empty {
@@ -325,17 +360,17 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_context_digest_tracks_source_beyond_model_prefix() {
-        fn inputs(suffix: &str) -> Inputs {
+    fn duplicate_context_digest_tracks_source_outside_model_sample() {
+        fn inputs(omitted: &str) -> Inputs {
             let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
-            let description = format!("{} {suffix}", "x".repeat(2000));
+            let description = format!("{}{omitted}{}", "x".repeat(1100), "x".repeat(3000));
             let first = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/a","title":"Research Scientist","employer":"Example Labs","description":description}), 1).unwrap();
             crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/b","title":"Office Administrator","employer":"Example Labs"}), 1).unwrap();
             let id = waypoint_domain::JobIdentityId::new(first["id"].as_str().unwrap()).unwrap();
             crate::duplicate_search_inputs(&ws, &id).unwrap()
         }
-        let a = inputs("first suffix");
-        let b = inputs("second suffix");
+        let a = inputs("first");
+        let b = inputs("other");
         assert_eq!(a.target, b.target);
         assert_ne!(a.digest, b.digest);
         assert_eq!(a.source_texts_shortened, 1);
