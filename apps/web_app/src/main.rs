@@ -244,14 +244,16 @@ fn fit_inputs(
     Ok((facts, instructions, listing, digest))
 }
 
-/// Bind the full bounded fact inventory, not just the pool selected for the
-/// model, so edits outside the pool invalidate a saved assessment too.
+/// Bind all active facts while keeping the model's evidence pool bounded.
+/// Omitted facts invalidate prior assessments but are not evaluated by the model.
 fn fit_assessment_inputs(
     ws: &Workspace,
     job_id: &JobIdentityId,
 ) -> Result<(Vec<String>, usize, String, String, String), String> {
     let (facts, instructions) = fit_candidate_context(ws)?;
-    let (pool, listing, digest) = fit_assessment_digest(ws, job_id, &facts, &instructions)?;
+    let facts_digest = ws.active_facts_digest().map_err(|e| e.to_string())?;
+    let (pool, listing, digest) =
+        fit_assessment_digest(ws, job_id, &facts, &instructions, &facts_digest)?;
     Ok((pool, facts.len(), instructions, listing, digest))
 }
 
@@ -260,6 +262,7 @@ fn fit_assessment_digest(
     job_id: &JobIdentityId,
     facts: &[String],
     instructions: &str,
+    facts_digest: &str,
 ) -> Result<(Vec<String>, String, String), String> {
     let (_, listing, _) = fit_listing_digest(ws, job_id, facts, instructions)?;
     let pool = fit_semantic_pool(facts, &listing);
@@ -272,7 +275,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile["instructions"].as_str().unwrap_or("");
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v43","facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v44","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
@@ -553,17 +556,21 @@ fn read_fit(ws: &Workspace, job_id: &JobIdentityId) -> Result<Value, String> {
 fn read_fit_with_context(
     ws: &Workspace,
     job_id: &JobIdentityId,
-    context: &mut Option<(Vec<String>, String)>,
+    context: &mut Option<(Vec<String>, String, String)>,
 ) -> Result<Value, String> {
     match ws.fit_assessment(job_id).map_err(|e| e.to_string())? {
         Some(data) => {
             let value: Value =
                 serde_json::from_slice(&data).map_err(|_| "Stored assessment is invalid")?;
             if context.is_none() {
-                *context = Some(fit_candidate_context(ws)?);
+                let (facts, instructions) = fit_candidate_context(ws)?;
+                let facts_digest = ws.active_facts_digest().map_err(|e| e.to_string())?;
+                *context = Some((facts, instructions, facts_digest));
             }
-            let (facts, instructions) = context.as_ref().ok_or("Candidate context unavailable")?;
-            let (_, _, digest) = fit_assessment_digest(ws, job_id, facts, instructions)?;
+            let (facts, instructions, facts_digest) =
+                context.as_ref().ok_or("Candidate context unavailable")?;
+            let (_, _, digest) =
+                fit_assessment_digest(ws, job_id, facts, instructions, facts_digest)?;
             if value["input_digest"].as_str() == Some(digest.as_str()) {
                 let mut assessment = value["assessment"].clone();
                 if !assessment.is_object() {
@@ -6556,11 +6563,15 @@ mod tests {
         let mut facts: Vec<_> = (0..120)
             .map(|i| format!("Fictional qualification {i}"))
             .collect();
-        let (pool, _, before) = fit_assessment_digest(&ws, &id, &facts, "").unwrap();
+        let (pool, _, before) =
+            fit_assessment_digest(&ws, &id, &facts, "", &ws.active_facts_digest().unwrap())
+                .unwrap();
         assert!(pool.len() <= 60);
         let omitted = facts.iter().position(|fact| !pool.contains(fact)).unwrap();
         facts[omitted].push_str(" corrected");
-        let (_, _, after) = fit_assessment_digest(&ws, &id, &facts, "").unwrap();
+        let (_, _, after) =
+            fit_assessment_digest(&ws, &id, &facts, "", &ws.active_facts_digest().unwrap())
+                .unwrap();
         assert_ne!(before, after);
     }
 
@@ -7123,6 +7134,32 @@ mod tests {
         ws.correct_fact(&new_fact, "Corrected reviewed fact", 2)
             .unwrap();
         assert_ne!(added, ws.active_facts_digest().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn saved_fit_becomes_stale_when_omitted_long_fact_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.add_fact("Fictional reviewed qualification", FactOrigin::UserAttested)
+            .unwrap();
+        let (before_pool, _, _, _, before) = fit_assessment_inputs(&ws, &id).unwrap();
+        ws.save_fit_assessment(
+            &id,
+            json!({"input_digest":before,"assessment":{"score":73},"model":"fixture"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(read_fit(&ws, &id).unwrap()["status"], "current");
+        ws.add_fact(&"Long qualification ".repeat(100), FactOrigin::UserAttested)
+            .unwrap();
+        let (after_pool, _, _, _, after) = fit_assessment_inputs(&ws, &id).unwrap();
+        assert_eq!(before_pool, after_pool);
+        assert_ne!(before, after);
+        assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
     }
 
     #[cfg(windows)]
