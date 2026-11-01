@@ -51,3 +51,36 @@ fn live_lever_board_parses() {
     assert!(parsed.iter().all(|p| p.identity.starts_with("lever::")));
     eprintln!("lever live rows: {}", parsed.len());
 }
+
+#[test]
+#[ignore = "requires a separately captured public Lever API response"]
+fn captured_lever_workplace_metadata_matches_payload() {
+    let path = std::env::var("WAYPOINT_LEVER_CAPTURE").expect("capture path");
+    let body = std::fs::read_to_string(path).unwrap();
+    let raw: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    let parsed = parse_lever("spotify", &body).unwrap();
+    assert_eq!(parsed.len(), raw.len());
+    let mut checked = 0;
+    for (row, source) in parsed.iter().zip(raw.iter()) {
+        let nested = source
+            .pointer("/categories/workplaceType")
+            .and_then(|v| v.as_str());
+        if nested.is_some_and(|value| !value.trim().is_empty()) {
+            continue;
+        }
+        let expected = match source["workplaceType"]
+            .as_str()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("remote") => Some(true),
+            Some("on-site" | "onsite") => Some(false),
+            _ => None,
+        };
+        assert_eq!(row.remote_evidence, expected);
+        checked += 1;
+    }
+    assert!(checked > 0);
+    println!("Compared {checked} captured public postings");
+}

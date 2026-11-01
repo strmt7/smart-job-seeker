@@ -78,6 +78,8 @@ struct LeverPosting {
     categories: LeverCategories,
     #[serde(default, rename = "hostedUrl")]
     hosted_url: String,
+    #[serde(default, rename = "workplaceType")]
+    workplace_type: Option<String>,
     #[serde(default, rename = "createdAt")]
     created_at: Option<i64>,
     #[serde(default, rename = "descriptionPlain")]
@@ -253,30 +255,38 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
         .map_err(|e| ConnectorError::Parse(format!("lever list: {e}")))?;
     Ok(jobs
         .into_iter()
-        .map(|j| RawPosting {
-            identity: identity_key("lever", Some(&j.id), &j.hosted_url),
-            source: "lever".into(),
-            source_url: j.hosted_url.clone(),
-            requisition_id: Some(j.id.clone()),
-            employer_namespace: company.to_string(),
-            title: j.text,
-            employer: company.to_string(),
-            location: j.categories.location,
-            remote: j.categories.workplace_type.eq_ignore_ascii_case("remote"),
-            remote_evidence: match j
-                .categories
+        .map(|j| {
+            let top = j
                 .workplace_type
-                .trim()
-                .to_ascii_lowercase()
-                .as_str()
-            {
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let nested = Some(j.categories.workplace_type.trim()).filter(|value| !value.is_empty());
+            let workplace = match (top, nested) {
+                (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b) => None,
+                (Some(value), _) | (None, Some(value)) => Some(value),
+                _ => None,
+            };
+            let evidence = workplace.and_then(|value| match value.to_ascii_lowercase().as_str() {
                 "remote" => Some(true),
                 "on-site" | "onsite" => Some(false),
                 _ => None,
-            },
-            posted_at: j.created_at.map(|ms| format!("unix:{ms}")),
-            description: j.description_plain.as_deref().map(description_text),
-            content_hash_source: format!("lv://{company}/{}", j.id),
+            });
+            RawPosting {
+                identity: identity_key("lever", Some(&j.id), &j.hosted_url),
+                source: "lever".into(),
+                source_url: j.hosted_url.clone(),
+                requisition_id: Some(j.id.clone()),
+                employer_namespace: company.to_string(),
+                title: j.text,
+                employer: company.to_string(),
+                location: j.categories.location,
+                remote: evidence == Some(true),
+                remote_evidence: evidence,
+                posted_at: j.created_at.map(|ms| format!("unix:{ms}")),
+                description: j.description_plain.as_deref().map(description_text),
+                content_hash_source: format!("lv://{company}/{}", j.id),
+            }
         })
         .collect())
 }
@@ -548,6 +558,28 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].remote);
         assert_eq!(out[0].identity, "lever::req::abc-123");
+    }
+
+    #[test]
+    fn lever_top_level_workplace_type_is_preserved_without_guessing() {
+        let data = r#"[
+          {"id":"a","text":"Engineer","hostedUrl":"https://jobs.lever.co/example/a","workplaceType":"remote"},
+          {"id":"b","text":"Engineer","hostedUrl":"https://jobs.lever.co/example/b","workplaceType":"on-site"},
+          {"id":"c","text":"Engineer","hostedUrl":"https://jobs.lever.co/example/c","workplaceType":"hybrid"},
+          {"id":"d","text":"Engineer","hostedUrl":"https://jobs.lever.co/example/d"},
+          {"id":"e","text":"Engineer","hostedUrl":"https://jobs.lever.co/example/e","workplaceType":"remote","categories":{"workplaceType":"on-site"}}
+        ]"#;
+        let rows = parse_lever("example", data).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.remote_evidence)
+                .collect::<Vec<_>>(),
+            vec![Some(true), Some(false), None, None, None]
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.remote).collect::<Vec<_>>(),
+            vec![true, false, false, false, false]
+        );
     }
 
     #[test]

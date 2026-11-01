@@ -21,7 +21,7 @@ fn greenhouse_payload(title: &str) -> String {
 fn lever_payload() -> String {
     // Field names mirror Lever's real payload (camelCase).
     r#"[{"id":"lv-1","text":"Site Reliability Engineer","hostedUrl":"https://jobs.lever.co/spotify/lv-1",
-        "categories":{"location":"Stockholm","workplaceType":"remote"},"createdAt":1758900000000}]"#
+        "categories":{"location":"Stockholm"},"workplaceType":"remote","createdAt":1758900000000}]"#
         .to_string()
 }
 
