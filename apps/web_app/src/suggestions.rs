@@ -1368,7 +1368,7 @@ mod tests {
             crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
         use waypoint_applications::driver::BrowserDriver;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../crates/waypoint_browser/tests/fixtures/form_contact_sections.html")
+            .join("../../crates/waypoint_browser/tests/fixtures/form_contact_named_groups.html")
             .canonicalize()
             .unwrap();
         let url = url::Url::from_file_path(path).unwrap().to_string();
@@ -1382,7 +1382,7 @@ mod tests {
             .fields
             .iter()
             .any(|field| field.selector == "#reference"
-                && field.label == "Professional reference — Email"));
+                && field.label == "Professional reference — Contact details — Email"));
         let offline = suggest_exact(&schema, &json!({"email":"avery@example.invalid"})).unwrap();
         assert!(!offline
             .iter()

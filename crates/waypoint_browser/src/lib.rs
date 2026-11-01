@@ -1401,7 +1401,7 @@ impl CdpDriver {
         let mut labels: HashMap<String, String> = HashMap::new();
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
-        let mut field_containers: HashMap<u64, (String, Option<String>)> = HashMap::new();
+        let mut field_containers: HashMap<u64, Vec<(String, Option<String>)>> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
@@ -1622,11 +1622,14 @@ impl CdpDriver {
                     });
                 }
             }
-            if tag == "fieldset"
+            let named_field_group = tag == "fieldset"
                 || attrs
                     .get("role")
-                    .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"))
-            {
+                    .is_some_and(|role| role.eq_ignore_ascii_case("group"));
+            let radio_group = attrs
+                .get("role")
+                .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"));
+            if named_field_group || radio_group {
                 let legend = if tag == "fieldset" {
                     attrs
                         .get("aria-label")
@@ -1665,14 +1668,17 @@ impl CdpDriver {
                             .and_then(Value::as_str)
                             .unwrap_or("")
                             .to_ascii_lowercase();
-                        if tag == "fieldset"
+                        if named_field_group
                             && matches!(child_tag.as_str(), "input" | "textarea" | "select")
                         {
                             if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
-                                field_containers.insert(id, (legend.clone(), group_ref.clone()));
+                                let groups = field_containers.entry(id).or_default();
+                                if groups.len() < 9 {
+                                    groups.push((legend.clone(), group_ref.clone()));
+                                }
                             }
                         }
-                        if child_tag == "input" {
+                        if child_tag == "input" && (tag == "fieldset" || radio_group) {
                             if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
                                 radio_containers
                                     .insert(id, (fieldset_id, legend.clone(), group_ref.clone()));
@@ -1951,7 +1957,11 @@ impl CdpDriver {
         for group_ref in radio_containers
             .values()
             .map(|(_, _, group_ref)| group_ref)
-            .chain(field_containers.values().map(|(_, group_ref)| group_ref))
+            .chain(
+                field_containers
+                    .values()
+                    .flat_map(|groups| groups.iter().map(|(_, group_ref)| group_ref)),
+            )
         {
             if let Some(ids) = group_ref.as_ref().filter(|s| s.len() <= 512) {
                 for id in ids.split_whitespace().take(16) {
@@ -2063,35 +2073,51 @@ impl CdpDriver {
                 })
                 .unwrap_or_else(|| "unlabelled field".into());
             if input_type != "radio" {
-                if let Some((legend, group_ref)) = field_containers.get(&control.node_id) {
-                    let group = if let Some(ids) = group_ref {
-                        let parts: Vec<_> = ids.split_whitespace().collect();
-                        if ids.len() <= 512 && !parts.is_empty() && parts.len() <= 16 {
-                            parts
-                                .iter()
-                                .map(|id| referenced.get(*id).and_then(Option::as_ref))
-                                .collect::<Option<Vec<_>>>()
-                                .map(|parts| {
-                                    parts
-                                        .into_iter()
-                                        .map(String::as_str)
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                })
+                if let Some(groups) = field_containers.get(&control.node_id) {
+                    if groups.len() > 8 {
+                        walls.push("field group nesting exceeds the inspection limit".into());
+                    }
+                    let mut context = Vec::new();
+                    for (legend, group_ref) in groups.iter().take(8) {
+                        let group = if let Some(ids) = group_ref {
+                            let parts: Vec<_> = ids.split_whitespace().collect();
+                            if ids.len() <= 512 && !parts.is_empty() && parts.len() <= 16 {
+                                parts
+                                    .iter()
+                                    .map(|id| referenced.get(*id).and_then(Option::as_ref))
+                                    .collect::<Option<Vec<_>>>()
+                                    .map(|parts| {
+                                        parts
+                                            .into_iter()
+                                            .map(String::as_str)
+                                            .collect::<Vec<_>>()
+                                            .join(" ")
+                                    })
+                            } else {
+                                None
+                            }
                         } else {
-                            None
+                            Some(legend.clone())
+                        };
+                        match group.filter(|group| !group.trim().is_empty() && group.len() <= 500) {
+                            Some(group)
+                                if !label.eq_ignore_ascii_case(&group)
+                                    && !context.iter().any(|existing: &String| {
+                                        existing.eq_ignore_ascii_case(&group)
+                                    }) =>
+                            {
+                                context.push(group)
+                            }
+                            Some(_) => {}
+                            None => walls.push(
+                                "a field group has an unresolved or ambiguous accessible label"
+                                    .into(),
+                            ),
                         }
-                    } else {
-                        Some(legend.clone())
-                    };
-                    match group.filter(|group| !group.trim().is_empty() && group.len() <= 500) {
-                        Some(group) if !label.eq_ignore_ascii_case(&group) => {
-                            label = format!("{group} — {label}")
-                        }
-                        Some(_) => {}
-                        None => walls.push(
-                            "a field group has an unresolved or ambiguous accessible label".into(),
-                        ),
+                    }
+                    if !context.is_empty() {
+                        context.push(label);
+                        label = context.join(" — ");
                     }
                 }
             }
