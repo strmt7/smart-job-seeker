@@ -144,6 +144,18 @@ mod tests {
             .contains("description overlap 100%"));
     }
     #[test]
+    fn manual_intake_flags_matching_requisition_and_description_across_employers() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let description = "Analyze genomic sequencing data using Python and statistical methods collaborate with research teams prepare reproducible results manage experiments communicate findings across interdisciplinary scientific projects and maintain accurate documentation daily";
+        let first = add(&mut ws, &json!({"url":"https://example.org/jobs/one","title":"Computational biologist","employer":"Alpha Institute","requisition_id":"REQ-481","description":description}), 1).unwrap();
+        let second = add(&mut ws, &json!({"url":"https://example.net/jobs/two","title":"Genomics specialist","employer":"Beta Staffing","requisition_id":"req-481","description":description}), 2).unwrap();
+        let a = JobIdentityId::new(first["id"].as_str().unwrap()).unwrap();
+        let b = JobIdentityId::new(second["id"].as_str().unwrap()).unwrap();
+        assert!(ws.has_duplicate_hold(&a).unwrap());
+        assert!(ws.has_duplicate_hold(&b).unwrap());
+        assert_eq!(ws.possible_duplicates().unwrap().len(), 1);
+    }
+    #[test]
     fn import_deduplicates_without_resetting_state_and_preserves_description() {
         let mut ws = Workspace::in_memory().unwrap();
         let body = json!({"url":"https://example.com/jobs/1","title":"Engineer","employer":"Example","description":"Rust and SQL"});
