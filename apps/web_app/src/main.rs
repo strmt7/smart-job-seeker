@@ -4024,7 +4024,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"status":"complete","fields":preview.fields_for_review(),"repeated_label_selectors":preview.repeated_label_selectors(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                json!({"status":"complete","fields":preview.fields_for_review(),"model_review_selectors":preview.model_review_selectors,"repeated_label_selectors":preview.repeated_label_selectors(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
             );
             *session = Some(ReviewSession {
                 id: session_id,
@@ -5281,7 +5281,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","fields":current.preview.fields_for_review(),"repeated_label_selectors":current.preview.repeated_label_selectors(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                        json!({"status":"complete","fields":current.preview.fields_for_review(),"model_review_selectors":current.preview.model_review_selectors,"repeated_label_selectors":current.preview.repeated_label_selectors(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
                     );
                     *session = Some(current);
                 }

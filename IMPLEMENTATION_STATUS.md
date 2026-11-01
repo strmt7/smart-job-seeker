@@ -1064,3 +1064,7 @@ A prompt variant explicitly clarifying applicant phone fields was evaluated once
 ### Live mapping test integrity (2026-11-01)
 
 A subsequent live preview returned no suggestions because a changing page blocked inference, but the previous test still passed. The read-only test now requires a completed model response and records the prompt and response for its fictional profile; it may request one fresh read-only inspection after a stale-node warning. In one such run, the raw model response explicitly put the live `Phone` field in manual review. A prompt variant explaining `autocomplete=off` did not change that response in one run and was discarded. The cause remains unproven, and no phone-mapping improvement is claimed. The model was resource-gated and unloaded afterward. No field was entered, control clicked, or application submitted. Web Clippy and formatting passed.
+
+### Manual field review explanation (2026-11-01)
+
+Initial and rescanned form responses now identify selectors needing model review or affected by unavailable model review. The interface explains that AI review needs attention and directs the user to the browser; other sensitive fields retain a separate manual-handling message. The same server-side restrictions still apply. A focused UI check, 19 form-preview unit tests, web Clippy and formatting passed. The new explanation has not been observed in a rendered browser. No application was submitted.

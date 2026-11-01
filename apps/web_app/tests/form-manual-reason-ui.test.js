@@ -1,0 +1,14 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function formFieldManualNotice('));
+assert.ok(line);
+const notice = vm.runInNewContext(`(${line})`);
+const phone = {selector:'#phone', label:'Phone', sensitive:true, required:true};
+assert.match(notice(phone, {model_review_selectors:['#phone']}), /AI review requires attention or was unavailable/);
+assert.match(notice(phone, {}), /manual handling in the browser/);
+assert.match(notice({...phone, sensitive:false}, {}), /Needs an answer/);
+assert.match(notice({...phone, sensitive:false, required:false}, {}), /Not mapped/);
+assert.ok(source.includes("formFieldManualNotice(field,result)"));
+console.log('Manual field reason checks passed.');
