@@ -11,12 +11,14 @@ vm.runInNewContext(source.slice(start, end), context);
 const panel = element('div');
 context.renderAttemptAnswers(panel, {available:true, unreadable:1, truncated:false, items:[
   {file:'answers/0000.json', data:{type:'fields_inspected',origin:'https://example.invalid',fields:[{question:'Work authorization',required:true,sensitive:true,field_type:{select:{options:['Yes','No']}}}],omitted:2}},
-  {file:'answers/0001.json', data:{type:'fields_requested', fields:[{question:'Name',value:{text:'Fictional Candidate'}}]}},
+  {file:'answers/0001.json', data:{type:'fields_requested', fields:[{question:'Name',value:{text:'Fictional Candidate'}},{question:'Cover letter',value:{text:'Edited letter'},source_cover_letter_draft:{edited:true}}]}},
   {file:'answers/0002.json', data:{type:'fill_incomplete',answer_file:'answers/0001.json',completed_commands:[{label:'Name'}]}}
 ]});
 const text = panel.children.flatMap(item => [item.text, ...item.children.map(child => child.text)]).join('\n');
 assert.match(text, /Fictional Candidate/);
 assert.match(text, /Name: Fictional Candidate/);
+assert.match(text, /answer was edited/);
+assert.match(text, /evidence applies only to the original text/);
 assert.doesNotMatch(text, /\{"text"/);
 assert.match(text, /Fill interrupted/);
 assert.match(text, /current values are unconfirmed/);
