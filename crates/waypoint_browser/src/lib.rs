@@ -941,7 +941,7 @@ impl CdpDriver {
             const visibleNode = this instanceof HTMLInputElement && this.type === 'file' ? this.parentElement : this;
             if (!visibleNode) return null;
             const style = getComputedStyle(visibleNode);
-            let needsReview = false;
+            let needsReview = false, outsideScrollArea = false;
             const rect = visibleNode.getBoundingClientRect();
             let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
             for (let node = visibleNode, depth = 0; node; node = node.parentElement) {
@@ -950,6 +950,9 @@ impl CdpDriver {
                 if (Number(ancestorStyle.opacity) === 0) needsReview = true;
                 if (node !== visibleNode) {
                     const box = node.getBoundingClientRect();
+                    const centerX = (rect.left + rect.right) / 2, centerY = (rect.top + rect.bottom) / 2;
+                    if (['auto', 'scroll'].includes(ancestorStyle.overflowX) && (centerX < box.left + node.clientLeft || centerX >= box.left + node.clientLeft + node.clientWidth)) outsideScrollArea = true;
+                    if (['auto', 'scroll'].includes(ancestorStyle.overflowY) && (centerY < box.top + node.clientTop || centerY >= box.top + node.clientTop + node.clientHeight)) outsideScrollArea = true;
                     if (['hidden', 'clip'].includes(ancestorStyle.overflowX)) {
                         left = Math.max(left, box.left + node.clientLeft);
                         right = Math.min(right, box.left + node.clientLeft + node.clientWidth);
@@ -962,7 +965,15 @@ impl CdpDriver {
             }
             // A partly hidden answer cannot be visually reviewed in full.
             // Allow subpixel layout rounding without treating it as clipping.
-            if (right <= left || bottom <= top || left > rect.left + 0.5 || right < rect.right - 0.5 || top > rect.top + 0.5 || bottom < rect.bottom - 0.5) needsReview = true;
+            if (rect.width > 0 && rect.height > 0 && (right <= left || bottom <= top || left > rect.left + 0.5 || right < rect.right - 0.5 || top > rect.top + 0.5 || bottom < rect.bottom - 0.5)) needsReview = true;
+            // Hit-test only an in-viewport center. Offscreen and unscrolled controls
+            // are checked again after focusing or scrolling.
+            const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
+            if (!needsReview && !outsideScrollArea && (this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || (this instanceof HTMLInputElement && this.type !== 'file')) && rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight) {
+                const root = visibleNode.getRootNode();
+                const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x, y) : null;
+                if (!hit || (hit !== visibleNode && !visibleNode.contains(hit))) needsReview = true;
+            }
             const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !needsReview;
             const parts = []; let current = this;
             while (current && current.nodeType === 1) {

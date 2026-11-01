@@ -120,6 +120,26 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
     driver
         .verify_text_value("#focus-clipped", "Example")
         .unwrap();
+    for selector in ["#covered", "#focus-covered"] {
+        assert!(driver
+            .execute(&BrowserCommand::Fill {
+                selector: selector.into(),
+                value: PacketValue::Text("Changed".into())
+            })
+            .is_err());
+        let reveal = if selector == "#covered" {
+            "#reveal-overlay"
+        } else {
+            "#reveal-focus-overlay"
+        };
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: reveal.into(),
+                value: PacketValue::Text("reveal".into()),
+            })
+            .unwrap();
+        driver.verify_text_value(selector, "Example").unwrap();
+    }
     driver.verify_text_value("#visible", "Example").unwrap();
     driver.verify_text_value("#offscreen", "Example").unwrap();
     driver
