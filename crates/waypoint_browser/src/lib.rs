@@ -194,6 +194,30 @@ fn ascii_key(character: char) -> Option<(String, u32, u32, char)> {
     None
 }
 
+/// Split long text at spaces without splitting Unicode characters or words.
+/// Bound the number of browser round trips and leave long unbroken text intact.
+fn text_segments(text: &str) -> Vec<&str> {
+    const TARGET_BYTES: usize = 64;
+    const MAX_SEGMENTS: usize = 8;
+    let mut segments = Vec::new();
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        let end = index + character.len_utf8();
+        if character == ' '
+            && end - start >= TARGET_BYTES
+            && segments.len() < MAX_SEGMENTS - 1
+            && end < text.len()
+        {
+            segments.push(&text[start..end]);
+            start = end;
+        }
+    }
+    if start < text.len() {
+        segments.push(&text[start..]);
+    }
+    segments
+}
+
 /// This is only a hint to request manual navigation, never authorization to click.
 fn possible_next_label(label: &str) -> bool {
     let normalized = label
@@ -3885,9 +3909,12 @@ impl CdpDriver {
                         self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":key,"code":code,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
                     }
                 } else {
-                    self.cdp
-                        .call("Input.insertText", json!({ "text": t }))
-                        .map_err(derr)?;
+                    for segment in text_segments(t) {
+                        self.ensure_text_focus(node, object)?;
+                        self.cdp
+                            .call("Input.insertText", json!({ "text": segment }))
+                            .map_err(derr)?;
+                    }
                 }
                 let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
@@ -5508,6 +5535,18 @@ mod traversal_tests {
         }
         assert_eq!(ascii_key('@'), Some(("Digit2".into(), 50, 8, '2')));
         assert_eq!(ascii_key('A'), Some(("KeyA".into(), 65, 8, 'a')));
+    }
+
+    #[test]
+    fn long_text_segments_preserve_content_and_bound_round_trips() {
+        let text = "Résumé 🧭 and relevant experience. ".repeat(100);
+        let segments = text_segments(&text);
+        assert_eq!(segments.concat(), text);
+        assert_eq!(segments.len(), 8);
+        assert!(segments[..7].iter().all(|segment| segment.ends_with(' ')));
+        let unbroken = "é".repeat(100);
+        assert_eq!(text_segments(&unbroken), vec![unbroken.as_str()]);
+        assert!(text_segments("").is_empty());
     }
 
     #[test]

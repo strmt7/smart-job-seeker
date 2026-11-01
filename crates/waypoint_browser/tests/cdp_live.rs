@@ -1295,6 +1295,11 @@ fn text_entry_emits_keys_and_stops_when_focus_moves() {
     let unicode = "Renée 🧭";
     driver.execute(&fill("#name", unicode)).unwrap();
     driver.verify_text_value("#name", unicode).unwrap();
+    let long = "Relevant experience with international teams and résumé review. 🧭 ".repeat(3);
+    driver.execute(&fill("#name", &long)).unwrap();
+    driver.verify_text_value("#name", &long).unwrap();
+    assert!(driver.execute(&fill("#long-redirect", &long)).is_err());
+    driver.verify_text_value("#other", "").unwrap();
     assert!(driver.execute(&fill("#redirect", "xyz")).is_err());
     driver.verify_text_value("#other", "").unwrap();
     let (text, _) = driver.page_text_bounded(2000).unwrap();

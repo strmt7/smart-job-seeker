@@ -4,6 +4,7 @@
   <label for="name">Name</label><input id="name">
   <label for="redirect">Redirecting field</label><input id="redirect">
   <label for="other">Other field</label><input id="other">
+  <label for="long-redirect">Long redirecting field</label><textarea id="long-redirect"></textarea>
   <output id="events"></output><output id="submitted">NOT SUBMITTED</output>
   <button type="submit">Submit</button>
 </form>
@@ -14,6 +15,9 @@ document.querySelector('#name').addEventListener('keydown', event => {
 });
 document.querySelector('#redirect').addEventListener('keydown', event => {
   if (event.key === 'x') document.querySelector('#other').focus();
+});
+document.querySelector('#long-redirect').addEventListener('input', () => {
+  document.querySelector('#other').focus();
 });
 </script>
 </body></html>
