@@ -61,6 +61,21 @@ fn comparison(label: &str, ambiguous: bool, items: &[String]) -> &'static str {
         _ => "ambiguous",
     }
 }
+
+/// A capture is current only when both surrounding page inventories agree
+/// with the original and the captured pixels match the reviewed image.
+pub fn capture_is_current(
+    expected_snapshot: Option<&str>,
+    before: Option<&str>,
+    after: Option<&str>,
+    image_hash: Option<&str>,
+    image: Option<&str>,
+) -> bool {
+    expected_snapshot.is_some()
+        && before == expected_snapshot
+        && after == expected_snapshot
+        && crate::visual_review::image_freshness(image_hash, image) == "same"
+}
 pub fn pending() -> Result<Value, String> {
     let mut task = TASK.lock().map_err(|_| "Control vision unavailable")?;
     if task
@@ -269,6 +284,31 @@ mod tests {
             comparison("Continue", true, &["Continue".into()]),
             "ambiguous"
         );
+    }
+
+    #[test]
+    fn capture_requires_unchanged_page_on_both_sides_and_matching_pixels() {
+        let image = "fixture-image";
+        let hash = waypoint_domain::Sha256Digest::of(image).as_str().to_owned();
+        let current = |before, after, pixels| {
+            capture_is_current(Some("original"), before, after, Some(&hash), pixels)
+        };
+        assert!(current(Some("original"), Some("original"), Some(image)));
+        assert!(!current(Some("original"), Some("changed"), Some(image)));
+        assert!(!current(Some("changed"), Some("original"), Some(image)));
+        assert!(!current(Some("original"), None, Some(image)));
+        assert!(!current(
+            Some("original"),
+            Some("original"),
+            Some("changed")
+        ));
+        assert!(!capture_is_current(
+            None,
+            None,
+            None,
+            Some(&hash),
+            Some(image)
+        ));
     }
 
     #[test]

@@ -3715,12 +3715,16 @@ fn serve(
                                 .with_review_timeout(|driver| driver.screenshot_control(selector))
                                 .ok()
                         });
-                        let same = current_snapshot.as_deref()
-                            == result["snapshot_digest"].as_str()
-                            && visual_review::image_freshness(
-                                result["image_hash"].as_str(),
-                                image.as_deref(),
-                            ) == "same";
+                        let final_snapshot = control_rank::snapshot(&mut current.driver)
+                            .ok()
+                            .map(|(_, digest)| digest);
+                        let same = control_vision::capture_is_current(
+                            result["snapshot_digest"].as_str(),
+                            current_snapshot.as_deref(),
+                            final_snapshot.as_deref(),
+                            result["image_hash"].as_str(),
+                            image.as_deref(),
+                        );
                         let previously_stale = result["comparison"] == "stale";
                         if !same || previously_stale {
                             result["comparison"] = json!("stale");
