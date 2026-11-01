@@ -2606,9 +2606,9 @@ fn serve(
                     {
                         let reason = if job["extraction"] == "local_model" {
                             if job["page_text_truncated"] == true {
-                                "Review locally extracted listing; page text was truncated and application route is unverified"
+                                "Review locally extracted listing: the page may contain multiple roles, page text was truncated, and the application route is unverified"
                             } else {
-                                "Review locally extracted listing and unverified application route"
+                                "Review locally extracted listing: the page may contain multiple roles and the application route is unverified"
                             }
                         } else {
                             "Review structured listing and unverified application route"
@@ -2641,7 +2641,15 @@ fn serve(
                                 || (capture["saved"] == true
                                     && capture["preserved_existing"] != true))
                     });
-                    let response = json!({"status":"complete","job":job,"saved":result,"capture":capture,"search_context_saved":search_context_saved});
+                    let role_suggestions_saved = job["other_roles_status"].is_string().then(|| {
+                        inspected.capture.metadata["extraction_provenance"]["other_roles_status"]
+                            .is_string()
+                            && (capture["source_saved"] == true
+                                || (capture["saved"] == true
+                                    && capture["preserved_existing"] != true
+                                    && matches!(ws.job_source_only(&job_id), Ok(None))))
+                    });
+                    let response = json!({"status":"complete","job":job,"saved":result,"capture":capture,"search_context_saved":search_context_saved,"role_suggestions_saved":role_suggestions_saved});
                     candidate_task::complete(id, response.clone())?;
                     json_reply(stream, "200 OK", response);
                 }

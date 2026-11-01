@@ -19,6 +19,30 @@ fn input<'a>(body: &'a Value, key: &str, max: usize, required: bool) -> Result<&
 fn host_matches(host: &str, domain: &str) -> bool {
     host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
 }
+
+fn same_identity_text(a: &str, b: &str) -> bool {
+    let normalize = |value: &str| {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    normalize(a) == normalize(b)
+}
+
+fn check_shared_url_identity(
+    existing: &StoredJob,
+    title: &str,
+    employer: &str,
+) -> Result<(), String> {
+    if !same_identity_text(&existing.title, title)
+        || !same_identity_text(&existing.employer, employer)
+    {
+        return Err("This URL is already associated with a different title or employer. Review the saved listing: one careers page may contain multiple roles, or the descriptions may refer to the same role.".into());
+    }
+    Ok(())
+}
 pub fn source(host: &str) -> &'static str {
     for (domain, source) in [
         ("linkedin.com", "linkedin"),
@@ -68,6 +92,7 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
             .job(&key)
             .map_err(|e| e.to_string())?
             .ok_or("Saved job not found")?;
+        check_shared_url_identity(&existing, title, employer)?;
         let mut identifier_added = false;
         if !requisition_id.is_empty()
             && existing
@@ -87,6 +112,12 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
         return Ok(json!({"id":id,"existing":true,"requisition_added":identifier_added}));
     }
     if let Some(id) = ws.resolve_alias(&url).map_err(|e| e.to_string())? {
+        let key = JobIdentityId::new(&id).map_err(|e| e.to_string())?;
+        let existing = ws
+            .job(&key)
+            .map_err(|e| e.to_string())?
+            .ok_or("Saved job not found")?;
+        check_shared_url_identity(&existing, title, employer)?;
         return Ok(json!({"id":id,"existing":true}));
     }
     let id = JobIdentityId::new(format!("manual-{}", sha256_hex(url.as_bytes())))
@@ -171,6 +202,25 @@ mod tests {
     }
 
     #[test]
+    fn shared_page_does_not_silently_merge_distinct_roles() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let first = json!({"url":"https://example.org/careers","title":"Research Engineer","employer":"Example Lab"});
+        let added = add(&mut ws, &first, 1).unwrap();
+        let other = json!({"url":"https://example.org/careers","title":"Data Scientist","employer":"Example Lab","requisition_id":"DATA-2"});
+        assert!(add(&mut ws, &other, 2)
+            .unwrap_err()
+            .contains("multiple roles"));
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let saved = ws.job(&id).unwrap().unwrap();
+        assert_eq!(saved.title, "Research Engineer");
+        assert!(saved.requisition_id.is_none());
+        let distinct = json!({"url":"https://example.org/careers#data-scientist","title":"Data Scientist","employer":"Example Lab"});
+        let second = add(&mut ws, &distinct, 3).unwrap();
+        assert_eq!(second["existing"], false);
+        assert_ne!(second["id"], added["id"]);
+    }
+
+    #[test]
     fn reinspection_adds_missing_identifier_without_replacing_existing_data() {
         let mut ws = Workspace::in_memory().unwrap();
         let first = json!({"url":"https://example.com/one","title":"Engineer","employer":"Example Labs","description":"Original description"});
@@ -178,7 +228,10 @@ mod tests {
         let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
         ws.set_state(&id, ApplicationState::Shortlisted).unwrap();
         add(&mut ws, &json!({"url":"https://other.example/two","title":"Research Analyst","employer":"Example Labs","requisition_id":"REQ-123"}), 1).unwrap();
-        let result = add(&mut ws, &json!({"url":"https://example.com/one","title":"Changed title","employer":"Example Labs","requisition_id":"REQ-123"}), 2).unwrap();
+        let error = add(&mut ws, &json!({"url":"https://example.com/one","title":"Changed title","employer":"Example Labs","requisition_id":"REQ-123"}), 2).unwrap_err();
+        assert!(error.contains("multiple roles"));
+        assert!(ws.job(&id).unwrap().unwrap().requisition_id.is_none());
+        let result = add(&mut ws, &json!({"url":"https://example.com/one","title":" engineer ","employer":"Example Labs","requisition_id":"REQ-123"}), 2).unwrap();
         assert_eq!(result["requisition_added"], true);
         let job = ws.job(&id).unwrap().unwrap();
         assert_eq!(job.requisition_id.as_deref(), Some("REQ-123"));

@@ -84,7 +84,14 @@ pub(crate) fn parse_provider(
     if entries.len() > 500 {
         return Err("Provider returned too many results".into());
     }
-    let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("URL"),"title":item.get("Title"),"content":item.get("Snippet").or_else(|| item.get("Description")),"engine":"Wiby"})).collect();
+    let decode = |value: Option<&Value>| {
+        value.and_then(Value::as_str).map(|text| {
+            quick_xml::escape::unescape(text)
+                .unwrap_or(std::borrow::Cow::Borrowed(text))
+                .into_owned()
+        })
+    };
+    let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("URL"),"title":decode(item.get("Title")),"content":decode(item.get("Snippet").or_else(|| item.get("Description"))),"engine":"Wiby"})).collect();
     let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
     parsed["provider"] = json!("wiby");
     Ok(parsed)
@@ -459,7 +466,7 @@ mod tests {
         assert_eq!(url.path(), "/json/");
         assert_eq!(page_parameter(&url), "p");
         let raw = json!([
-            {"URL":"https://example.org/careers", "Title":"Fictional opening", "Snippet":"Apply here"},
+            {"URL":"https://example.org/careers", "Title":"Engineer&#39;s &amp; Analyst", "Snippet":"Apply &lt;here&gt;"},
             {"URL":"http://example.org/old", "Title":"Untrusted HTTP"},
             {"URL":"https://127.0.0.1/private", "Title":"Private host"}
         ]).to_string();
@@ -468,6 +475,8 @@ mod tests {
         assert_eq!(result["results"].as_array().unwrap().len(), 1);
         assert_eq!(result["results_rejected"], 2);
         assert_eq!(result["results"][0]["engines"][0], "Wiby");
+        assert_eq!(result["results"][0]["title"], "Engineer's & Analyst");
+        assert_eq!(result["results"][0]["snippet"], "Apply <here>");
         assert!(parse_provider("{}", &url, &std::collections::HashSet::new()).is_err());
         assert_eq!(
             page_parameter(&request_url("https://example.org/", "role").unwrap()),
