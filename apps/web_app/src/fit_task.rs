@@ -1694,6 +1694,8 @@ fn compare_preferences_with_source(
                     "no information on",
                     "not stated",
                     "not specified",
+                    "not established",
+                    "unspecified",
                     "not mentioned",
                     "details unavailable",
                 ]
@@ -4866,6 +4868,22 @@ mod tests {
             assert_eq!(result["rubric"][1]["status"], "unknown");
             assert_eq!(result["score_range"], json!({"lower":50,"upper":100}));
         }
+        for phrase in ["Salary not established", "Salary unspecified"] {
+            let altered_listing = format!("Fully remote in Germany. {phrase}.");
+            let mut claimed = response.clone();
+            claimed["items"][1] =
+                json!({"id":2,"status":"contradicted","quote":phrase,"explanation":"Fixture"});
+            let baseline = validate(source.clone(), &[], preferences, &altered_listing).unwrap();
+            let result = compare_preferences(
+                &mut Fixture(claimed),
+                source.clone(),
+                baseline,
+                &[],
+                preferences,
+                &altered_listing,
+            );
+            assert_eq!(result["rubric"][1]["status"], "unknown");
+        }
         let mut unknown_quote = response.clone();
         unknown_quote["items"][1]["quote"] = json!("Salary not stated");
         let result = compare_preferences(
@@ -5133,6 +5151,66 @@ mod tests {
             );
             assert_eq!(result["rubric"][0]["status"], "unknown");
             assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a resource-gated qwen3.5:9b model"]
+    fn live_location_preference_does_not_assume_remote_geography() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let preference =
+            crate::profile_fit_instructions(&json!({"search_locations":"Berlin\nParis"})).unwrap();
+        let listing = format!("Location: London\nRemote status: {}\nDescription: Remote work offered; eligible regions are not specified.", crate::fit_remote_status_text(Some(true)));
+        let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let baseline = validate(raw.clone(), &[], &preference, &listing).unwrap();
+        let result = compare_preferences(&mut model, raw, baseline, &[], &preference, &listing);
+        println!("Fictional remote geography: {result}");
+        assert_eq!(result["preference_comparison"]["status"], "completed");
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+    }
+
+    #[test]
+    #[ignore = "requires a resource-gated qwen3.5:9b model"]
+    fn live_location_preference_recognizes_alternatives() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let preference =
+            crate::profile_fit_instructions(&json!({"search_locations":"Berlin\nParis"})).unwrap();
+        for (listing, expected) in [
+            (
+                "Location: Paris. Description: On-site work in Paris.",
+                "supported",
+            ),
+            (
+                "Location: London. Description: On-site work in London only.",
+                "contradicted",
+            ),
+            (
+                "Location: London and Berlin. Description: On-site in either city.",
+                "supported",
+            ),
+        ] {
+            let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+            let baseline = validate(raw.clone(), &[], &preference, listing).unwrap();
+            let result = compare_preferences(&mut model, raw, baseline, &[], &preference, listing);
+            println!("Fictional location case: {result}");
+            assert_eq!(result["preference_comparison"]["status"], "completed");
+            assert_eq!(result["rubric"][0]["status"], expected, "listing={listing}");
         }
     }
 
