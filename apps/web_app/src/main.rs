@@ -427,7 +427,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile_fit_instructions(&profile)?;
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v46","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v47","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
@@ -7382,6 +7382,28 @@ mod tests {
             fit_assessment_digest(&ws, &id, &facts, "", &ws.active_facts_digest().unwrap())
                 .unwrap();
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn saved_fit_from_previous_scoring_pipeline_is_stale() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Python required"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (facts, instructions) = fit_candidate_context(&ws).unwrap();
+        let facts_digest = ws.active_facts_digest().unwrap();
+        let (pool, listing, current_digest) =
+            fit_assessment_digest(&ws, &id, &facts, &instructions, &facts_digest).unwrap();
+        let previous_digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v46","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":"Python required","full_instructions":""}).to_string()).as_str().to_owned();
+        assert_ne!(previous_digest, current_digest);
+        ws.save_fit_assessment(
+            &id,
+            json!({"input_digest":previous_digest,"assessment":{"score":0},"model":"fixture"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
     }
 
     #[test]
