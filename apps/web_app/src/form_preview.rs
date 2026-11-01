@@ -3280,6 +3280,27 @@ mod tests {
     #[test]
     #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_preview_is_read_only() {
+        struct Recording<I> {
+            inner: I,
+            completed: usize,
+        }
+        impl<I: Inference> Inference for Recording<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                println!("Public form mapping request ({schema}): {prompt}");
+                let result = self.inner.generate_structured(schema, prompt, max)?;
+                self.completed += 1;
+                println!("Public form mapping response ({schema}): {}", result.0);
+                Ok(result)
+            }
+        }
         let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")
             .expect("set the public application URL");
         let model =
@@ -3294,7 +3315,15 @@ mod tests {
         )
         .unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        let live = driver.open(&url).unwrap();
+        let mut live = driver.open(&url).unwrap();
+        if live
+            .walls
+            .iter()
+            .any(|wall| wall == "The page changed during inspection; review the form manually")
+        {
+            println!("Initial inspection changed; requesting one fresh read-only inspection");
+            live = driver.inspect_current().unwrap();
+        }
         assert!(!live.schema.fields.is_empty(), "no fields detected");
         let llm =
             waypoint_inference::ollama::OllamaInference::new(&format!("http://{addr}"), &model)
@@ -3305,11 +3334,20 @@ mod tests {
             llm.with_resident_context()
         };
         let checked_model = model.clone();
-        let mut llm = crate::resident_inference::ResidentInference::new(llm, model, move || {
+        let guarded = crate::resident_inference::ResidentInference::new(llm, model, move || {
             crate::visual_review::benchmark_target(&checked_model)
                 .map(|_| Some(checked_model.clone()))
         });
+        let mut llm = Recording {
+            inner: guarded,
+            completed: 0,
+        };
         let preview = suggest_for_live_form(live.clone(), &mut llm, &json!({"full_name":"Avery Example", "first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123", "city":"Example City", "linkedin":"https://example.invalid/avery"})).unwrap();
+        assert!(
+            llm.completed > 0,
+            "No model response was produced; walls: {:?}",
+            live.walls
+        );
         for field in &preview.schema.fields {
             let value = preview
                 .suggestions
