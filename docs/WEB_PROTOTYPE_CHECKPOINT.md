@@ -1330,3 +1330,5 @@ PDF extraction review now flags pages that have selectable text and image resour
 The PDF text extraction pass now also flags inline image operators on selectable-text pages. A fictional inline-image fixture passed alongside the resource-image and empty-page checks. This remains an advisory inventory, not proof that every image or missing word is detected; logos can still trigger it.
 
 Model-assisted qualification review now carries PDF image-coverage warnings through its result, including recovery of a completed task. The model still reviews selectable text only; images may contain additional qualifications and need separate inspection. A fictional mixed PDF, task-result and simulated UI checks passed. Other automated consumers do not yet carry this warning.
+
+Model-assisted qualification review can now process selectable text from a partly scanned PDF and reports pages without selectable text in the result. Other extraction consumers without coverage handling still reject that partial PDF. A fictional mixed-page fixture passed a resource-gated qwen3.5:9b review, extraction and simulated UI checks; scanned content itself is not included in that review.

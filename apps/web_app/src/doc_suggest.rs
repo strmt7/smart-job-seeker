@@ -246,6 +246,28 @@ mod tests {
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     struct Fake(Value);
     #[test]
+    #[ignore = "requires a resource-gated resident model and local PDF runtime"]
+    fn live_reviews_available_text_from_partly_scanned_pdf() {
+        let bytes = include_bytes!("../tests/fictional-image-page.pdf");
+        let (text, coverage) = crate::document_extract::extract_for_model("cv.pdf", bytes).unwrap();
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+            .unwrap()
+            .with_resident_context();
+        let mut inference =
+            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let result = suggest(&mut inference, &text, |_| {}).unwrap();
+        assert!(!result.excerpts.is_empty());
+        assert!(result.excerpts.iter().all(|excerpt| text.contains(excerpt)));
+        assert_eq!(
+            coverage.unwrap()["pages_without_selectable_text"],
+            json!([2])
+        );
+    }
+
+    #[test]
     fn completed_document_review_is_available_until_collected() {
         *TASK.lock().unwrap() = Some(Task {
             id: "first".into(),

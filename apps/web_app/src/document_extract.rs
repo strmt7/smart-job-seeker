@@ -21,19 +21,12 @@ pub fn extract_for_review(
     }
 }
 
+/// Model suggestions are advisory and carry coverage to the user.
 pub fn extract_for_model(
     name: &str,
     bytes: &[u8],
 ) -> Result<(String, Option<serde_json::Value>), String> {
-    if name
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
-    {
-        let (text, coverage) = crate::pdf_extract::extract_checked_with_coverage(bytes)?;
-        Ok((text, Some(coverage)))
-    } else {
-        Ok((extract(name, bytes)?, None))
-    }
+    extract_for_review(name, bytes)
 }
 
 pub fn extract(name: &str, bytes: &[u8]) -> Result<String, String> {

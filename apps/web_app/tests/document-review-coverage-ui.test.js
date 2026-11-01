@@ -16,3 +16,7 @@ assert.match(text,/Some document text was not attempted/);
 assert.match(text,/One or more sections could not be reviewed/);
 assert.match(text,/per-section limit in 1 section; 2 additional distinct excerpts/);
 console.log('Document review coverage checks passed.');
+
+const partial=node('div');
+render(partial,{excerpts:[],coverage:{pages:2,pages_without_selectable_text:[2],structurally_blank_pages:[]}});
+assert.match(partial.children.map(item=>item.textContent).join('\n'),/No selectable text was found on PDF page 2 of 2/);

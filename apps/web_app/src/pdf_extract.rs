@@ -506,6 +506,10 @@ mod tests {
             crate::document_extract::extract_for_review("fictional.pdf", partial).unwrap();
         assert_eq!(reviewed, text);
         assert_eq!(report.unwrap(), coverage);
+        let (model_text, model_coverage) =
+            crate::document_extract::extract_for_model("fictional.pdf", partial).unwrap();
+        assert_eq!(model_text, text);
+        assert_eq!(model_coverage.unwrap(), coverage);
         assert!(crate::document_extract::extract("fictional.pdf", partial).is_err());
         let complete = include_bytes!("../tests/fictional-document-overlap.pdf");
         let (_, complete_coverage) = super::extract_with_coverage(complete).unwrap();
