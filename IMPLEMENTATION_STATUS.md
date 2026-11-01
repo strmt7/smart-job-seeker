@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Incomplete duplicate decisions — 2026-11-01
+
+- A duplicate pair marked as the same without a preferred listing, or with an unrecognized status, now holds both jobs instead of treating them as cleared. A focused store test covered these cases and normal same/different decisions; 46 workspace tests passed, with network tests ignored. Recovery of malformed records through the UI has not been established, and this does not guarantee detection of every duplicate.
+
 ## Changing form during read-only inspection — 2026-11-01
 
 - A Greenhouse page intermittently replaced a DOM node during the initial read, causing inspection to fail. Initial reads and later current-page rescans now retry that specific stale-node error once without reloading and add a blocking manual-review warning; a second failure still surfaces. A disappearing custom choice also leaves its inventory incomplete. Other protocol failures are not converted to success.

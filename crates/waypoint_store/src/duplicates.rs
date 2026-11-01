@@ -816,7 +816,7 @@ impl Store {
     }
 
     pub fn has_duplicate_hold(&self, id: &str) -> rusqlite::Result<bool> {
-        self.conn.query_row("SELECT 1 FROM possible_duplicates WHERE (job_a=?1 OR job_b=?1) AND (status='pending' OR (status='same' AND preferred_job<>?1)) LIMIT 1", [id], |_| Ok(())).optional().map(|v|v.is_some())
+        self.conn.query_row("SELECT 1 FROM possible_duplicates WHERE (job_a=?1 OR job_b=?1) AND status<>'different' AND (status<>'same' OR preferred_job IS NULL OR preferred_job<>?1) LIMIT 1", [id], |_| Ok(())).optional().map(|v|v.is_some())
     }
 
     pub fn pending_duplicate_pair(&self, first: &str, second: &str) -> rusqlite::Result<bool> {
@@ -876,6 +876,28 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn incomplete_duplicate_decisions_hold_both_listings() {
+        let mut store = Store::in_memory().unwrap();
+        let first = job("a", "Engineer", "Example", None);
+        let second = job("b", "Engineer", "Example", None);
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        for status in ["same", "unrecognized"] {
+            store.conn.execute("UPDATE possible_duplicates SET status=?1, preferred_job=NULL WHERE job_a='a' AND job_b='b'", [status]).unwrap();
+            assert!(store.has_duplicate_hold("a").unwrap());
+            assert!(store.has_duplicate_hold("b").unwrap());
+        }
+        store.conn.execute("UPDATE possible_duplicates SET status='same', preferred_job='a' WHERE job_a='a' AND job_b='b'", []).unwrap();
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
+        store.conn.execute("UPDATE possible_duplicates SET status='different', preferred_job=NULL WHERE job_a='a' AND job_b='b'", []).unwrap();
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        assert!(!store.has_duplicate_hold("b").unwrap());
     }
 
     #[test]
