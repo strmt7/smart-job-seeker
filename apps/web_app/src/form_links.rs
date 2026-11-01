@@ -286,9 +286,23 @@ fn reviewed_link_matches(
     link.url == target && link.label == label
 }
 
-fn mark_prior_fills_for_review(preview: &mut form_preview::FormPreview, completed: &[String]) {
-    if !completed.is_empty() {
-        preview.manual_review.push("Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection".into());
+const PRIOR_FIELDS_REVIEW: &str = "Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection";
+
+fn mark_prior_fills_for_review(
+    preview: &mut form_preview::FormPreview,
+    completed: &[String],
+    previous_review: &[String],
+) {
+    if (!completed.is_empty()
+        || previous_review
+            .iter()
+            .any(|reason| reason == PRIOR_FIELDS_REVIEW))
+        && !preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == PRIOR_FIELDS_REVIEW)
+    {
+        preview.manual_review.push(PRIOR_FIELDS_REVIEW.into());
     }
 }
 
@@ -433,7 +447,7 @@ pub fn start(
                 {
                     preview.manual_review.push(form_preview::POST_CHOICE_VISUAL_REQUIRED.into());
                 }
-                mark_prior_fills_for_review(&mut preview, &session.completed_selectors);
+                mark_prior_fills_for_review(&mut preview, &session.completed_selectors, &session.preview.manual_review);
                 if !session.attachments.is_empty() {
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
                 }
@@ -538,14 +552,26 @@ mod tests {
             manual_review: vec![],
             model_review_selectors: Default::default(),
         };
-        mark_prior_fills_for_review(&mut preview, &[]);
+        mark_prior_fills_for_review(&mut preview, &[], &[]);
         assert!(preview.manual_review.is_empty());
-        mark_prior_fills_for_review(&mut preview, &["#earlier-answer".into()]);
+        mark_prior_fills_for_review(&mut preview, &["#earlier-answer".into()], &[]);
         assert!(preview
             .manual_review
             .iter()
             .any(|reason| reason
                 .contains("Fields filled before this inspection must be reviewed again")));
+        let previous = preview.manual_review.clone();
+        preview.manual_review.clear();
+        mark_prior_fills_for_review(&mut preview, &[], &previous);
+        mark_prior_fills_for_review(&mut preview, &[], &previous);
+        assert_eq!(
+            preview
+                .manual_review
+                .iter()
+                .filter(|reason| *reason == PRIOR_FIELDS_REVIEW)
+                .count(),
+            1
+        );
     }
 
     #[test]

@@ -1,3 +1,8 @@
+## Earlier-field warnings through subsequent sections — 2026-11-01
+
+- The earlier-field review warning now carries forward through later navigations and rescans in the same review session, even when no additional fields were filled on the immediately preceding page. Repeated carry-forward does not duplicate the warning. Closing and starting a separate session does not carry this particular in-memory warning; saved manual-review reasons remain separate.
+- Focused navigation tests covered carry-forward and deduplication (10 passed, 3 browser tests ignored), and web-app Clippy passed. This is not an end-to-end employer-site test; no application was submitted.
+
 ## Prior fields across application navigation — 2026-11-01
 
 - When a reviewed application link opens a new inspection, completed fields from the previous inspection now produce the same explicit review warning already used for rescans. The next page cannot itself establish that earlier fields remain correct. The status endpoint records a manual-review reason when it collects the result.
