@@ -450,6 +450,18 @@ mod tests {
 
     #[test]
     #[ignore = "requires an explicitly configured local pypdf runtime"]
+    fn reports_inline_images_on_selectable_pages() {
+        let bytes = include_bytes!("../tests/fictional-inline-image.pdf");
+        let (text, coverage) = super::extract_with_coverage(bytes).unwrap();
+        assert!(!text.trim().is_empty());
+        assert_eq!(
+            coverage["pages_with_images_and_text"],
+            serde_json::json!([1])
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly configured local pypdf runtime"]
     fn reports_pages_without_selectable_text() {
         let blank = include_bytes!("../tests/fictional-partial-text.pdf");
         let (_, blank_coverage) = super::extract_with_coverage(blank).unwrap();

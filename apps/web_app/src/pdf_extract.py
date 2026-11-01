@@ -50,10 +50,14 @@ try:
     mixed_image_pages = []
     image_inventory_unknown_pages = []
     for index, page in enumerate(reader.pages, 1):
-        text = page.extract_text() or ""
+        inline_image = [False]
+        def observe_operator(operator, operands, ctm, text_matrix):
+            if operator == b"INLINE IMAGE":
+                inline_image[0] = True
+        text = page.extract_text(visitor_operand_before=observe_operator) or ""
         if text.strip():
             try:
-                if image_resources(page):
+                if inline_image[0] or image_resources(page):
                     mixed_image_pages.append(index)
             except Exception:
                 image_inventory_unknown_pages.append(index)
