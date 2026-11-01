@@ -3505,12 +3505,20 @@ fn serve(
                 .as_mut()
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
-            let (controls, digest) = control_rank::snapshot(&mut current.driver)?;
+            let (controls, digest, context) =
+                control_rank::snapshot_with_context(&mut current.driver)?;
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let task_id = random_id()?;
-            control_rank::start(task_id.clone(), current.id.clone(), model, controls, digest)?;
+            control_rank::start(
+                task_id.clone(),
+                current.id.clone(),
+                model,
+                controls,
+                digest,
+                context,
+            )?;
             current.created = Instant::now();
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
