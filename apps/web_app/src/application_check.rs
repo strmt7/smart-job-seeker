@@ -1449,6 +1449,24 @@ mod tests {
     }
     use waypoint_applications::driver::BrowserDriver;
     #[test]
+    #[ignore = "starts one browser on a fictional listing"]
+    fn transparent_controls_do_not_imply_a_visible_application_form() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-transparent-application.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let page = browser.open(url.as_str()).unwrap();
+        assert!(page.schema.fields.is_empty());
+        assert!(page
+            .walls
+            .iter()
+            .any(|wall| wall == "a custom control needs manual review"));
+        let (summary, review) = classify_fields(&page.schema.fields, false);
+        assert!(review && summary.contains("No form fields detected"));
+    }
+    #[test]
     fn follows_only_a_single_safe_same_origin_application_link() {
         let base = "https://jobs.example.org/role";
         assert_eq!(

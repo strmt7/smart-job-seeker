@@ -387,7 +387,7 @@ impl CdpDriver {
                 break;
             }
             match self.with_review_timeout(|driver| driver.control_visibility_and_path(id)) {
-                Ok((true, selector, available)) => {
+                Ok((true, selector, available, _)) => {
                     controls.push(PageControl {
                         label,
                         disabled: disabled || !available,
@@ -924,7 +924,7 @@ impl CdpDriver {
     fn control_visibility_and_path(
         &mut self,
         node: u64,
-    ) -> Result<(bool, String, bool), DriverError> {
+    ) -> Result<(bool, String, bool, bool), DriverError> {
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -941,7 +941,12 @@ impl CdpDriver {
             const visibleNode = this instanceof HTMLInputElement && this.type === 'file' ? this.parentElement : this;
             if (!visibleNode) return null;
             const style = getComputedStyle(visibleNode);
-            const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+            let transparent = false;
+            for (let node = visibleNode, depth = 0; node; node = node.parentElement) {
+                if (++depth > 64) return null;
+                if (Number(getComputedStyle(node).opacity) === 0) { transparent = true; break; }
+            }
+            const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !transparent;
             const parts = []; let current = this;
             while (current && current.nodeType === 1) {
                 if (parts.length >= 64 || !current.localName) return null;
@@ -952,7 +957,7 @@ impl CdpDriver {
             }
             const path = parts.join(' > ');
             const available = !this.matches(':disabled') && this.readOnly !== true && !this.closest('[aria-disabled="true" i], [aria-readonly="true" i]');
-            return path.length <= 4096 ? {visible, path, available} : null;
+            return path.length <= 4096 ? {visible, path, available, transparent} : null;
         }"#,"returnByValue":true}));
         let released = self
             .cdp
@@ -981,7 +986,13 @@ impl CdpDriver {
             .ok_or_else(|| {
                 DriverError("Field availability is unavailable; manual review is needed".into())
             })?;
-        Ok((visible, path.to_owned(), available))
+        let transparent = value
+            .get("transparent")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                DriverError("Field opacity is unavailable; manual review is needed".into())
+            })?;
+        Ok((visible, path.to_owned(), available, transparent))
     }
 
     fn open_visible_shadow_host(&mut self, node: u64) -> Result<bool, DriverError> {
@@ -1779,12 +1790,15 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                let (rendered, path, available) =
+                let (rendered, path, available, transparent) =
                     self.control_visibility_and_path(control.node_id)?;
                 if rendered && available {
                     css_paths.insert(control.node_id, path);
                     visible.push(control);
                 } else {
+                    if transparent {
+                        wall_flags.push("a custom control needs manual review".into());
+                    }
                     if rendered && !available {
                         let required = control.attrs.contains_key("required")
                             || control
@@ -2352,7 +2366,7 @@ impl CdpDriver {
             .and_then(|v| v.get("objectId"))
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { const visible = node => { if (!node.getClientRects().length) return false; for (let item = node; item; item = item.parentElement) { const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(this)) return false; if (this instanceof HTMLInputElement && this.hasAttribute('list')) { const input = this, root = input.getRootNode(), list = input.list, listId = input.getAttribute('list'); const safe = () => input.isConnected && !input.matches(':disabled') && !input.readOnly && !input.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && ['text','search','email','tel','url'].includes(input.type) && !input.hasAttribute('role') && !input.hasAttribute('aria-autocomplete') && !input.multiple && list instanceof HTMLDataListElement && list.isConnected && input.list === list && root.querySelectorAll('#' + CSS.escape(listId)).length === 1; if (!safe()) return false; const options = Array.from(list.options); if (!options.length || options.length > 100 || options.some(o => o.disabled || o.closest('optgroup[disabled]') || !o.hasAttribute('value') || !o.value || o.value.length > 200 || o.value.trim() !== o.value)) return false; const values = options.map(o => o.value); if (new Set(values.map(v => v.toLowerCase())).size !== values.length) return false; const matches = options.filter(o => o.value.toLowerCase() === label.toLowerCase()); if (matches.length !== 1) return false; const chosen = matches[0]; if (apply) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, chosen.value); input.dispatchEvent(new Event('input', {bubbles:true})); input.dispatchEvent(new Event('change', {bubbles:true})); } return safe() && input.validity.valid && input.value === chosen.value && Array.from(list.options).length === options.length && Array.from(list.options).every((o,i) => o === options[i] && !o.disabled && !o.closest('optgroup[disabled]') && o.value === values[i]); } if (this.tagName !== 'SELECT' || this.multiple || this.matches(':disabled') || (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]'))) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && !matches[0].closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !matches[0].disabled && !(matches[0].parentElement && matches[0].parentElement.tagName === 'OPTGROUP' && matches[0].parentElement.disabled) && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object_id,"functionDeclaration":"function(label, apply) { const visible = node => { if (!node.getClientRects().length) return false; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(this)) return false; if (this instanceof HTMLInputElement && this.hasAttribute('list')) { const input = this, root = input.getRootNode(), list = input.list, listId = input.getAttribute('list'); const safe = () => input.isConnected && !input.matches(':disabled') && !input.readOnly && !input.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && ['text','search','email','tel','url'].includes(input.type) && !input.hasAttribute('role') && !input.hasAttribute('aria-autocomplete') && !input.multiple && list instanceof HTMLDataListElement && list.isConnected && input.list === list && root.querySelectorAll('#' + CSS.escape(listId)).length === 1; if (!safe()) return false; const options = Array.from(list.options); if (!options.length || options.length > 100 || options.some(o => o.disabled || o.closest('optgroup[disabled]') || !o.hasAttribute('value') || !o.value || o.value.length > 200 || o.value.trim() !== o.value)) return false; const values = options.map(o => o.value); if (new Set(values.map(v => v.toLowerCase())).size !== values.length) return false; const matches = options.filter(o => o.value.toLowerCase() === label.toLowerCase()); if (matches.length !== 1) return false; const chosen = matches[0]; if (apply) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, chosen.value); input.dispatchEvent(new Event('input', {bubbles:true})); input.dispatchEvent(new Event('change', {bubbles:true})); } return safe() && input.validity.valid && input.value === chosen.value && Array.from(list.options).length === options.length && Array.from(list.options).every((o,i) => o === options[i] && !o.disabled && !o.closest('optgroup[disabled]') && o.value === values[i]); } if (this.tagName !== 'SELECT' || this.multiple || this.matches(':disabled') || (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]'))) return false; const matches = Array.from(this.options).filter(o => o.label.trim().replace(/\\s+/g, ' ').toLowerCase() === label.trim().replace(/\\s+/g, ' ').toLowerCase() && !o.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled)); if (matches.length !== 1) return false; if (apply) { this.value = matches[0].value; this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.selectedOptions.length === 1 && this.selectedOptions[0] === matches[0] && !matches[0].closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !matches[0].disabled && !(matches[0].parentElement && matches[0].parentElement.tagName === 'OPTGROUP' && matches[0].parentElement.disabled) && this.validity.valid; }","arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result
                 .get("result")
@@ -2388,7 +2402,7 @@ impl CdpDriver {
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect select field".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(labels, apply) {
-            const visible = node => { if (!node.getClientRects().length) return false; for (let item = node; item; item = item.parentElement) { const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(this)) return false;
+            const visible = node => { if (!node.getClientRects().length) return false; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(this)) return false;
             if (!(this instanceof HTMLSelectElement) || !this.multiple || this.matches(':disabled') || (!this.isConnected || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]'))) return false;
             const norm = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
             const options = Array.from(this.options);
@@ -2461,7 +2475,7 @@ impl CdpDriver {
           const choices = radios.filter(r => { const text = optionLabel(r); return text !== null && norm(text) === norm(label); });
           if (choices.length !== 1) return false;
           const chosen = choices[0];
-          const visible = node => { if (!node.getClientRects().length) return false; for (let item = node; item; item = item.parentElement) { const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(chosen)) return false;
+          const visible = node => { if (!node.getClientRects().length) return false; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(chosen)) return false;
           if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
           return chosen.isConnected && chosen.checked && !unavailable(chosen) && chosen.validity.valid;
         }"#,"arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
@@ -2792,7 +2806,7 @@ impl BrowserDriver for CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.getClientRects().length) return false; for (let node = this; node; node = node.parentElement) { const style = getComputedStyle(node); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.getClientRects().length) return false; for (let node = this, depth = 0; node; node = node.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(node); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
@@ -2986,7 +3000,7 @@ impl BrowserDriver for CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect checkbox".into()))?;
-                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { const visible = node => { if (!node.getClientRects().length) return false; for (let item = node; item; item = item.parentElement) { const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!visible(this)) return false; return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'checkbox' && !this.matches(':disabled') && this.checked === value && this.validity.valid; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { const visible = node => { if (!node.getClientRects().length) return false; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!visible(this)) return false; return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'checkbox' && !this.matches(':disabled') && this.checked === value && this.validity.valid; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
                 if result.get("exceptionDetails").is_some()
                     || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {

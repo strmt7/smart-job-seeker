@@ -60,9 +60,23 @@ fn failed_navigation_does_not_return_an_inspected_form() {
 #[ignore = "launches one local browser against a fictional fixture"]
 fn verification_rejects_hidden_and_transparent_text_fields() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
-    driver
+    let live = driver
         .open(&file_url("form_hidden_verification.html"))
         .unwrap();
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Visible"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Transparent"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a custom control needs manual review"));
     driver.verify_text_value("#visible", "Example").unwrap();
     driver.verify_text_value("#offscreen", "Example").unwrap();
     for selector in ["#hidden", "#transparent", "#invisible"] {
