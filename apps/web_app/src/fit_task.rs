@@ -761,6 +761,40 @@ fn assess_with_source(
     ))
 }
 
+/// Preserve a bounded history of prior reviews, which never applies to a new rubric.
+pub(crate) fn review_history(previous: &Value) -> Result<(Vec<Value>, u64), String> {
+    if !previous.is_object() {
+        return Err("Previous saved assessment is invalid".into());
+    }
+    let mut history = match &previous["review_history"] {
+        Value::Null => Vec::new(),
+        Value::Array(items) if items.len() <= 5 => items.clone(),
+        _ => return Err("Saved review history is invalid".into()),
+    };
+    let mut omitted = previous["review_history_omitted"].as_u64().unwrap_or(0);
+    if !previous["user_review"].is_null() {
+        let rubric = previous["assessment"]["rubric"]
+            .as_array()
+            .filter(|items| !items.is_empty() && items.len() <= 12)
+            .ok_or("Previous reviewed rubric is invalid")?;
+        let review = &previous["user_review"];
+        reviewed_rubric(&previous["assessment"], &review["decisions"])?;
+        history.insert(0, json!({"model":previous["model"],"input_digest":previous["input_digest"],"rubric":rubric,"review":review}));
+    }
+    if history.len() > 5 {
+        history.truncate(5);
+        omitted = omitted.saturating_add(1);
+    }
+    if serde_json::to_vec(&history)
+        .map_err(|_| "Could not serialize review history")?
+        .len()
+        > 256 * 1024
+    {
+        return Err("Review history exceeds its size limit".into());
+    }
+    Ok((history, omitted))
+}
+
 /// Calculate an explicit user review without modifying the model assessment.
 pub(crate) fn reviewed_rubric(assessment: &Value, decisions: &Value) -> Result<Value, String> {
     let rubric = assessment["rubric"]
@@ -2185,6 +2219,28 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn previous_review_history_is_bounded_and_never_reapplied() {
+        let rubric = json!([{"source":"listing","excerpt":"Rust","status":"unknown","importance":"required"}]);
+        let review = reviewed_rubric(
+            &json!({"rubric":rubric}),
+            &json!([{"status":"supported","importance":"preferred"}]),
+        )
+        .unwrap();
+        let previous = json!({"model":"fixture","input_digest":"old","assessment":{"rubric":rubric},"user_review":review,"review_history":[{"old":1},{"old":2},{"old":3},{"old":4},{"old":5}],"review_history_omitted":2});
+        let (history, omitted) = review_history(&previous).unwrap();
+        assert_eq!(history.len(), 5);
+        assert_eq!(omitted, 3);
+        assert_eq!(history[0]["review"]["score"], 100);
+        assert_eq!(history[0]["rubric"][0]["excerpt"], "Rust");
+        assert!(review_history(&json!({"review_history":"invalid"})).is_err());
+        assert!(review_history(&json!(null)).is_err());
+        assert!(review_history(
+            &json!({"assessment":{"rubric":[]},"user_review":{"decisions":[]}})
+        )
+        .is_err());
+    }
 
     #[test]
     fn reviewed_scenario_is_bounded_and_independent_of_model_score() {
@@ -4731,6 +4787,13 @@ mod tests {
         .unwrap();
         let id = waypoint_domain::JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
         let (_, _, _, _, digest) = crate::fit_assessment_inputs(&ws, &id).unwrap();
+        let rubric = json!([{"source":"listing","excerpt":"Rust","status":"unknown","importance":"required"}]);
+        let review = reviewed_rubric(
+            &json!({"rubric":rubric}),
+            &json!([{"status":"supported","importance":"preferred"}]),
+        )
+        .unwrap();
+        ws.save_fit_assessment(&id, json!({"input_digest":digest,"model":"earlier","assessment":{"score":50,"rubric":rubric},"user_review":review}).to_string().as_bytes()).unwrap();
         *TASK.lock().unwrap() = Some(Task {
             id: "fixture-api".into(),
             result: Some(Ok(
@@ -4757,6 +4820,12 @@ mod tests {
         };
         let first = request(&mut ws);
         assert_eq!(first["saved"], true);
+        assert_eq!(first["review_history"][0]["review"]["score"], 100);
+        assert!(first["user_review"].is_null());
+        assert_eq!(
+            crate::read_fit(&ws, &id).unwrap()["review_history"][0]["rubric"][0]["excerpt"],
+            "Rust"
+        );
         let saved = ws.fit_assessment(&id).unwrap().unwrap();
         assert_eq!(request(&mut ws), first);
         assert_eq!(ws.fit_assessment(&id).unwrap().unwrap(), saved);

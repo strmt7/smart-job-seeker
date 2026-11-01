@@ -671,7 +671,7 @@ fn read_fit_with_context(
                     };
                 assessment["preference_coverage"] = json!(coverage);
                 Ok(
-                    json!({"status":"current","assessment":assessment,"model":value["model"],"user_review":value["user_review"],"review_revision":fit_review_revision(&value)}),
+                    json!({"status":"current","assessment":assessment,"model":value["model"],"user_review":value["user_review"],"review_history":value["review_history"],"review_history_omitted":value["review_history_omitted"],"review_revision":fit_review_revision(&value)}),
                 )
             } else {
                 Ok(json!({"status":"stale"}))
@@ -2422,13 +2422,17 @@ fn serve(
                     result["assessment"]["source_coverage"] =
                         fit_source_coverage(ws, &job_id, &listing, &instructions)?;
                     if let Some(previous) = ws.fit_assessment(&job_id).map_err(|e| e.to_string())? {
-                        if let Ok(previous) = serde_json::from_slice::<Value>(&previous) {
-                            if let Some(comparison) =
-                                fit_task::repeatability_comparison(&previous, &result)
-                            {
-                                result["assessment"]["repeatability"] = comparison;
-                            }
+                        let previous: Value = serde_json::from_slice(&previous).map_err(|_| {
+                            "Previous saved assessment is invalid; it was not replaced"
+                        })?;
+                        if let Some(comparison) =
+                            fit_task::repeatability_comparison(&previous, &result)
+                        {
+                            result["assessment"]["repeatability"] = comparison;
                         }
+                        let (history, omitted) = fit_task::review_history(&previous)?;
+                        result["review_history"] = json!(history);
+                        result["review_history_omitted"] = json!(omitted);
                     }
                     ws.save_fit_assessment(&job_id, result.to_string().as_bytes())
                         .map_err(|e| format!("Could not save assessment; retry after resolving the workspace error: {e}"))?;
@@ -2450,6 +2454,8 @@ fn serve(
                     result = json!({"status":"failed","error":"The saved assessment changed; reopen the current assessment"});
                 } else {
                     result["user_review"] = saved["user_review"].clone();
+                    result["review_history"] = saved["review_history"].clone();
+                    result["review_history_omitted"] = saved["review_history_omitted"].clone();
                     result["review_revision"] = json!(fit_review_revision(&saved));
                 }
             }
@@ -2477,7 +2483,8 @@ fn serve(
             if body["revision"].as_str() != Some(fit_review_revision(&saved).as_str()) {
                 return Err("The assessment or review changed; reload it before saving".into());
             }
-            let review = fit_task::reviewed_rubric(&saved["assessment"], &body["decisions"])?;
+            let mut review = fit_task::reviewed_rubric(&saved["assessment"], &body["decisions"])?;
+            review["reviewed_at"] = json!(now());
             saved["user_review"] = review.clone();
             ws.save_fit_assessment(&job_id, saved.to_string().as_bytes())
                 .map_err(|e| e.to_string())?;
