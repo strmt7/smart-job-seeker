@@ -319,6 +319,7 @@ fn required_attempt_record(
 }
 const PROFILE_FIELDS: &[&str] = &[
     "full_name",
+    "preferred_name",
     "first_name",
     "last_name",
     "email",
@@ -11053,7 +11054,7 @@ mod tests {
         assert!(request(
             "/api/profile",
             "test-token",
-            r#"{"full_name":"Example, Avery","first_name":"Avery","instructions":"Remote work"}"#
+            r#"{"full_name":"Example, Avery","preferred_name":"Ace","first_name":"Avery","instructions":"Remote work"}"#
         )
         .contains("200 OK"));
         assert!(request("/api/profile", "test-token", r#"{"unknown":"x"}"#)
@@ -11062,6 +11063,10 @@ mod tests {
             .contains("profile fields must be text"));
         assert!(request("/api/profile", "test-token", r#"{"full_name":42}"#)
             .contains("profile fields must be text"));
+        assert!(
+            request("/api/profile", "test-token", r#"{"preferred_name":42}"#)
+                .contains("profile fields must be text")
+        );
         assert!(request(
             "/api/profile",
             "test-token",

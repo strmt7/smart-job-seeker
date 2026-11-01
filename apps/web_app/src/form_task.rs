@@ -2120,6 +2120,10 @@ mod tests {
     fn public_worker_recheck(model: Result<Option<String>, String>, profile: serde_json::Value) {
         let _guard = TEST_LOCK.lock().unwrap();
         let expected_model = matches!(&model, Ok(Some(_)));
+        let expected_preferred = profile
+            .get("preferred_name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
         let url =
             std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").expect("set public application URL");
         let parsed = url::Url::parse(&url).unwrap();
@@ -2190,8 +2194,14 @@ mod tests {
                             println!("suggested field: {:?}", field.label);
                             if expected_model {
                                 use waypoint_applications::form_mapping::PacketValue;
-                                let expected = if field.label.starts_with("Full name") {
+                                let expected = if field.label.starts_with("Full name")
+                                    || field.label == "Full legal name"
+                                {
                                     "Avery Example"
+                                } else if field.label.starts_with("Preferred name") {
+                                    expected_preferred
+                                        .as_deref()
+                                        .expect("preferred name must be provided")
                                 } else if field.label.starts_with("Email") {
                                     "avery@example.invalid"
                                 } else if field.label.starts_with("Phone") {
@@ -2206,6 +2216,17 @@ mod tests {
                                     field.label
                                 );
                             }
+                        }
+                        if expected_preferred.is_some() {
+                            assert!(
+                                preview.suggestions.iter().any(|mapping| preview
+                                    .schema
+                                    .fields
+                                    .iter()
+                                    .any(|field| field.selector == mapping.field_selector
+                                        && field.label.starts_with("Preferred name"))),
+                                "preferred name was not suggested"
+                            );
                         }
                         if preview
                             .manual_review
@@ -2271,10 +2292,11 @@ mod tests {
             }
         }
         let _unload = Unload(result["model"]["already_running"] != true);
-        public_worker_recheck(
-            Ok(Some("qwen3.5:9b".into())),
-            serde_json::json!({"full_name":"Avery Example","email":"avery@example.invalid","phone":"+1 202 555 0101","city":"Fictional City"}),
-        );
+        let mut profile = serde_json::json!({"full_name":"Avery Example","email":"avery@example.invalid","phone":"+1 202 555 0101","city":"Fictional City"});
+        if std::env::var("WAYPOINT_TEST_PREFERRED_NAME").as_deref() == Ok("1") {
+            profile["preferred_name"] = serde_json::json!("Ace");
+        }
+        public_worker_recheck(Ok(Some("qwen3.5:9b".into())), profile);
     }
 
     #[test]
