@@ -219,7 +219,7 @@ mod tests {
             result["sources"][0],
             "User-selected template passage (not independently verified): Fictional research"
         );
-        assert_eq!(model.calls, 3);
+        assert_eq!(model.calls, 4);
         assert_eq!(result["evidence_check"]["status"], "invalid");
         assert_eq!(result["first_person_opening_changed"], false);
         let changed_voice = suggest(

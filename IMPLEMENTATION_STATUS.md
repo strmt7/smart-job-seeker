@@ -1,3 +1,8 @@
+## Evidence-check recovery — 2026-11-01
+
+- Answer and template evidence checks now retry once when the local model returns malformed structured output or a review that fails validation. The retry receives the fixed validation reason, and the same exact-quotation, status, explanation and numeric checks apply. Runtime failures are not retried. The interface identifies recovered checks; unrecovered checks remain visibly incomplete. A retry adds a model call and may be refused if the prompt exceeds the existing size limit.
+- In a fictional live run, both template checks recovered after an invalid first response, including the previously failing résumé case. A separate invented-management claim was still flagged. Another fictional template check failed because the model treated the unverified selected passage as supported instead of uncertain; the interface explains that source provenance and the judgment is advisory. These observations do not establish general accuracy. Minimum sampled available RAM was 19.63 and 19.61 GiB in the two runs; the model was unloaded. No employer was contacted or application submitted. Logs are under `target/live_*qwen-live.log`.
+
 ## Template voice review — 2026-11-01
 
 - Template drafting now asks both model passes to preserve the selected passage's grammatical person and tense unless the writing instructions request otherwise. The editor warns if the original and suggestion differ in whether they start with `I` or `we`. This narrow check does not detect other voice or tense changes, and the user must review the complete replacement.

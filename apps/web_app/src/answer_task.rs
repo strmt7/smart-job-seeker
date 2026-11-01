@@ -327,49 +327,79 @@ fn check_evidence(llm: &mut dyn Inference, answer: &Value) -> Value {
     if prompt.len() > 8000 {
         return json!({"status":"input_limit","numeric_review":numeric_review});
     }
-    let Ok((response, _)) =
-        llm.generate_structured("application_answer_evidence_check", &prompt, 700)
-    else {
-        return json!({"status":"unavailable","numeric_review":numeric_review});
-    };
+    let mut reason = "";
+    for attempt in 0..2 {
+        let request = if attempt == 0 {
+            prompt.clone()
+        } else {
+            format!("{prompt} The previous review was invalid: {reason}. Return a corrected review. Every excerpt must be an exact substring of the draft; do not quote or paraphrase the cited facts as the excerpt.")
+        };
+        if request.len() > 8000 {
+            return json!({"status":"input_limit","numeric_review":numeric_review,"repair_used":attempt > 0});
+        }
+        match llm.generate_structured("application_answer_evidence_check", &request, 700) {
+            Ok((response, _)) => match validate_evidence_response(text, &cited, &response) {
+                Ok(clean) => {
+                    return json!({"status":"completed","limit_reached":clean.len()==8,"numeric_review":numeric_review,"claims":clean,"repair_used":attempt > 0})
+                }
+                Err(error) => reason = error,
+            },
+            Err(InferenceError::StructuredOutputFailed(_)) => {
+                reason = "the response did not match the required JSON schema"
+            }
+            Err(_) => {
+                return json!({"status":"unavailable","numeric_review":numeric_review,"repair_used":attempt > 0})
+            }
+        }
+    }
+    json!({"status":"invalid","numeric_review":numeric_review,"repair_used":true})
+}
+
+fn validate_evidence_response(
+    text: &str,
+    cited: &[&str],
+    response: &Value,
+) -> Result<Vec<Value>, &'static str> {
     let Some(claims) = response["claims"]
         .as_array()
         .filter(|claims| claims.len() <= 8)
     else {
-        return json!({"status":"invalid","numeric_review":numeric_review});
+        return Err("the claims array is missing or exceeds eight items");
     };
     let mut clean = Vec::new();
     for claim in claims {
         let Some(excerpt) = claim["excerpt"].as_str().filter(|excerpt| {
             !excerpt.trim().is_empty() && excerpt.len() <= 800 && text.contains(excerpt)
         }) else {
-            return json!({"status":"invalid","numeric_review":numeric_review});
+            return Err(
+                "a claim excerpt is missing, too long, or not an exact quote from the draft",
+            );
         };
         let Some(status) = claim["status"]
             .as_str()
             .filter(|status| matches!(*status, "supported" | "unsupported" | "uncertain"))
         else {
-            return json!({"status":"invalid","numeric_review":numeric_review});
+            return Err("a claim status is invalid");
         };
         let Some(explanation) = claim["explanation"]
             .as_str()
             .filter(|explanation| !explanation.trim().is_empty() && explanation.len() <= 500)
         else {
-            return json!({"status":"invalid","numeric_review":numeric_review});
+            return Err("a claim explanation is missing or too long");
         };
         if clean
             .iter()
             .any(|previous: &Value| previous["excerpt"] == excerpt)
         {
-            return json!({"status":"invalid","numeric_review":numeric_review});
+            return Err("the review repeats a claim excerpt");
         }
         let numeric_uncertain =
-            status == "supported" && !crate::draft_task::numeric_claims_supported(excerpt, &cited);
+            status == "supported" && !crate::draft_task::numeric_claims_supported(excerpt, cited);
         clean.push(if numeric_uncertain {
             json!({"excerpt":excerpt,"status":"uncertain","explanation":"A number or its unit does not match the cited facts. Check the original evidence manually.","numeric_guard":true})
         } else { json!({"excerpt":excerpt,"status":status,"explanation":explanation}) });
     }
-    json!({"status":"completed","limit_reached":clean.len()==8,"numeric_review":numeric_review,"claims":clean})
+    Ok(clean)
 }
 
 /// Advisory only: identify potentially relevant source details omitted from a
@@ -831,6 +861,64 @@ mod tests {
                 "invalid"
             );
         }
+    }
+
+    #[test]
+    fn evidence_check_repairs_invalid_quotes_once_and_stops_on_runtime_failure() {
+        struct Check {
+            calls: usize,
+            runtime_failure: bool,
+        }
+        impl Inference for Check {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.calls += 1;
+                if self.runtime_failure {
+                    return Err(InferenceError::RuntimeUnreachable("fixture".into()));
+                }
+                let excerpt = if self.calls == 1 {
+                    "paraphrased claim"
+                } else {
+                    assert!(prompt.contains("not an exact quote from the draft"));
+                    "led a team for 5 years"
+                };
+                Ok((
+                    json!({"claims":[{"excerpt":excerpt,"status":"supported","explanation":"Reviewed"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let answer =
+            json!({"text":"I led a team for 5 years.","sources":["Worked as a scientist"]});
+        let mut model = Check {
+            calls: 0,
+            runtime_failure: false,
+        };
+        let result = check_evidence(&mut model, &answer);
+        assert_eq!(model.calls, 2);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["repair_used"], true);
+        assert_eq!(result["claims"][0]["status"], "uncertain");
+        let mut failed = Check {
+            calls: 0,
+            runtime_failure: true,
+        };
+        assert_eq!(
+            check_evidence(&mut failed, &answer)["status"],
+            "unavailable"
+        );
+        assert_eq!(failed.calls, 1);
     }
 
     #[test]
@@ -1523,7 +1611,7 @@ mod tests {
             always_invalid: false,
         };
         assert!(generate(&mut recovered, &input).is_ok());
-        assert_eq!(recovered.calls, 4);
+        assert_eq!(recovered.calls, 5);
         let mut failed = RevisionFixture {
             calls: 0,
             always_invalid: true,
@@ -1583,7 +1671,7 @@ mod tests {
             runtime: false,
         };
         assert!(generate(&mut structured, &input).is_ok());
-        assert_eq!(structured.calls, 4);
+        assert_eq!(structured.calls, 5);
         let mut runtime = Failing {
             calls: 0,
             runtime: true,
@@ -1606,7 +1694,7 @@ mod tests {
         };
         let mut model = Fake { calls: 0 };
         let answer = generate(&mut model, &input).unwrap();
-        assert_eq!(model.calls, 3);
+        assert_eq!(model.calls, 4);
         assert_eq!(answer["sources"][0], "Research experience");
         assert!(validate(&json!({"text":"A","facts":[2]}), &input.facts).is_err());
         assert!(validate(&json!({"text":"","facts":[1]}), &input.facts)
