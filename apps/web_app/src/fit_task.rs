@@ -5098,6 +5098,37 @@ mod tests {
 
     #[test]
     #[ignore = "requires a resource-gated qwen3.5:9b model"]
+    fn live_remote_metadata_preserves_unknown_and_distinguishes_stated_remote() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let preference = "Remote work is required";
+        for (remote, expected) in [
+            (None, "unknown"),
+            (Some(true), "supported"),
+            (Some(false), "unknown"),
+        ] {
+            let listing = format!(
+                "Title: Engineer\nRemote status: {}\nDescription: Builds software.",
+                crate::fit_remote_status_text(remote)
+            );
+            let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+            let baseline = validate(raw.clone(), &[], preference, &listing).unwrap();
+            let result = compare_preferences(&mut model, raw, baseline, &[], preference, &listing);
+            println!("Fictional remote={remote:?}: {result}");
+            assert_eq!(result["preference_comparison"]["status"], "completed");
+            assert_eq!(result["rubric"][0]["status"], expected, "remote={remote:?}");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a resource-gated qwen3.5:9b model"]
     fn live_remote_metadata_does_not_establish_geographic_eligibility() {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()

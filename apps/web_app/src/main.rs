@@ -283,7 +283,7 @@ fn fit_assessment_digest(
 fn fit_remote_status_text(status: Option<bool>) -> &'static str {
     match status {
         Some(true) => "Source indicates remote work; eligible locations are not established by this flag",
-        Some(false) => "Source does not mark the role remote; hybrid or on-site details are not established by this flag",
+        Some(false) => "Structured remote flag is false; some remote work may still be possible in a hybrid arrangement, which this flag does not confirm or exclude",
         None => "Remote status is not established by structured source data",
     }
 }
@@ -7112,8 +7112,7 @@ mod tests {
         assert!(after_listing.contains("Source indicates remote work"));
         assert!(after_listing.contains("eligible locations are not established"));
         assert_ne!(before, after);
-        assert!(fit_remote_status_text(Some(false))
-            .contains("hybrid or on-site details are not established"));
+        assert!(fit_remote_status_text(Some(false)).contains("hybrid arrangement"));
     }
 
     #[test]
