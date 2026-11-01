@@ -2138,8 +2138,10 @@ mod tests {
                 match finished.result {
                     Ok((driver, preview)) => {
                         println!(
-                            "review returned: fields={} warnings={} captcha={} informational={}",
+                            "review returned: fields={} required={} suggestions={} warnings={} captcha={} informational={}",
                             preview.schema.fields.len(),
+                            preview.schema.fields.iter().filter(|field| field.required).count(),
+                            preview.suggestions.len(),
                             preview.manual_review.len(),
                             preview
                                 .manual_review
