@@ -1135,6 +1135,29 @@ fn attach_answer_provenance(
     };
     let mut used = std::collections::HashSet::new();
     for answer in answers {
+        if let Some(value) = answer.get("letter_draft_id") {
+            let id = value
+                .as_str()
+                .filter(|id| !id.is_empty() && id.len() <= 128)
+                .ok_or("Invalid cover-letter draft identifier")?;
+            if answer.get("draft_id").is_some() || !used.insert(id) {
+                return Err(
+                    "A draft cannot be linked to multiple answers or combined with another draft"
+                        .into(),
+                );
+            }
+            let selector = answer["selector"].as_str().ok_or("Missing answer field")?;
+            let text = answer["value"]
+                .as_str()
+                .ok_or("Invalid cover-letter answer")?;
+            let provenance = letter_answer_provenance(ws, &session.job_id, id, text)?;
+            let field = fields
+                .iter_mut()
+                .find(|field| field["selector"].as_str() == Some(selector))
+                .ok_or("Linked answer field is missing")?;
+            field["source_cover_letter_draft"] = provenance;
+            continue;
+        }
         let id = match answer.get("draft_id") {
             None => continue,
             Some(Value::String(id)) if !id.is_empty() => id.as_str(),
@@ -1165,6 +1188,21 @@ fn attach_answer_provenance(
         field["source_draft"] = json!({"task_id":id,"sources":draft.answer["sources"],"selection":draft.answer["selection"],"evidence_check":draft.answer["evidence_check"],"note":"The reviewed answer exactly matched this local draft. Model citations and checks are advisory."});
     }
     Ok(())
+}
+
+fn letter_answer_provenance(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    id: &str,
+    text: &str,
+) -> Result<Value, String> {
+    let bytes = ws
+        .generated_draft(id, job)
+        .map_err(|e| e.to_string())?
+        .ok_or("The saved cover-letter draft is no longer available")?;
+    let cached: Value = serde_json::from_slice(&bytes).map_err(|_| "Saved draft is invalid")?;
+    let digest = draft_context_digest(ws, job, "cover_letter")?;
+    draft_task::export_provenance(&cached, id, job.as_str(), "cover_letter", &digest, text)
 }
 
 struct GeneratedEvidenceLink<'a> {
@@ -8996,6 +9034,41 @@ mod tests {
         assert!(duplicate_inputs(&ws, &first, &second).is_err());
     }
 
+    #[test]
+    fn cover_letter_answer_provenance_tracks_edits_and_current_job_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let job = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/role","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let id = JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
+        let digest = draft_context_digest(&ws, &id, "cover_letter").unwrap();
+        let saved = json!({"status":"complete","job_id":id.as_str(),"kind":"cover_letter","digest":digest,"draft":{"kind":"cover_letter","paragraphs":[{"text":"Fictional experience","facts":[1]}]}});
+        ws.save_generated_draft(
+            "letter",
+            &id,
+            "cover_letter",
+            1,
+            &serde_json::to_vec(&saved).unwrap(),
+        )
+        .unwrap();
+        let exact = letter_answer_provenance(&ws, &id, "letter", "Fictional experience").unwrap();
+        assert_eq!(exact["edited"], false);
+        let edited = letter_answer_provenance(&ws, &id, "letter", "Revised experience").unwrap();
+        assert_eq!(edited["edited"], true);
+        assert_ne!(
+            exact["reviewed_text_sha256"],
+            edited["reviewed_text_sha256"]
+        );
+        assert!(letter_answer_provenance(&ws, &id, "missing", "Fictional experience").is_err());
+        ws.save_candidate_profile(&json!({"first_name":"Changed"}).to_string())
+            .unwrap();
+        assert!(letter_answer_provenance(&ws, &id, "letter", "Fictional experience").is_err());
+    }
+
     #[cfg(all(windows, feature = "sqlcipher"))]
     #[test]
     fn saved_generated_draft_reopens_and_marks_changed_context() {
@@ -12192,6 +12265,29 @@ mod tests {
                 serde_json::from_str(draft_response.split_once("\r\n\r\n").unwrap().1).unwrap();
             assert_eq!(draft_response["provenance_available"], true);
             let current = session.as_mut().unwrap();
+            let letter_digest = draft_context_digest(&ws, &id, "cover_letter").unwrap();
+            let letter = json!({"status":"complete","job_id":id.as_str(),"kind":"cover_letter","digest":letter_digest,"draft":{"kind":"cover_letter","paragraphs":[{"text":"Fictional letter","facts":[1]}]}});
+            ws.save_generated_draft(
+                "fixture-letter",
+                &id,
+                "cover_letter",
+                1,
+                &serde_json::to_vec(&letter).unwrap(),
+            )
+            .unwrap();
+            let letter_request = json!({"selectors":[],"answers":[{"selector":"#candidate","value":"Edited letter","letter_draft_id":"fixture-letter"}]});
+            let (letter_preview, _) =
+                prepare_reviewed_fill(&current.preview, &letter_request).unwrap();
+            let mut letter_fields = form_preview::requested_field_records(&letter_preview).unwrap();
+            attach_answer_provenance(&ws, current, &letter_request, &mut letter_fields).unwrap();
+            assert_eq!(
+                letter_fields[0]["source_cover_letter_draft"]["edited"],
+                true
+            );
+            assert_eq!(
+                letter_fields[0]["source_cover_letter_draft"]["draft_id"],
+                "fixture-letter"
+            );
             let request = json!({"selectors":[],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"}]});
             let (prepared, _) = prepare_reviewed_fill(&current.preview, &request).unwrap();
             let mut fields = form_preview::requested_field_records(&prepared).unwrap();
@@ -12766,6 +12862,17 @@ mod tests {
                 field["source_draft"]["sources"][0],
                 "Fictional research experience"
             );
+            let linked_letter = requested["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["selector"] == "#email")
+                .unwrap();
+            assert_eq!(
+                linked_letter["source_cover_letter_draft"]["draft_id"],
+                "fixture-letter"
+            );
+            assert_eq!(linked_letter["source_cover_letter_draft"]["edited"], true);
             assert!(requested["note"].as_str().unwrap().contains("not proof"));
             let answer_path = requested["answer_file"].as_str().unwrap();
             assert!(answer_path.starts_with("answers/"));
@@ -12880,7 +12987,7 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("Close the active review session"));
-        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"},{"selector":"#email","value":"manual@example.invalid"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":true},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
+        let body = r##"{"session_id":"test-session","reviewed":true,"selectors":["#country"],"answers":[{"selector":"#candidate","value":"Revised","draft_id":"fixture-draft"},{"selector":"#email","value":"manual@example.invalid","letter_draft_id":"fixture-letter"},{"selector":"#available","value":"2029-02-28"},{"selector":"#travel","value":true},{"selector":"#onsite","value":"Remote"},{"selector":"#skills","value":["Rust","Python"]}]}"##;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
