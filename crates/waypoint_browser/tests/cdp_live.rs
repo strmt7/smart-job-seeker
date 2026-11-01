@@ -240,6 +240,36 @@ fn accessible_group_context_distinguishes_applicant_and_reference() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn named_sections_and_regions_supply_context_for_fields() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_contact_named_sections.html"))
+        .unwrap();
+    let field = |selector: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|field| field.selector == selector)
+            .unwrap()
+    };
+    assert_eq!(field("#self").label, "Applicant contact — Email");
+    assert_eq!(
+        field("#reference").label,
+        "Professional reference — Contact details — Email"
+    );
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Professional reference — Contact details — Notes"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn verification_rejects_hidden_choices() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver

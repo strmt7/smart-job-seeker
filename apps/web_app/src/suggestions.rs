@@ -1368,7 +1368,7 @@ mod tests {
             crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
         use waypoint_applications::driver::BrowserDriver;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../crates/waypoint_browser/tests/fixtures/form_contact_named_groups.html")
+            .join("../../crates/waypoint_browser/tests/fixtures/form_contact_named_sections.html")
             .canonicalize()
             .unwrap();
         let url = url::Url::from_file_path(path).unwrap().to_string();

@@ -1623,9 +1623,13 @@ impl CdpDriver {
                 }
             }
             let named_field_group = tag == "fieldset"
-                || attrs
-                    .get("role")
-                    .is_some_and(|role| role.eq_ignore_ascii_case("group"));
+                || (tag == "section"
+                    && attrs
+                        .get("role")
+                        .is_none_or(|role| role.eq_ignore_ascii_case("region")))
+                || attrs.get("role").is_some_and(|role| {
+                    role.eq_ignore_ascii_case("group") || role.eq_ignore_ascii_case("region")
+                });
             let radio_group = attrs
                 .get("role")
                 .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"));
