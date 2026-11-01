@@ -11,6 +11,7 @@ assert.match(render({results_examined: 0, results_reported: 0, unresponsive_engi
 assert.match(render({results_examined: 2, unresponsive_engines: 1}), /1 engine reported unavailable/);
 assert.match(render({results_examined: 2, unresponsive_engines: 3, unresponsive_engine_names:['Engine A','Engine B']}), /3 engines reported unavailable \(Engine A, Engine B; some entries not shown\)/);
 assert.match(render({results_examined:100,results_reported:100,limited:true,batch_limit_omitted:2,unresponsive_engines:0}), /2 omitted by the batch limit/);
+assert.match(render({results_examined:6,results_reported:6,results_rejected:2,within_page_duplicates:1,unresponsive_engines:0}), /2 invalid or unsupported results omitted; 1 repeated on this page/);
 const batchStart = source.indexOf('function webBatchSummary(');
 const batchEnd = source.indexOf('\nasync function followWebBatch(', batchStart);
 assert.ok(batchStart >= 0 && batchEnd > batchStart, 'batch coverage summary must exist');

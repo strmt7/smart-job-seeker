@@ -82,11 +82,12 @@ pub(crate) fn parse_excluding(
         .get("results")
         .and_then(Value::as_array)
         .ok_or("Provider returned no results array")?;
-    let mut links = Vec::new();
+    let mut links: Vec<Value> = Vec::new();
     let mut repeated = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut examined = 0;
     let mut previously_seen = 0;
+    let mut within_page_duplicates = 0usize;
     // A provider can repeat earlier pages before returning new results. Scan a
     // larger bounded prefix while still retaining at most 100 new links.
     for item in results.iter().take(500) {
@@ -105,19 +106,34 @@ pub(crate) fn parse_excluding(
         {
             continue;
         }
-        let Some(title) = item
+        let cleaned_title: String = item
             .get("title")
             .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        else {
-            continue;
-        };
-        let title: String = title
+            .unwrap_or("")
             .chars()
             .filter(|c| !c.is_control())
             .take(200)
             .collect();
-        if title.trim().is_empty() || !seen.insert(url.to_string()) {
+        let title_missing = cleaned_title.trim().is_empty();
+        let title = if title_missing {
+            format!(
+                "Untitled result from {}",
+                url.host_str().unwrap_or("unknown host")
+            )
+        } else {
+            cleaned_title
+        };
+        if !seen.insert(url.to_string()) {
+            within_page_duplicates += 1;
+            if !title_missing {
+                if let Some(earlier) = links
+                    .iter_mut()
+                    .find(|entry| entry["url"] == url.as_str() && entry["title_missing"] == true)
+                {
+                    earlier["title"] = json!(title);
+                    earlier["title_missing"] = json!(false);
+                }
+            }
             continue;
         }
         let snippet: String = item
@@ -162,7 +178,7 @@ pub(crate) fn parse_excluding(
             }
             continue;
         }
-        links.push(json!({"url":url.as_str(),"title":title,"snippet":snippet,"engines":engines,"published_date":published_date.trim()}));
+        links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"published_date":published_date.trim()}));
         if links.len() == 100 {
             break;
         }
@@ -195,7 +211,7 @@ pub(crate) fn parse_excluding(
         }
     }
     Ok(
-        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len(),"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len(),"results_rejected":examined-links.len()-previously_seen-within_page_duplicates,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
     )
 }
 
@@ -280,6 +296,33 @@ mod tests {
     }
 
     #[test]
+    fn result_coverage_distinguishes_rejected_and_repeated_entries() {
+        let payload = json!({"results":[
+            {"url":"https://example.org/new","title":"Role"},
+            {"url":"https://example.org/new","title":"Duplicate"},
+            {"url":"https://example.org/previous","title":"Earlier"},
+            {"url":"http://example.org/job","title":"Insecure"},
+            {"url":"https://example.org/no-title"},
+            {"title":"Missing URL"}
+        ]})
+        .to_string();
+        let excluded = ["https://example.org/previous".to_owned()]
+            .into_iter()
+            .collect();
+        let result = parse_excluding(&payload, &excluded).unwrap();
+        assert_eq!(result["results_examined"], 6);
+        assert_eq!(result["results"].as_array().unwrap().len(), 2);
+        assert_eq!(result["results"][1]["title_missing"], true);
+        assert_eq!(
+            result["results"][1]["title"],
+            "Untitled result from example.org"
+        );
+        assert_eq!(result["within_page_duplicates"], 1);
+        assert_eq!(result["previously_seen"], 1);
+        assert_eq!(result["results_rejected"], 2);
+    }
+
+    #[test]
     fn provider_engine_failures_retain_bounded_names_without_error_messages() {
         let data = parse(&json!({"results":[],"unresponsive_engines":[["engine-one","private detail"], ["engine-one","duplicate"], {"engine":"engine\ntwo"}, [42,"invalid"], "engine-three"]}).to_string()).unwrap();
         assert_eq!(data["unresponsive_engines"], 5);
@@ -353,6 +396,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(duplicate["results"][0]["title"], "Fictional role");
+        assert_eq!(duplicate["results"][0]["title_missing"], false);
+        assert_eq!(duplicate["within_page_duplicates"], 1);
         assert_eq!(duplicate["results_examined"], 2);
         assert_eq!(duplicate["limited"], false);
 

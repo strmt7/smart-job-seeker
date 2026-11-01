@@ -7,7 +7,7 @@ const start=source.indexOf('function renderWebBatch('),end=source.indexOf('\nfun
 assert.ok(candidate && start>=0 && end>start);
 function node(tag,text=''){return {tag,textContent:text,children:[],listeners:{},append(...items){this.children.push(...items);},replaceChildren(...items){this.children=[...items];},addEventListener(event,fn){this.listeners[event]=fn;},setAttribute(){}};}
 const panel=node('div'),selected=new Map(),notices=[];
-const context={selectedCandidates:selected,webBatchPage:0,element:node,searchCoverage:()=>'',notify:text=>notices.push(text),updateCandidateSelection(){},document:{querySelector:()=>panel,createElement:tag=>node(tag),createTextNode:text=>node('text',text)}};
+const context={selectedCandidates:selected,webBatchPage:0,element:node,searchCoverage:()=>'',repeatedCandidateDetails:()=>null,notify:text=>notices.push(text),updateCandidateSelection(){},document:{querySelector:()=>panel,createElement:tag=>node(tag),createTextNode:text=>node('text',text)}};
 const render=vm.runInNewContext(`${candidate}\n${source.slice(start,end)}\nrenderWebBatch`,context);
 const items=Array.from({length:120},(_,i)=>({url:`https://example.test/${i}`,title:`Role ${i}`,snippet:''}));
 const batch={groups:[{query:'roles',page:1,data:{results:items}}]};
