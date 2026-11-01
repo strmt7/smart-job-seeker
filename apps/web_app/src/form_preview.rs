@@ -1664,6 +1664,10 @@ mod tests {
         let live = driver.inspect_current().unwrap();
         assert_ne!(first.schema, live.schema);
         let second = suggest_for_live_form(live, &mut llm, &profile).unwrap();
+        println!(
+            "Fictional second-step fields: {:?}; suggestions: {:?}; review: {:?}",
+            second.schema.fields, second.suggestions, second.manual_review
+        );
         assert_eq!(second.suggestions.len(), 1);
         assert_eq!(second.suggestions[0].field_selector, "#email");
         assert!(second
