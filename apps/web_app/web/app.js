@@ -490,7 +490,27 @@ function showFormPreview(job,result){setWorkspaceView('applications');
        });
       }
      }catch(error){visualResult.replaceChildren(element('p',`Choice visual check unavailable: ${error.message}`,'review-label'));}finally{visual.disabled=false;}
-    });section.append(visual,visualResult);choicesPanel.append(section);
+    });section.append(visual,visualResult);
+    if(choice.expanded && Array.isArray(choice.options) && choice.options.length){
+     const label=element('label','Your answer for this question'),answer=document.createElement('input'),suggest=element('button','Suggest a visible option'),advice=element('div','','review-label');answer.type='text';answer.maxLength=600;answer.autocomplete='off';suggest.type='button';label.append(answer);section.append(label,suggest,advice);
+     answer.addEventListener('input',()=>advice.replaceChildren());
+     suggest.addEventListener('click',async()=>{
+      const requested=answer.value || '';if(!requested.trim()){advice.replaceChildren(element('p','Enter your answer first.'));return;}suggest.disabled=true;advice.replaceChildren(element('p','Checking the visible options locally…'));
+      try{
+       let pending;try{pending=JSON.parse(sessionStorage.getItem('waypoint-choice-advice')||'null');}catch(_){}
+       let recovered=!!pending;
+       if(!pending){const active=await api('/api/form/custom-choice-advice-pending',{});if(active.active){pending={task:active.task_id,session:active.session_id};recovered=true;}else{const started=await api('/api/form/custom-choice-advice-start',{session_id:result.session_id,selector:choice.selector,snapshot_digest:inventory.snapshot_digest,answer:requested});pending={task:started.task_id,session:result.session_id};}sessionStorage.setItem('waypoint-choice-advice',JSON.stringify(pending));}
+       let response;do{await new Promise(resolve=>setTimeout(resolve,700));response=await api('/api/form/custom-choice-advice-status',{task_id:pending.task});}while(response.status==='running');sessionStorage.removeItem('waypoint-choice-advice');
+       if(recovered)throw new Error('A previous advice request was recovered; request advice again for the current answer');
+       if(answer.value!==requested)throw new Error('Your answer changed; request advice again');
+       if(response.status!=='complete' || response.session_id!==result.session_id)throw new Error(response.error || 'Choice advice is unavailable');
+       const option=response.advice?.option;if(option===null){advice.replaceChildren(element('p','No visible option could be suggested from this answer.'));return;}
+       if(typeof option!=='string' || !choice.options.includes(option) || typeof response.advice?.evidence!=='string')throw new Error('Invalid option advice');
+       advice.replaceChildren(element('p',`Suggested visible option: ${option}`),element('p',`Based on your answer: ${response.advice.evidence}`),element('p','Suggestions can be wrong and other options may exist. Visually check the option and review it before selecting.'));
+      }catch(error){advice.replaceChildren(element('p',`Choice advice unavailable: ${error.message}`));}finally{suggest.disabled=false;}
+     });
+    }
+    choicesPanel.append(section);
    }
    if(inventory.incomplete)choicesPanel.append(element('p','Some page scopes or controls could not be inspected.','review-label'));
   }catch(error){choicesPanel.replaceChildren(element('p',`Custom choices could not be inspected: ${error.message}`,'review-label'));}finally{choicesButton.disabled=false;}

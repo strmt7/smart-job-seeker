@@ -384,6 +384,38 @@ mod tests {
         for option in ["Missing", "Duplicate"] {
             assert!(request(&mut ws, &mut session, "/api/form/custom-choice-option-vision-start", json!({"session_id":"choice-session","selector":selector,"option":option,"snapshot_digest":digest})).is_err());
         }
+        let advice_task = if std::env::var("WAYPOINT_CHOICE_ADVICE_LIVE").as_deref() == Ok("1") {
+            request(&mut ws, &mut session, "/api/form/custom-choice-advice-start", json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest,"answer":"I prefer Berlin"})).unwrap()["task_id"].as_str().unwrap().to_owned()
+        } else {
+            crate::choice_advice::set_fixture("choice-advice", "choice-session", &digest);
+            "choice-advice".to_owned()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let advice = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/custom-choice-advice-status",
+                json!({"task_id":advice_task}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(advice["advice"]["option"], "Berlin");
+        crate::choice_advice::set_fixture("choice-advice-stale", "choice-session", "stale");
+        let stale = request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choice-advice-status",
+            json!({"task_id":"choice-advice-stale"}),
+        )
+        .unwrap();
+        assert_eq!(stale["status"], "failed");
+        assert!(stale["advice"].is_null());
         let image = session
             .as_mut()
             .unwrap()

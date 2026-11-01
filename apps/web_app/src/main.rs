@@ -7,6 +7,7 @@ mod ats_check;
 mod attempt_record;
 mod candidate_selection;
 mod candidate_task;
+mod choice_advice;
 mod contact_advice;
 mod control_rank;
 mod control_vision;
@@ -3984,6 +3985,88 @@ fn serve(
                 json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest,"can_open":can_open,"pending_selected":pending_selected}),
             );
         }
+        "/api/form/custom-choice-advice-pending" => {
+            json_reply(stream, "200 OK", choice_advice::pending()?);
+        }
+        "/api/form/custom-choice-advice-start" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"]
+                .as_str()
+                .filter(|value| !value.is_empty() && value.len() <= 4096)
+                .ok_or("Invalid choice selector")?;
+            let answer = body["answer"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty() && value.len() <= 600)
+                .ok_or("Provide an answer of at most 600 bytes")?;
+            let expected = body["snapshot_digest"]
+                .as_str()
+                .filter(|value| value.len() == 64)
+                .ok_or("Missing choice snapshot")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let (inventory, digest) = custom_choice_snapshot(&mut current.driver)?;
+            if digest != expected {
+                return Err("The page changed; inspect choices again".into());
+            }
+            let matches: Vec<_> = inventory
+                .choices
+                .iter()
+                .filter(|choice| choice.selector == selector)
+                .collect();
+            if matches.len() != 1
+                || !matches[0].expanded
+                || matches[0].label == "Unlabelled choice"
+                || matches[0].options.is_empty()
+            {
+                return Err("Open an unambiguous, labelled choice before requesting advice".into());
+            }
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            choice_advice::start(
+                task_id.clone(),
+                current.id.clone(),
+                digest,
+                model,
+                matches[0].label.clone(),
+                answer.to_owned(),
+                matches[0].options.clone(),
+            )?;
+            current.created = Instant::now();
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/form/custom-choice-advice-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let mut result = choice_advice::poll(id)?;
+            if matches!(result["status"].as_str(), Some("running" | "complete")) {
+                if let Some(current) = session.as_mut().filter(|s| {
+                    Some(s.id.as_str()) == result["session_id"].as_str()
+                        && s.created.elapsed() <= s.ttl
+                }) {
+                    current.created = Instant::now();
+                    if result["status"] == "complete"
+                        && custom_choice_snapshot(&mut current.driver)
+                            .ok()
+                            .map(|(_, digest)| digest)
+                            != result["snapshot_digest"].as_str().map(str::to_owned)
+                    {
+                        result = json!({"status":"failed","session_id":current.id,"error":"The page changed; inspect the choice again"});
+                    }
+                } else if result["status"] == "complete" {
+                    result = json!({"status":"failed","session_id":result["session_id"],"error":"The review session ended or changed"});
+                }
+            }
+            if result["status"] != "running" {
+                choice_advice::complete(id, result.clone())?;
+            }
+            if let Some(object) = result.as_object_mut() {
+                object.remove("snapshot_digest");
+            }
+            json_reply(stream, "200 OK", result);
+        }
         "/api/form/custom-choice-vision-start"
         | "/api/form/custom-choice-option-vision-start"
         | "/api/form/custom-choice-selected-vision-start" => {
@@ -7103,6 +7186,10 @@ fn serve_loop(
         if let Err(error) = control_rank::collect_orphaned(session.as_ref().map(|s| s.id.as_str()))
         {
             eprintln!("Could not release expired control advice: {error}");
+        }
+        if let Err(error) = choice_advice::collect_orphaned(session.as_ref().map(|s| s.id.as_str()))
+        {
+            eprintln!("Could not release expired choice advice: {error}");
         }
         if let Err(error) =
             control_vision::collect_orphaned(session.as_ref().map(|s| s.id.as_str()))

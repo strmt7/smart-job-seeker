@@ -187,6 +187,24 @@ API run used the same local model for both option observation and the later
 selected-value check; the earlier field-label observation was simulated. No
 application was submitted, and the model was unloaded after the checks.
 
+## Advice for a visible custom option
+
+The review panel can ask a local model to suggest an option for an answer
+typed specifically for that question. Suggestions are limited to currently
+rendered options and must include an exact excerpt from the supplied answer;
+duplicates, invalid indices and unsupported excerpts are rejected. This is
+advice only: it does not select an option or authorize an action, and a
+matching excerpt does not prove that the model interpreted the answer
+correctly. The answer is not added to the candidate profile or attempt record.
+The page snapshot is rechecked before advice is returned.
+
+`gemma4:12b-it-qat` suggested Berlin for one fictional answer and abstained
+for one undecided answer. A separate fictional browser/API run exercised the
+same model-backed endpoint and rejected simulated stale advice. The model was
+unloaded afterward. These few cases do not establish general accuracy; other
+options may be absent from a virtualized list, and the user must review the
+suggestion and visual evidence.
+
 ## Reviewed option selection
 
 The web flow can select a uniquely rendered option after a saved, current
