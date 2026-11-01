@@ -1,3 +1,8 @@
+## Template evidence qualification — 2026-11-01
+
+- The live fictional template test now checks that the evidence review completes and flags a claim based on the selected, independently unverified passage as uncertain. In the observed run the model retained the original passage unchanged; this does not establish that it improves a résumé or correctly classifies every claim. A separate fictional answer check identified the cited Python work as supported and an invented five-year management claim as unsupported.
+- Both checks passed with the production-admitted `qwen3.5:9b`; minimum sampled available RAM was 19.88 GiB and the model was unloaded. Three focused template tests also passed. These are narrow model observations, not proof of document quality or reliability. No employer was contacted or application submitted. Local outputs are in `target/live_*qwen-live.log`.
+
 ## Preference evidence context — 2026-11-01
 
 - Preference assessments now include bounded surrounding text from the verified original listing for a unique cited passage. The interface displays it alongside the exact quote when different; scoring is unchanged. Ambiguous quotes remain unknown, and older assessments do not gain context until reassessed. The context makes a citation easier to inspect but does not prove the model's interpretation.

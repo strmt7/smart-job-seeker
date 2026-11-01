@@ -352,6 +352,22 @@ mod tests {
             !text.contains("ten years") && !text.contains("10 years"),
             "unsupported duration: {text}"
         );
+        let evidence = &result["evidence_check"];
+        assert_eq!(
+            evidence["status"], "completed",
+            "evidence check: {evidence}"
+        );
+        assert!(
+            evidence["claims"]
+                .as_array()
+                .is_some_and(|claims| claims.iter().any(|claim| {
+                    claim["status"] == "uncertain"
+                        && claim["excerpt"].as_str().is_some_and(|excerpt| {
+                            !excerpt.is_empty() && text.contains(&excerpt.to_lowercase())
+                        })
+                })),
+            "unverified template evidence should require review: {evidence}"
+        );
     }
 
     #[test]
