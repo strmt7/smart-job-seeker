@@ -182,3 +182,10 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 .draft-template-image{display:block;max-width:100%;height:auto;margin:12px 0}
 
 .reviewed-sort{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}.reviewed-sort [role="status"]{flex-basis:100%;font-size:.85rem;color:var(--muted,#526375)}
+
+/* Keep job titles readable when match badges contain both estimates. */
+.job{grid-template-columns:minmax(0,1fr)}
+.job>div:last-child{flex-direction:row;justify-content:flex-start;align-items:center;flex-wrap:wrap;padding-left:30px}
+.job>div:last-child .score{max-width:100%;white-space:normal;text-align:left}
+.jobs>.reviewed-sort{margin-left:28px;margin-right:28px}
+@media(max-width:850px){.jobs>.reviewed-sort{margin-left:20px;margin-right:20px}}
