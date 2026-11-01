@@ -584,7 +584,14 @@ impl CdpDriver {
         }
         let (left, top, width, height, scale) = if context {
             let left = (x + page_x - 120.0).max(page_x).max(0.0).min(page_width);
-            let top = (y + page_y - 70.0).max(page_y).max(0.0).min(page_height);
+            // Include more section context when the field is short, while
+            // preserving the previous 70-pixel margin for tall controls.
+            let field_height = bottom - (y + page_y);
+            let headroom = (400.0 - field_height - 60.0).clamp(70.0, 160.0);
+            let top = (y + page_y - headroom)
+                .max(page_y)
+                .max(0.0)
+                .min(page_height);
             let width = (right + 60.0 - left)
                 .clamp(220.0, 720.0)
                 .min(page_width - left)

@@ -32,6 +32,23 @@ context and one local browser at a time. Results can vary between runs. Keep
 these cases for future model and prompt evaluation; neither a successful DOM
 check nor exact transcription establishes overall application correctness.
 
+## Focused-crop refinement
+
+On the same fictional grouped-contact page, the original 70-pixel margin
+above the field led the model to return the short label `Email` twice. With
+160 and 240 pixels of context above the field, it returned the full
+section-qualified label and expected fictional value in both trials for each
+crop. These were local browser captures with the same model and prompt; they
+are not a representative benchmark.
+
+The driver was then changed to allow up to 160 pixels above a focused field,
+while retaining the 400-pixel capture-height limit and the previous 70-pixel
+margin for taller controls. One subsequent run of
+`live_visual_distinguishes_identically_labelled_sections` passed with the
+actual driver and model. The viewport-boundary browser fixture also passed.
+Nearby fields may still confuse the model, and headings outside the viewport
+remain unavailable; a missing or ambiguous label remains unverified.
+
 ## Placeholder prompt experiment
 
 Four additional fictional pages displayed the same email as either an entered
