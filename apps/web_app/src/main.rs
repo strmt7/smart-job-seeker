@@ -114,7 +114,7 @@ struct ReviewSession {
     // Attachment verification is scoped to the inspection session in which
     // the control was observed; later wizard sections can reuse selectors.
     attachments: Vec<(String, std::path::PathBuf, String, String)>,
-    pending_choice_visual: Option<(String, String, i64)>,
+    pending_choice_visual: Option<(String, String, i64, Option<String>)>,
     last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
 }
@@ -3943,14 +3943,26 @@ fn serve(
                 .ok_or("Form session expired")?;
             let (choices, digest) = custom_choice_snapshot(&mut current.driver)?;
             let can_open = check_answer_page(current).is_ok();
+            let pending_selected =
+                current
+                    .pending_choice_visual
+                    .as_ref()
+                    .and_then(|(selector, _, _, option)| {
+                        option
+                            .as_ref()
+                            .map(|option| json!({"selector":selector,"option":option}))
+                    });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest,"can_open":can_open}),
+                json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest,"can_open":can_open,"pending_selected":pending_selected}),
             );
         }
-        "/api/form/custom-choice-vision-start" | "/api/form/custom-choice-option-vision-start" => {
+        "/api/form/custom-choice-vision-start"
+        | "/api/form/custom-choice-option-vision-start"
+        | "/api/form/custom-choice-selected-vision-start" => {
             let option_review = path == "/api/form/custom-choice-option-vision-start";
+            let selected_review = path == "/api/form/custom-choice-selected-vision-start";
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let selector = body["selector"]
                 .as_str()
@@ -3976,7 +3988,14 @@ fn serve(
             if matches.len() != 1 {
                 return Err("The choice is unavailable or ambiguous".into());
             }
-            let label = if option_review {
+            let label = if selected_review {
+                current
+                    .pending_choice_visual
+                    .as_ref()
+                    .filter(|pending| pending.0 == selector)
+                    .and_then(|pending| pending.3.clone())
+                    .ok_or("No selected value is awaiting visual review")?
+            } else if option_review {
                 let option = body["option"]
                     .as_str()
                     .filter(|value| {
@@ -4004,7 +4023,9 @@ fn serve(
                     .join(" ")
                     .to_lowercase()
             };
-            let ambiguous = if option_review {
+            let ambiguous = if selected_review {
+                false
+            } else if option_review {
                 matches[0]
                     .options
                     .iter()
@@ -4023,7 +4044,9 @@ fn serve(
             let image = current
                 .driver
                 .with_review_timeout(|driver| {
-                    if option_review {
+                    if selected_review {
+                        driver.screenshot_control(selector)
+                    } else if option_review {
                         driver.screenshot_base64()
                     } else {
                         driver.screenshot_field_context(selector)
@@ -4042,7 +4065,9 @@ fn serve(
             if let Err(error) = control_vision::start(control_vision::Request {
                 id: task_id.clone(),
                 session: current.id.clone(),
-                rank_task: if option_review {
+                rank_task: if selected_review {
+                    "custom-choice-selected"
+                } else if option_review {
                     "custom-choice-option"
                 } else {
                     "custom-choice"
@@ -4070,7 +4095,8 @@ fn serve(
                 json!({"task_id":task_id,"screenshot":image,"capture_saved":capture_saved}),
             );
         }
-        "/api/form/custom-choice-open" => {
+        "/api/form/custom-choice-open" | "/api/form/custom-choice-select" => {
+            let selecting = path == "/api/form/custom-choice-select";
             if body["reviewed"] != true || body["source_reviewed"] != true {
                 return Err("Review the destination and choice before opening it".into());
             }
@@ -4084,7 +4110,12 @@ fn serve(
             let evidence = control_vision::poll(task_id)?;
             if evidence["status"] != "complete"
                 || evidence["choice"] != true
-                || evidence["rank_task_id"] != "custom-choice"
+                || evidence["rank_task_id"]
+                    != if selecting {
+                        "custom-choice-option"
+                    } else {
+                        "custom-choice"
+                    }
                 || evidence["comparison"] != "label_observed"
                 || evidence["session_id"].as_str() != Some(id)
                 || evidence["capture_saved"] != true
@@ -4166,15 +4197,41 @@ fn serve(
                 .iter()
                 .filter(|choice| choice.selector == selector)
                 .collect();
-            if matches.len() != 1
-                || matches[0].expanded
-                || evidence["label"].as_str() != Some(matches[0].label.as_str())
-            {
-                return Err("Choice changed or is already open; inspect again".into());
+            if matches.len() != 1 {
+                return Err("Choice changed; inspect again".into());
             }
+            let option = if selecting {
+                let value = evidence["label"]
+                    .as_str()
+                    .ok_or("Option evidence missing")?;
+                if !matches[0].expanded
+                    || matches[0]
+                        .options
+                        .iter()
+                        .filter(|option| option.as_str() == value)
+                        .count()
+                        != 1
+                {
+                    return Err("Choice option changed; inspect again".into());
+                }
+                Some(value.to_owned())
+            } else {
+                if matches[0].expanded
+                    || evidence["label"].as_str() != Some(matches[0].label.as_str())
+                {
+                    return Err("Choice changed or is already open; inspect again".into());
+                }
+                None
+            };
             let image = current
                 .driver
-                .with_review_timeout(|driver| driver.screenshot_field_context(&selector))
+                .with_review_timeout(|driver| {
+                    if selecting {
+                        driver.screenshot_base64()
+                    } else {
+                        driver.screenshot_field_context(&selector)
+                    }
+                })
                 .map_err(|error| error.to_string())?;
             let after = custom_choice_snapshot(&mut current.driver)?.1;
             if !control_vision::capture_is_current(
@@ -4190,10 +4247,10 @@ fn serve(
                 .record
                 .as_mut()
                 .ok_or("A disk-backed application record is required before opening a choice")?;
-            record.event(json!({"type":"custom_choice_open_requested","time":now(),"selector":selector,"visual_task_id":task_id,"note":"Explicitly reviewed; no submission authorized."}))?;
+            record.event(json!({"type":"custom_choice_action_requested","time":now(),"selector":selector,"option":option,"visual_task_id":task_id,"note":"Explicitly reviewed; no submission authorized."}))?;
             control_vision::consume_choice_evidence(task_id)?;
             let grant_id = random_id()?;
-            let payload = json!({"action":"open_custom_choice","selector":selector,"snapshot_digest":before,"visual_task_id":task_id}).to_string();
+            let payload = json!({"action":if selecting {"select_custom_choice"} else {"open_custom_choice"},"selector":selector,"option":option,"snapshot_digest":before,"visual_task_id":task_id}).to_string();
             ws.record_consumed_prefill_grant(&waypoint_store::prefill_grants::PrefillGrantRecord {
                 id: grant_id.clone(),
                 job_id: current.job_id.as_str().into(),
@@ -4211,7 +4268,7 @@ fn serve(
             let revision = custom_choice_action::begin_pending(ws, &current.job_id, &action_id)?;
             let current = session.take().ok_or("Form session expired")?;
             if let Err((current, error)) =
-                custom_choice_action::start(action_id.clone(), current, selector, revision)
+                custom_choice_action::start(action_id.clone(), current, selector, option, revision)
             {
                 let cleanup =
                     custom_choice_action::finish_pending(ws, &current.job_id, &action_id, revision);
@@ -4612,7 +4669,9 @@ fn serve(
                             current
                                 .driver
                                 .with_review_timeout(|driver| {
-                                    if result["rank_task_id"] == "custom-choice-option" {
+                                    if result["rank_task_id"] == "custom-choice-selected" {
+                                        driver.screenshot_control(selector)
+                                    } else if result["rank_task_id"] == "custom-choice-option" {
                                         driver.screenshot_base64()
                                     } else if choice {
                                         driver.screenshot_field_context(selector)
@@ -4698,7 +4757,10 @@ fn serve(
                     result["pending_finished"] = json!(true);
                 }
                 if result["choice"] == true
-                    && result["rank_task_id"] == "custom-choice"
+                    && matches!(
+                        result["rank_task_id"].as_str(),
+                        Some("custom-choice" | "custom-choice-selected")
+                    )
                     && result["comparison"] == "label_observed"
                     && result["capture_saved"] == true
                     && result["result_saved"] == true
@@ -4708,7 +4770,7 @@ fn serve(
                         .as_mut()
                         .filter(|s| Some(s.id.as_str()) == result["session_id"].as_str())
                     {
-                        if let Some((selector, action_id, revision)) =
+                        if let Some((selector, action_id, revision, selected)) =
                             current.pending_choice_visual.clone()
                         {
                             if result["selector"].as_str() == Some(selector.as_str()) {
@@ -4720,7 +4782,14 @@ fn serve(
                                     .filter(|choice| choice.selector == selector && choice.expanded)
                                     .count()
                                     == 1;
-                                if expanded
+                                let expected_visual = match selected.as_deref() {
+                                    Some(value) => {
+                                        result["rank_task_id"] == "custom-choice-selected"
+                                            && result["label"].as_str() == Some(value)
+                                    }
+                                    None => result["rank_task_id"] == "custom-choice" && expanded,
+                                };
+                                if expected_visual
                                     && result["snapshot_digest"].as_str() == Some(digest.as_str())
                                 {
                                     custom_choice_action::finish_pending(

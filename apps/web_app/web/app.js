@@ -406,19 +406,31 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  panel.replaceChildren(element('h3',`Form review: ${job.title} · ${job.employer}`));
  panel.append(element('p',`${result.visible ? 'Visible browser open. You can handle sign-in, CAPTCHA and other sections yourself.' : 'Headless browser open.'} Waypoint does not press submit; websites may transmit information as you type.`));
  const choicesButton=element('button','Inspect custom choices'),choicesPanel=element('div','','application-link');choicesButton.type='button';choicesPanel.setAttribute('aria-live','polite');
+ function addSelectedReview(selector,option,target){
+  const verify=element('button','Check selected value with local vision');verify.type='button';target.append(verify);
+  verify.addEventListener('click',async()=>{verify.disabled=true;try{
+   let task;try{task=JSON.parse(sessionStorage.getItem('waypoint-choice-selected-vision')||'null');}catch(_){}
+   if(task){if(task.session!==result.session_id || task.selector!==selector)throw new Error('Another selected value check is pending');}
+   else{const active=await api('/api/form/control-vision-pending',{});if(active.active){if(active.rank_task_id!=='custom-choice-selected' || active.session_id!==result.session_id)throw new Error('Another control visual check is pending');task={task:active.task_id,session:result.session_id,selector};}else{const current=await api('/api/form/custom-choices',{session_id:result.session_id});const started=await api('/api/form/custom-choice-selected-vision-start',{session_id:result.session_id,selector,snapshot_digest:current.snapshot_digest});task={task:started.task_id,session:result.session_id,selector};}sessionStorage.setItem('waypoint-choice-selected-vision',JSON.stringify(task));}
+   let visual;do{await new Promise(resolve=>setTimeout(resolve,1000));visual=await api('/api/form/control-vision-status',{task_id:task.task});}while(visual.status==='running');sessionStorage.removeItem('waypoint-choice-selected-vision');
+   if(visual.post_choice_review_finished!==true || visual.rank_task_id!=='custom-choice-selected' || visual.session_id!==result.session_id || visual.label!==option)throw new Error('The displayed value could not be verified');
+   target.append(element('p','The selected value was visually checked.','review-label'));
+  }catch(error){target.append(element('p',`Selected value needs manual review: ${error.message}`,'review-label'));}finally{verify.disabled=false;}});
+ }
  choicesButton.addEventListener('click',async()=>{
   choicesButton.disabled=true;choicesPanel.replaceChildren(element('p','Inspecting visible choice controls…','footnote'));
   try{
    const inventory=await api('/api/form/custom-choices',{session_id:result.session_id});
    if(!Array.isArray(inventory.choices)||typeof inventory.snapshot_digest!=='string')throw new Error('Invalid choice inventory');
    choicesPanel.replaceChildren();
+   if(inventory.pending_selected){const pending=inventory.pending_selected,review=element('section','','choice-review-item');review.append(element('p',`A selected value needs visual review: ${pending.option}`,'review-label'));addSelectedReview(pending.selector,pending.option,review);choicesPanel.append(review);}
    if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom choices were detected.','footnote'));
    for(const choice of inventory.choices.slice(0,15)){
     const section=element('section','','choice-review-item');section.append(element('strong',choice.label || 'Unlabelled choice'));
     if(!choice.expanded)section.append(element('p','Options are not currently available from this control. Open it in a visible browser, then inspect again.','review-label'));
     else if(!Array.isArray(choice.options)||!choice.options.length)section.append(element('p','No rendered options could be read.','review-label'));
     else{const list=element('ul','');for(const option of choice.options.slice(0,30)){
-     const row=element('li',option),check=element('button','Check option with local vision'),feedback=element('span','','review-label');check.type='button';
+     const row=element('li',option),check=element('button','Check option with local vision'),feedback=element('span','','review-label'),actions=element('div','');check.type='button';
      check.addEventListener('click',async()=>{
       check.disabled=true;feedback.textContent='Checking option…';
       try{
@@ -431,10 +443,26 @@ function showFormPreview(job,result){setWorkspaceView('applications');
        feedback.textContent=outcome.comparison==='label_observed'?'The local model observed this option. No option was selected.':'The option could not be reliably verified; review it manually.';
        if(outcome.capture_saved!==true || outcome.result_saved!==true)feedback.textContent+=' Visual evidence was not saved.';
        if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured open choice';image.src=`data:image/png;base64,${outcome.screenshot}`;feedback.append(image);}
+       actions.replaceChildren();
+       if(outcome.comparison==='label_observed' && outcome.capture_saved===true && outcome.result_saved===true && outcome.pending_finished===true && inventory.can_open===true){
+        const review=element('label',''),confirm=document.createElement('input'),select=element('button','Select reviewed option');confirm.type='checkbox';select.type='button';review.append(confirm,document.createTextNode(' I reviewed this option and destination. The site may transmit data.'));actions.append(review,select);
+        select.addEventListener('click',async()=>{
+         if(!confirm.checked){actions.append(element('p','Confirm the option and destination first.','review-label'));return;}select.disabled=true;
+         try{
+          let action;try{action=JSON.parse(sessionStorage.getItem('waypoint-choice-action')||'null');}catch(_){}
+          if(action && action.session!==result.session_id)throw new Error('Another choice action is pending');
+          if(!action){const active=await api('/api/form/custom-choice-action-pending',{});if(active.active){if(active.session_id!==result.session_id)throw new Error('Another choice action is pending');action={task:active.task_id,session:result.session_id};}else{const started=await api('/api/form/custom-choice-select',{session_id:result.session_id,visual_task_id:pending.task,reviewed:true,source_reviewed:true});action={task:started.task_id,session:result.session_id};}sessionStorage.setItem('waypoint-choice-action',JSON.stringify(action));}
+          let selected;do{await new Promise(resolve=>setTimeout(resolve,700));selected=await api('/api/form/custom-choice-action-status',{task_id:action.task});}while(selected.status==='running');sessionStorage.removeItem('waypoint-choice-action');
+          if(selected.status!=='complete' || selected.selected!==true || selected.option!==option || selected.record_saved!==true || selected.previous_fields_verified!==true)throw new Error(selected.error || 'The result needs manual review');
+          actions.append(element('p','Option selected. A visual check of the displayed value is required before continuing.','review-label'));
+          addSelectedReview(choice.selector,option,actions);
+         }catch(error){actions.append(element('p',`Choice action needs review and was not retried: ${error.message}`,'review-label'));}
+        });
+       }
       }catch(error){feedback.textContent=`Option check unavailable: ${error.message}`;}finally{check.disabled=false;}
-     });row.append(check,feedback);list.append(row);
+     });row.append(check,feedback,actions);list.append(row);
     }section.append(list);}
-    section.append(element('p','Only currently rendered options can be shown; additional options may exist. Nothing was selected.','footnote'));
+    section.append(element('p','Only currently rendered options can be shown; additional options may exist.','footnote'));
     const visual=element('button','Check choice with local vision'),visualResult=element('div','','answer-draft');visual.type='button';
     visual.addEventListener('click',async()=>{
      visual.disabled=true;visualResult.replaceChildren(element('p','Checking the visible label locally…','footnote'));

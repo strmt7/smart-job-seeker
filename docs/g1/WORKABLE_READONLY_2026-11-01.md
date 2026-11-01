@@ -171,6 +171,22 @@ the control text from that crop. On the same fixture, a viewport capture let
 the model transcribe `Berlin` among the visible options. This was a single
 local-model probe, not a measurement of general accuracy; the application
 pipeline and its one-use separation were checked with simulated vision results.
-Option checks are advisory and do not select or authorize an option. A changed
-snapshot, unreadable option, duplicate label or unavailable evidence requires
-review. The model was unloaded after the probe.
+Option checks alone do not select or authorize an option. A changed snapshot,
+unreadable option, duplicate label or unavailable evidence requires review.
+The model was unloaded after the probe.
+
+## Reviewed option selection
+
+The web flow can select a uniquely rendered option after a saved, current
+option visual check and an explicit destination and option review. Its one-use
+approval binds the option and snapshot, the background action records its
+outcome, and further filling stays blocked until the displayed value receives
+a separate saved visual check. The selected-value check can be resumed from
+the choice inventory after reloading the interface. On a fictional local form,
+the complete API workflow selected `Berlin`, rejected reuse of the evidence,
+and completed the displayed-value check with resource-gated
+`gemma4:12b-it-qat`; the earlier option observation in that workflow was
+simulated. A separate model probe transcribed both the visible option and the
+displayed value. Neither test establishes reliability across employer sites,
+and site scripts can still have side effects. No employer form was operated
+or application submitted in these tests. The model was unloaded afterward.

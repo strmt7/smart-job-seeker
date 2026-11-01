@@ -72,6 +72,7 @@ pub fn start(
     id: String,
     mut session: ReviewSession,
     selector: String,
+    option: Option<String>,
     revision: i64,
 ) -> Result<(), (Box<ReviewSession>, String)> {
     let mut task = match TASK.lock() {
@@ -95,8 +96,15 @@ pub fn start(
     });
     drop(task);
     std::thread::spawn(move || {
-        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            session.driver.open_custom_choice(&selector)
+        let action = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(value) = option.as_deref() {
+                session
+                    .driver
+                    .select_custom_choice_option(&selector, value)
+                    .map(|()| None)
+            } else {
+                session.driver.open_custom_choice(&selector).map(Some)
+            }
         }))
         .map_err(|_| "Choice opening stopped unexpectedly".to_string())
         .and_then(|result| result.map_err(|error| error.to_string()));
@@ -105,7 +113,7 @@ pub fn start(
             .with_review_timeout(|driver| driver.screenshot_base64())
             .ok();
         let saved = match (&mut session.record, &screenshot) {
-            (Some(record), Some(image)) => record.screenshot_with_name(image).and_then(|name| record.event(json!({"type":"custom_choice_open_result","time":now(),"selector":selector,"opened":opened.is_ok(),"screenshot":format!("screenshots/{name}"),"note":"A new visual review is required before further action."}))).is_ok(),
+            (Some(record), Some(image)) => record.screenshot_with_name(image).and_then(|name| record.event(json!({"type":"custom_choice_action_result","time":now(),"selector":selector,"option":option,"succeeded":action.is_ok(),"screenshot":format!("screenshots/{name}"),"note":"A new visual review is required before further action."}))).is_ok(),
             _ => false,
         };
         let check = session.completed_selectors.first().cloned().map(|first| {
@@ -121,15 +129,18 @@ pub fn start(
         let previous_verified = check.as_ref().is_none_or(|check| {
             check.selected_retained && check.failed_labels.is_empty() && check.unverified == 0
         });
-        let result = match opened {
-            Ok(choice) => {
+        let result = match action {
+            Ok(Some(choice)) => {
                 json!({"status":"complete","opened":true,"choice":choice,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
+            }
+            Ok(None) => {
+                json!({"status":"complete","selected":true,"option":option,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
             }
             Err(error) => {
                 json!({"status":"uncertain","opened":false,"error":error,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
             }
         };
-        session.pending_choice_visual = Some((selector, id, revision));
+        session.pending_choice_visual = Some((selector, id, revision, option));
         session
             .preview
             .manual_review
@@ -445,6 +456,168 @@ mod tests {
             clicks
         );
         let (text, _) = current.driver.page_text_bounded(2000).unwrap();
+        assert!(text.contains("NOT SUBMITTED"), "{text}");
+        let (_, digest) =
+            crate::custom_choice_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
+        let image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_base64()
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .record
+            .as_mut()
+            .unwrap()
+            .screenshot_with_name(&image)
+            .unwrap();
+        let revision =
+            crate::control_vision::begin_pending(&ws, &job, "option-select", now()).unwrap();
+        crate::control_vision::set_option_fixture(
+            "option-select",
+            "choice-session",
+            job.as_str(),
+            revision,
+            (&selector, &digest, &image, "Berlin"),
+        );
+        request(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-status",
+            json!({"task_id":"option-select"}),
+        )
+        .unwrap();
+        let approved = json!({"session_id":"choice-session","visual_task_id":"option-select","reviewed":true,"source_reviewed":true});
+        let started = request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choice-select",
+            approved.clone(),
+        )
+        .unwrap();
+        let action_id = started["task_id"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let selected = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/custom-choice-action-status",
+                json!({"task_id":action_id}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(selected["selected"], true, "{selected}");
+        assert_eq!(selected["option"], "Berlin");
+        assert!(request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choice-select",
+            approved
+        )
+        .is_err());
+        assert!(session.as_ref().unwrap().pending_choice_visual.is_some());
+        let (_, digest) =
+            crate::custom_choice_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
+        let field_image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_field_context(&selector)
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .record
+            .as_mut()
+            .unwrap()
+            .screenshot_with_name(&field_image)
+            .unwrap();
+        let revision =
+            crate::control_vision::begin_pending(&ws, &job, "wrong-visual", now()).unwrap();
+        crate::control_vision::set_choice_fixture(
+            "wrong-visual",
+            "choice-session",
+            job.as_str(),
+            revision,
+            (&selector, &digest, &field_image, "Location"),
+            true,
+        );
+        let wrong = request(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-status",
+            json!({"task_id":"wrong-visual"}),
+        )
+        .unwrap();
+        assert_eq!(wrong["comparison"], "label_observed");
+        assert!(session.as_ref().unwrap().pending_choice_visual.is_some());
+        let image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_control(&selector)
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .record
+            .as_mut()
+            .unwrap()
+            .screenshot_with_name(&image)
+            .unwrap();
+        let task = if std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref() == Ok("1") {
+            request(
+                &mut ws,
+                &mut session,
+                "/api/form/custom-choice-selected-vision-start",
+                json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest}),
+            )
+            .unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        } else {
+            let revision =
+                crate::control_vision::begin_pending(&ws, &job, "selected-visual", now()).unwrap();
+            crate::control_vision::set_selected_fixture(
+                "selected-visual",
+                "choice-session",
+                job.as_str(),
+                revision,
+                (&selector, &digest, &image, "Berlin"),
+            );
+            "selected-visual".to_owned()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let visual = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/control-vision-status",
+                json!({"task_id":task}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(visual["post_choice_review_finished"], true);
+        assert!(session.as_ref().unwrap().pending_choice_visual.is_none());
+        let (text, _) = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .page_text_bounded(2000)
+            .unwrap();
         assert!(text.contains("NOT SUBMITTED"), "{text}");
     }
 }

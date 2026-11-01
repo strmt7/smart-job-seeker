@@ -70,7 +70,7 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
         || reason.starts_with("a custom control needs manual review: ")
 }
 
-pub const POST_CHOICE_VISUAL_REQUIRED: &str = "Visual review required after opening a choice";
+pub const POST_CHOICE_VISUAL_REQUIRED: &str = "Visual review required after a choice action";
 
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
     if preview
