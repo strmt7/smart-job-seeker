@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Listing inspection address checks — 2026-11-01
+
+- Listing inspection now rechecks the page address after structured-data and text extraction, model inference, capture and contact collection. An address change stops the inspection rather than saving the result against the earlier URL. A local browser fixture covers navigation to another page. Same-address content changes and navigation away and back between checks remain possible.
+
 ## Listing capture consistency — 2026-11-01
 
 - Listing captures now check the page address and dimensions between tiles and compare a fresh first tile before calling the screenshot set complete. If the capture changes, the partial screenshots remain available, but page text is not attributed to that capture. A local wide-page fixture verifies stable capture, address mismatch and dimension mismatch. These checks cannot detect every change in another tile, hidden content or nested scrolling areas.

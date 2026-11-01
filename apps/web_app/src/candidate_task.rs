@@ -733,15 +733,23 @@ fn listing_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
     (tiles, width <= 3200.0 && height <= 8000.0)
 }
 
+fn ensure_listing_address(
+    browser: &mut waypoint_browser::CdpDriver,
+    source_url: &str,
+) -> Result<(), String> {
+    let current = browser.current_url().map_err(|error| error.to_string())?;
+    if current != source_url {
+        return Err("Listing address changed during inspection".into());
+    }
+    Ok(())
+}
+
 fn listing_capture_identity(
     browser: &mut waypoint_browser::CdpDriver,
     source_url: &str,
     dimensions: (f64, f64),
 ) -> Result<(), String> {
-    let current = browser.current_url().map_err(|error| error.to_string())?;
-    if current != source_url {
-        return Err("Listing address changed during capture".into());
-    }
+    ensure_listing_address(browser, source_url)?;
     let current_dimensions = browser
         .page_dimensions()
         .map_err(|error| error.to_string())?;
@@ -943,11 +951,13 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 return Err("The listing redirected to another site; review it manually".into());
             }
             let scripts = browser.structured_data_scripts().map_err(|e| e.to_string())?;
+            ensure_listing_address(&mut browser, &current)?;
             let (structured, incomplete_structured) = structured_or_fallback(&scripts, &current)?;
             let mut job = if let Some(job) = structured { job } else {
                 let model = crate::resident_model().ok().flatten().ok_or("No structured job found and no eligible local model is loaded; review manually")?;
                 let _lease = crate::doc_suggest::lease()?;
                 let (page_text, truncated) = browser.page_text_bounded(16_000).map_err(|e|e.to_string())?;
+                ensure_listing_address(&mut browser, &current)?;
                 let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
                 let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
                 let mut job=extract_page_text(&mut inference,&page_text,&current)?;
@@ -955,6 +965,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 merge_partial_structured(&mut job, incomplete_structured.as_ref());
                 job
             };
+            ensure_listing_address(&mut browser, &current)?;
             if !frame_warnings.is_empty() {
                 if job["extraction_warnings"].as_array().is_none() {
                     job["extraction_warnings"] = json!([]);
@@ -962,11 +973,13 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 job["extraction_warnings"].as_array_mut().expect("warnings array").extend(frame_warnings.into_iter().map(Value::String));
             }
             let mut capture=capture_listing(&mut browser,&url,&current,&scripts);
+            ensure_listing_address(&mut browser, &current)?;
             let mut email_links = match browser.with_review_timeout(|browser| browser.page_links()) {
                 Ok(links) if browser.current_url().ok().as_deref() == Some(current.as_str()) => email_link_candidates(&links),
                 _ => json!({"status":"unavailable","contacts":[]}),
             };
             add_page_text_contacts(&mut email_links, &capture.metadata);
+            ensure_listing_address(&mut browser, &current)?;
             capture.metadata["email_links"] = email_links;
             attach_provenance(&mut capture, &job);
             Ok(InspectedListing { job, capture })
@@ -1101,7 +1114,7 @@ mod tests {
         assert_eq!(changed.metadata["full_dimensions_captured"], false);
         assert_eq!(
             changed.metadata["error"],
-            "Listing address changed during capture"
+            "Listing address changed during inspection"
         );
         assert_eq!(
             changed.metadata["page_text_status"],
@@ -1116,6 +1129,17 @@ mod tests {
             .trace
             .iter()
             .all(|event| !event.contains("submitted")));
+        let other = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-embedded-listing.html")
+            .canonicalize()
+            .unwrap();
+        browser
+            .open(url::Url::from_file_path(other).unwrap().as_str())
+            .unwrap();
+        assert_eq!(
+            super::ensure_listing_address(&mut browser, url.as_str()).unwrap_err(),
+            "Listing address changed during inspection"
+        );
     }
     #[test]
     fn listing_keeps_embedded_warnings_but_stops_on_captcha() {
