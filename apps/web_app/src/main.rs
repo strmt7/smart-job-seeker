@@ -44,6 +44,7 @@ mod pdf_job;
 mod pdf_preview_task;
 mod pdf_probe_task;
 mod pdf_setup;
+mod pdf_transcribe;
 mod resident_inference;
 mod runtime_start;
 mod search_planner;
@@ -2964,6 +2965,38 @@ fn serve(
         "/api/pdf-setup/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", pdf_setup::poll(id)?);
+        }
+        "/api/documents/transcribe-start" => {
+            let id = body["id"].as_str().ok_or("missing document id")?;
+            let page = body["page"]
+                .as_u64()
+                .filter(|page| *page < 30)
+                .ok_or("invalid page number")? as usize;
+            let info = ws
+                .documents()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|doc| doc.id == id)
+                .ok_or("Document not found")?;
+            if !info.name.to_ascii_lowercase().ends_with(".pdf") {
+                return Err("Choose a PDF".into());
+            }
+            let bytes = ws
+                .document_content(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Document not found")?;
+            let model = resident_model()?
+                .ok_or("No single fully GPU-resident local vision model is available")?;
+            let task_id = random_id()?;
+            pdf_transcribe::start(task_id.clone(), id.to_owned(), model, bytes, page)?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/transcribe-pending" => {
+            json_reply(stream, "200 OK", pdf_transcribe::pending()?);
+        }
+        "/api/documents/transcribe-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", pdf_transcribe::poll(id)?);
         }
         "/api/documents/preview-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
