@@ -885,6 +885,84 @@ fn screenshot_directory(
     Ok(path)
 }
 
+fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, &'static str) {
+    use std::io::Read;
+    let Some(parent) = directory.parent() else {
+        return (json!({}), "unavailable");
+    };
+    let path = parent.join("events.jsonl");
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        return (json!({}), "unavailable");
+    };
+    if !meta.is_file() || meta.file_type().is_symlink() {
+        return (json!({}), "unavailable");
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return (json!({}), "unavailable");
+    };
+    const LIMIT: usize = 2 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    if file.take(LIMIT as u64 + 1).read_to_end(&mut bytes).is_err() {
+        return (json!({}), "unavailable");
+    }
+    let mut partial = bytes.len() > LIMIT;
+    bytes.truncate(LIMIT);
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        partial = true;
+    }
+    let mut contexts = serde_json::Map::new();
+    for (index, line) in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .enumerate()
+    {
+        if index >= 5000 {
+            partial = true;
+            break;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            partial = true;
+            continue;
+        };
+        let Some(kind) = value["type"].as_str().filter(|kind| {
+            matches!(
+                *kind,
+                "page_inspected"
+                    | "fields_filled"
+                    | "fill_failure_viewport"
+                    | "attachment_viewport"
+                    | "page_capture_segment"
+                    | "page_capture_changed"
+                    | "visual_capture"
+                    | "visual_focus_capture"
+                    | "control_focus_capture"
+                    | "control_visual_capture"
+                    | "visual_freshness_checked"
+            )
+        }) else {
+            continue;
+        };
+        let Some(name) = value["screenshot"]
+            .as_str()
+            .and_then(|path| path.strip_prefix("screenshots/"))
+        else {
+            continue;
+        };
+        if !names.iter().any(|expected| expected == name) {
+            continue;
+        }
+        let timestamp = value["time"]
+            .as_i64()
+            .filter(|time| (1..=253_402_300_799).contains(time));
+        // Later events may record that a previously captured page changed.
+        contexts.insert(name.to_owned(), json!({"type":kind,"time":timestamp}));
+    }
+    (
+        Value::Object(contexts),
+        if partial { "partial" } else { "available" },
+    )
+}
+
 /// List a bounded page; each image is loaded only when explicitly requested.
 pub fn screenshot_index(
     ws: &Workspace,
@@ -895,7 +973,7 @@ pub fn screenshot_index(
     let directory = screenshot_directory(ws, job, attempt)?;
     let mut names = Vec::new();
     let (mut truncated, mut unreadable) = (false, 0usize);
-    for (index, entry) in fs::read_dir(directory)
+    for (index, entry) in fs::read_dir(&directory)
         .map_err(|_| "Cannot inspect screenshots")?
         .enumerate()
     {
@@ -932,8 +1010,10 @@ pub fn screenshot_index(
         None
     };
     names.truncate(24);
+    let names: Vec<_> = names.into_iter().map(|(_, name)| name).collect();
+    let (contexts, context_status) = screenshot_context(&directory, &names);
     Ok(
-        json!({"items":names.into_iter().map(|(_,name)| name).collect::<Vec<_>>(),"next_after":next_after,"truncated":truncated,"unreadable":unreadable}),
+        json!({"items":names,"contexts":contexts,"context_status":context_status,"next_after":next_after,"truncated":truncated,"unreadable":unreadable}),
     )
 }
 
@@ -1888,7 +1968,7 @@ mod tests {
         let mut ws = Workspace::open(directory.path()).unwrap();
         let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.invalid/screenshots","title":"Role","employer":"Fixture"}), 1).unwrap();
         let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
-        let record = AttemptRecord::start(&ws, &job, "screens-fixture", 2)
+        let mut record = AttemptRecord::start(&ws, &job, "screens-fixture", 2)
             .unwrap()
             .unwrap();
         for index in 1..=25 {
@@ -1906,13 +1986,33 @@ mod tests {
             .unwrap()
             .set_len(6 * 1024 * 1024 + 1)
             .unwrap();
+        record
+            .event(json!({"type":"fields_filled","time":123,"screenshot":"screenshots/0001.png"}))
+            .unwrap();
+        record.event(json!({"type":"page_capture_segment","time":124,"screenshot":"screenshots/0002.png"})).unwrap();
+        record.event(json!({"type":"page_capture_changed","time":125,"screenshot":"screenshots/0002.png"})).unwrap();
+        record.event(json!({"type":"attachment_viewport","time":126,"screenshot":"screenshots/0025.png"})).unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
         assert_eq!(first["items"].as_array().unwrap().len(), 24);
         assert_eq!(first["next_after"], 24);
         assert_eq!(first["unreadable"], 2);
+        assert_eq!(first["context_status"], "available");
+        assert_eq!(
+            first["contexts"]["0001.png"],
+            json!({"type":"fields_filled","time":123})
+        );
+        assert_eq!(
+            first["contexts"]["0002.png"]["type"],
+            "page_capture_changed"
+        );
+        assert!(first["contexts"]["0025.png"].is_null());
         let second = screenshot_index(&ws, &job, "screens-fixture", 24).unwrap();
         assert_eq!(second["items"], json!(["0025.png"]));
         assert!(second["next_after"].is_null());
+        assert_eq!(
+            second["contexts"]["0025.png"]["type"],
+            "attachment_viewport"
+        );
         let image = screenshot_image(&ws, &job, "screens-fixture", "0001.png").unwrap();
         assert_eq!(
             STANDARD
@@ -1949,6 +2049,15 @@ mod tests {
         .is_err());
         fs::write(record.dir.join("screenshots/0001.png"), b"not a PNG").unwrap();
         assert!(screenshot_image(&ws, &job, "screens-fixture", "0001.png").is_err());
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(record.dir.join("events.jsonl"))
+            .unwrap();
+        file.set_len(2 * 1024 * 1024 + 1).unwrap();
+        assert_eq!(
+            screenshot_index(&ws, &job, "screens-fixture", 0).unwrap()["context_status"],
+            "partial"
+        );
     }
     #[test]
     fn answer_history_pages_in_order_across_unreadable_and_large_records() {
