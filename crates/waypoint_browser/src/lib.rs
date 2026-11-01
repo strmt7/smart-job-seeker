@@ -2322,8 +2322,9 @@ impl CdpDriver {
             .map(str::to_owned))
     }
 
-    /// Read nearby visible context for an unnamed native choice group. The
-    /// result is advisory and the group stays manual regardless of its text.
+    /// Read nearby visible context for an unnamed native choice group. None
+    /// means no group was established; an empty string means a group was found
+    /// but its question was unavailable or ambiguous. Both remain advisory.
     fn rendered_unassociated_choice_question(
         &mut self,
         node: u64,
@@ -2342,13 +2343,14 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Choice disappeared".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(kind) {
             if (!this.isConnected || !(this instanceof HTMLInputElement) || this.type !== kind || !['radio','checkbox'].includes(kind) || !this.name || !this.form) return null;
-            let branch = this;
+            let branch = this, foundGroup = false;
             for (let depth = 0; depth < 8; depth++) {
                 const parent = branch.parentElement;
-                if (!parent || ['FORM','FIELDSET','SECTION','BODY'].includes(parent.tagName) || parent.children.length > 20) return null;
+                if (!parent || ['FORM','FIELDSET','SECTION','BODY'].includes(parent.tagName) || parent.children.length > 20) return foundGroup ? '' : null;
                 const controls = parent.querySelectorAll('input:not([type="hidden" i]),textarea,select,button,[contenteditable="true"]');
-                if (controls.length > 20 || Array.from(controls).some(control => !(control instanceof HTMLInputElement) || control.type !== kind || control.name !== this.name || control.form !== this.form)) return null;
+                if (controls.length > 20 || Array.from(controls).some(control => !(control instanceof HTMLInputElement) || control.type !== kind || control.name !== this.name || control.form !== this.form)) return foundGroup ? '' : null;
                 if (controls.length >= 2) {
+                    foundGroup = true;
                     const candidates = [];
                     for (const sibling of parent.children) {
                         if (sibling === branch || sibling.querySelector('input,textarea,select,button,[contenteditable="true"]') || !sibling.getClientRects().length) continue;
@@ -2358,11 +2360,11 @@ impl CdpDriver {
                         if (value) candidates.push(value);
                     }
                     if (candidates.length === 1 && candidates[0].length <= 500) return candidates[0];
-                    if (candidates.length > 1) return null;
+                    if (candidates.length > 1) return '';
                 }
                 branch = parent;
             }
-            return null;
+            return foundGroup ? '' : null;
         }"#, "arguments":[{"value":kind}], "returnByValue":true}));
         let released = self
             .cdp
@@ -2372,7 +2374,7 @@ impl CdpDriver {
         Ok(result
             .pointer("/result/value")
             .and_then(Value::as_str)
-            .filter(|text| !text.trim().is_empty() && text.len() <= 500)
+            .filter(|text| text.len() <= 500)
             .map(str::to_owned))
     }
 
@@ -3946,7 +3948,11 @@ impl CdpDriver {
                 None
             };
             if let Some(question) = &unassociated_checkbox_group {
-                label = format!("Possible question (review): {question} — {label}");
+                label = if question.is_empty() {
+                    format!("Question context unavailable (review): {label}")
+                } else {
+                    format!("Possible question (review): {question} — {label}")
+                };
             }
             let sensitive = label_unverified
                 || may_be_unannotated_choice
@@ -4046,6 +4052,7 @@ impl CdpDriver {
                         } else {
                             None
                         };
+                        let context = context.filter(|text| !text.is_empty());
                         fields.push(FormField {
                             selector,
                             label: context.map_or_else(

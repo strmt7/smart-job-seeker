@@ -1303,8 +1303,10 @@ fn unlabelled_checkbox_group_context_is_advisory() {
     assert!(group
         .iter()
         .all(|field| field.sensitive && field.label.starts_with("Possible question (review):")));
-    assert!(live.schema.fields.iter().any(|field| field.label == "A"));
-    assert!(live.schema.fields.iter().any(|field| field.label == "C"));
+    for option in ["A", "B", "C", "D"] {
+        assert!(live.schema.fields.iter().any(|field| field.sensitive
+            && field.label == format!("Question context unavailable (review): {option}")));
+    }
     assert!(!live
         .schema
         .fields
