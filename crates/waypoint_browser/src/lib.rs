@@ -1976,7 +1976,7 @@ impl CdpDriver {
                 for (let depth = 0; visible && parent; depth++, parent = parent.parentElement) {
                     if (depth > 64 || ['SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName)) { visible = false; break; }
                     const style = getComputedStyle(parent);
-                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || !parent.getClientRects().length) { visible = false; break; }
+                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || (style.display !== 'contents' && !parent.getClientRects().length)) { visible = false; break; }
                     if (parent === this) break;
                     if (!block && ['block','flow-root','flex','grid','list-item','table','table-row','table-cell'].includes(style.display)) block = parent;
                 }
@@ -2029,7 +2029,7 @@ impl CdpDriver {
                 for (let depth = 0; visible && parent; depth++, parent = parent.parentElement) {
                     if (depth > 64 || ['INPUT','TEXTAREA','SELECT','BUTTON','SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName) || (parent.getAttribute('aria-hidden') || '').toLowerCase() === 'true') { visible = false; break; }
                     const style = getComputedStyle(parent);
-                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || !parent.getClientRects().length) { visible = false; break; }
+                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || (style.display !== 'contents' && !parent.getClientRects().length)) { visible = false; break; }
                     if (parent === this) break;
                 }
                 if (visible) { const value = text.nodeValue || ''; size += value.length; if (size > 2000) return null; parts.push(value); }

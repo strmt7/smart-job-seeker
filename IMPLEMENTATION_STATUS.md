@@ -1164,3 +1164,7 @@ Chromium's download documentation says its snapshots and Chrome for Testing buil
 ### Multi-line form headings (2026-11-01)
 
 The rendered-heading collector now preserves a word boundary at visible line breaks and between block-level fragments while retaining adjacent inline fragments as written. Fictional local-browser cases covered line breaks, block fragments, inline word fragments, hidden text and changed-heading schema identity. The focused browser test, Clippy and formatting passed. Other visual layouts and real employer forms remain unverified; no application was submitted.
+
+### Boxless label descendants (2026-11-01)
+
+Rendered label and inferred-heading extraction now retain visible text inside `display: contents` descendants, whose wrapper has no box of its own. Before the fix a fictional label was reduced from two words to one. Local-browser checks verified the full label and section context, while nested hidden text remained excluded; Clippy and formatting passed. The change does not establish visibility for all CSS layouts or when the label or heading itself lacks a box. No real form was filled or submitted.
