@@ -53,6 +53,8 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     let mut reader = quick_xml::NsReader::from_reader(xml.as_slice());
     let mut tables = 0;
     let mut text_boxes = 0;
+    let mut multi_column_sections = 0;
+    let mut uncertain_columns = false;
     loop {
         let (namespace, event) = reader
             .read_resolved_event()
@@ -67,6 +69,27 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                 }
                 if word && e.local_name().as_ref() == b"txbxContent" {
                     text_boxes += 1;
+                }
+                if word && e.local_name().as_ref() == b"cols" {
+                    for attribute in e.attributes() {
+                        let attribute =
+                            attribute.map_err(|_| "Malformed DOCX column attributes")?;
+                        let (namespace, local) =
+                            reader.resolver_mut().resolve_attribute(attribute.key);
+                        let is_word_attribute = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if
+                            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+                        if is_word_attribute && local.as_ref() == b"num" {
+                            match std::str::from_utf8(attribute.value.as_ref())
+                                .ok()
+                                .and_then(|v| v.parse::<u32>().ok())
+                            {
+                                Some(2..) => multi_column_sections += 1,
+                                Some(1) => {}
+                                _ => uncertain_columns = true,
+                            }
+                        }
+                    }
                 }
             }
             quick_xml::events::Event::Eof => break,
@@ -83,6 +106,15 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
         notes.push(format!(
             "DOCX contains {text_boxes} text box(es); some parsers may miss their contents."
         ));
+    }
+    if multi_column_sections > 0 {
+        notes.push(format!("DOCX declares multiple columns in {multi_column_sections} section(s); some parsers may read the content in a different order."));
+    }
+    if uncertain_columns {
+        notes.push(
+            "A DOCX column count could not be interpreted; inspect the reading order manually."
+                .into(),
+        );
     }
     if headers {
         notes.push("DOCX has header files; some parsers may miss header content, so check that contact details are also present in the body.".into());
@@ -355,6 +387,35 @@ mod tests {
         assert!(result["reading_order_preview"]
             .to_string()
             .contains("Rust experience"));
+    }
+    #[test]
+    fn detects_column_declarations_without_relying_on_prefix() {
+        use std::io::Write;
+        fn fixture(xml: &[u8]) -> Vec<u8> {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zip.write_all(xml).unwrap();
+            zip.finish().unwrap().into_inner()
+        }
+        let multi = fixture(br#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:sectPr><d:cols d:num="2"/></d:sectPr></d:body></d:document>"#);
+        assert!(structure_notes("cv.docx", &multi)
+            .unwrap()
+            .iter()
+            .any(|v| v.contains("declares multiple columns")));
+        let invalid = fixture(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:sectPr><w:cols w:num="bad"/></w:sectPr></w:body></w:document>"#);
+        assert!(structure_notes("cv.docx", &invalid)
+            .unwrap()
+            .iter()
+            .any(|v| v.contains("could not be interpreted")));
+        let single = fixture(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:sectPr><w:cols w:num="1"/></w:sectPr></w:body></w:document>"#);
+        assert!(!structure_notes("cv.docx", &single)
+            .unwrap()
+            .iter()
+            .any(|v| v.contains("declares multiple columns")));
     }
     #[test]
     fn reports_extractable_text_and_literal_posting_terms() {
