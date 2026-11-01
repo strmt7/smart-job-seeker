@@ -1335,6 +1335,23 @@ mod tests {
                 }
                 assert_eq!(draft["template_used"], true);
                 assert!(!draft["paragraphs"].as_array().unwrap().is_empty());
+                let output = draft["paragraphs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|paragraph| paragraph["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                for unsupported in ["maya", "2020", "2024", "sql", "german", "berlin"] {
+                    assert!(
+                        !output.contains(unsupported),
+                        "template-only detail leaked into draft: {output}"
+                    );
+                }
+                println!("Fictional draft paragraphs: {output}");
+                println!("Fictional evidence check: {}", draft["evidence_check"]);
+
                 println!(
                     "Fictional template transcription: {}",
                     draft["template_vision"]["text"]
