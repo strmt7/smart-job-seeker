@@ -1105,6 +1105,8 @@ When more than twelve undecided employer-neighbor candidates are found, the mode
 
 Thirteen focused duplicate-store tests passed, including a fictional crowded-employer case with a similarly named role late in ID order; web lint passed. This is not a measured duplicate-recall improvement on real postings and did not use the local model.
 
+Title comparison now ignores standalone bracketed or trailing gender notations such as `(m/f/d)` when identifying possible duplicates, while retaining other title words and single-letter skills. A database migration queues affected existing titles for bounded rechecking without removing prior decisions. A fictional same-employer title pair was flagged for review rather than merged; store tests and the encrypted-store migration test passed. This limited normalization does not establish duplicate identity or recall across job boards.
+
 ## Paged duplicate scan — 2026-11-01
 
 The job details now offer a separate “Scan next group with AI” action. It walks indexed, undecided related-employer candidates by ID in groups of at most twelve, retaining a continuation cursor for one job in the current browser tab. The first group can overlap the initial ranked search. An incomplete model batch keeps the current cursor for retry; after all groups are reached, the scan can restart to include earlier newly added jobs. Each employer token reads at most thirteen indexed IDs per page, and already-reviewed pairs are skipped after bounded retrieval, including when an entire group has been reviewed. Job data, candidate IDs and cursor are bound to each result and checked again before saving suggestions.

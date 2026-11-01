@@ -34,7 +34,55 @@ fn overlap(a: &BTreeSet<String>, b: &BTreeSet<String>) -> u32 {
 }
 
 fn title_score(a: &str, b: &str) -> u32 {
-    overlap(&words(a), &words(b))
+    overlap(&title_words(a), &title_words(b))
+}
+
+/// Remove only a standalone, bracketed or trailing gender notation such as
+/// (m/w/d). The remaining words, including single-letter skills, are retained.
+fn title_words(title: &str) -> BTreeSet<String> {
+    fn gender_marker(value: &str) -> bool {
+        let mut count = 0;
+        let mut separator = false;
+        for ch in value.chars() {
+            if matches!(ch.to_ascii_lowercase(), 'm' | 'f' | 'w' | 'd' | 'x') {
+                count += 1;
+            } else if matches!(ch, '/' | '-' | ',' | ' ' | '\t') {
+                separator = true;
+            } else {
+                return false;
+            }
+        }
+        separator && (2..=5).contains(&count)
+    }
+    let mut cleaned = String::with_capacity(title.len());
+    let mut pending = title;
+    while let Some(start) = pending.find(['(', '[']) {
+        cleaned.push_str(&pending[..start]);
+        let opening = pending[start..].chars().next().unwrap();
+        let closing = if opening == '(' { ')' } else { ']' };
+        let rest = &pending[start + 1..];
+        let Some(end) = rest.find(closing) else {
+            cleaned.push_str(&pending[start..]);
+            pending = "";
+            break;
+        };
+        if gender_marker(&rest[..end]) {
+            cleaned.push(' ');
+        } else {
+            cleaned.push(opening);
+            cleaned.push_str(&rest[..end]);
+            cleaned.push(closing);
+        }
+        pending = &rest[end + 1..];
+    }
+    cleaned.push_str(pending);
+    let trimmed = cleaned.trim_end();
+    if let Some((prefix, last)) = trimmed.rsplit_once(char::is_whitespace) {
+        if gender_marker(last) {
+            return words(prefix);
+        }
+    }
+    words(trimmed)
 }
 
 fn employer_words(s: &str) -> BTreeSet<String> {
@@ -777,6 +825,42 @@ mod tests {
         let pairs = store.possible_duplicates().unwrap();
         assert_eq!(pairs.len(), 1);
         assert!(pairs[0].reason.contains("Matching requisition"));
+        assert!(store.has_duplicate_hold("a").unwrap());
+    }
+
+    #[test]
+    fn gender_notation_does_not_hide_title_candidates_or_merge_jobs() {
+        assert!(
+            title_score(
+                "Senior ML Software Engineer (m/f/d)",
+                "ML Software Developer"
+            ) >= 65
+        );
+        assert!(
+            title_score(
+                "Senior ML Software Engineer [w/m/x]",
+                "ML Software Developer"
+            ) >= 65
+        );
+        assert!(title_score("Senior ML Software Engineer m/f/d", "ML Software Developer") >= 65);
+        assert!(title_words("C Developer (C++)").contains("c"));
+        assert!(title_words("Developer (Remote)").contains("remote"));
+        assert!(title_score("Senior ML Software Engineer (m/f/d)", "Marketing Director") < 65);
+        let mut store = Store::in_memory().unwrap();
+        let a = job(
+            "a",
+            "Senior ML Software Engineer (m/f/d)",
+            "Example Research",
+            None,
+        );
+        let b = job("b", "ML Software Developer", "Example Research", None);
+        for item in [&a, &b] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
         assert!(store.has_duplicate_hold("a").unwrap());
     }
 

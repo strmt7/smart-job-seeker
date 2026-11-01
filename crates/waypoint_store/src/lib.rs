@@ -283,6 +283,13 @@ const MIGRATIONS: &[&str] = &[
            VALUES(NEW.job_id,NEW.reason,NEW.updated_at,(SELECT CAST(value AS INTEGER) FROM meta WHERE key='manual_review_revision'))
            ON CONFLICT(job_id,reason) DO UPDATE SET updated_at=excluded.updated_at,revision=excluded.revision; END;
      UPDATE meta SET value='29' WHERE key='schema_version';",
+    // v30 — recheck titles whose metadata may contain a gender notation.
+    "DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT id FROM jobs WHERE instr(title,'(')>0 OR instr(title,'[')>0 OR instr(title,'/')>0
+         OR lower(title) LIKE '% m-%' OR lower(title) LIKE '% f-%' OR lower(title) LIKE '% w-%'
+         OR lower(title) LIKE '% d-%' OR lower(title) LIKE '% x-%'
+     );
+     UPDATE meta SET value='30' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1056,6 +1063,40 @@ mod tests {
     }
 
     #[test]
+    fn title_notation_migration_requeues_candidates_without_losing_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &MIGRATIONS[..29] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute_batch("INSERT INTO jobs(id,title,employer,location,state) VALUES('a','Senior ML Engineer (m/f/d)','Example','','\"discovered\"'),('b','ML Developer','Example','','\"discovered\"');
+            INSERT INTO job_employer_indexed(job_id) VALUES('a'),('b');
+            INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES('a','complete',1),('b','complete',1);
+            INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES('a','b',90,'Fictional','different');").unwrap();
+        let before: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='duplicate_coverage_revision'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert_eq!(store.duplicate_coverage_counts().unwrap().1, 1);
+        assert!(store.duplicate_coverage_revision().unwrap() > before);
+        let status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM possible_duplicates WHERE job_a='a' AND job_b='b'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "different");
+    }
+
+    #[test]
     fn requisition_priority_migration_reindexes_without_discarding_decisions() {
         let conn = Connection::open_in_memory().unwrap();
         #[cfg(feature = "sqlcipher")]
@@ -1131,7 +1172,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "29");
+        assert_eq!(version, "30");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
