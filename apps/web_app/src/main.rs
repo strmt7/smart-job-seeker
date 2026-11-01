@@ -628,6 +628,14 @@ fn draft_context_digest(
     Ok(Sha256Digest::of(&json!({"job":job,"description":description,"facts_digest":facts_digest,"profile":profile,"template_hash":template_hash,"kind":kind}).to_string()).as_str().to_owned())
 }
 
+fn fit_review_revision(value: &Value) -> String {
+    Sha256Digest::of(
+        &json!({"assessment":value["assessment"],"user_review":value["user_review"]}).to_string(),
+    )
+    .as_str()
+    .to_owned()
+}
+
 fn read_fit(ws: &Workspace, job_id: &JobIdentityId) -> Result<Value, String> {
     read_fit_with_context(ws, job_id, &mut None)
 }
@@ -662,7 +670,9 @@ fn read_fit_with_context(
                         fit_task::preference_coverage(&assessment)
                     };
                 assessment["preference_coverage"] = json!(coverage);
-                Ok(json!({"status":"current","assessment":assessment,"model":value["model"]}))
+                Ok(
+                    json!({"status":"current","assessment":assessment,"model":value["model"],"user_review":value["user_review"],"review_revision":fit_review_revision(&value)}),
+                )
             } else {
                 Ok(json!({"status":"stale"}))
             }
@@ -2420,10 +2430,57 @@ fn serve(
                     result["saved"] = json!(true);
                 }
             }
+            if result["status"] == "complete" {
+                let job_id = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job")?)
+                    .map_err(|e| e.to_string())?;
+                let bytes = ws
+                    .fit_assessment(&job_id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Saved assessment is unavailable")?;
+                let saved: Value =
+                    serde_json::from_slice(&bytes).map_err(|_| "Stored assessment is invalid")?;
+                if saved["assessment"] != result["assessment"]
+                    || saved["input_digest"] != result["input_digest"]
+                {
+                    result = json!({"status":"failed","error":"The saved assessment changed; reopen the current assessment"});
+                } else {
+                    result["user_review"] = saved["user_review"].clone();
+                    result["review_revision"] = json!(fit_review_revision(&saved));
+                }
+            }
             if result["status"] != "running" {
                 fit_task::complete(id, result.clone())?;
             }
             json_reply(stream, "200 OK", result);
+        }
+        "/api/fit/review" => {
+            if body["reviewed"] != true {
+                return Err("Confirm that you reviewed the criteria".into());
+            }
+            let job_id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
+                .map_err(|e| e.to_string())?;
+            let bytes = ws
+                .fit_assessment(&job_id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Saved assessment is unavailable")?;
+            let mut saved: Value =
+                serde_json::from_slice(&bytes).map_err(|_| "Stored assessment is invalid")?;
+            let (_, _, _, _, digest) = fit_assessment_inputs(ws, &job_id)?;
+            if saved["input_digest"].as_str() != Some(digest.as_str()) {
+                return Err("The assessment is stale; assess the current job again".into());
+            }
+            if body["revision"].as_str() != Some(fit_review_revision(&saved).as_str()) {
+                return Err("The assessment or review changed; reload it before saving".into());
+            }
+            let review = fit_task::reviewed_rubric(&saved["assessment"], &body["decisions"])?;
+            saved["user_review"] = review.clone();
+            ws.save_fit_assessment(&job_id, saved.to_string().as_bytes())
+                .map_err(|e| e.to_string())?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"user_review":review,"review_revision":fit_review_revision(&saved)}),
+            );
         }
         "/api/fit/read" => {
             let job_id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)

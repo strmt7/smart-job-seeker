@@ -761,6 +761,50 @@ fn assess_with_source(
     ))
 }
 
+/// Calculate an explicit user review without modifying the model assessment.
+pub(crate) fn reviewed_rubric(assessment: &Value, decisions: &Value) -> Result<Value, String> {
+    let rubric = assessment["rubric"]
+        .as_array()
+        .filter(|items| !items.is_empty() && items.len() <= 12)
+        .ok_or("Assessment rubric is unavailable")?;
+    let decisions = decisions
+        .as_array()
+        .filter(|items| items.len() == rubric.len())
+        .ok_or("Review must cover every criterion")?;
+    let mut supported = 0u32;
+    let mut unknown = 0u32;
+    let mut total = 0u32;
+    let mut clean = Vec::new();
+    for decision in decisions {
+        let status = decision["status"]
+            .as_str()
+            .filter(|value| matches!(*value, "supported" | "unknown" | "contradicted" | "exclude"))
+            .ok_or("Invalid review judgment")?;
+        let importance = decision["importance"]
+            .as_str()
+            .filter(|value| matches!(*value, "required" | "preferred"))
+            .ok_or("Invalid review importance")?;
+        let weight = if importance == "required" { 3 } else { 1 };
+        if status != "exclude" {
+            total += weight;
+        }
+        if status == "supported" {
+            supported += weight;
+        }
+        if status == "unknown" {
+            unknown += weight;
+        }
+        clean.push(json!({"status":status,"importance":importance}));
+    }
+    if total == 0 {
+        return Err("Keep at least one criterion in the review".into());
+    }
+    let round = |n: u32, d: u32| (n * 100 + d / 2) / d;
+    Ok(
+        json!({"decisions":clean,"score":round(supported * 2 + unknown, total * 2),"score_range":{"lower":round(supported,total),"upper":round(supported + unknown,total)},"note":"User-reviewed scenario; the original model assessment is unchanged."}),
+    )
+}
+
 /// Summarize evidence gaps for the job-list badge without claiming that a
 /// model extracted every user preference or interpreted it correctly.
 pub(crate) fn preference_coverage(assessment: &Value) -> &'static str {
@@ -2141,6 +2185,19 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reviewed_scenario_is_bounded_and_independent_of_model_score() {
+        let assessment = json!({"score":80,"rubric":[{"excerpt":"A"},{"excerpt":"B"}]});
+        let decisions = json!([{"status":"supported","importance":"preferred"},{"status":"unknown","importance":"required"}]);
+        let review = reviewed_rubric(&assessment, &decisions).unwrap();
+        assert_eq!(review["score"], 63);
+        assert_eq!(review["score_range"], json!({"lower":25,"upper":100}));
+        assert_eq!(assessment["score"], 80);
+        assert!(reviewed_rubric(&assessment, &json!([])).is_err());
+        assert!(reviewed_rubric(&assessment, &json!([{"status":"supported","importance":"optional"},{"status":"unknown","importance":"required"}])).is_err());
+        assert!(reviewed_rubric(&assessment, &json!([{"status":"exclude","importance":"required"},{"status":"exclude","importance":"required"}])).is_err());
+    }
 
     #[test]
     fn preference_coverage_marks_missing_unknown_and_conflicting_conditions() {
@@ -4607,6 +4664,58 @@ mod tests {
 
     #[cfg(all(windows, feature = "sqlcipher"))]
     #[test]
+    fn api_saves_review_separately_and_rejects_stale_edits() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(test_root).unwrap();
+        let mut ws = waypoint_workspace::Workspace::open_encrypted(dir.path()).unwrap();
+        let job = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/role","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let id = waypoint_domain::JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
+        let (_, _, _, _, digest) = crate::fit_assessment_inputs(&ws, &id).unwrap();
+        ws.save_fit_assessment(&id, json!({"input_digest":digest,"model":"fixture","assessment":{"score":75,"rubric":[{"excerpt":"Rust","status":"unknown","importance":"required"}]}}).to_string().as_bytes()).unwrap();
+        let initial = crate::read_fit(&ws, &id).unwrap();
+        let original = initial["review_revision"].as_str().unwrap().to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let request = |ws: &mut waypoint_workspace::Workspace,
+                       revision: &str|
+         -> Result<Value, String> {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"id":id.as_str(),"revision":revision,"reviewed":true,"decisions":[{"status":"supported","importance":"preferred"}]}).to_string();
+            write!(client, "POST /api/fit/review HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, &mut None, "fixture-token", port)?;
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1)
+                .map_err(|e| e.to_string())
+        };
+        let result = request(&mut ws, &original).unwrap();
+        assert_eq!(result["user_review"]["score"], 100);
+        let restored = crate::read_fit(&ws, &id).unwrap();
+        assert_eq!(restored["assessment"]["score"], 75);
+        assert_eq!(restored["user_review"]["score"], 100);
+        assert_eq!(restored["review_revision"], result["review_revision"]);
+        assert!(request(&mut ws, &original).unwrap_err().contains("changed"));
+        ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
+            .unwrap();
+        assert!(
+            request(&mut ws, result["review_revision"].as_str().unwrap())
+                .unwrap_err()
+                .contains("stale")
+        );
+        assert_eq!(crate::read_fit(&ws, &id).unwrap()["status"], "stale");
+    }
+
+    #[cfg(all(windows, feature = "sqlcipher"))]
+    #[test]
     fn api_retries_saved_assessment_and_rejects_changed_inputs() {
         let _guard = TEST_LOCK.lock().unwrap();
         use std::io::{Read, Write};
@@ -4651,6 +4760,13 @@ mod tests {
         let saved = ws.fit_assessment(&id).unwrap().unwrap();
         assert_eq!(request(&mut ws), first);
         assert_eq!(ws.fit_assessment(&id).unwrap().unwrap(), saved);
+        let mut updated: Value = serde_json::from_slice(&saved).unwrap();
+        updated["user_review"] = json!({"score":42,"decisions":[]});
+        ws.save_fit_assessment(&id, updated.to_string().as_bytes())
+            .unwrap();
+        let replay = request(&mut ws);
+        assert_eq!(replay["user_review"]["score"], 42);
+        assert_ne!(replay["review_revision"], first["review_revision"]);
         ws.save_candidate_profile(&json!({"instructions":"Remote only"}).to_string())
             .unwrap();
         assert_eq!(request(&mut ws)["status"], "failed");
