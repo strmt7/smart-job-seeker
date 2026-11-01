@@ -1455,23 +1455,43 @@ pub fn capture_page(
     let (tiles, within_limits) = capture_tiles(width, height);
     let capture_id = crate::random_id()?;
     record.event(json!({"type":"page_capture_started","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height}))?;
+    let mut first_image_hash = None;
     for (count, (x, y, tile_width, tile_height)) in tiles.iter().copied().enumerate() {
         let image = driver
             .screenshot_tile(x, y, tile_width, tile_height)
             .map_err(|e| e.to_string())?;
+        if count == 0 {
+            first_image_hash = Some(waypoint_domain::Sha256Digest::of(&image));
+        }
         let name = record.screenshot_with_name(&image)?;
         record.event(json!({"type":"page_capture_segment","time":timestamp,"capture_id":capture_id,"index":count,"x":x,"y":y,"width":tile_width,"height":tile_height,"screenshot":format!("screenshots/{name}")}))?;
         let current_url = driver.current_url().map_err(|e| e.to_string())?;
         let dimensions = driver.page_dimensions().map_err(|e| e.to_string())?;
         if !capture_page_unchanged(&initial_url, (width, height), &current_url, dimensions) {
-            record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"after_segment":count,"note":"Page address or dimensions changed while capturing; screenshots may show different states."}))?;
+            record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"after_segment":count,"initial_dimensions":[width,height],"observed_dimensions":[dimensions.0,dimensions.1],"address_changed":current_url != initial_url,"note":"Page address or dimensions changed while capturing; screenshots may show different states."}))?;
             return Err(
                 "Page address or dimensions changed during capture; inspect and capture again"
                     .into(),
             );
         }
     }
-    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":tiles.len(),"full_dimensions_captured":within_limits,"note":"Address and dimensions stayed the same between tiles; content changes, hidden content and nested scrollers may still be missed."}))?;
+    if let (Some((x, y, tile_width, tile_height)), Some(original)) =
+        (tiles.first().copied(), first_image_hash)
+    {
+        let image = driver
+            .screenshot_tile(x, y, tile_width, tile_height)
+            .map_err(|e| e.to_string())?;
+        let current_url = driver.current_url().map_err(|e| e.to_string())?;
+        let dimensions = driver.page_dimensions().map_err(|e| e.to_string())?;
+        if original != waypoint_domain::Sha256Digest::of(&image)
+            || !capture_page_unchanged(&initial_url, (width, height), &current_url, dimensions)
+        {
+            let name = record.screenshot_with_name(&image)?;
+            record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"screenshot":format!("screenshots/{name}"),"note":"The first tile, page address or dimensions changed during capture; screenshots may show different states."}))?;
+            return Err("Page changed during capture; inspect and capture again".into());
+        }
+    }
+    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":tiles.len(),"full_dimensions_captured":within_limits,"note":"Address and dimensions stayed the same and the first tile matched a later capture. Other content changes, hidden content and nested scrollers may still be missed."}))?;
     if !within_limits {
         return Err("Page exceeded screenshot capture limits".into());
     }
@@ -1658,6 +1678,44 @@ mod tests {
         assert!(!capture_tiles(4097.0, 1000.0).1);
         assert!(capture_tiles(2048.0, 12000.0).1);
     }
+    #[test]
+    #[ignore = "starts one headless browser against a fictional changing form"]
+    fn changing_page_content_is_recorded_as_incomplete() {
+        use waypoint_applications::driver::BrowserDriver;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        fs::create_dir(root.path().join("screenshots")).unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_path_buf(),
+            sequence: 0,
+        };
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-changing-capture.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(capture_page(&mut driver, &mut record, 1)
+            .unwrap_err()
+            .contains("changed"));
+        let events: Vec<Value> = fs::read_to_string(root.path().join("events.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let changed = events
+            .iter()
+            .find(|event| event["type"] == "page_capture_changed")
+            .unwrap();
+        assert!(root
+            .path()
+            .join(changed["screenshot"].as_str().unwrap())
+            .is_file());
+        assert!(!events.iter().any(|event| event["type"] == "page_capture"));
+    }
+
     #[test]
     #[ignore = "starts one headless browser against a fictional wide form"]
     fn captures_bounded_horizontal_tiles_on_wide_page() {

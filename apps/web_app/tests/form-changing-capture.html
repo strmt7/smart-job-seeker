@@ -1,0 +1,5 @@
+<!doctype html><html><body style="width:1800px">
+<div id="counter" style="width:250px;height:40px;font:24px monospace">000000</div>
+<div style="height:2400px">Fictional application</div>
+<script>let n = 0; setInterval(() => { document.querySelector('#counter').textContent = String(++n).padStart(6, '0'); }, 20);</script>
+</body></html>
