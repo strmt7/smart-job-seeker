@@ -332,7 +332,7 @@ pub(crate) fn parse_excluding(
         if excluded.contains(url.as_str()) {
             previously_seen += 1;
             if repeated.len() < 10 {
-                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
             }
             continue;
         }
@@ -715,6 +715,10 @@ mod tests {
         assert_eq!(
             repeated["repeated_references"][0]["title"],
             "Fictional role"
+        );
+        assert_eq!(
+            repeated["repeated_references"][0]["snippet"],
+            "Fictional description"
         );
         assert_eq!(
             repeated["repeated_references"][0]["alternative_published_dates"],
