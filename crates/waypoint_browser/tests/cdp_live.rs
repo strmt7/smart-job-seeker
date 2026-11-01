@@ -1400,11 +1400,12 @@ fn visual_capture_requires_the_target_in_the_viewport() {
     let selector = "#candidate-name";
     let error = driver.screenshot_field_context(selector).unwrap_err();
     assert!(error.to_string().contains("outside the visible viewport"));
+    assert!(driver.screenshot_control(selector).is_err());
     driver.scroll_field_into_view(selector).unwrap();
-    assert!(!driver
-        .screenshot_field_context(selector)
-        .unwrap()
-        .is_empty());
+    let context = driver.screenshot_field_context(selector).unwrap();
+    let target = driver.screenshot_control(selector).unwrap();
+    assert!(!target.is_empty());
+    assert_ne!(context, target);
     assert!(driver
         .trace
         .iter()

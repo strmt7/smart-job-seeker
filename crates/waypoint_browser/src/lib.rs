@@ -494,6 +494,16 @@ impl CdpDriver {
     /// Capture a bounded area around a known field after it has been scrolled
     /// into view. The crop may omit a distant label or obscured content.
     pub fn screenshot_field_context(&mut self, selector: &str) -> Result<String, DriverError> {
+        self.screenshot_element(selector, true)
+    }
+
+    /// Capture only a control's bounding box, reducing unrelated nearby text.
+    /// Overlays and content clipped by an ancestor can still obscure the control.
+    pub fn screenshot_control(&mut self, selector: &str) -> Result<String, DriverError> {
+        self.screenshot_element(selector, false)
+    }
+
+    fn screenshot_element(&mut self, selector: &str, context: bool) -> Result<String, DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for visual capture".into()))?;
@@ -572,16 +582,29 @@ impl CdpDriver {
         {
             return Err(DriverError("Control is outside the visible viewport; scroll it into view before visual capture".into()));
         }
-        let left = (x + page_x - 120.0).max(page_x).max(0.0).min(page_width);
-        let top = (y + page_y - 70.0).max(page_y).max(0.0).min(page_height);
-        let width = (right + 60.0 - left)
-            .clamp(220.0, 720.0)
-            .min(page_width - left)
-            .min(viewport_right - left);
-        let height = (bottom + 60.0 - top)
-            .clamp(80.0, 400.0)
-            .min(page_height - top)
-            .min(viewport_bottom - top);
+        let (left, top, width, height, scale) = if context {
+            let left = (x + page_x - 120.0).max(page_x).max(0.0).min(page_width);
+            let top = (y + page_y - 70.0).max(page_y).max(0.0).min(page_height);
+            let width = (right + 60.0 - left)
+                .clamp(220.0, 720.0)
+                .min(page_width - left)
+                .min(viewport_right - left);
+            let height = (bottom + 60.0 - top)
+                .clamp(80.0, 400.0)
+                .min(page_height - top)
+                .min(viewport_bottom - top);
+            (left, top, width, height, 1)
+        } else {
+            let left = x + page_x;
+            let top = y + page_y;
+            (
+                left,
+                top,
+                (right - left).min(720.0),
+                (bottom - top).min(400.0),
+                2,
+            )
+        };
         if right > left + width || bottom > top + height {
             return Err(DriverError(
                 "Field is too large for one visual capture".into(),
@@ -590,7 +613,7 @@ impl CdpDriver {
         if !left.is_finite() || !top.is_finite() || width <= 0.0 || height <= 0.0 {
             return Err(DriverError("Field capture is outside the page".into()));
         }
-        let captured = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":1}})).map_err(derr)?;
+        let captured = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":scale}})).map_err(derr)?;
         let data = captured
             .get("data")
             .and_then(Value::as_str)

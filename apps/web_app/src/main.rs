@@ -3655,7 +3655,7 @@ fn serve(
             }
             let image = current
                 .driver
-                .with_review_timeout(|driver| driver.screenshot_field_context(&selector))
+                .with_review_timeout(|driver| driver.screenshot_control(&selector))
                 .map_err(|e| format!("Could not capture the control: {e}"))?;
             if control_rank::snapshot(&mut current.driver)
                 .ok()
@@ -3712,9 +3712,7 @@ fn serve(
                         let image = result["selector"].as_str().and_then(|selector| {
                             current
                                 .driver
-                                .with_review_timeout(|driver| {
-                                    driver.screenshot_field_context(selector)
-                                })
+                                .with_review_timeout(|driver| driver.screenshot_control(selector))
                                 .ok()
                         });
                         let same = current_snapshot.as_deref()
