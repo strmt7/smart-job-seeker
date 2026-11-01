@@ -2187,6 +2187,8 @@ fn serve(
             if matches!(result["status"].as_str(), Some("complete" | "failed")) {
                 let _ = web_search_batch::persist_completed(ws);
                 result = web_search_batch::poll(id, acknowledged)?;
+            } else if result["status"] == "running" && web_search_batch::checkpoint_failed(id)? {
+                result["checkpoint_failed"] = json!(true);
             }
             json_reply(stream, "200 OK", result);
         }
@@ -6246,8 +6248,10 @@ fn serve_loop(
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
         if Instant::now() >= next_web_search_save {
             next_web_search_save = Instant::now()
-                + match web_search_batch::persist_completed(&ws) {
-                    Ok(_) => Duration::from_secs(1),
+                + match web_search_batch::persist_progress(&ws)
+                    .and_then(|_| web_search_batch::persist_completed(&ws))
+                {
+                    Ok(_) => Duration::from_secs(5),
                     Err(error) => {
                         eprintln!("Web search history could not be saved: {error}");
                         Duration::from_secs(30)
@@ -6347,6 +6351,12 @@ fn serve_loop(
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
+    }
+    if let Err(error) = web_search_batch::collect_background()
+        .and_then(|_| web_search_batch::persist_progress(&ws).map(|_| ()))
+        .and_then(|_| web_search_batch::persist_completed(&ws).map(|_| ()))
+    {
+        eprintln!("Web search history could not be saved during shutdown: {error}");
     }
     if let Some(worker) = index_worker {
         if worker.join().is_err() {

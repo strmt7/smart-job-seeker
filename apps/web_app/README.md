@@ -22,7 +22,7 @@ Start the resulting executable to open the local browser workspace. On Windows, 
 
 For application inspection, an explicit `WAYPOINT_BROWSER` executable takes priority, followed by installed browsers and then any bundled Chromium fallback. Bundled browsers do not update automatically; replace them through a newly reviewed package when needed.
 
-Public-board and batch web searches continue while the local app is running even if the web page is closed. Board results are saved incrementally. The latest completed web-search batch is sealed to the Windows user and saved for recovery after restart; the interface reports if saving fails. Stopping the app ends active runs, so unfinished web-search links may be lost.
+Public-board and batch web searches continue while the local app is running even if the web page is closed. Board results are saved incrementally. The latest web-search batch is sealed to the Windows user for recovery after restart; an active batch is normally checkpointed every five seconds and saved once more at normal shutdown. An interrupted batch is shown as incomplete and is not automatically resumed. A crash can lose pages since the last checkpoint, and the interface reports checkpoint or completed-history saving failures.
 
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.
 

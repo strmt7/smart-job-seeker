@@ -23,6 +23,7 @@ assert.match(batchSummary({status:'complete',processed:0,total:2,cancelled:true,
 const interrupted = batchSummary({status:'failed',processed:1,total:3,error:'Results not collected',coverage:{attempted_pages:2,succeeded_pages:1,failed_pages:0,unattempted_pages:1,fetched_unreported_pages:1}});
 assert.match(interrupted,/2 of 3 pages attempted.*1 succeeded, 0 failed, 1 not attempted.*1 fetched page could not be delivered/);
 assert.match(batchSummary({status:'complete',processed:1,total:1,history_saved:false}), /history could not be saved/);
+assert.match(batchSummary({status:'failed',processed:1,total:3,recovered_partial:true}), /interrupted: 1 of 3 requested pages were saved.*may have been in progress/);
 const repeatedLine = source.split('\n').find(line=>line.startsWith('function repeatedCandidateDetails('));
 assert.ok(repeatedLine);
 const make = (tag,text='')=>({tag,text,children:[],append(...items){this.children.push(...items);}});

@@ -15,6 +15,8 @@ struct Task {
     cancel: Arc<AtomicBool>,
     total: usize,
     processed: usize,
+    saved_processed: Option<usize>,
+    checkpoint_failed: bool,
     pending: Option<Value>,
     history: Vec<Value>,
     timed_out: Arc<AtomicBool>,
@@ -177,6 +179,8 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         cancel,
         total,
         processed: 0,
+        saved_processed: None,
+        checkpoint_failed: false,
         pending: None,
         history: Vec::new(),
         timed_out,
@@ -343,6 +347,11 @@ pub fn collect_background() -> Result<(), String> {
 
 /// Retain the latest terminal result only after sealing and storage succeed.
 pub fn persist_completed(ws: &waypoint_workspace::Workspace) -> Result<bool, String> {
+    // Do not overwrite a newer in-progress checkpoint with an older result.
+    let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
+    if tasks.is_some() {
+        return Ok(false);
+    }
     let mut completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
     let Some((id, result, saved)) = completed.as_mut() else {
         return Ok(false);
@@ -361,6 +370,40 @@ pub fn persist_completed(ws: &waypoint_workspace::Workspace) -> Result<bool, Str
     *result = persisted;
     *saved = true;
     Ok(true)
+}
+
+/// A restart cannot resume the worker, so store a clearly interrupted snapshot
+/// of collected pages, not a claim that the provider finished its requests.
+pub fn persist_progress(ws: &waypoint_workspace::Workspace) -> Result<bool, String> {
+    let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
+    let Some(task) = tasks.as_mut() else {
+        return Ok(false);
+    };
+    if task.processed == 0 || task.saved_processed == Some(task.processed) {
+        return Ok(false);
+    }
+    let result = json!({
+        "status":"failed", "processed":task.processed, "total":task.total,
+        "history":task.history, "history_saved":true, "recovered_partial":true,
+        "error":"The app stopped before this search finished; another provider request may have been in progress"
+    });
+    let bytes =
+        serde_json::to_vec(&result).map_err(|_| "Could not serialize web search checkpoint")?;
+    if let Err(error) = ws.save_latest_web_search(&task.id, &bytes) {
+        task.checkpoint_failed = true;
+        return Err(error.to_string());
+    }
+    task.checkpoint_failed = false;
+    task.saved_processed = Some(task.processed);
+    Ok(true)
+}
+
+pub fn checkpoint_failed(id: &str) -> Result<bool, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Web search unavailable")?
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.checkpoint_failed))
 }
 
 pub fn pending_with_saved(ws: &waypoint_workspace::Workspace) -> Result<Value, String> {
@@ -430,6 +473,77 @@ mod tests {
             "https://example.test/job"
         );
     }
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_batch_recovers_saved_pages_without_replacing_them_with_older_results() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        fn open(path: &std::path::Path) -> waypoint_workspace::Workspace {
+            #[cfg(feature = "sqlcipher")]
+            {
+                waypoint_workspace::Workspace::open_encrypted(path).unwrap()
+            }
+            #[cfg(not(feature = "sqlcipher"))]
+            {
+                waypoint_workspace::Workspace::open(path).unwrap()
+            }
+        }
+        let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::Builder::new()
+            .prefix("waypoint-web-checkpoint-")
+            .tempdir_in(parent)
+            .unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "active-fixture".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 3,
+            processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
+            pending: None,
+            history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
+        });
+        *COMPLETED.lock().unwrap() = Some((
+            "older".into(),
+            json!({"status":"complete","history":[]}),
+            false,
+        ));
+        {
+            let ws = open(dir.path());
+            tx.send(Message::Query(
+                "fictional".into(),
+                1,
+                Ok(json!({"results":[{"url":"https://example.test/job"}]})),
+            ))
+            .unwrap();
+            collect_background().unwrap();
+            let no_sealer = waypoint_workspace::Workspace::in_memory().unwrap();
+            assert!(persist_progress(&no_sealer).is_err());
+            assert!(checkpoint_failed("active-fixture").unwrap());
+            assert!(persist_progress(&ws).unwrap());
+            assert!(!checkpoint_failed("active-fixture").unwrap());
+            assert!(!persist_progress(&ws).unwrap());
+            assert!(!persist_completed(&ws).unwrap());
+            assert_eq!(ws.latest_web_search().unwrap().unwrap().0, "active-fixture");
+        }
+        *TASK.lock().unwrap() = None;
+        *COMPLETED.lock().unwrap() = None;
+        let ws = open(dir.path());
+        let recovered = pending_with_saved(&ws).unwrap();
+        let result = &recovered["last"]["result"];
+        assert_eq!(recovered["last"]["task_id"], "active-fixture");
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["recovered_partial"], true);
+        assert_eq!(result["processed"], 1);
+        assert_eq!(result["total"], 3);
+        assert_eq!(
+            result["history"][0]["data"]["results"][0]["url"],
+            "https://example.test/job"
+        );
+    }
     #[test]
     fn background_collection_retains_pages_for_later_client_recovery() {
         let _lock = TEST_LOCK.lock().unwrap();
@@ -440,6 +554,8 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
@@ -491,6 +607,8 @@ mod tests {
             cancel: stop.clone(),
             total: 2,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
@@ -537,6 +655,8 @@ mod tests {
             cancel: stop.clone(),
             total: 3,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: timeout.clone(),
@@ -604,6 +724,8 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 3,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
@@ -695,6 +817,8 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 1,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
@@ -727,6 +851,8 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
@@ -754,6 +880,8 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             processed: 0,
+            saved_processed: None,
+            checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
