@@ -370,6 +370,16 @@ const MIGRATIONS: &[&str] = &[
     "INSERT INTO meta(key,value)
        SELECT 'duplicate_cross_employer_cursor','' WHERE EXISTS (SELECT 1 FROM jobs LIMIT 1);
      UPDATE meta SET value='39' WHERE key='schema_version';",
+    // v40 — reconsider records sharing an exact saved application URL.
+    "DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT j.id FROM jobs j WHERE j.canonical_url IS NOT NULL AND j.canonical_url<>''
+       AND EXISTS (SELECT 1 FROM jobs other WHERE other.canonical_url=j.canonical_url AND other.id<>j.id)
+     );
+     CREATE TRIGGER duplicate_url_coverage_update AFTER UPDATE OF canonical_url ON jobs
+       WHEN OLD.canonical_url IS NOT NEW.canonical_url
+       BEGIN DELETE FROM job_duplicate_coverage WHERE job_id=NEW.id;
+         DELETE FROM job_employer_indexed WHERE job_id=NEW.id; END;
+     UPDATE meta SET value='40' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1451,7 +1461,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "39");
+        assert_eq!(version, "40");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

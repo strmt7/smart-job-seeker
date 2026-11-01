@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Shared application URL duplicate review — 2026-11-01
+
+- Duplicate discovery now considers exact nonempty saved application URLs even when employers or titles differ or an employer is missing. A match creates a review pair, never an automatic merge; generic URLs can refer to different roles. Migration 40 queues existing shared-URL records for bounded rechecking, and a URL change invalidates the changed record's duplicate index. Searches remain capped at 200 candidates and report bounded coverage when the cap is reached. Store tests and the SQLCipher migration fixture passed; this is not a guarantee that all duplicates will be found.
+
 ## Listing inspection address checks — 2026-11-01
 
 - Listing inspection now rechecks the page address after structured-data and text extraction, model inference, capture and contact collection. An address change stops the inspection rather than saving the result against the earlier URL. A local browser fixture covers navigation to another page. Same-address content changes and navigation away and back between checks remain possible.

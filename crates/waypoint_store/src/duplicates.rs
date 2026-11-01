@@ -296,7 +296,11 @@ impl Store {
             .as_deref()
             .map(str::trim)
             .filter(|id| id.len() >= 3);
-        if missing_employer && usable_requisition.is_none() {
+        let canonical_url = job
+            .canonical_url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty());
+        if missing_employer && usable_requisition.is_none() && canonical_url.is_none() {
             self.conn.execute("INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,'missing_employer',0)", [job.id.as_str()])?;
             self.conn.execute(
                 "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
@@ -310,6 +314,21 @@ impl Store {
         let mut description_words: Option<BTreeSet<String>> = None;
         let mut candidates = Vec::new();
         let mut seen = BTreeSet::new();
+        // The exact saved URL is a candidate signal, not proof of identity:
+        // some sites reuse a generic application URL for multiple positions.
+        if let Some(url) = canonical_url {
+            let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j INDEXED BY jobs_canonical_url_lookup WHERE j.canonical_url=?1 AND j.id<>?2 ORDER BY COALESCE(j.last_seen,'') DESC,j.id ASC LIMIT 200")?;
+            for row in stmt.query_map(params![url, job.id.as_str()], Self::row_to_job)? {
+                let other = row?;
+                if seen.insert(other.id.as_str().to_owned()) {
+                    candidates.push(other);
+                }
+                if candidates.len() >= 200 {
+                    bounded = true;
+                    break;
+                }
+            }
+        }
         // An exact requisition is a stronger review signal than arbitrary ID
         // order. Reserve candidate slots for it across all employer tokens
         // before spending the shared 200-candidate budget on general matches.
@@ -318,6 +337,7 @@ impl Store {
             .as_deref()
             .map(str::trim)
             .filter(|id| id.len() >= 3)
+            .filter(|_| candidates.len() < 200)
         {
             let normalized = requisition.to_ascii_lowercase();
             let mut exact = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j INDEXED BY jobs_requisition_lookup JOIN job_employer_tokens t ON t.job_id=j.id WHERE lower(trim(j.requisition_id))=?1 AND t.token=?2 AND j.id<>?3 ORDER BY j.id LIMIT 200")?;
@@ -442,6 +462,8 @@ impl Store {
                 .is_some_and(|(a, b)| {
                     a.trim().len() >= 3 && a.trim().eq_ignore_ascii_case(b.trim())
                 });
+            let same_url =
+                canonical_url.is_some_and(|url| other.canonical_url.as_deref() == Some(url));
             // An exact identifier with a related employer is a review signal,
             // not proof: different employers may reuse identifiers.
             let missing_employer_pair = employer_tokens.is_empty() || other_employer.is_empty();
@@ -451,6 +473,7 @@ impl Store {
                 && !(same_requisition && employer_score >= 40)
                 && !same_acronym
                 && !same_requisition
+                && !same_url
             {
                 continue;
             }
@@ -474,18 +497,24 @@ impl Store {
                 None
             };
             let description_overlap = description_score.unwrap_or(0);
-            if dissimilar_employers && description_overlap < 85 {
+            if dissimilar_employers && description_overlap < 85 && !same_url {
                 continue;
             }
             // Requisition identifiers can be reused across unrelated employers;
             // missing employer data requires independent textual corroboration.
-            if missing_employer_pair && same_requisition && score < 65 && description_overlap < 85 {
+            if missing_employer_pair
+                && same_requisition
+                && score < 65
+                && description_overlap < 85
+                && !same_url
+            {
                 continue;
             }
             if score < 65
                 && !(score >= 30 && description_overlap >= 75)
                 && description_overlap < 85
                 && !same_requisition
+                && !same_url
             {
                 continue;
             }
@@ -503,7 +532,7 @@ impl Store {
                         "description unavailable or too short".into()
                     }
                 });
-            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" }, if dissimilar_employers { "Employer names differ; matching descriptions and identifiers can be reused." } else { "" });
+            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} {} {} Compare location, duties and requisition numbers.", if same_url { "Exact application URL matches; sites may reuse URLs for different positions." } else { "" }, if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" }, if dissimilar_employers { "Employer names differ; compare the listing details carefully." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=CASE WHEN possible_duplicates.status='pending' AND possible_duplicates.reason LIKE 'Listing changed after duplicate review; review again.%' THEN 'Listing changed after duplicate review; review again. ' || excluded.reason ELSE excluded.reason END", params![job_a,job_b,score,reason])?;
             let (status, preferred_job, stored_reason, revision) = self.conn.query_row(
                 "SELECT status,preferred_job,reason,revision FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
@@ -904,6 +933,74 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn exact_application_url_prompts_review_even_with_different_or_missing_employers() {
+        let mut store = Store::in_memory().unwrap();
+        let mut first = job("a", "Software Engineer", "Example", None);
+        let mut second = job("b", "Platform Lead", "", None);
+        first.canonical_url = Some("https://example.org/jobs/42".into());
+        second.canonical_url = first.canonical_url.clone();
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(pairs[0].reason.contains("Exact application URL matches"));
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
+        store.decide_duplicate("a", "b", false).unwrap();
+        store.find_possible_duplicates(&second).unwrap();
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        second.canonical_url = Some("https://example.org/jobs/43".into());
+        store.upsert_job(&second).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+    }
+
+    #[test]
+    fn migration_rechecks_existing_shared_urls() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..39] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for id in ["a", "b"] {
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state,canonical_url) VALUES(?1,'Role','','','\"discovered\"','https://example.org/jobs/42')", [id]).unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [id])
+                .unwrap();
+        }
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        store.index_next_duplicate_job("").unwrap();
+        assert_eq!(store.possible_duplicates().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn crowded_shared_url_is_bounded_and_reports_incomplete_coverage() {
+        let mut store = Store::in_memory().unwrap();
+        for n in 0..201 {
+            let mut item = job(&format!("job-{n:03}"), "Role", "Example", None);
+            item.canonical_url = Some("https://example.org/apply".into());
+            store.upsert_job(&item).unwrap();
+        }
+        let mut target = job("target", "Role", "Example", None);
+        target.canonical_url = Some("https://example.org/apply".into());
+        store.upsert_job(&target).unwrap();
+        assert_eq!(store.find_possible_duplicates(&target).unwrap().len(), 200);
+        let status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM job_duplicate_coverage WHERE job_id='target'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "bounded");
     }
 
     #[test]
