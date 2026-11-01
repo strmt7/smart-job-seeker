@@ -2528,6 +2528,24 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
             options: vec!["Germany".into(), "Canada".into()]
         }
     );
+    let text_option = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#text-option")
+        .unwrap();
+    assert_eq!(
+        text_option.field_type,
+        FormFieldType::Select {
+            options: vec!["France".into(), "New Zealand".into()]
+        }
+    );
+    let text_command = BrowserCommand::SelectOption {
+        selector: "#text-option".into(),
+        label: "New Zealand".into(),
+    };
+    driver.execute(&text_command).unwrap();
+    driver.verify_choice(&text_command).unwrap();
     assert!(page
         .walls
         .iter()
@@ -2538,6 +2556,7 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
         "#duplicate-id",
         "#disabled",
         "#aria-disabled",
+        "#text-ambiguous",
     ] {
         assert!(
             !page
@@ -2554,6 +2573,7 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
         ("#duplicate-id", "One"),
         ("#disabled", "One"),
         ("#aria-disabled", "One"),
+        ("#text-ambiguous", "New Zealand"),
     ] {
         assert!(
             driver
@@ -2565,6 +2585,12 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
             "{selector} must not be selected"
         );
     }
+    assert!(driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#text-changing".into(),
+            label: "France".into(),
+        })
+        .is_err());
     let command = BrowserCommand::SelectOption {
         selector: "#region".into(),
         label: "Germany".into(),

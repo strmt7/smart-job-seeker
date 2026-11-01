@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Text-only datalist options — 2026-11-01
+
+- Native datalist options without a value attribute can be reviewed and selected when their value is a single unambiguous text node. The driver checks the live option value and rechecks it after input events; ambiguous whitespace or markup still requires manual review. The existing datalist review warning remains because retained text does not prove a site's internal selection state.
+- A fictional local-browser fixture exercised text-only choices, whitespace ambiguity and a choice that changes during input. The focused fixture and browser unit suite passed; no real employer site or local model was tested.
+
 ## Native datalist choices — 2026-10-31
 
 - Standard text inputs backed by an unambiguous, bounded HTML datalist can now be offered as reviewed choices. Waypoint selects only an explicitly listed value, sends input and change events, and rechecks the value and options. Duplicate IDs or values, disabled choices, custom ARIA comboboxes, and changed or invalid controls remain manual. A manual-review warning remains because a site's internal selection state may not be visible from the input value.

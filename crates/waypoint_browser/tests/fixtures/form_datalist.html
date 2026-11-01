@@ -1,5 +1,8 @@
 <!doctype html><html><body><form>
 <label for="region">Region</label><input id="region" list="places" autocomplete="country-name" onchange="this.dataset.seen=this.value"><datalist id="places"><option value="Germany"><option value="Canada"></datalist>
+<label for="text-option">Text choices</label><input id="text-option" list="text-options"><datalist id="text-options"><option>France</option><option>New Zealand</option></datalist>
+<label for="text-changing">Changing text choice</label><input id="text-changing" list="changing-text-options" oninput="document.querySelector('#changing-text-options option').textContent='Changed'"><datalist id="changing-text-options"><option>France</option></datalist>
+<label for="text-ambiguous">Ambiguous text choice</label><input id="text-ambiguous" list="ambiguous-text-options"><datalist id="ambiguous-text-options"><option>New  Zealand</option></datalist>
 <label for="clear">Changing value</label><input id="clear" list="places" oninput="this.value=''">
 <label for="changing-disabled">Changing availability</label><input id="changing-disabled" list="places" oninput="document.querySelector('#places option').setAttribute('aria-disabled','true')">
 <label for="changing-role">Changing role</label><input id="changing-role" list="places" oninput="this.setAttribute('role','combobox')">
