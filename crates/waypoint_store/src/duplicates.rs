@@ -12,6 +12,16 @@ pub struct PossibleDuplicate {
     pub reason: String,
     pub status: String,
     pub preferred_job: Option<String>,
+    pub previous_decision: Option<PreviousDuplicateDecision>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreviousDuplicateDecision {
+    pub status: String,
+    pub preferred_job: Option<String>,
+    pub changed_job: String,
+    pub change_kind: String,
+    pub recorded_at: String,
 }
 
 fn words(s: &str) -> BTreeSet<String> {
@@ -446,18 +456,26 @@ impl Store {
                 });
             let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=CASE WHEN possible_duplicates.status='pending' AND possible_duplicates.reason LIKE 'Listing changed after duplicate review; review again.%' THEN 'Listing changed after duplicate review; review again. ' || excluded.reason ELSE excluded.reason END", params![job_a,job_b,score,reason])?;
-            let (status, preferred_job) = self.conn.query_row(
-                "SELECT status,preferred_job FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
+            let (status, preferred_job, stored_reason) = self.conn.query_row(
+                "SELECT status,preferred_job,reason FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
                 params![job_a, job_b],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?)),
             )?;
+            let previous_decision = if status == "pending"
+                && stored_reason.starts_with("Listing changed after duplicate review;")
+            {
+                self.latest_duplicate_reopen(job_a, job_b)?
+            } else {
+                None
+            };
             result.push(PossibleDuplicate {
                 job_a: job_a.into(),
                 job_b: job_b.into(),
                 score,
-                reason,
+                reason: stored_reason,
                 status,
                 preferred_job,
+                previous_decision,
             });
         }
         self.conn.execute(
@@ -643,19 +661,47 @@ impl Store {
         Ok(added)
     }
 
+    fn latest_duplicate_reopen(
+        &self,
+        a: &str,
+        b: &str,
+    ) -> rusqlite::Result<Option<PreviousDuplicateDecision>> {
+        self.conn.query_row("SELECT previous_status,previous_preferred,changed_job,change_kind,recorded_at FROM duplicate_reopen_log WHERE job_a=?1 AND job_b=?2 ORDER BY id DESC LIMIT 1", params![a,b], |row| Ok(PreviousDuplicateDecision {status:row.get(0)?, preferred_job:row.get(1)?, changed_job:row.get(2)?, change_kind:row.get(3)?, recorded_at:row.get(4)?})).optional()
+    }
+
     pub fn possible_duplicates(&self) -> rusqlite::Result<Vec<PossibleDuplicate>> {
-        let mut stmt=self.conn.prepare("SELECT job_a,job_b,score,reason,status,preferred_job FROM possible_duplicates WHERE status <> 'different' ORDER BY job_a,job_b")?;
-        let rows = stmt.query_map([], |r| {
-            Ok(PossibleDuplicate {
-                job_a: r.get(0)?,
-                job_b: r.get(1)?,
-                score: r.get(2)?,
-                reason: r.get(3)?,
-                status: r.get(4)?,
-                preferred_job: r.get(5)?,
-            })
+        let mut stmt = self.conn.prepare("SELECT job_a,job_b,score,reason,status,preferred_job FROM possible_duplicates WHERE status <> 'different' ORDER BY job_a,job_b")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get(5)?,
+            ))
         })?;
-        rows.collect()
+        let mut result = Vec::new();
+        for row in rows {
+            let (job_a, job_b, score, reason, status, preferred_job) = row?;
+            let previous_decision = if status == "pending"
+                && reason.starts_with("Listing changed after duplicate review;")
+            {
+                self.latest_duplicate_reopen(&job_a, &job_b)?
+            } else {
+                None
+            };
+            result.push(PossibleDuplicate {
+                job_a,
+                job_b,
+                score,
+                reason,
+                status,
+                preferred_job,
+                previous_decision,
+            });
+        }
+        Ok(result)
     }
 
     pub fn has_duplicate_hold(&self, id: &str) -> rusqlite::Result<bool> {
@@ -727,6 +773,14 @@ mod tests {
         store.upsert_job(&first).unwrap();
         assert!(store.has_duplicate_hold("a").unwrap());
         assert!(store.pending_duplicate_pair("a", "b").unwrap());
+        let previous = store
+            .possible_duplicates()
+            .unwrap()
+            .remove(0)
+            .previous_decision
+            .unwrap();
+        assert_eq!(previous.status, "different");
+        assert_eq!(previous.changed_job, "a");
         assert!(store.possible_duplicates().unwrap()[0]
             .reason
             .contains("after duplicate review"));
@@ -773,6 +827,14 @@ mod tests {
         assert!(store.has_duplicate_hold("b").unwrap());
         let prior: (String, Option<String>) = store.conn.query_row("SELECT previous_status,previous_preferred FROM duplicate_reopen_log ORDER BY id DESC LIMIT 1", [], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
         assert_eq!(prior, ("same".into(), Some("a".into())));
+        let previous = store
+            .possible_duplicates()
+            .unwrap()
+            .remove(0)
+            .previous_decision
+            .unwrap();
+        assert_eq!(previous.status, "same");
+        assert_eq!(previous.preferred_job.as_deref(), Some("a"));
     }
 
     fn check_background_indexer_yields(writer: &mut Store, indexer: &Store) {

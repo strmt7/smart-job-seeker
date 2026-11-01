@@ -340,6 +340,9 @@ const MIGRATIONS: &[&str] = &[
          WHERE (job_a=NEW.job_id OR job_b=NEW.job_id) AND status IN ('different','same');
      END;
      UPDATE meta SET value='33' WHERE key='schema_version';",
+    // v34 — bound the latest prior duplicate decision lookup.
+    "CREATE INDEX duplicate_reopen_pair_latest ON duplicate_reopen_log(job_a,job_b,id DESC);
+     UPDATE meta SET value='34' WHERE key='schema_version';",
 
 ];
 
@@ -1307,7 +1310,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "33");
+        assert_eq!(version, "34");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
