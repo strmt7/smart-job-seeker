@@ -3612,6 +3612,20 @@ fn serve(
                 attempt_record::screenshot_image(ws, &job, attempt, name)?,
             );
         }
+        "/api/attempts/visual-result" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            let task = body["task_id"].as_str().ok_or("missing visual review id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::saved_visual_result(ws, &job, attempt, task)?,
+            );
+        }
         "/api/gmail/reconcile-handoff" => {
             if body["reviewed"].as_bool() != Some(true) {
                 return Err("Confirm that you checked the mailbox first".into());

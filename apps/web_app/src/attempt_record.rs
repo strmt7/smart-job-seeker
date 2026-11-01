@@ -961,6 +961,14 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
         if let Some(label) = label {
             context["field_label"] = json!(label);
         }
+        if kind == "visual_capture" {
+            if let Some(task_id) = value["task_id"]
+                .as_str()
+                .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                context["visual_task_id"] = json!(task_id);
+            }
+        }
         // Later events may record that a previously captured page changed.
         contexts.insert(name.to_owned(), context);
     }
@@ -1046,6 +1054,40 @@ pub fn screenshot_image(
         return Err("Invalid screenshot content".into());
     }
     Ok(json!({"name":name,"image_base64":STANDARD.encode(bytes)}))
+}
+
+/// The worker records this before subsequent live-value and freshness checks.
+pub fn saved_visual_result(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    task_id: &str,
+) -> Result<Value, String> {
+    use std::io::Read;
+    if task_id.len() != 32 || !task_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Invalid visual review identity".into());
+    }
+    let path = attempt_directory(ws, job, attempt)?.join(format!("visual-result-{task_id}.json"));
+    let meta = fs::symlink_metadata(&path).map_err(|_| "Saved visual review is unavailable")?;
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 512 * 1024 {
+        return Err("Invalid saved visual review".into());
+    }
+    let file = fs::File::open(path).map_err(|_| "Cannot read saved visual review")?;
+    let mut bytes = Vec::new();
+    file.take(512 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Cannot read saved visual review")?;
+    if bytes.len() > 512 * 1024 {
+        return Err("Saved visual review exceeds its size limit".into());
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid saved visual review")?;
+    if value["type"] != "visual_result"
+        || value["task_id"].as_str() != Some(task_id)
+        || !matches!(value["status"].as_str(), Some("complete" | "failed"))
+    {
+        return Err("Saved visual review identity does not match".into());
+    }
+    Ok(value)
 }
 /// Make a self-contained index for locally saved PNGs. Metadata supplies only
 /// validated numbers; captured page text and URLs never become HTML markup.
@@ -2000,7 +2042,29 @@ mod tests {
         record.event(json!({"type":"page_capture_segment","time":124,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"page_capture_changed","time":125,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"attachment_viewport","time":126,"field_label":"Resume","screenshot":"screenshots/0025.png"})).unwrap();
+        let visual_id = "0123456789abcdef0123456789abcdef";
+        record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png"})).unwrap();
+        write_visual_result(
+            &record.visual_result_path(visual_id).unwrap(),
+            visual_id,
+            &Ok(json!({"observations":[],"comparisons":[]})),
+            128,
+        )
+        .unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
+        assert_eq!(first["contexts"]["0003.png"]["visual_task_id"], visual_id);
+        assert_eq!(
+            saved_visual_result(&ws, &job, "screens-fixture", visual_id).unwrap()["status"],
+            "complete"
+        );
+        assert!(saved_visual_result(&ws, &job, "screens-fixture", "../invalid").is_err());
+        assert!(saved_visual_result(
+            &ws,
+            &JobIdentityId::new("different-job").unwrap(),
+            "screens-fixture",
+            visual_id
+        )
+        .is_err());
         assert_eq!(first["items"].as_array().unwrap().len(), 24);
         assert_eq!(first["next_after"], 24);
         assert_eq!(first["unreadable"], 2);
