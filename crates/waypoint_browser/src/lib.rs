@@ -2634,9 +2634,9 @@ impl CdpDriver {
                         "Rich text has too many lines; review it manually".into(),
                     ));
                 }
-                // Real focus + real typing: the page sees the same events a
-                // human would produce. Replace existing content instead of
-                // appending to a prefilled or browser-restored value.
+                // Focus the control and insert text through Chromium input.
+                // Input.insertText does not reproduce physical keystroke events.
+                // Replace existing content instead of appending to it.
                 self.cdp
                     .call("DOM.focus", json!({ "nodeId": node }))
                     .map_err(derr)?;

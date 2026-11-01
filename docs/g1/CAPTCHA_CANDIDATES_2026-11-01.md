@@ -55,3 +55,34 @@ to synthetic click dispatch. A product integration must account for these
 behaviors, enforce the existing application submission boundary and test its
 actual effects. A local vision model may assist with image challenges and
 inspection, but its effectiveness and resource use for this task are unmeasured.
+
+## Local vision feasibility probe
+
+On the same date, the app's Windows resource gate started the already-installed
+`gemma4:12b-it-qat` at a 4,096-token context and verified full GPU residency.
+In one run each, two generated 3-by-3 grids of solid circles and squares were
+sent to the model through loopback Ollama. The model returned the exact circle
+indices for both grids (`[1,4,8]` and `[2,5,9]`) and stopped normally. The model
+was then unloaded. These synthetic, high-contrast diagrams are deliberately
+simple; this is not evidence of performance on photographs, real provider
+challenges, ambiguous tiles, localized instructions, or interactive puzzles.
+Fixture images, prompts and responses remain under ignored
+`target/captcha-research/vision-fixtures/` and `vision_probe.py`.
+
+## Interaction behavior research
+
+[Cloudflare's detection overview](https://developers.cloudflare.com/bots/concepts/bot-detection-engines/)
+describes a combination of request, session and browser signals. The
+[FP-Agent study](https://arxiv.org/html/2605.01247) reports measurable
+differences in typing, scrolling and mouse behavior for seven tested agents;
+its results are limited to the tested tasks and configurations. Neither source
+establishes that adding random delays or interpolated pointer paths makes an
+agent indistinguishable from a person. Waypoint currently inserts text in whole
+strings and moves directly to click coordinates, so those behaviors warrant
+measurement and refinement. Any change needs to preserve exact text entry,
+verification and the user's no-submission boundary while measuring added time.
+
+Crawl4AI receipts, both HTTP 200 with substantive extracted content:
+
+- Cloudflare: `c48e6a5619f498512f7109bd54402062430aa59c8cba071a605301ece065c513`
+- FP-Agent: `e48aa0c529a1708ba82ae2503c5c01688841816cb3382795183c3795a8e180ec`
