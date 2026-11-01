@@ -1104,3 +1104,7 @@ A single debug-build SQLCipher disk run of the same 10,000-fictional-job fixture
 ### Independent fit-audit warning (2026-11-01)
 
 A fit badge can now show both an unknown or conflicting required criterion and an incomplete requirement audit. The latter is calculated independently from the saved assessment's coverage and audit fields, including for older saved assessments; it does not change the score or its range. Focused coverage and local API tests, all UI checks, web Clippy and formatting passed. A mocked Edge job-list fixture rendered the combined warning at 1,200 and 390 pixels without horizontal overflow or page errors. This does not validate the model's assessment or establish complete requirement extraction. No application was submitted.
+
+### DOCX tracked-revision edits (2026-11-01)
+
+The exact DOCX editor now excludes removed and moved-from tracked revisions from matching, consistent with document extraction. It keeps removed XML unchanged and does not join a replacement across a removed revision boundary. A fictional DOCX fixture covered removed-only text, duplicated current and removed text, and a cross-boundary match. Eight DOCX editor tests passed (four LibreOffice-dependent tests ignored); web Clippy and formatting passed. This does not establish fidelity for every tracked-change structure or template; rendered review remains necessary. No application was submitted.

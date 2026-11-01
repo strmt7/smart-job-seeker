@@ -36,6 +36,7 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
     let mut stack: Vec<Vec<Node>> = Vec::new();
     let mut blocks = Vec::new();
     let mut active: Option<(usize, usize, usize)> = None;
+    let mut removed_revision_depth = 0usize;
     loop {
         let before = reader.buffer_position() as usize;
         let (namespace, event) = reader
@@ -45,6 +46,29 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
             ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
             || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         let after = reader.buffer_position() as usize;
+        if removed_revision_depth > 0 {
+            match event {
+                Event::Start(_) => removed_revision_depth += 1,
+                Event::End(_) => removed_revision_depth -= 1,
+                Event::Eof => return Err("Unclosed removed DOCX revision".into()),
+                _ => {}
+            }
+            continue;
+        }
+        if word
+            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref(), b"del" | b"moveFrom"))
+        {
+            if active.is_some() {
+                return Err("Invalid DOCX revision inside text".into());
+            }
+            if let Some(current) = stack.last_mut() {
+                if !current.is_empty() {
+                    blocks.push(std::mem::take(current));
+                }
+            }
+            removed_revision_depth = 1;
+            continue;
+        }
         match event {
             Event::DocType(_) => return Err("DOCX document types are unsupported".into()),
             Event::Start(ref e) if word && e.local_name().as_ref() == b"p" => {
@@ -502,6 +526,35 @@ mod tests {
         let doc = writer.finish().unwrap().into_inner();
         assert!(replace(&doc, "Repeated", "Changed").is_err());
         assert!(replace(&doc, "RepeatedRepeated", "Changed").is_err());
+    }
+
+    #[test]
+    fn edits_current_text_without_matching_removed_revisions() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:moveFrom><w:r><w:t>Old qualification</w:t></w:r></w:moveFrom><w:r><w:t>Old qualification</w:t></w:r></w:p><w:p><w:r><w:t>Before</w:t></w:r><w:del><w:r><w:t>Hidden</w:t></w:r></w:del><w:r><w:t>After</w:t></w:r></w:p></w:body></w:document>"#;
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(xml.as_bytes()).unwrap();
+        let doc = writer.finish().unwrap().into_inner();
+        assert!(replace(&doc, "Hidden", "Changed").is_err());
+        assert!(replace(&doc, "BeforeAfter", "Changed").is_err());
+        let edited = replace(&doc, "Old qualification", "Current qualification").unwrap();
+        assert_eq!(
+            crate::document_extract::extract("x.docx", &edited).unwrap(),
+            "Current qualification\nBeforeAfter"
+        );
+        let mut archive = zip::ZipArchive::new(Cursor::new(edited)).unwrap();
+        let mut body = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.contains("<w:moveFrom><w:r><w:t>Old qualification</w:t></w:r></w:moveFrom>"));
     }
 
     #[test]
