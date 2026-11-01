@@ -1,3 +1,8 @@
+## Template suggestion review — 2026-11-01
+
+- The single-passage and batch template editors now show the local evidence check, qualification-selection limits and unavailable-check warnings already returned by the backend. They also identify unchanged suggestions. A supported judgment may rely on the selected passage, which is not independently verified; the interface says so. These judgments apply to the generated text and do not validate later edits or document layout.
+- In one fictional local-model test, `qwen3.5:9b` shortened a wordy accessibility passage while retaining the screen-reader detail. It judged the revised claim supported by the user-selected passage, illustrating why that provenance warning matters. This is one case, not proof of reliable tailoring. Minimum sampled available RAM was 19.85 GiB and the model was unloaded. No employer was contacted or application submitted.
+
 ## Template evidence qualification — 2026-11-01
 
 - The live fictional template test now checks that the evidence review completes and flags a claim based on the selected, independently unverified passage as uncertain. In the observed run the model retained the original passage unchanged; this does not establish that it improves a résumé or correctly classifies every claim. A separate fictional answer check identified the cited Python work as supported and an invented five-year management claim as unsupported.

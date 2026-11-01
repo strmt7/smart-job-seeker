@@ -372,6 +372,43 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_template_suggestion_rewrites_wordy_fictional_passage() {
+        let passage = "Responsible for the development of accessible web interfaces for users of screen readers.";
+        let mut input = input_with_passage(passage, passage);
+        input.facts.clear();
+        input.listing = "Frontend developer: build accessible web interfaces.".into();
+        input.instructions = "Use active voice and concise language.".into();
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let result = suggest(&mut model, input).unwrap();
+        println!("Fictional wordy template suggestion: {result}");
+        let text = result["text"].as_str().unwrap();
+        let lower = text.to_lowercase();
+        assert_ne!(text, passage, "the passage was not revised");
+        assert!(
+            text.len() < passage.len(),
+            "the revision was not concise: {text}"
+        );
+        assert!(
+            lower.contains("accessib"),
+            "accessibility was omitted: {text}"
+        );
+        assert!(
+            lower.contains("screen reader") || lower.contains("screen-reader"),
+            "screen-reader detail was omitted: {text}"
+        );
+        assert_eq!(result["evidence_check"]["status"], "completed");
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_two_template_passages_are_drafted_sequentially() {
         let first = "Designed accessible interfaces for screen-reader users.";
         let second = "Maintained Python services for three years.";

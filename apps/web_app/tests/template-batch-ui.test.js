@@ -14,7 +14,10 @@ function node(tag, text = '') {
 async function fixture(failSecond = false) {
   const calls=[], notices=[], changes=[], text={value:'Built dashboards\nLed research',selectionStart:0,selectionEnd:29}, jobSelect={value:'job'}, busy=[];
   const context={element:(tag,text)=>node(tag,text), TextEncoder, setTimeout:f=>f(), notify:message=>notices.push(message),
-    api:async(path,body)=>{calls.push({path,body});if(failSecond && path.endsWith('-start') && body.before==='Led research')throw Error('Model unavailable');return path.endsWith('-start')?{task_id:body.before}:{status:'complete',document_id:'doc',job_id:'job',before:body.task_id,digest:'a'.repeat(64),suggestion:{text:`Revised ${body.task_id}`,sources:['Fictional source']}};}};
+    selectedFactsDetails:()=>null, factCrossCheckMessage:()=>'',
+    api:async(path,body)=>{calls.push({path,body});if(failSecond && path.endsWith('-start') && body.before==='Led research')throw Error('Model unavailable');return path.endsWith('-start')?{task_id:body.before}:{status:'complete',document_id:'doc',job_id:'job',before:body.task_id,digest:'a'.repeat(64),suggestion:{text:body.task_id==='Led research'?body.task_id:`Revised ${body.task_id}`,sources:['Fictional source'],evidence_check:body.task_id==='Led research'?{status:'invalid'}:{status:'completed',claims:[{status:'unsupported',excerpt:'Revised',explanation:'Not established'}]}}};}};
+  context.showAnswerEvidence=vm.runInNewContext(`(${source.split('\n').find(line=>line.startsWith('function showAnswerEvidence('))})`,context);
+  context.showTemplateSuggestionReview=vm.runInNewContext(`(${source.split('\n').find(line=>line.startsWith('function showTemplateSuggestionReview('))})`,context);
   context.followTemplateSuggestion=task=>context.api('/api/documents/template-suggest-status',{task_id:task});
   const create=vm.runInNewContext(`(${source.slice(start,end)})`,context);
   const section=create({text,documentResult:{id:'doc'},jobSelect,changes,renderQueue:()=>{},isBusy:()=>false,setBusy:value=>busy.push(value)});
@@ -26,6 +29,11 @@ async function fixture(failSecond = false) {
   assert.equal(f.calls.length,4);
   assert.deepEqual(f.busy,[true,false]);
   assert.match(f.section.children[1].textContent,/2 suggestions ready/);
+  const cards=f.section.children[2].children;
+  assert.ok(cards[0].children.some(item=>/unsupported: Revised/.test(item.textContent)));
+  assert.ok(cards[0].children.some(item=>/has not been independently verified/.test(item.textContent)));
+  assert.ok(cards[1].children.some(item=>/original passage unchanged/.test(item.textContent)));
+  assert.ok(cards[1].children.some(item=>/unavailable or incomplete/.test(item.textContent)));
   const buttons=f.section.children[2].querySelectorAll('button');
   assert.equal(buttons.length,2);
   buttons[0].handlers.click();buttons[1].handlers.click();
@@ -39,5 +47,6 @@ async function fixture(failSecond = false) {
   f.section.children[2].querySelectorAll('button')[0].handlers.click();
   assert.equal(f.changes.length,0);
   assert.match(f.notices[0],/job or queue changed/);
+  assert.ok(source.includes('showTemplateSuggestionReview(suggestion,proposed,selected)'));
   console.log('Template batch suggestion UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
