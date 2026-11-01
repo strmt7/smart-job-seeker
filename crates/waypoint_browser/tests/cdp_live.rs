@@ -73,6 +73,16 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
         .fields
         .iter()
         .any(|field| field.label == "Transparent"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Clipped"));
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Scrollable"));
     assert!(live
         .walls
         .iter()

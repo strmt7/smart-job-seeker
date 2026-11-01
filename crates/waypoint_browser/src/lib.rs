@@ -941,12 +941,27 @@ impl CdpDriver {
             const visibleNode = this instanceof HTMLInputElement && this.type === 'file' ? this.parentElement : this;
             if (!visibleNode) return null;
             const style = getComputedStyle(visibleNode);
-            let transparent = false;
+            let needsReview = false;
+            const rect = visibleNode.getBoundingClientRect();
+            let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
             for (let node = visibleNode, depth = 0; node; node = node.parentElement) {
                 if (++depth > 64) return null;
-                if (Number(getComputedStyle(node).opacity) === 0) { transparent = true; break; }
+                const ancestorStyle = getComputedStyle(node);
+                if (Number(ancestorStyle.opacity) === 0) needsReview = true;
+                if (node !== visibleNode) {
+                    const box = node.getBoundingClientRect();
+                    if (['hidden', 'clip'].includes(ancestorStyle.overflowX)) {
+                        left = Math.max(left, box.left + node.clientLeft);
+                        right = Math.min(right, box.left + node.clientLeft + node.clientWidth);
+                    }
+                    if (['hidden', 'clip'].includes(ancestorStyle.overflowY)) {
+                        top = Math.max(top, box.top + node.clientTop);
+                        bottom = Math.min(bottom, box.top + node.clientTop + node.clientHeight);
+                    }
+                }
             }
-            const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !transparent;
+            if (right <= left || bottom <= top) needsReview = true;
+            const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !needsReview;
             const parts = []; let current = this;
             while (current && current.nodeType === 1) {
                 if (parts.length >= 64 || !current.localName) return null;
@@ -957,7 +972,7 @@ impl CdpDriver {
             }
             const path = parts.join(' > ');
             const available = !this.matches(':disabled') && this.readOnly !== true && !this.closest('[aria-disabled="true" i], [aria-readonly="true" i]');
-            return path.length <= 4096 ? {visible, path, available, transparent} : null;
+            return path.length <= 4096 ? {visible, path, available, needsReview} : null;
         }"#,"returnByValue":true}));
         let released = self
             .cdp
@@ -986,13 +1001,13 @@ impl CdpDriver {
             .ok_or_else(|| {
                 DriverError("Field availability is unavailable; manual review is needed".into())
             })?;
-        let transparent = value
-            .get("transparent")
+        let needs_review = value
+            .get("needsReview")
             .and_then(Value::as_bool)
             .ok_or_else(|| {
-                DriverError("Field opacity is unavailable; manual review is needed".into())
+                DriverError("Field visibility is unavailable; manual review is needed".into())
             })?;
-        Ok((visible, path.to_owned(), available, transparent))
+        Ok((visible, path.to_owned(), available, needs_review))
     }
 
     fn open_visible_shadow_host(&mut self, node: u64) -> Result<bool, DriverError> {
@@ -1790,13 +1805,13 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                let (rendered, path, available, transparent) =
+                let (rendered, path, available, needs_review) =
                     self.control_visibility_and_path(control.node_id)?;
                 if rendered && available {
                     css_paths.insert(control.node_id, path);
                     visible.push(control);
                 } else {
-                    if transparent {
+                    if needs_review {
                         wall_flags.push("a custom control needs manual review".into());
                     }
                     if rendered && !available {
