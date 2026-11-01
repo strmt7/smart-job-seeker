@@ -663,6 +663,60 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "read-only public form; captures bounded screenshots with a browser"]
+    fn live_scroll_capture_reports_dimension_changes() {
+        let url = std::env::var("WAYPOINT_SCROLL_TEST_URL").unwrap();
+        let section = std::env::var("WAYPOINT_SCROLL_TEST_SECTION").unwrap();
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(&url).unwrap();
+        driver.scroll_field_into_view(&section).unwrap();
+        driver.reveal_section_controls(&section).unwrap();
+        let before = driver.page_dimensions().unwrap();
+        let width = before.0.min(2048.0);
+        println!("initial dimensions: {before:?}");
+        for index in 0..6 {
+            let y = f64::from(index) * 2000.0;
+            if y >= before.1 {
+                break;
+            }
+            let image = driver
+                .screenshot_tile(0.0, y, width, (before.1 - y).min(2000.0))
+                .unwrap();
+            assert!(!image.is_empty());
+            drop(image);
+            let after = driver.page_dimensions().unwrap();
+            println!("after tile {index}: {after:?}");
+            if after != before {
+                for delay in [100, 500, 1000] {
+                    std::thread::sleep(std::time::Duration::from_millis(delay));
+                    println!("after {delay}ms: {:?}", driver.page_dimensions().unwrap());
+                }
+            }
+        }
+        if before.1 > 2000.0 {
+            let image = driver
+                .screenshot_tile(0.0, before.1 - 2000.0, width, 2000.0)
+                .unwrap();
+            drop(image);
+            println!(
+                "after overlapping bottom tile: {:?}",
+                driver.page_dimensions().unwrap()
+            );
+        }
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     fn lesson_selection_uses_live_non_sensitive_control_types() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType as Field, FormSchema};
         use waypoint_workspace::form_experience::{

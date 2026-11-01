@@ -296,6 +296,7 @@ fn reviewed_link_matches(
 }
 
 const PRIOR_FIELDS_REVIEW: &str = "Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection";
+const PRIOR_MISSING_FIELDS_REVIEW: &str = "a custom control needs manual review: An earlier inspection found fields that disappeared while scrolling. Review the entire application; this inspection may still be incomplete.";
 
 fn mark_prior_fills_for_review(
     preview: &mut form_preview::FormPreview,
@@ -312,6 +313,19 @@ fn mark_prior_fills_for_review(
             .any(|reason| reason == PRIOR_FIELDS_REVIEW)
     {
         preview.manual_review.push(PRIOR_FIELDS_REVIEW.into());
+    }
+    if previous_review.iter().any(|reason| {
+        reason == PRIOR_MISSING_FIELDS_REVIEW
+            || (reason.starts_with("a custom control needs manual review: ")
+                && reason.contains("field(s) seen earlier are absent from this inspection"))
+    }) && !preview
+        .manual_review
+        .iter()
+        .any(|reason| reason == PRIOR_MISSING_FIELDS_REVIEW)
+    {
+        preview
+            .manual_review
+            .push(PRIOR_MISSING_FIELDS_REVIEW.into());
     }
 }
 
@@ -609,6 +623,29 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn missing_field_observation_remains_a_historical_review_obligation() {
+        let mut preview = form_preview::FormPreview {
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let first = vec!["a custom control needs manual review: 1 field(s) seen earlier are absent from this inspection (Question). Scroll and inspect again; the form may be incomplete.".into()];
+        mark_prior_fills_for_review(&mut preview, &[], &first);
+        assert_eq!(preview.manual_review, vec![PRIOR_MISSING_FIELDS_REVIEW]);
+        let prior = preview.manual_review.clone();
+        preview.manual_review.clear();
+        mark_prior_fills_for_review(&mut preview, &[], &prior);
+        mark_prior_fills_for_review(&mut preview, &[], &prior);
+        assert_eq!(preview.manual_review, vec![PRIOR_MISSING_FIELDS_REVIEW]);
     }
 
     #[test]

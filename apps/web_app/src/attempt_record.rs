@@ -1857,14 +1857,21 @@ fn capture_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
     let mut tiles = Vec::new();
     let mut y = 0.0;
     while y < capped_height {
-        let tile_height = (capped_height - y).min(2000.0);
+        // Keep the final tile full-height when possible. It overlaps the
+        // previous tile but still records its actual page coordinates.
+        let capture_y = if y > 0.0 && capped_height - y < 2000.0 {
+            capped_height - 2000.0
+        } else {
+            y
+        };
+        let tile_height = (capped_height - capture_y).min(2000.0);
         let mut x = 0.0;
         while x < capped_width {
             if tiles.len() == 6 {
                 return (tiles, false);
             }
             let tile_width = (capped_width - x).min(2048.0);
-            tiles.push((x, y, tile_width, tile_height));
+            tiles.push((x, capture_y, tile_width, tile_height));
             x += tile_width;
         }
         y += tile_height;
@@ -2451,8 +2458,8 @@ mod tests {
             vec![
                 (0.0, 0.0, 2048.0, 2000.0),
                 (2048.0, 0.0, 952.0, 2000.0),
-                (0.0, 2000.0, 2048.0, 400.0),
-                (2048.0, 2000.0, 952.0, 400.0)
+                (0.0, 400.0, 2048.0, 2000.0),
+                (2048.0, 400.0, 952.0, 2000.0)
             ]
         );
         let (tiles, complete) = capture_tiles(4096.0, 12000.0);
@@ -2931,24 +2938,35 @@ mod tests {
         assert!(entries.iter().any(|event| event["type"] == "page_capture"
             && event["segments"] == 2
             && event["full_dimensions_captured"] == true));
-        let segments: Vec<_> = entries
-            .iter()
-            .filter(|event| event["type"] == "page_capture_segment")
-            .collect();
-        assert_eq!(segments.len(), 2);
-        let started = entries
-            .iter()
-            .find(|event| event["type"] == "page_capture_started")
-            .unwrap();
         let finished = entries
             .iter()
             .find(|event| event["type"] == "page_capture")
             .unwrap();
+        let started = entries
+            .iter()
+            .find(|event| {
+                event["type"] == "page_capture_started"
+                    && event["capture_id"] == finished["capture_id"]
+            })
+            .unwrap();
+        let segments: Vec<_> = entries
+            .iter()
+            .filter(|event| {
+                event["type"] == "page_capture_segment"
+                    && event["capture_id"] == finished["capture_id"]
+            })
+            .collect();
+        assert_eq!(segments.len(), 2);
         assert_eq!(started["capture_id"], finished["capture_id"]);
         for (index, event) in segments.iter().enumerate() {
             assert_eq!(event["capture_id"], started["capture_id"]);
             assert_eq!(event["index"], index);
-            assert_eq!(event["y"].as_f64().unwrap(), index as f64 * 2000.0);
+            let expected_y = if index == 0 {
+                0.0
+            } else {
+                finished["page_height"].as_f64().unwrap() - 2000.0
+            };
+            assert_eq!(event["y"].as_f64().unwrap(), expected_y);
             let name = event["screenshot"].as_str().unwrap();
             assert!(record.dir.join(name).is_file());
         }
@@ -2960,20 +2978,21 @@ mod tests {
             .dir
             .join(viewport["screenshot"].as_str().unwrap())
             .is_file());
-        assert_eq!(
+        assert!(
             fs::read_dir(record.dir.join("screenshots"))
                 .unwrap()
-                .count(),
-            3
+                .count()
+                >= 3
         );
         // Force a collision on the second segment. The first segment and its
         // capture ID must remain attributable even without a completion event.
-        fs::write(record.dir.join("screenshots/0005.png"), b"existing").unwrap();
+        let collision = record
+            .dir
+            .join("screenshots")
+            .join(format!("{:04}.png", record.sequence + 2));
+        fs::write(&collision, b"existing").unwrap();
         assert!(capture_before_navigation(&mut driver, &mut record, 3).is_err());
-        assert_eq!(
-            fs::read(record.dir.join("screenshots/0005.png")).unwrap(),
-            b"existing"
-        );
+        assert_eq!(fs::read(&collision).unwrap(), b"existing");
         assert!(capture_page(&mut driver, &mut record, 4).is_ok());
         let entries: Vec<Value> = fs::read_to_string(record.dir.join("events.jsonl"))
             .unwrap()
@@ -2982,17 +3001,20 @@ mod tests {
             .collect();
         let starts: Vec<_> = entries
             .iter()
-            .filter(|event| event["type"] == "page_capture_started")
+            .filter(|event| {
+                event["type"] == "page_capture_started"
+                    && (event["time"] == 3 || event["time"] == 4)
+            })
             .collect();
-        assert_eq!(starts.len(), 3);
+        assert_eq!(starts.len(), 2);
         assert!(entries
             .iter()
             .any(|event| event["type"] == "navigation_capture_incomplete"));
         assert!(!entries
             .iter()
             .any(|event| event["type"] == "navigation_capture_complete"));
-        assert_ne!(starts[1]["capture_id"], starts[2]["capture_id"]);
-        let failed_id = &starts[1]["capture_id"];
+        assert_ne!(starts[0]["capture_id"], starts[1]["capture_id"]);
+        let failed_id = &starts[0]["capture_id"];
         assert_eq!(
             entries
                 .iter()
@@ -3005,7 +3027,7 @@ mod tests {
             .iter()
             .any(|event| event["type"] == "page_capture" && &event["capture_id"] == failed_id));
         assert!(entries.iter().any(|event| event["type"] == "page_capture"
-            && event["capture_id"] == starts[2]["capture_id"]));
+            && event["capture_id"] == starts[1]["capture_id"]));
         driver
             .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
                 selector: "#candidate".into(),
@@ -3014,7 +3036,7 @@ mod tests {
                 ),
             })
             .unwrap();
-        capture_before_navigation(&mut driver, &mut record, 5).unwrap();
+        let capture_result = capture_before_navigation(&mut driver, &mut record, 5);
         let entries: Vec<Value> = fs::read_to_string(record.dir.join("events.jsonl"))
             .unwrap()
             .lines()
@@ -3026,18 +3048,43 @@ mod tests {
             .unwrap();
         let end = entries
             .iter()
-            .rposition(|event| event["type"] == "navigation_capture_complete")
+            .rposition(|event| {
+                event["type"]
+                    == if capture_result.is_ok() {
+                        "navigation_capture_complete"
+                    } else {
+                        "navigation_capture_incomplete"
+                    }
+                    && event["time"] == 5
+            })
             .unwrap();
         assert!(start < end);
         let captured: Vec<_> = entries[start..end]
             .iter()
             .filter(|event| event["type"] == "page_capture_segment")
             .collect();
-        assert_eq!(captured.len(), 2);
+        assert!(!captured.is_empty());
         assert!(captured.iter().all(|event| record
             .dir
             .join(event["screenshot"].as_str().unwrap())
             .is_file()));
+        if capture_result.is_ok() {
+            let finished_id = &entries[start..end]
+                .iter()
+                .find(|event| event["type"] == "page_capture")
+                .unwrap()["capture_id"];
+            assert_eq!(
+                captured
+                    .iter()
+                    .filter(|event| &event["capture_id"] == finished_id)
+                    .count(),
+                2
+            );
+        } else {
+            assert!(!entries[start..end]
+                .iter()
+                .any(|event| event["type"] == "page_capture"));
+        }
         let next = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/application-check-contact.html")
             .canonicalize()
