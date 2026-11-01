@@ -1868,7 +1868,7 @@ impl CdpDriver {
             // Hit-test only an in-viewport center. Offscreen and unscrolled controls
             // are checked again after focusing or scrolling.
             const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
-            if (!needsReview && !outsideScrollArea && (this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || (this instanceof HTMLInputElement && this.type !== 'file')) && rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight) {
+            if (!needsReview && !outsideScrollArea && (this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || (this instanceof HTMLInputElement && this.type !== 'file') || this.isContentEditable) && rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight) {
                 const root = visibleNode.getRootNode();
                 const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x, y) : null;
                 if (!hit || (hit !== visibleNode && !visibleNode.contains(hit))) needsReview = true;

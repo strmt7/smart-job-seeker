@@ -3730,6 +3730,31 @@ mod tests {
 
     #[test]
     #[ignore = "starts one local browser and does not submit"]
+    fn obscured_rich_text_is_not_filled() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-obscured-rich-text.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let fill = |selector: &str| BrowserCommand::Fill {
+            selector: selector.into(),
+            value: PacketValue::Text("Fictional answer".into()),
+        };
+        assert!(driver.execute(&fill("#covered")).is_err());
+        assert_eq!(driver.text_value_snapshot("#covered").unwrap().value, "");
+        assert!(driver.execute(&fill("#focus-covered")).is_err());
+        assert_eq!(
+            driver.text_value_snapshot("#focus-covered").unwrap().value,
+            ""
+        );
+        driver.execute(&fill("#clear")).unwrap();
+        driver
+            .verify_text_value("#clear", "Fictional answer")
+            .unwrap();
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and does not submit"]
     fn field_hidden_before_write_is_not_modified() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/form-hidden-before-write.html");

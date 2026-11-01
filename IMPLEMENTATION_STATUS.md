@@ -1036,3 +1036,7 @@ Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging chec
 ### Search attribution across batch pages (2026-11-01)
 
 The batch candidate view merges provider-reported engine names and dates from retained repeated references for the same exact URL before selection or inspection. It retains at most eight engines and four alternate dates and marks incomplete coverage when pages fail, are limited, or omit repeated references. These reports remain unverified; repeated references are themselves capped per page. A selection is a snapshot: clear and reselect it to include reports arriving later. Lost-save recovery compares the attribution as well as URL and title, and older selections without the coverage flag remain readable. Focused selection tests and the web UI checks passed locally; no external provider or employer was contacted for this change.
+
+### Rich-text overlay checks (2026-11-01)
+
+The browser now applies its existing center-point hit test to contenteditable fields as well as native controls. A fictional local-browser fixture confirmed that a covered rich-text field and one covered on focus are left unchanged, while an unobscured rich-text field is filled and verified. The existing hidden-before-write browser fixture, web Clippy and formatting checks also passed. This is a point-in-time center hit test, not proof that every overlay or partially obscured field is detected; pointer-events-disabled overlays and later page changes can evade it. No employer site was contacted and no application was submitted.
