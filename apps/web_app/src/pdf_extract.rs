@@ -447,6 +447,11 @@ mod tests {
             model_coverage.unwrap()["pages_with_images_and_text"],
             serde_json::json!([1])
         );
+        let (_, draft_coverage) = crate::draft_task::extract_template("cv.PDF", bytes).unwrap();
+        assert_eq!(
+            draft_coverage.unwrap()["pages_with_images_and_text"],
+            serde_json::json!([1])
+        );
         assert_eq!(
             coverage["pages_with_images_and_text"],
             serde_json::json!([1])
@@ -511,6 +516,7 @@ mod tests {
         assert_eq!(model_text, text);
         assert_eq!(model_coverage.unwrap(), coverage);
         assert!(crate::document_extract::extract("fictional.pdf", partial).is_err());
+        assert!(crate::draft_task::extract_template("fictional.pdf", partial).is_err());
         let complete = include_bytes!("../tests/fictional-document-overlap.pdf");
         let (_, complete_coverage) = super::extract_with_coverage(complete).unwrap();
         assert_eq!(

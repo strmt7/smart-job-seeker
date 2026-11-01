@@ -15,3 +15,5 @@ console.log('PDF extraction coverage UI checks passed.');
 
 assert.match(notice({pages:1,pages_without_selectable_text:[],pages_with_images_and_text:[1]}),/page 1 also contains images.*missing from the extraction/);
 assert.match(notice({pages:1,pages_without_selectable_text:[],pages_with_unknown_image_inventory:[1]}),/could not be checked/);
+
+assert.ok(source.includes("pdfExtractionCoverageNotice(draft.template_pdf_coverage)"));

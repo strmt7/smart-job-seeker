@@ -35,6 +35,20 @@ pub struct Inputs {
     pub instructions: String,
     pub template: Option<(String, Vec<u8>)>,
 }
+pub(crate) fn extract_template(
+    name: &str,
+    bytes: &[u8],
+) -> Result<(String, Option<Value>), String> {
+    if name
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
+    {
+        let (text, coverage) = crate::pdf_extract::extract_checked_with_coverage(bytes)?;
+        Ok((text, Some(coverage)))
+    } else {
+        Ok((crate::document_extract::extract(name, bytes)?, None))
+    }
+}
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = {
         let mut task = TASK.lock().map_err(|_| "Draft state unavailable")?;
@@ -55,9 +69,9 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
-            let template = match &input.template {
-                Some((name, bytes)) => crate::document_extract::extract(name, bytes)?,
-                None => String::new(),
+            let (template, template_coverage) = match &input.template {
+                Some((name, bytes)) => extract_template(name, bytes)?,
+                None => (String::new(), None),
             };
             let template: String = template.chars().take(8000).collect();
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -68,7 +82,9 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                 model,
                 crate::resident_model,
             );
-            generate_with_selection(&mut llm, &input, &template)
+            let mut draft = generate_with_selection(&mut llm, &input, &template)?;
+            draft["template_pdf_coverage"] = json!(template_coverage);
+            Ok(draft)
         })
         .unwrap_or_else(|_| Err("Drafting stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
