@@ -266,8 +266,10 @@ fn search_plan_context(
     let full_instructions = profile_fit_instructions(&profile)?;
     let instructions: String = full_instructions.chars().take(2000).collect();
     let protected = search_planner::protected_identifiers(&profile);
+    // All active facts affect freshness, including facts omitted from the prompt.
+    let facts_digest = ws.active_facts_digest().map_err(|e| e.to_string())?;
     let digest = Sha256Digest::of(
-        &json!({"facts":facts,"instructions":instructions,"full_instructions":full_instructions,"protected":protected}).to_string(),
+        &json!({"facts":facts,"active_facts_digest":facts_digest,"instructions":instructions,"full_instructions":full_instructions,"protected":protected}).to_string(),
     );
     Ok((facts, instructions, digest.as_str().to_owned(), protected))
 }
@@ -6496,6 +6498,26 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+    }
+
+    #[test]
+    fn search_plan_becomes_stale_when_an_omitted_fact_changes() {
+        let mut ws = Workspace::in_memory().unwrap();
+        ws.add_fact("Fictional engineer", FactOrigin::UserAttested)
+            .unwrap();
+        let long_id = ws
+            .add_fact(&format!("{}A", "x".repeat(1000)), FactOrigin::UserAttested)
+            .unwrap();
+        let (facts, instructions, digest, _) = search_plan_context(&ws).unwrap();
+        let coverage = search_plan_coverage(&ws, &facts, &instructions).unwrap();
+        assert_eq!(coverage["oversized"], 1);
+        ws.correct_fact(&long_id, &format!("{}B", "x".repeat(1000)), 1)
+            .unwrap();
+        let (new_facts, new_instructions, new_digest, _) = search_plan_context(&ws).unwrap();
+        assert_eq!(facts, new_facts);
+        assert_eq!(instructions, new_instructions);
+        assert_ne!(digest, new_digest);
+        assert!(check_search_plan_binding(&ws, &json!({"plan_digest":digest})).is_err());
     }
 
     #[test]
