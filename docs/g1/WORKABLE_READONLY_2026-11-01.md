@@ -41,3 +41,20 @@ review. These three observations are not a representative sample and are not
 evidence that the application can fill or navigate Workable forms. Dynamic
 loading, omitted fields, visual coverage and final-step handling need further
 evaluation without submitting or bypassing challenges.
+
+## Delayed form loading follow-up
+
+Waypoint's driver was changed to reinspect an initially empty page up to three
+times, starting retries within a three-second window, without clicking or entering values.
+Review walls observed earlier in that inspection are retained. A fictional
+delayed-form browser fixture passed and retained its CAPTCHA review flag.
+
+One read-only reinspection of the same three public pages, with the same 12B
+model and fictional profile, found 5, 12 and 17 fields on the initial `open`
+result respectively; previously that result contained zero fields on all three.
+Each still reported `captcha present`, and the normal preview still made no
+fill suggestions. Separate read-only advisory mapping produced 1, 1 and 3
+suggestions; screenshot transcription produced 0, 0 and 2 observations.
+No field was filled, no control clicked and no application submitted. The model
+was unloaded. This small comparison does not establish reliable loading, field
+coverage, visual accuracy, or support for these sites' application flows.

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><body>
+<div id="captcha-fixture">Verification requires manual review</div>
+<main id="application">Loading the application…</main>
+<script>
+setTimeout(() => {
+  document.querySelector('#application').innerHTML =
+    '<form><label for="candidate">First name</label><input id="candidate" required><button type="submit">Submit application</button></form>';
+}, 900);
+</script>
+</body></html>

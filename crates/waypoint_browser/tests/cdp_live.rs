@@ -1805,6 +1805,22 @@ fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
 }
 
 #[test]
+#[ignore = "launches a real browser against a fictional delayed form"]
+fn delayed_form_is_inspected_without_clearing_review_walls() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_delayed_loading.html")).unwrap();
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "First name"));
+    assert!(live.walls.iter().any(|wall| wall == "captcha present"));
+    assert!(driver.trace.iter().all(|event| !event.contains("typed")
+        && !event.contains("submitted")
+        && !event.contains("click")));
+}
+
+#[test]
 #[ignore = "launches a real browser against a fictional scrollable form"]
 fn visual_capture_requires_the_target_in_the_viewport() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

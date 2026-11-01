@@ -3001,6 +3001,14 @@ fn check_navigation_result(navigation: &Value) -> Result<(), DriverError> {
     Ok(())
 }
 
+fn retain_observed_walls(previous: Vec<String>, next: &mut LiveForm) {
+    for wall in previous {
+        if !next.walls.contains(&wall) {
+            next.walls.push(wall);
+        }
+    }
+}
+
 impl BrowserDriver for CdpDriver {
     fn current_url(&mut self) -> Result<String, DriverError> {
         CdpDriver::current_url(self)
@@ -3043,6 +3051,22 @@ impl BrowserDriver for CdpDriver {
             }
         }
         let mut result = self.inspect_current()?;
+        // Client-rendered applications can expose their form shortly after the
+        // load event. Reinspect only an empty form, without interacting with
+        // the page, and keep any previously observed walls conservative.
+        let dynamic_deadline = Instant::now() + Duration::from_secs(3);
+        for _ in 0..3 {
+            if !result.schema.fields.is_empty() || Instant::now() >= dynamic_deadline {
+                break;
+            }
+            self.cdp.pump(
+                Duration::from_millis(750)
+                    .min(dynamic_deadline.saturating_duration_since(Instant::now())),
+            );
+            let mut next = self.inspect_current()?;
+            retain_observed_walls(result.walls, &mut next);
+            result = next;
+        }
         // A same-document route has no new loader or HTTP response. For an
         // ordinary HTTP navigation, bind the status to the main frame and
         // loader, never to a subresource or an earlier page.
@@ -4069,6 +4093,25 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn delayed_inspection_keeps_previously_observed_walls() {
+        let mut next = LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec!["other wall".into()],
+        };
+        retain_observed_walls(
+            vec!["captcha present".into(), "other wall".into()],
+            &mut next,
+        );
+        assert_eq!(next.walls, vec!["other wall", "captcha present"]);
+    }
 
     #[test]
     fn navigation_result_rejects_errors_and_downloads() {
