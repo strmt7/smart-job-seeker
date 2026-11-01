@@ -2532,7 +2532,13 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
         .walls
         .iter()
         .any(|wall| wall == waypoint_browser::NATIVE_DATALIST_REVIEW));
-    for selector in ["#duplicate", "#custom", "#duplicate-id", "#disabled"] {
+    for selector in [
+        "#duplicate",
+        "#custom",
+        "#duplicate-id",
+        "#disabled",
+        "#aria-disabled",
+    ] {
         assert!(
             !page
                 .schema
@@ -2547,6 +2553,7 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
         ("#custom", "Germany"),
         ("#duplicate-id", "One"),
         ("#disabled", "One"),
+        ("#aria-disabled", "One"),
     ] {
         assert!(
             driver
@@ -2582,6 +2589,13 @@ fn native_datalist_choices_are_reviewable_and_checked_after_events() {
             "{selector}"
         );
     }
+    assert!(driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#changing-disabled".into(),
+            label: "Germany".into(),
+        })
+        .is_err());
+    assert!(driver.verify_choice(&command).is_err());
     driver
         .execute(&BrowserCommand::Click {
             selector: "#change-list".into(),

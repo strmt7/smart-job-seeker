@@ -1,10 +1,12 @@
 <!doctype html><html><body><form>
 <label for="region">Region</label><input id="region" list="places" autocomplete="country-name" onchange="this.dataset.seen=this.value"><datalist id="places"><option value="Germany"><option value="Canada"></datalist>
 <label for="clear">Changing value</label><input id="clear" list="places" oninput="this.value=''">
+<label for="changing-disabled">Changing availability</label><input id="changing-disabled" list="places" oninput="document.querySelector('#places option').setAttribute('aria-disabled','true')">
 <label for="changing-role">Changing role</label><input id="changing-role" list="places" oninput="this.setAttribute('role','combobox')">
 <label for="duplicate">Duplicate choices</label><input id="duplicate" list="dups"><datalist id="dups"><option value="One"><option value="one"></datalist>
 <label for="custom">Custom choices</label><input id="custom" role="combobox" list="places">
 <label for="duplicate-id">Ambiguous list</label><input id="duplicate-id" list="same"><datalist id="same"><option value="One"></datalist><div id="same"></div>
 <label for="disabled">Disabled choice</label><input id="disabled" list="disabled-list"><datalist id="disabled-list"><option value="One" disabled></datalist>
+<label for="aria-disabled">Unavailable choice</label><input id="aria-disabled" list="unavailable"><datalist id="unavailable"><option value="One" aria-disabled="true"></datalist>
 <button id="change-list" type="button" onclick="document.querySelector('#places option').value='Changed'">Change list</button>
 </form></body></html>
