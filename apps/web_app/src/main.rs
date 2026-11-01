@@ -5500,10 +5500,14 @@ fn serve(
                         "The form session expired; this visual observation is no longer current",
                     )?;
                 if result["status"] == "complete" {
-                    let url = current.driver.current_url().map_err(|e| e.to_string())?;
-                    let (width, height) = current
+                    let (url, (width, height)) = current
                         .driver
-                        .page_dimensions()
+                        .with_review_timeout(|driver| {
+                            Ok::<_, waypoint_applications::driver::DriverError>((
+                                driver.current_url()?,
+                                driver.page_dimensions()?,
+                            ))
+                        })
                         .map_err(|e| e.to_string())?;
                     if result["page_signature"].as_str()
                         != Some(visual_review::page_signature(&url, width, height).as_str())
@@ -5552,7 +5556,7 @@ fn serve(
                             driver.screenshot_tile(x, y, clip_width, clip_height).ok()
                         }
                     };
-                    let fresh_screenshot = capture(&mut current.driver);
+                    let fresh_screenshot = current.driver.with_review_timeout(&capture);
                     let (verified, unconfirmed) = current.driver.with_review_timeout(|driver| {
                         visual_review::crosscheck_live_values(
                             driver,
@@ -5564,7 +5568,7 @@ fn serve(
                     let final_screenshot = if verified + unconfirmed == 0 {
                         fresh_screenshot.clone()
                     } else {
-                        capture(&mut current.driver)
+                        current.driver.with_review_timeout(&capture)
                     };
                     let mut freshness = visual_review::interval_freshness(
                         result["screenshot_hash"].as_str(),
@@ -5573,14 +5577,12 @@ fn serve(
                     );
                     let mut final_signature_status = "not_rechecked";
                     if verified + unconfirmed > 0 && freshness != "changed" {
-                        let final_signature = current.driver.current_url().ok().and_then(|url| {
-                            current
-                                .driver
-                                .page_dimensions()
-                                .ok()
-                                .map(|(width, height)| {
+                        let final_signature = current.driver.with_review_timeout(|driver| {
+                            driver.current_url().ok().and_then(|url| {
+                                driver.page_dimensions().ok().map(|(width, height)| {
                                     visual_review::page_signature(&url, width, height)
                                 })
+                            })
                         });
                         final_signature_status = match final_signature {
                             Some(signature)
