@@ -805,10 +805,9 @@ fn unlabelled_radio_groups_are_deduplicated_but_require_manual_review() {
         .iter()
         .filter(|field| matches!(field.field_type, FormFieldType::Radio { .. }))
         .collect();
-    assert_eq!(groups.len(), 2);
-    for group in groups {
-        assert!(group.sensitive && group.required);
-        assert!(group.label.starts_with("Unlabelled radio group:"));
+    assert_eq!(groups.len(), 4);
+    for group in &groups {
+        assert!(group.sensitive);
         assert_eq!(
             group.field_type,
             FormFieldType::Radio {
@@ -816,6 +815,36 @@ fn unlabelled_radio_groups_are_deduplicated_but_require_manual_review() {
             }
         );
     }
+    assert!(groups
+        .iter()
+        .find(|group| group.selector.contains("question-a"))
+        .unwrap()
+        .label
+        .contains("Possible question (review): Question one?"));
+    assert!(groups
+        .iter()
+        .find(|group| group.selector.contains("question-b"))
+        .unwrap()
+        .label
+        .contains("Possible question (review): Question two?"));
+    assert!(groups
+        .iter()
+        .filter(
+            |group| group.selector.contains("question-a") || group.selector.contains("question-b")
+        )
+        .all(|group| group.required));
+    assert!(groups
+        .iter()
+        .find(|group| group.selector.contains("question-c"))
+        .unwrap()
+        .label
+        .starts_with("Unlabelled radio group:"));
+    assert!(groups
+        .iter()
+        .find(|group| group.selector.contains("question-d"))
+        .unwrap()
+        .label
+        .starts_with("Unlabelled radio group:"));
     assert!(driver
         .trace
         .iter()

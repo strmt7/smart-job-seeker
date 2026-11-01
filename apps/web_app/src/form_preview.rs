@@ -2721,6 +2721,36 @@ mod tests {
 
     #[test]
     #[ignore = "read-only inspection of a public application page"]
+    fn live_public_application_structure_is_read_only() {
+        let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")
+            .expect("set the public application URL");
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            parsed.origin().ascii_serialization().as_str(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        assert!(!live.schema.fields.is_empty(), "no fields detected");
+        for field in &live.schema.fields {
+            if matches!(field.field_type, FormFieldType::Radio { .. }) {
+                println!(
+                    "radio={:?} sensitive={} required={}",
+                    field.label, field.sensitive, field.required
+                );
+            }
+        }
+        println!("walls={:?}", live.walls);
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_preview_is_read_only() {
         let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")
             .expect("set the public application URL");

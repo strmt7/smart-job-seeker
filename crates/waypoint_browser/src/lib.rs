@@ -1878,6 +1878,59 @@ impl CdpDriver {
             .map(str::to_owned))
     }
 
+    /// Read nearby visible context for an unnamed native radio group. The
+    /// result is advisory and the group stays manual regardless of its text.
+    fn rendered_unassociated_radio_question(
+        &mut self,
+        node: u64,
+    ) -> Result<Option<String>, DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Ok(None);
+        }
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Radio disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || !(this instanceof HTMLInputElement) || this.type !== 'radio' || !this.name || !this.form) return null;
+            let branch = this;
+            for (let depth = 0; depth < 8; depth++) {
+                const parent = branch.parentElement;
+                if (!parent || ['FORM','FIELDSET','SECTION','BODY'].includes(parent.tagName) || parent.children.length > 20) return null;
+                const controls = parent.querySelectorAll('input:not([type="hidden" i]),textarea,select,button,[contenteditable="true"]');
+                if (controls.length > 20 || Array.from(controls).some(control => !(control instanceof HTMLInputElement) || control.type !== 'radio' || control.name !== this.name || control.form !== this.form)) return null;
+                if (controls.length >= 2) {
+                    const candidates = [];
+                    for (const sibling of parent.children) {
+                        if (sibling === branch || sibling.querySelector('input,textarea,select,button,[contenteditable="true"]') || !sibling.getClientRects().length) continue;
+                        const style = getComputedStyle(sibling);
+                        if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || sibling.getAttribute('aria-hidden') === 'true') continue;
+                        const value = (sibling.innerText || '').trim().replace(/\s+/g,' ');
+                        if (value) candidates.push(value);
+                    }
+                    if (candidates.length === 1 && candidates[0].length <= 500) return candidates[0];
+                    if (candidates.length > 1) return null;
+                }
+                branch = parent;
+            }
+            return null;
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty() && text.len() <= 500)
+            .map(str::to_owned))
+    }
+
     fn open_visible_shadow_host(&mut self, node: u64) -> Result<bool, DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Ok(false);
@@ -3244,9 +3297,22 @@ impl CdpDriver {
                         field.required |= required;
                     } else {
                         radio_groups.insert(key, fields.len());
+                        let context = if unassociated_question_count < 16 {
+                            unassociated_question_count += 1;
+                            self.with_review_timeout(|driver| {
+                                driver.rendered_unassociated_radio_question(control.node_id)
+                            })
+                            .ok()
+                            .flatten()
+                        } else {
+                            None
+                        };
                         fields.push(FormField {
                             selector,
-                            label: format!("Unlabelled radio group: {name}"),
+                            label: context.map_or_else(
+                                || format!("Unlabelled radio group: {name}"),
+                                |text| format!("Possible question (review): {text}"),
+                            ),
                             field_type: FormFieldType::Radio {
                                 options: vec![label],
                             },

@@ -9,3 +9,20 @@ Initially, unnamed yes/no radios appeared as separate fields sharing selectors, 
 The same page contained three textareas whose visible questions were not programmatically associated with their fields. A bounded, generic nearby-text check now exposes such text as a **possible** question for review; these textareas remain sensitive/manual and are not automatically filled. The last inspection showed the three question texts, left both radio groups and all three textareas manual, and again produced the four fictional profile suggestions. Other fields, including the location control, remained unresolved. These observations do not prove the suggested values are correct in general, identify every hidden control, or establish support for this employer's application flow. The model was unloaded after testing.
 
 The 69 local browser fixtures passed before the final empty-label handling adjustment; the affected radio and textarea fixtures passed afterward. Web and browser Clippy passed. The local fixtures also cover ambiguous nearby text, hidden text and repeated radio names across separate forms.
+
+## Unlabelled radio question context
+
+The parser now looks for one nearby rendered text block around an otherwise
+unnamed radio group, within bounded ancestor and control counts. It presents
+the result as a possible question and keeps the group sensitive/manual; it
+does not assume the visual proximity is a programmatic association. Ambiguous,
+hidden or unavailable text leaves the group unlabelled. Fictional browser
+checks covered two distinct questions, ambiguous and hidden context, and
+repeated names across forms.
+
+On a later read-only inspection of the same public page, the two work-eligibility
+and sponsorship prompts appeared as possible questions, with both groups still
+manual. The resource-gated local model again suggested the four fictional
+profile values, and the CAPTCHA wall remained. No field was filled or control
+clicked, and the model was unloaded. This single page does not establish
+correct association on other layouts.
