@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Blank search constraints — 2026-11-01
+
+- Empty language and location entries no longer exclude listings. Language codes are trimmed before comparison, and an employer language list containing only blank entries remains unknown when a language is required. All 19 search-crate tests passed.
+
 ## Sponsorship constraint — 2026-11-01
 
 - A candidate who does not require sponsorship no longer excludes employers that offer it. When sponsorship is required, an offer passes, a stated absence fails, and missing information remains unknown. The search crate's 18 tests passed, including all combinations of the candidate setting and employer status.

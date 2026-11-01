@@ -75,15 +75,25 @@ pub fn check_constraints_with_remote(
 ) -> Vec<(String, ConstraintOutcome)> {
     let mut out = Vec::new();
 
-    if !c.language_required.is_empty() {
-        let missing: Vec<_> = c
-            .language_required
+    let required_languages: Vec<_> = c
+        .language_required
+        .iter()
+        .map(|language| language.trim())
+        .filter(|language| !language.is_empty())
+        .collect();
+    let stated_languages: Vec<_> = job_languages
+        .iter()
+        .map(|language| language.trim())
+        .filter(|language| !language.is_empty())
+        .collect();
+    if !required_languages.is_empty() {
+        let missing: Vec<_> = required_languages
             .iter()
-            .filter(|l| !job_languages.iter().any(|j| j.eq_ignore_ascii_case(l)))
+            .filter(|l| !stated_languages.iter().any(|j| j.eq_ignore_ascii_case(l)))
             .collect();
         if missing.is_empty() {
             out.push(("language".into(), ConstraintOutcome::Pass));
-        } else if job_languages.is_empty() {
+        } else if stated_languages.is_empty() {
             out.push((
                 "language".into(),
                 ConstraintOutcome::Unknown("job does not state a language".into()),
@@ -180,7 +190,7 @@ pub fn check_constraints_with_remote(
             Some(true) => {}
         }
     }
-    if !c.locations.is_empty() {
+    if c.locations.iter().any(|value| !value.trim().is_empty()) {
         let observed = location.trim();
         let listed_match = c
             .locations
@@ -618,6 +628,33 @@ mod tests {
         assert!(r
             .iter()
             .any(|(_, o)| matches!(o, ConstraintOutcome::Fail(_))));
+    }
+
+    #[test]
+    fn blank_constraints_do_not_exclude_and_blank_source_language_is_unknown() {
+        let blank = CampaignConstraints {
+            language_required: vec![" ".into(), "".into()],
+            locations: vec![" ".into(), "".into()],
+            ..Default::default()
+        };
+        assert!(check_constraints(&blank, &[], None, None, false, "Zurich").is_empty());
+
+        let german = CampaignConstraints {
+            language_required: vec![" ".into(), " de ".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints(&german, &[" ".into()], None, None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        assert!(matches!(
+            check_constraints(&german, &[" DE ".into()], None, None, false, "")[0].1,
+            ConstraintOutcome::Pass
+        ));
+        assert!(matches!(
+            check_constraints(&german, &[" en ".into()], None, None, false, "")[0].1,
+            ConstraintOutcome::Fail(_)
+        ));
     }
 
     #[test]
