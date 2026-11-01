@@ -8,16 +8,16 @@ assert.equal(constraintReviewLabel({unknown_constraints:['salary: not stated']})
 assert.equal(constraintReviewLabel({unknown_constraints:[' ', null]}), null);
 assert.equal(constraintReviewLabel({unknown_constraints:[]}), null);
 assert.equal(constraintReviewLabel({}), null);
-const badgeStart = source.indexOf("side.append(element('span',job.state.replaceAll('_',' '),'job-state'));");
-const badgeEnd = source.indexOf("card.addEventListener('click'", badgeStart);
-assert.ok(badgeStart >= 0 && badgeEnd > badgeStart);
+const noticeStart = source.indexOf("if(constraintReviewLabel(row))selectedPanel.append(");
+const noticeEnd = source.indexOf("if(needsReview)", noticeStart);
+assert.ok(noticeStart >= 0 && noticeEnd > noticeStart);
 for (const [unknown, shown] of [[['salary: not stated'], true], [[], false]]) {
-  const side = {children:[], append(node){this.children.push(node);}};
-  vm.runInNewContext(source.slice(badgeStart,badgeEnd), {
-    side, row:{unknown_constraints:unknown}, job:{state:'discovered'}, needsReview:false,
-    constraintReviewLabel, element:(_tag,text,cls)=>({text,cls})
+  const selectedPanel = {children:[], append(node){this.children.push(node);}};
+  vm.runInNewContext(source.slice(noticeStart,noticeEnd), {
+    selectedPanel, row:{unknown_constraints:unknown}, constraintReviewLabel,
+    element:(_tag,text,cls)=>({text,cls})
   });
-  assert.equal(side.children.some(node=>node.text==='Search criteria need review'), shown);
+  assert.equal(selectedPanel.children.some(node=>node.text.includes('Search criteria need review')), shown);
 }
 const rows = ['clear', 'unknown', 'conflict', 'missing', 'excluded'].map(id => ({job:{id,title:id,employer:'E',location:''}, ...(id === 'excluded' ? {excluded_reasons:['constraint']} : {})}));
 const nodes = {'#filter':{value:''},'#review-only':{checked:false},'#sort-reviewed':{},'#sort-attention':{},'#sort-default':{},'#sort-reviewed-status':{}};
