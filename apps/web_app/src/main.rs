@@ -4860,12 +4860,15 @@ fn serve(
                     }
                 }
             }
+            let mut requested_answer_file = None;
             if let Some(record) = &mut current.record {
                 let requested = json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions,"reviewed_replacements":replacements,"fields":requested_fields,"note":"These are requested answers, not proof that the fields were filled or submitted."});
                 let saved = record.requested_answers(&requested).and_then(|path| {
                     let mut event = requested;
                     event["answer_file"] = json!(path);
-                    record.event(event)
+                    record.event(event)?;
+                    requested_answer_file = Some(path);
+                    Ok(())
                 });
                 if let Err(error) = saved {
                     let review_error = ws
@@ -4923,8 +4926,13 @@ fn serve(
             let filled = match result {
                 Ok(count) => count,
                 Err(error) => {
+                    let mut outcome_error = None;
                     if let Some(record) = &mut current.record {
-                        let _ = record.event(json!({"type":"fill_incomplete","time":now(),"error":error,"completed_commands":completed,"note":"The failing field may have changed and earlier values may have been changed by the site; verify all fields."}));
+                        let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These commands completed before the failure; they are not proof that all values remain correct or that an application was submitted."});
+                        if let Err(problem) = record.answer_outcome(outcome.clone()) {
+                            let _ = record.event(outcome);
+                            outcome_error = Some(problem);
+                        }
                         if let Ok(image) = current.driver.screenshot_base64() {
                             if let Ok(name) = record.screenshot_with_name(&image) {
                                 let _ = record.event(json!({"type":"fill_failure_viewport","time":now(),"screenshot":format!("screenshots/{name}")}));
@@ -4953,13 +4961,16 @@ fn serve(
                     } else {
                         ""
                     };
+                    let outcome_note = outcome_error
+                        .map(|e| format!(" The separate answer outcome could not be saved: {e}."))
+                        .unwrap_or_default();
                     return Err(format!(
-                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{flag_note}", completed.len()
+                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{flag_note}{outcome_note}", completed.len()
                     ));
                 }
             };
             if let Some(record) = &mut current.record {
-                if let Err(error) = record.event(json!({"type":"fill_commands_verified","time":now(),"completed_commands":completed,"note":"Each command completed and its live value was checked immediately afterward. The site may change values later; this does not prove submission."})) {
+                if let Err(error) = record.answer_outcome(json!({"type":"fill_commands_verified","time":now(),"answer_file":requested_answer_file,"completed_commands":completed,"note":"All requested fields matched when checked after the fill commands. The site may change values later; this does not prove submission."})) {
                     let status_error = record.status("manual_review", now()).err();
                     let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written after filling", now()).err();
                     current.created = Instant::now();
@@ -9086,6 +9097,19 @@ mod tests {
                 .iter()
                 .position(|event| event["type"] == "fill_incomplete")
                 .unwrap();
+            for event in [&event_values[verified_index], &event_values[incomplete]] {
+                assert!(event["answer_file"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("answers/"));
+                let outcome_path = event["outcome_file"].as_str().unwrap();
+                assert!(outcome_path.starts_with("answers/"));
+                let outcome: Value =
+                    serde_json::from_slice(&std::fs::read(record.join(outcome_path)).unwrap())
+                        .unwrap();
+                assert_eq!(outcome["answer_file"], event["answer_file"]);
+                assert_eq!(outcome["completed_commands"], event["completed_commands"]);
+            }
             assert_eq!(
                 event_values[incomplete]["completed_commands"]
                     .as_array()

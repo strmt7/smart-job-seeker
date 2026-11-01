@@ -939,6 +939,12 @@ impl AttemptRecord {
             .map_err(|e| e.to_string())?;
         Ok(format!("answers/{name}"))
     }
+    /// Preserve a separate outcome alongside the event that points to it.
+    pub fn answer_outcome(&mut self, mut value: Value) -> Result<(), String> {
+        let path = self.requested_answers(&value)?;
+        value["outcome_file"] = json!(path);
+        self.event(value)
+    }
     pub fn status(&mut self, status: &str, timestamp: i64) -> Result<(), String> {
         if !matches!(
             status,
@@ -1317,7 +1323,7 @@ mod tests {
         let second_path = record.requested_answers(&second).unwrap();
         assert_ne!(first_path, second_path);
         assert_eq!(
-            serde_json::from_slice::<Value>(&fs::read(dir.path().join(first_path)).unwrap())
+            serde_json::from_slice::<Value>(&fs::read(dir.path().join(&first_path)).unwrap())
                 .unwrap(),
             first
         );
@@ -1326,6 +1332,15 @@ mod tests {
                 .unwrap(),
             second
         );
+        let outcome = json!({"type":"fill_incomplete","answer_file":first_path,"completed_commands":[{"selector":"#name"}],"note":"Not proof of submission"});
+        record.answer_outcome(outcome.clone()).unwrap();
+        let event: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("events.jsonl")).unwrap()).unwrap();
+        let saved: Value = serde_json::from_slice(
+            &fs::read(dir.path().join(event["outcome_file"].as_str().unwrap())).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved, outcome);
         record.dir = dir.path().join("missing");
         assert!(record.requested_answers(&first).is_err());
     }
