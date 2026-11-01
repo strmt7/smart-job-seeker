@@ -2,7 +2,7 @@
 
 ## Search-constraint review cues — 2026-11-01
 
-- Jobs with unresolved search constraints show a review cue on the job card and selected-job panel, with details retained under the match explanation. Mocked JavaScript checks covered presence and absence of the card cue; the rendered layout and keyboard flow were not tested in this change.
+- Jobs with unresolved search constraints show a review cue on the job card and selected-job panel, with details retained under the match explanation. Mocked JavaScript checks covered presence and absence of the card cue. A fictional, intercepted-API browser fixture rendered the interface at 1440×900 and 390×844; the cue appeared, keyboard activation opened the explanation and selected the job, and no horizontal overflow or browser errors were observed. This was not a live backend or employer-site test.
 
 ## Local model capability identity — 2026-11-01
 
