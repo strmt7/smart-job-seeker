@@ -210,6 +210,79 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a public CV fixture, resource-gated local vision model and PDF runtime"]
+    fn live_public_cv_transcription_reports_aggregate_overlap() {
+        use std::collections::BTreeMap;
+        let path = std::env::var_os("WAYPOINT_PUBLIC_CV_FIXTURE").expect("public CV fixture path");
+        let bytes = std::fs::read(path).unwrap();
+        let (_, _, pages) = crate::pdf_extract::scan_coverage_with_pages(&bytes).unwrap();
+        let reference = pages
+            .first()
+            .filter(|s| !s.trim().is_empty())
+            .expect("selectable first page");
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let address = "127.0.0.1:11434".parse().unwrap();
+        let result = transcribe(
+            &bytes,
+            0,
+            "full",
+            crate::pdf_extract::render_page,
+            |image| {
+                crate::visual_review::generate_vision(address, &model, image, TRANSCRIBE_PROMPT)
+            },
+        )
+        .unwrap();
+        let words = |text: &str| {
+            let mut counts = BTreeMap::<String, usize>::new();
+            for word in text
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|s| !s.is_empty())
+            {
+                *counts.entry(word.to_lowercase()).or_default() += 1;
+            }
+            counts
+        };
+        let expected = words(reference);
+        let observed = words(result["text"].as_str().unwrap());
+        let expected_count: usize = expected.values().sum();
+        let observed_count: usize = observed.values().sum();
+        let overlap: usize = observed
+            .iter()
+            .map(|(word, count)| count.min(expected.get(word).unwrap_or(&0)))
+            .sum();
+        assert!(expected_count > 0 && observed_count > 0);
+        let tokens = |text: &str| -> Vec<String> {
+            text.split(|c: char| !c.is_alphanumeric())
+                .filter(|s| !s.is_empty())
+                .map(str::to_lowercase)
+                .collect()
+        };
+        let expected_order = tokens(reference);
+        let observed_order = tokens(result["text"].as_str().unwrap());
+        let ordered = if expected_order.len() <= 2000 && observed_order.len() <= 2000 {
+            let mut row = vec![0usize; observed_order.len() + 1];
+            for left in &expected_order {
+                let mut diagonal = 0;
+                for (index, right) in observed_order.iter().enumerate() {
+                    let old = row[index + 1];
+                    row[index + 1] = if left == right {
+                        diagonal + 1
+                    } else {
+                        row[index + 1].max(row[index])
+                    };
+                    diagonal = old;
+                }
+            }
+            Some(row[observed_order.len()])
+        } else {
+            None
+        };
+        println!("Public CV first-page word overlap: {overlap}/{expected_count} reference and {overlap}/{observed_count} transcribed; ordered overlap: {ordered:?}; model uncertain: {}. Exact characters and visual fidelity are not measured.", result["uncertain"]);
+    }
     #[test]
     #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
     fn live_model_transcribes_fictional_scanned_pdf_page() {
