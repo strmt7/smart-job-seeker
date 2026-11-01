@@ -1288,6 +1288,29 @@ fn unassociated_questions_are_advisory_and_never_auto_filled() {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn checkbox_context_budget_is_reported_and_requires_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_checkbox_context_budget.html"))
+        .unwrap();
+    let last = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label.ends_with("Option 16"))
+        .unwrap();
+    assert!(last.sensitive);
+    assert!(last
+        .label
+        .starts_with("Question context not inspected (review):"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("Checkbox question context exceeded the inspection limit")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn unlabelled_checkbox_group_context_is_advisory() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

@@ -2180,14 +2180,31 @@ mod tests {
                             );
                         }
                         for mapping in &preview.suggestions {
-                            if let Some(field) = preview
+                            let field = preview
                                 .schema
                                 .fields
                                 .iter()
                                 .find(|field| field.selector == mapping.field_selector)
-                            {
-                                assert!(!field.sensitive, "sensitive field was suggested");
-                                println!("suggested field: {:?}", field.label);
+                                .expect("suggestion references a visible field");
+                            assert!(!field.sensitive, "sensitive field was suggested");
+                            println!("suggested field: {:?}", field.label);
+                            if expected_model {
+                                use waypoint_applications::form_mapping::PacketValue;
+                                let expected = if field.label.starts_with("Full name") {
+                                    "Avery Example"
+                                } else if field.label.starts_with("Email") {
+                                    "avery@example.invalid"
+                                } else if field.label.starts_with("Phone") {
+                                    "+1 202 555 0101"
+                                } else {
+                                    panic!("unexpected suggestion for {:?}", field.label);
+                                };
+                                assert_eq!(
+                                    mapping.value,
+                                    PacketValue::Text(expected.into()),
+                                    "incorrect fictional value for {:?}",
+                                    field.label
+                                );
                             }
                         }
                         if preview

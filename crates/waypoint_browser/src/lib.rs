@@ -3943,19 +3943,21 @@ impl CdpDriver {
                     label.chars().take(160).collect::<String>()
                 ));
             }
-            let unassociated_checkbox_group = if input_type == "checkbox"
-                && !field_containers.contains_key(&control.node_id)
-                && unassociated_question_count < 16
-            {
-                unassociated_question_count += 1;
-                self.with_review_timeout(|driver| {
-                    driver.rendered_unassociated_choice_question(control.node_id, "checkbox")
-                })
-                .ok()
-                .flatten()
-            } else {
-                None
-            };
+            let checkbox_context_needed =
+                input_type == "checkbox" && !field_containers.contains_key(&control.node_id);
+            let checkbox_context_limit_hit =
+                checkbox_context_needed && unassociated_question_count >= 16;
+            let unassociated_checkbox_group =
+                if checkbox_context_needed && !checkbox_context_limit_hit {
+                    unassociated_question_count += 1;
+                    self.with_review_timeout(|driver| {
+                        driver.rendered_unassociated_choice_question(control.node_id, "checkbox")
+                    })
+                    .ok()
+                    .flatten()
+                } else {
+                    None
+                };
             if let Some(question) = &unassociated_checkbox_group {
                 label = if question.is_empty() {
                     format!("Question context unavailable (review): {label}")
@@ -3963,11 +3965,16 @@ impl CdpDriver {
                     format!("Possible question (review): {question} — {label}")
                 };
             }
+            if checkbox_context_limit_hit {
+                label = format!("Question context not inspected (review): {label}");
+                walls.push("a custom control needs manual review: Checkbox question context exceeded the inspection limit".into());
+            }
             let sensitive = label_unverified
                 || may_be_unannotated_choice
                 || unsupported_native
                 || unassociated_textarea
                 || unassociated_checkbox_group.is_some()
+                || checkbox_context_limit_hit
                 || is_sensitive_label(&label)
                 || input_type == "password";
             if input_type == "radio" {
