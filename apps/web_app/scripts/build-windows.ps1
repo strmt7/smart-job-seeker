@@ -6,6 +6,7 @@ param(
     [switch]$Clippy,
     [switch]$StaticCrt,
     [switch]$Ignored,
+    [switch]$NoCapture,
     [string]$TestFilter
 )
 $ErrorActionPreference = 'Stop'
@@ -13,6 +14,7 @@ if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for W
 if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
 if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
 if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires -Test and a specific -TestFilter.' }
+if ($NoCapture -and -not $Test) { throw '-NoCapture requires -Test.' }
 if ($OpenSslInstaller -and $PSBoundParameters.ContainsKey('OpenSslRoot') -and $OpenSslRoot) { throw 'Choose either -OpenSslRoot or -OpenSslInstaller.' }
 if (-not $PSBoundParameters.ContainsKey('StaticCrt')) { $StaticCrt = [bool]$Release }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
@@ -114,7 +116,11 @@ try {
     if ($Release) { $cargoArgs += '--release' }
     if ($TestFilter) { $cargoArgs += $TestFilter }
     if ($Clippy) { $cargoArgs += @('--all-targets', '--', '-D', 'warnings') }
-    if ($Ignored) { $cargoArgs += @('--', '--ignored', '--test-threads=1') }
+    if ($Ignored -or $NoCapture) {
+        $cargoArgs += '--'
+        if ($Ignored) { $cargoArgs += @('--ignored', '--test-threads=1') }
+        if ($NoCapture) { $cargoArgs += '--nocapture' }
+    }
     $artifactPaths = @()
     if ($operation -eq 'build') {
         # Cargo identifies the actual executable even with a custom target
