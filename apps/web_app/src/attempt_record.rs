@@ -2547,7 +2547,7 @@ mod tests {
             "https://example.invalid",
             &[],
             Some("not base64!"),
-            2
+            2,
         )
         .unwrap_err();
         let meta: Value =
