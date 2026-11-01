@@ -226,17 +226,17 @@ async function previewPdf(doc, page=0){setWorkspaceView('documents');
   const image=document.createElement('img');image.alt=`Page ${view.page+1} of ${doc.name}`;image.src=`data:image/png;base64,${view.image}`;panel.append(image);
   const controls=element('div','','pdf-controls');
   for(const [label,index] of [['Previous page',view.page-1],['Next page',view.page+1]]){const button=element('button',label);button.type='button';button.disabled=index<0 || index>=view.pages;button.addEventListener('click',()=>previewPdf(doc,index));controls.append(button);}
-  const transcribe=element('button','Transcribe this page locally');transcribe.type='button';transcribe.addEventListener('click',()=>transcribePdfPage(doc,view.page,panel,generation,transcribe));controls.append(transcribe);
-  const close=element('button','Close preview');close.type='button';close.addEventListener('click',()=>{beginDocumentReview();panel.replaceChildren();});controls.append(close);panel.append(controls);
+  const regionLabel=element('label','Transcription area'),regionSelect=document.createElement('select');regionSelect.setAttribute('aria-label','Transcription area');for(const [value,label] of [['full','Full page'],['top','Top half'],['bottom','Bottom half']]){const option=element('option',label);option.value=value;regionSelect.append(option);}regionLabel.append(regionSelect);controls.append(regionLabel);const transcribe=element('button','Transcribe selected area locally');transcribe.type='button';transcribe.addEventListener('click',()=>transcribePdfPage(doc,view.page,panel,generation,transcribe,regionSelect.value));controls.append(transcribe);
+  const close=element('button','Close preview');close.type='button';close.addEventListener('click',()=>{beginDocumentReview();panel.replaceChildren();});controls.append(close);panel.append(controls,element('p','The two page halves overlap. Review both areas to cover the page; each transcription can miss or misread text.','footnote'));
  }catch(error){if(generation===documentReviewGeneration)panel.replaceChildren(element('p',error.message,'review-label'));}finally{pdfPreviewBusy=false;}
 }
-async function transcribePdfPage(doc,page,panel,generation,button){
+async function transcribePdfPage(doc,page,panel,generation,button,region='full'){
  button.disabled=true;let pending=null;
  try{
   try{pending=JSON.parse(sessionStorage.getItem('waypoint-pdf-transcribe')||'null');}catch(_){pending=null;}
-  if(!pending){const active=await api('/api/documents/transcribe-pending',{});if(active.active)pending={task:active.task_id,doc:active.document,page:active.page};}
-  if(pending && (pending.doc!==doc.id || pending.page!==page))throw new Error('Another page transcription is pending; open its original document and page to resume');
-  if(!pending){const started=await api('/api/documents/transcribe-start',{id:doc.id,page});pending={task:started.task_id,doc:doc.id,page};}
+  if(!pending){const active=await api('/api/documents/transcribe-pending',{});if(active.active)pending={task:active.task_id,doc:active.document,page:active.page,region:active.region || 'full'};}
+  if(pending && (pending.doc!==doc.id || pending.page!==page || (pending.region || 'full')!==region))throw new Error('Another page transcription is pending; open its original document, page and area to resume');
+  if(!pending){const started=await api('/api/documents/transcribe-start',{id:doc.id,page,region});pending={task:started.task_id,doc:doc.id,page,region};}
   sessionStorage.setItem('waypoint-pdf-transcribe',JSON.stringify(pending));
   notify('Transcribing this page locally; check every word against the image');let response;
   do{await new Promise(resolve=>setTimeout(resolve,1500));response=await api('/api/documents/transcribe-status',{task_id:pending.task});}while(response.status==='running');
@@ -244,8 +244,8 @@ async function transcribePdfPage(doc,page,panel,generation,button){
   sessionStorage.removeItem('waypoint-pdf-transcribe');
   if(response.status!=='complete')throw new Error(response.error || 'Page transcription failed');
   const result=response.result, section=element('section','','answer-draft pdf-transcription');
-  section.append(element('h4',`AI transcription · page ${result.page+1} of ${result.pages}`),element('p',`This is unverified model output and may invent, omit or misread content. Compare every word with this exact page image before using it.${result.uncertain?' The model also reported uncertainty.':''}`,'review-label'));
-  const image=document.createElement('img');image.alt=`Page ${result.page+1} used for transcription`;image.src=`data:image/png;base64,${result.image}`;
+  section.append(element('h4',`AI transcription · page ${result.page+1} of ${result.pages} · ${result.region==='top'?'top half':result.region==='bottom'?'bottom half':'full page'}`),element('p',`This is unverified model output and may invent, omit or misread content. Compare every word with this exact page image before using it.${result.uncertain?' The model also reported uncertainty.':''}`,'review-label'));
+  const image=document.createElement('img');image.alt=`Page ${result.page+1} ${result.region==='top'?'top half':result.region==='bottom'?'bottom half':'full page'} used for transcription`;image.src=`data:image/png;base64,${result.image}`;
   const text=document.createElement('textarea');text.value=result.text;text.readOnly=true;text.rows=10;text.setAttribute('aria-label','Unverified AI page transcription');
   const use=element('button','Use selected text as a qualification');use.type='button';use.addEventListener('click',()=>{const selected=text.value.slice(text.selectionStart,text.selectionEnd).trim();if(!selected){notify('Select and verify text against the image first');return;}if(new TextEncoder().encode(selected).length>4000){notify('Selection exceeds the qualification limit');return;}document.querySelector('#fact-form input').value=selected;setWorkspaceView('profile');document.querySelector('#fact-form input').focus();notify('Check the qualification and add it explicitly');});
   section.append(image,text,use);panel.append(section);

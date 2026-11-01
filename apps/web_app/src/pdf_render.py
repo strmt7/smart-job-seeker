@@ -22,6 +22,8 @@ try:
         raise ValueError('Encrypted PDFs need manual review')
     page_arg, _, mode = sys.argv[1].partition(':')
     index = int(page_arg)
+    if mode not in ('', 'geometry', 'top', 'bottom'):
+        raise ValueError('Unsupported page region')
     document = pdfium.PdfDocument(data)
     count = len(document)
     if count < 1 or count > 30 or index < 0 or index >= count:
@@ -33,12 +35,18 @@ try:
     scale = min(1.5, 1600 / width, 2200 / height, math.sqrt(3200000 / (width * height)))
     bitmap = page.render(scale=scale)
     image = bitmap.to_pil()
+    if mode in ('top', 'bottom'):
+        width_px, height_px = image.size
+        if mode == 'top':
+            image = image.crop((0, 0, width_px, math.ceil(height_px * 0.55)))
+        else:
+            image = image.crop((0, math.floor(height_px * 0.45), width_px, height_px))
     out = io.BytesIO()
     image.save(out, format='PNG', optimize=False)
     png = out.getvalue()
     if len(png) > 3 * 1024 * 1024:
         raise ValueError('Rendered page exceeds 3 MiB; review the PDF externally')
-    result = {'page': index, 'pages': count, 'image': base64.b64encode(png).decode('ascii')}
+    result = {'page': index, 'pages': count, 'region': mode if mode in ('top', 'bottom') else 'full', 'image': base64.b64encode(png).decode('ascii')}
     if mode == 'geometry':
         # This is an advisory check of selectable text geometry, not an image or
         # semantic assessment. Limit work even on PDFs with pathological text.

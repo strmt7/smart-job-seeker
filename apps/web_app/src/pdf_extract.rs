@@ -238,23 +238,29 @@ pub fn extract(bytes: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 pub fn render_page(bytes: &[u8], page: usize) -> Result<serde_json::Value, String> {
-    render_page_inner(bytes, page, false)
+    render_page_inner(bytes, page, "full")
 }
 pub fn render_page_for_review(bytes: &[u8], page: usize) -> Result<serde_json::Value, String> {
-    render_page_inner(bytes, page, true)
+    render_page_inner(bytes, page, "geometry")
 }
-fn render_page_inner(
+pub fn render_page_region(
     bytes: &[u8],
     page: usize,
-    geometry: bool,
+    region: &str,
 ) -> Result<serde_json::Value, String> {
+    if !matches!(region, "full" | "top" | "bottom") {
+        return Err("Invalid page region".into());
+    }
+    render_page_inner(bytes, page, region)
+}
+fn render_page_inner(bytes: &[u8], page: usize, region: &str) -> Result<serde_json::Value, String> {
     if page > 29 {
         return Err("Page number exceeds 30-page limit".into());
     }
-    let argument = if geometry {
-        format!("{page}:geometry")
-    } else {
+    let argument = if region == "full" {
         page.to_string()
+    } else {
+        format!("{page}:{region}")
     };
     let data = run(
         bytes,
@@ -358,6 +364,38 @@ mod tests {
         assert!(super::render_page(&bytes, 30).is_err());
         assert!(super::render_page(b"%PDF-1.4 broken", 0).is_err());
     }
+    #[test]
+    #[ignore = "requires the local PDF renderer"]
+    fn renders_overlapping_regions_of_the_requested_page() {
+        let bytes = include_bytes!("../tests/fictional-scanned-cv.pdf");
+        let full = super::render_page_region(bytes, 0, "full").unwrap();
+        let top = super::render_page_region(bytes, 0, "top").unwrap();
+        let bottom = super::render_page_region(bytes, 0, "bottom").unwrap();
+        assert_eq!(full["region"], "full");
+        assert_eq!(top["region"], "top");
+        assert_eq!(bottom["region"], "bottom");
+        assert_ne!(full["image"], top["image"]);
+        assert_ne!(top["image"], bottom["image"]);
+        fn size(value: &serde_json::Value) -> (u32, u32) {
+            use base64::Engine;
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(value["image"].as_str().unwrap())
+                .unwrap();
+            (
+                u32::from_be_bytes(png[16..20].try_into().unwrap()),
+                u32::from_be_bytes(png[20..24].try_into().unwrap()),
+            )
+        }
+        let (width, height) = size(&full);
+        let (top_width, top_height) = size(&top);
+        let (bottom_width, bottom_height) = size(&bottom);
+        assert_eq!((top_width, bottom_width), (width, width));
+        assert!(
+            top_height < height && bottom_height < height && top_height + bottom_height > height
+        );
+        assert!(super::render_page_region(bytes, 0, "unknown").is_err());
+    }
+
     #[test]
     #[ignore = "requires an explicitly configured local pypdf runtime"]
     fn reports_pages_without_selectable_text() {

@@ -2972,6 +2972,7 @@ fn serve(
                 .as_u64()
                 .filter(|page| *page < 30)
                 .ok_or("invalid page number")? as usize;
+            let region = pdf_transcribe::requested_region(body.get("region"))?;
             let info = ws
                 .documents()
                 .map_err(|e| e.to_string())?
@@ -2988,7 +2989,14 @@ fn serve(
             let model = resident_model()?
                 .ok_or("No single fully GPU-resident local vision model is available")?;
             let task_id = random_id()?;
-            pdf_transcribe::start(task_id.clone(), id.to_owned(), model, bytes, page)?;
+            pdf_transcribe::start(
+                task_id.clone(),
+                id.to_owned(),
+                model,
+                bytes,
+                page,
+                region.to_owned(),
+            )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
         "/api/documents/transcribe-pending" => {
