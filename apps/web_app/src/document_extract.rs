@@ -114,6 +114,7 @@ fn extract_docx(bytes: &[u8]) -> Result<String, String> {
 fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
     let mut reader = NsReader::from_reader(xml);
     let mut in_text = false;
+    let mut removed_revision_depth = 0usize;
     loop {
         let (namespace, event) = reader
             .read_resolved_event()
@@ -121,10 +122,28 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
         let word = matches!(namespace, ResolveResult::Bound(ns) if
             ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
             || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
-        match event {
-            Event::DocType(_) => {
-                return Err("DOCX document type declarations are not supported".into())
+        // Use the accepted-change view for text: deleted and moved-from
+        // content is not a current qualification; insertions and moved-to
+        // content remain. Revisions still need review in the readability report.
+        if matches!(event, Event::DocType(_)) {
+            return Err("DOCX document type declarations are not supported".into());
+        }
+        if removed_revision_depth > 0 {
+            match event {
+                Event::Start(_) => removed_revision_depth += 1,
+                Event::End(_) => removed_revision_depth -= 1,
+                Event::Eof => return Err("Unclosed removed DOCX revision".into()),
+                _ => {}
             }
+            continue;
+        }
+        if word
+            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref(), b"del" | b"moveFrom"))
+        {
+            removed_revision_depth = 1;
+            continue;
+        }
+        match event {
             Event::Start(e) if word && e.local_name().as_ref() == b"t" => in_text = true,
             Event::End(e) if word && e.local_name().as_ref() == b"t" => in_text = false,
             Event::Text(e) if in_text => {
@@ -204,6 +223,17 @@ mod tests {
             extract("cv.docx", &archive(xml)).unwrap(),
             "Skills\tRust\nEngineer"
         );
+    }
+
+    #[test]
+    fn uses_accepted_view_for_deleted_and_moved_text() {
+        let xml = r#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:p><d:del><d:r><d:t>Removed skill</d:t></d:r></d:del><d:moveFrom><d:r><d:t>Old location</d:t></d:r></d:moveFrom><d:ins><d:r><d:t>Current skill</d:t></d:r></d:ins></d:p><d:p><d:moveTo><d:r><d:t>Current location</d:t></d:r></d:moveTo></d:p></d:body></d:document>"#;
+        assert_eq!(
+            extract("cv.docx", &archive(xml)).unwrap(),
+            "Current skill\nCurrent location"
+        );
+        let unclosed = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:del><w:r>"#;
+        assert!(extract("cv.docx", &archive(unclosed)).is_err());
     }
 
     #[test]
