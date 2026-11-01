@@ -82,6 +82,24 @@ pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
         })
 }
 
+#[cfg(any(windows, test))]
+fn existing_model(ps: &Value, requested: &str) -> Result<Option<Value>, String> {
+    let models = ps["models"]
+        .as_array()
+        .ok_or("Local runtime did not report resident models")?;
+    if models.is_empty() {
+        return Ok(None);
+    }
+    let state = crate::model_diagnostics(ps)?;
+    if state["model"].as_str() == Some(requested) && state["context_length"].as_u64() == Some(4096)
+    {
+        return Ok(Some(
+            json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":4096,"already_running":true}),
+        ));
+    }
+    Err("A model is already loaded with a different identity, context, or resource state; it was left unchanged".into())
+}
+
 #[cfg(windows)]
 fn run(model: &str) -> Result<Value, String> {
     use waypoint_inference::ollama::http_request;
@@ -95,9 +113,8 @@ fn run(model: &str) -> Result<Value, String> {
         }
         serde_json::from_slice(&bytes).map_err(|_| "Invalid local runtime response".into())
     };
-    let empty = |ps: &Value| ps["models"].as_array().is_some_and(Vec::is_empty);
-    if !empty(&get("/api/ps")?) {
-        return Err("Another model is already loaded; it was left unchanged".into());
+    if let Some(existing) = existing_model(&get("/api/ps")?, model)? {
+        return Ok(existing);
     }
     let size = installed_size(&get("/api/tags")?, model)?;
     let mut system = sysinfo::System::new().map_err(|_| "System memory could not be sampled")?;
@@ -107,8 +124,8 @@ fn run(model: &str) -> Result<Value, String> {
         system.available_memory(),
         &crate::gpu_resources::sample(),
     )?;
-    if !empty(&get("/api/ps")?) {
-        return Err("A model became resident during startup checks; it was left unchanged".into());
+    if let Some(existing) = existing_model(&get("/api/ps")?, model)? {
+        return Ok(existing);
     }
     let request = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Could not prepare local model request")?;
     let (status, bytes) = http_request(addr, "POST", "/api/generate", Some(&request), 120_000)
@@ -126,7 +143,7 @@ fn run(model: &str) -> Result<Value, String> {
         return Err("The requested model is not reported as the single fully GPU-resident model; inspect local model status".into());
     }
     Ok(
-        json!({"model":model,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":state["context_length"]}),
+        json!({"model":model,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":state["context_length"],"already_running":false}),
     )
 }
 #[cfg(not(windows))]
@@ -196,6 +213,35 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn existing_model_is_reused_only_when_identity_context_and_memory_match() {
+        let valid = json!({"models":[{"name":"fixture","size":6*GIB,"size_vram":6*GIB,"context_length":4096}]});
+        let result = existing_model(&valid, "fixture").unwrap().unwrap();
+        assert_eq!(result["already_running"], true);
+        assert_eq!(result["context_length"], 4096);
+        assert!(existing_model(&valid, "other").is_err());
+        let mut wrong_context = valid.clone();
+        wrong_context["models"][0]["context_length"] = json!(8192);
+        assert!(existing_model(&wrong_context, "fixture").is_err());
+        let mut partial_gpu = valid.clone();
+        partial_gpu["models"][0]["size_vram"] = json!(GIB);
+        assert!(existing_model(&partial_gpu, "fixture").is_err());
+        assert!(existing_model(&json!({"models":[]}), "fixture")
+            .unwrap()
+            .is_none());
+        assert!(existing_model(&json!({}), "fixture").is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a compatible resident local model; does not load or unload it"]
+    fn live_existing_requested_model_is_reused() {
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let result = run(&model).unwrap();
+        assert_eq!(result["model"], model);
+        assert_eq!(result["already_running"], true);
+    }
     #[test]
     fn startup_refuses_missing_or_insufficient_resources() {
         let gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":5*GIB}]});
