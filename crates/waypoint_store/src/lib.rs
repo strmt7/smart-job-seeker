@@ -386,6 +386,10 @@ const MIGRATIONS: &[&str] = &[
        SELECT id FROM jobs WHERE lower(title) LIKE '%engineering%'
      );
      UPDATE meta SET value='41' WHERE key='schema_version';",
+    // v42 — schedule a bounded, resumable recheck of title levels.
+    "INSERT INTO meta(key,value)
+       SELECT 'duplicate_title_level_cursor','' WHERE EXISTS (SELECT 1 FROM jobs LIMIT 1);
+     UPDATE meta SET value='42' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1055,6 +1059,20 @@ use rusqlite::OptionalExtension;
 mod tests {
     use super::*;
 
+    fn finish_duplicate_rechecks(store: &Store) {
+        let mut cursor = String::new();
+        for _ in 0..512 {
+            if !store.duplicate_index_pending().unwrap() {
+                return;
+            }
+            cursor = store
+                .index_next_duplicate_job(&cursor)
+                .unwrap()
+                .unwrap_or_default();
+        }
+        panic!("duplicate recheck did not finish");
+    }
+
     fn job(id: &str) -> StoredJob {
         StoredJob {
             id: JobIdentityId::new(id).unwrap(),
@@ -1235,6 +1253,7 @@ mod tests {
             Some("c")
         );
         assert_eq!(store.index_next_duplicate_job("c").unwrap(), None);
+        finish_duplicate_rechecks(&store);
         assert!(!store.duplicate_index_pending().unwrap());
         let pairs = store.possible_duplicates().unwrap();
         assert_eq!(pairs.len(), 1);
@@ -1251,6 +1270,96 @@ mod tests {
             )
             .unwrap();
         assert_eq!(old_status, "different");
+    }
+
+    #[test]
+    fn title_level_migration_resumes_bounded_recheck_and_preserves_decisions() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = base.join(format!(
+            "fictional-title-recheck-{}-{nonce}.db",
+            std::process::id()
+        ));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let conn = Connection::open(&path).unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &MIGRATIONS[..41] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute_batch(r#"INSERT INTO jobs(id,title,employer,location,state) VALUES
+            ('a','Nurse II','Example Hospital','','"discovered"'),
+            ('b','Nurse 2','Example Hospital','','"discovered"'),
+            ('c','Nurse III','Example Hospital','','"discovered"');
+            INSERT INTO job_employer_indexed(job_id) SELECT id FROM jobs;
+            INSERT INTO job_employer_tokens(job_id,token) SELECT id,'example' FROM jobs;
+            INSERT INTO job_employer_tokens(job_id,token) SELECT id,'hospital' FROM jobs;
+            INSERT INTO job_duplicate_coverage(job_id,status,candidates) SELECT id,'complete',0 FROM jobs;
+            INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES('b','c',50,'prior decision','different');"#).unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        store.conn.execute_batch("CREATE TRIGGER fail_title_recheck BEFORE INSERT ON job_employer_tokens BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(store.index_next_duplicate_job("").is_err());
+        let cursor: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='duplicate_title_level_cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(cursor.is_empty());
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_title_recheck;")
+            .unwrap();
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("a")
+        );
+        let saved: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='duplicate_title_level_cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved, "a");
+        drop(store);
+        let conn = Connection::open(&path).unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("b")
+        );
+        finish_duplicate_rechecks(&store);
+        let pairs = store.possible_duplicates().unwrap();
+        assert!(pairs
+            .iter()
+            .any(|pair| pair.job_a == "a" && pair.job_b == "b" && pair.status == "pending"));
+        let prior: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM possible_duplicates WHERE job_a='b' AND job_b='c'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(prior, "different");
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1300,6 +1409,7 @@ mod tests {
                 None => break,
             }
         }
+        finish_duplicate_rechecks(&store);
         assert!(!store.duplicate_index_pending().unwrap());
         let pairs = store.possible_duplicates().unwrap();
         assert_eq!(pairs.len(), 1);
@@ -1354,6 +1464,7 @@ mod tests {
             Some("job-129")
         );
         assert_eq!(store.index_next_duplicate_job("job-129").unwrap(), None);
+        finish_duplicate_rechecks(&store);
         assert!(!store.duplicate_index_pending().unwrap());
     }
 
@@ -1467,7 +1578,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "41");
+        assert_eq!(version, "42");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
@@ -1535,6 +1646,7 @@ mod tests {
         );
         assert!(store.duplicate_index_pending().unwrap());
         assert_eq!(store.index_next_duplicate_job("b").unwrap(), None);
+        finish_duplicate_rechecks(&store);
         assert!(!store.duplicate_index_pending().unwrap());
         assert!(store.possible_duplicates().unwrap().is_empty());
         assert!(!store.has_duplicate_hold("a").unwrap());

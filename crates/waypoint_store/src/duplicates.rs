@@ -640,8 +640,47 @@ impl Store {
                     [],
                 )?;
             }
-        } else {
-            next = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j WHERE j.id>?1 AND NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) ORDER BY j.id LIMIT 1", [after], Self::row_to_job).optional()?;
+        } else if let Some(job) = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j WHERE j.id>?1 AND NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) ORDER BY j.id LIMIT 1", [after], Self::row_to_job).optional()? {
+            next = Some(job);
+        } else if let Some(cursor) = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='duplicate_title_level_cursor'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            let mut page = self
+                .conn
+                .prepare("SELECT id,title FROM jobs WHERE id>?1 ORDER BY id LIMIT 64")?;
+            let jobs = page
+                .query_map([&cursor], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if let Some((last, _)) = jobs.last() {
+                let candidate = jobs.iter().find(|(_, title)| {
+                    title_words(title)
+                        .iter()
+                        .any(|term| matches!(term.as_str(), "1" | "2" | "3" | "4" | "5"))
+                });
+                let advanced = candidate.map(|(id, _)| id).unwrap_or(last);
+                self.conn.execute(
+                    "UPDATE meta SET value=?1 WHERE key='duplicate_title_level_cursor'",
+                    [advanced],
+                )?;
+                if candidate.is_some() {
+                    next = self.conn.query_row("SELECT id,title,employer,location,state,canonical_url,content_hash,first_seen,last_seen,remote,source,requisition_id,posted_at FROM jobs WHERE id=?1", [advanced], Self::row_to_job).optional()?;
+                } else {
+                    progressed = Some(last.clone());
+                }
+            } else {
+                self.conn.execute(
+                    "DELETE FROM meta WHERE key='duplicate_title_level_cursor'",
+                    [],
+                )?;
+            }
         }
         let indexed = if let Some(job) = next {
             let id = job.id.as_str().to_owned();
@@ -655,7 +694,7 @@ impl Store {
     }
 
     pub fn duplicate_index_pending(&self) -> rusqlite::Result<bool> {
-        self.conn.query_row("SELECT 1 WHERE EXISTS (SELECT 1 FROM meta WHERE key='duplicate_cross_employer_cursor') OR EXISTS (SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id))", [], |_| Ok(())).optional().map(|v| v.is_some())
+        self.conn.query_row("SELECT 1 WHERE EXISTS (SELECT 1 FROM meta WHERE key IN ('duplicate_cross_employer_cursor','duplicate_title_level_cursor')) OR EXISTS (SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id))", [], |_| Ok(())).optional().map(|v| v.is_some())
     }
 
     /// Counts are about bounded comparison work, not proof that every duplicate

@@ -1084,3 +1084,7 @@ Field-context captures now use up to 240 pixels of available left context within
 ### Duplicate title levels (2026-11-01)
 
 Candidate title comparison now normalizes standalone uppercase Roman levels I–V to 1–5. For example, `Nurse II` and `Nurse 2` can be flagged for review when the employer candidate checks also match; no records are merged, and different levels do not become identical. The focused fictional test also checks that C++ remains intact. Existing already-indexed records are not automatically rescanned solely by this change, and the bounded candidate scan and other identity limitations remain. The duplicate test group passed (36 passed, one ignored), as did web Clippy and formatting. No external site was contacted or application submitted.
+
+### Existing title-level recheck (2026-11-01)
+
+Workspace migration v42 schedules a resumable background recheck so the Roman/numeric title comparison also reaches older jobs. Each title-level scan reads at most 64 IDs and titles and compares at most one candidate job per indexing step; existing decisions are preserved. Duplicate coverage remains pending, including for email handoff, until the cursor finishes. Fictional disk-backed migration tests covered rollback and reopening, including SQLCipher, and the email handoff guard was exercised. The store suite passed (86 passed, one ignored); web Clippy and formatting passed. Large-workspace runtime and peak memory were not measured, and bounded candidate comparison can still miss duplicates. No application was submitted.
