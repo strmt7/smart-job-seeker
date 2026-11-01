@@ -2288,6 +2288,11 @@ impl CdpDriver {
                         "Text field did not retain safe focus or changed to a choice control; review it manually".into(),
                     ));
                 }
+                if !self.control_visibility_and_path(node)?.0 {
+                    return Err(DriverError(
+                        "Field became hidden on focus; review it manually".into(),
+                    ));
+                }
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
@@ -2509,7 +2514,7 @@ impl CdpDriver {
           const choices = radios.filter(r => { const text = optionLabel(r); return text !== null && norm(text) === norm(label); });
           if (choices.length !== 1) return false;
           const chosen = choices[0];
-          const visible = node => { if (!node.getClientRects().length) return false; const rect = node.getBoundingClientRect(); let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; if (item !== node) { const box = item.getBoundingClientRect(); if (['hidden','clip'].includes(style.overflowX)) { left = Math.max(left, box.left + item.clientLeft); right = Math.min(right, box.left + item.clientLeft + item.clientWidth); } if (['hidden','clip'].includes(style.overflowY)) { top = Math.max(top, box.top + item.clientTop); bottom = Math.min(bottom, box.top + item.clientTop + item.clientHeight); } } } return right > left && bottom > top; }; if (!apply && !visible(chosen)) return false;
+          const visible = node => { if (!node.getClientRects().length) return false; const rect = node.getBoundingClientRect(); let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; if (item !== node) { const box = item.getBoundingClientRect(); if (['hidden','clip'].includes(style.overflowX)) { left = Math.max(left, box.left + item.clientLeft); right = Math.min(right, box.left + item.clientLeft + item.clientWidth); } if (['hidden','clip'].includes(style.overflowY)) { top = Math.max(top, box.top + item.clientTop); bottom = Math.min(bottom, box.top + item.clientTop + item.clientHeight); } } } return right > left && bottom > top; }; if (!visible(chosen)) return false;
           if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
           return chosen.isConnected && chosen.checked && !unavailable(chosen) && chosen.validity.valid;
         }"#,"arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;

@@ -2667,6 +2667,36 @@ mod tests {
             Some(false)
         );
         assert_eq!(driver.text_value_snapshot("#start").unwrap().value, "");
+        assert!(driver
+            .execute(&fill("#focus-target", "Should not be entered"))
+            .is_err());
+        assert_eq!(
+            driver.text_value_snapshot("#focus-target").unwrap().value,
+            ""
+        );
+        let hidden_radio = BrowserCommand::SelectRadio {
+            selector: "#remote".into(),
+            label: "Remote".into(),
+        };
+        assert!(driver.execute(&hidden_radio).is_err());
+        assert!(driver
+            .choice_snapshot("#remote", "radio")
+            .unwrap()
+            .selections
+            .is_empty());
+        let visible_radio = BrowserCommand::SelectRadio {
+            selector: "#hidden-anchor".into(),
+            label: "Visible".into(),
+        };
+        driver.execute(&visible_radio).unwrap();
+        assert_eq!(
+            driver
+                .choice_snapshot("#visible-option", "radio")
+                .unwrap()
+                .selections[0]
+                .value,
+            "visible"
+        );
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 
