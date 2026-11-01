@@ -6970,6 +6970,26 @@ fn serve(
             } else {
                 None
             };
+            let template_scan_page = match &body["template_scan_page"] {
+                Value::Null => None,
+                Value::Number(number) if reviewed_template.is_none() => {
+                    let page = number.as_u64().ok_or("Invalid scanned template page")?;
+                    let previous = body["template_draft_id"]
+                        .as_str()
+                        .ok_or("Original draft is required")?;
+                    let cached = load_draft_result(ws, &id, previous)?;
+                    Some(draft_task::requested_scanned_template_page(
+                        &cached,
+                        id.as_str(),
+                        kind,
+                        &digest,
+                        page,
+                    )?)
+                }
+                _ => {
+                    return Err("Choose one scanned template page or reviewed transcription".into())
+                }
+            };
             let template_style_focus = match &body["template_style_focus"] {
                 Value::Null => None,
                 Value::String(text)
@@ -7003,6 +7023,7 @@ fn serve(
                     template,
                     reviewed_template,
                     template_style_focus,
+                    template_scan_page,
                 },
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));

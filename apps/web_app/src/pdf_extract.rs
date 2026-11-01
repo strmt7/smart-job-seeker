@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(model_coverage.unwrap(), coverage);
         assert!(crate::document_extract::extract("fictional.pdf", partial).is_err());
         assert!(crate::draft_task::extract_template("fictional.pdf", partial).is_err());
-        let (template, draft_coverage, vision) = crate::draft_task::scanned_template(partial, |_, page| {
+        let (template, draft_coverage, vision) = crate::draft_task::scanned_template(partial, None, |_, page| {
             assert_eq!(page, 1);
             Ok(serde_json::json!({"page":1,"pages":2,"text":"Fictional scanned page", "uncertain":true, "image":"ZmljdGlvbmFs"}))
         }).unwrap();
@@ -624,7 +624,7 @@ mod tests {
         let scanned = include_bytes!("../tests/fictional-scanned-cv.pdf");
         let mut observed_image = String::new();
         let (template, coverage, vision) =
-            crate::draft_task::scanned_template(scanned, |bytes, page| {
+            crate::draft_task::scanned_template(scanned, None, |bytes, page| {
                 assert_eq!(page, 0);
                 crate::pdf_transcribe::transcribe(
                     bytes,
@@ -659,7 +659,7 @@ mod tests {
             serde_json::json!([1])
         );
         let (_, coverage, vision) =
-            crate::draft_task::scanned_template(blank_then_scan, |bytes, page| {
+            crate::draft_task::scanned_template(blank_then_scan, None, |bytes, page| {
                 assert_eq!(page, 1);
                 crate::pdf_transcribe::transcribe(bytes, page, "full", super::render_page, |_| {
                     Ok(serde_json::json!({"text":"Fictional template", "uncertain":false}))
@@ -668,6 +668,18 @@ mod tests {
             .unwrap();
         assert_eq!(coverage.unwrap(), scan_coverage);
         assert_eq!(vision["page"], 2);
+        for page in [0, 2, usize::MAX] {
+            assert!(
+                crate::draft_task::scanned_template(blank_then_scan, Some(page), |_, _| {
+                    panic!("invalid page must not invoke vision")
+                })
+                .is_err()
+            );
+        }
+        let (_, _, chosen) = crate::draft_task::scanned_template(blank_then_scan, Some(1), |_, page| {
+            Ok(serde_json::json!({"page":page,"pages":2,"text":"Fictional template","uncertain":false,"image":"ZmljdGlvbmFs"}))
+        }).unwrap();
+        assert_eq!(chosen["page"], 2);
 
         let complete = include_bytes!("../tests/fictional-document-overlap.pdf");
         let (_, complete_coverage) = super::extract_with_coverage(complete).unwrap();

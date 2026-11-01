@@ -40,6 +40,7 @@ pub struct Inputs {
     pub template: Option<(String, Vec<u8>)>,
     pub reviewed_template: Option<(String, Value)>,
     pub template_style_focus: Option<String>,
+    pub template_scan_page: Option<usize>,
 }
 pub(crate) fn extract_template(
     name: &str,
@@ -58,6 +59,7 @@ pub(crate) fn extract_template(
 // At most one nonblank, nonselectable page is transcribed for style guidance.
 pub(crate) fn scanned_template<F>(
     bytes: &[u8],
+    requested_page: Option<usize>,
     mut transcribe: F,
 ) -> Result<(String, Option<Value>, Value), String>
 where
@@ -70,12 +72,20 @@ where
     let blank = coverage["structurally_blank_pages"]
         .as_array()
         .ok_or("PDF page coverage unavailable")?;
-    let page = empty
-        .iter()
-        .find(|page| !blank.contains(page))
-        .and_then(Value::as_u64)
-        .ok_or("No scanned template page was found")?;
-    let page = (page - 1) as usize;
+    let page = if let Some(page) = requested_page {
+        let number = json!(page.checked_add(1).ok_or("Invalid template page")?);
+        if !empty.contains(&number) || blank.contains(&number) {
+            return Err("Choose a nonblank scanned template page".into());
+        }
+        page
+    } else {
+        let page = empty
+            .iter()
+            .find(|page| !blank.contains(page))
+            .and_then(Value::as_u64)
+            .ok_or("No scanned template page was found")?;
+        (page - 1) as usize
+    };
     let result = transcribe(bytes, page)?;
     let text = result["text"]
         .as_str()
@@ -85,7 +95,10 @@ where
         .as_u64()
         .filter(|n| (1..=30).contains(n))
         .ok_or("Invalid template page count")?;
-    if result["page"].as_u64() != Some(page as u64) || page as u64 >= pages {
+    if result["page"].as_u64() != Some(page as u64)
+        || page as u64 >= pages
+        || coverage["pages"].as_u64() != Some(pages)
+    {
         return Err("Transcribed template page does not match".into());
     }
     let uncertain = result["uncertain"]
@@ -125,13 +138,7 @@ pub fn reviewed_template(
     digest: &str,
     reviewed: &str,
 ) -> Result<(String, Value), String> {
-    if cached["status"] != "complete"
-        || cached["job_id"].as_str() != Some(job)
-        || cached["kind"].as_str() != Some(kind)
-        || cached["digest"].as_str() != Some(digest)
-    {
-        return Err("The transcription is no longer current for this job and template".into());
-    }
+    validate_template_context(cached, job, kind, digest)?;
     if reviewed.trim().is_empty()
         || reviewed.len() > 12_000
         || reviewed
@@ -146,6 +153,46 @@ pub fn reviewed_template(
         .ok_or("The draft has no scanned template transcription")?;
     vision.insert("reviewed_text".into(), json!(reviewed));
     Ok((reviewed.to_owned(), Value::Object(vision)))
+}
+
+fn validate_template_context(
+    cached: &Value,
+    job: &str,
+    kind: &str,
+    digest: &str,
+) -> Result<(), String> {
+    if cached["status"] != "complete"
+        || cached["job_id"].as_str() != Some(job)
+        || cached["kind"].as_str() != Some(kind)
+        || cached["digest"].as_str() != Some(digest)
+    {
+        return Err("The transcription is no longer current for this job and template".into());
+    }
+    Ok(())
+}
+
+pub fn requested_scanned_template_page(
+    cached: &Value,
+    job: &str,
+    kind: &str,
+    digest: &str,
+    page: u64,
+) -> Result<usize, String> {
+    validate_template_context(cached, job, kind, digest)?;
+    if !cached["draft"]["template_vision"].is_object() || !(1..=30).contains(&page) {
+        return Err("Choose a scanned page from the current template".into());
+    }
+    let coverage = &cached["draft"]["template_pdf_coverage"];
+    let empty = coverage["pages_without_selectable_text"]
+        .as_array()
+        .ok_or("Template page coverage is unavailable")?;
+    let blank = coverage["structurally_blank_pages"]
+        .as_array()
+        .ok_or("Template page coverage is unavailable")?;
+    if !empty.contains(&json!(page)) || blank.contains(&json!(page)) {
+        return Err("Choose a nonblank scanned template page".into());
+    }
+    Ok((page - 1) as usize)
 }
 
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
@@ -188,6 +235,11 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             } else {
                 match &input.template {
                     Some((name, bytes)) => match extract_template(name, bytes) {
+                        Ok(_) if input.template_scan_page.is_some() => {
+                            return Err(
+                                "The selected template has no scanned page to transcribe".into()
+                            );
+                        }
                         Ok((text, coverage)) => (text, coverage, None),
                         Err(error)
                             if name
@@ -199,8 +251,10 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                             let addr = "127.0.0.1:11434"
                                 .parse()
                                 .map_err(|_| "Invalid local runtime address")?;
-                            let (text, coverage, vision) =
-                                scanned_template(bytes, |bytes, page| {
+                            let (text, coverage, vision) = scanned_template(
+                                bytes,
+                                input.template_scan_page,
+                                |bytes, page| {
                                     crate::pdf_transcribe::transcribe(
                                         bytes,
                                         page,
@@ -232,7 +286,8 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                                             Ok(output)
                                         },
                                     )
-                                })?;
+                                },
+                            )?;
                             (text, coverage, Some(vision))
                         }
                         Err(error) => return Err(error),
@@ -831,6 +886,28 @@ mod tests {
         );
         assert!(merge_scanned_page(pages.clone(), 0, "Scanned page").is_err());
         assert!(merge_scanned_page(pages, 3, "Scanned page").is_err());
+    }
+
+    #[test]
+    fn changing_scanned_page_requires_current_context_and_nonblank_coverage() {
+        let cached = json!({"status":"complete", "job_id":"job", "kind":"cv", "digest":"current", "draft":{
+            "template_vision":{"page":1},
+            "template_pdf_coverage":{"pages_without_selectable_text":[1,2,3],"structurally_blank_pages":[2]}
+        }});
+        assert_eq!(
+            requested_scanned_template_page(&cached, "job", "cv", "current", 3).unwrap(),
+            2
+        );
+        for page in [0, 2, 4, 31] {
+            assert!(
+                requested_scanned_template_page(&cached, "job", "cv", "current", page).is_err()
+            );
+        }
+        assert!(requested_scanned_template_page(&cached, "job", "cv", "stale", 3).is_err());
+        assert!(requested_scanned_template_page(&cached, "other", "cv", "current", 3).is_err());
+        let mut no_vision = cached.clone();
+        no_vision["draft"]["template_vision"] = Value::Null;
+        assert!(requested_scanned_template_page(&no_vision, "job", "cv", "current", 3).is_err());
     }
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
 
@@ -1471,6 +1548,7 @@ mod tests {
             template: None,
             reviewed_template: None,
             template_style_focus: None,
+            template_scan_page: None,
         };
         let draft = generate_with_selection(&mut model, &input, &"t".repeat(1000)).unwrap();
         assert_eq!(draft["selection"]["used_in_draft"], 2);
@@ -1550,6 +1628,52 @@ mod tests {
 
     #[test]
     #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
+    fn live_selected_scanned_template_page_drives_drafting() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let path = std::env::var_os("WAYPOINT_SCANNED_TEMPLATE_FIXTURE")
+            .expect("fictional multipage scanned PDF fixture");
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let fact = "Built Rust services and tested them with users.".to_owned();
+        let input = Inputs {
+            job_id: "fictional-selected-page".into(),
+            digest: "fixture".into(),
+            kind: "cv".into(),
+            job: json!({"title":"Rust developer", "employer":"Example", "description":"Build Rust services."}),
+            facts: vec![fact.clone()],
+            available_facts: 1,
+            contact_facts: vec![],
+            priority_facts: vec![fact],
+            selection_listing: "Rust developer: build Rust services".into(),
+            instructions: "Use concise factual language.".into(),
+            template: Some(("fictional.pdf".into(), std::fs::read(path).unwrap())),
+            reviewed_template: None,
+            template_style_focus: None,
+            template_scan_page: Some(1),
+        };
+        start("fictional-selected-page".into(), model, input).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        loop {
+            let result = poll("fictional-selected-page").unwrap();
+            if result["status"] != "running" {
+                assert_eq!(result["status"], "complete", "{result}");
+                assert_eq!(result["draft"]["template_vision"]["page"], 2);
+                assert_eq!(result["draft"]["template_vision"]["pages"], 2);
+                assert!(!result["draft"]["template_vision"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .trim()
+                    .is_empty());
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "draft timed out");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
     fn live_scanned_template_draft_uses_local_vision() {
         let _guard = TEST_LOCK.lock().unwrap();
         let model = crate::resident_model()
@@ -1573,6 +1697,7 @@ mod tests {
             )),
             reviewed_template: None,
             template_style_focus: None,
+            template_scan_page: None,
         };
         start(
             "fictional-scanned-draft".into(),
@@ -1732,6 +1857,7 @@ mod tests {
             template: None,
             reviewed_template: None,
             template_style_focus: None,
+            template_scan_page: None,
         };
         let result = generate_with_selection(&mut llm, &input, "");
         println!("fictional prioritized draft: {result:?}");
@@ -1782,6 +1908,7 @@ mod tests {
             template: None,
             reviewed_template: None,
             template_style_focus: None,
+            template_scan_page: None,
         };
         let draft = generate_with_selection(&mut model, &input, "")
             .expect("local model should draft a fictional CV");
