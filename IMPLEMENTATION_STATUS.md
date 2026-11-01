@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Real-backend visible handoff — 2026-11-01
+
+- An isolated fictional workspace exercised the actual web backend and a public Workable application page: a headless inspection was opened, the rendered handoff action closed it, and a visible inspection of the same listing opened and was then closed. The backend reported an active visible session, and the recorded form API requests contained no fill or submit operation. No candidate data was entered. The application and its browser processes were stopped after the check; available RAM was 25.01 GiB afterward. Peak or minimum free memory was not measured. The page still showed a cookie overlay and CAPTCHA, so this does not establish that the application can be completed. Screenshots and the local harness are retained under `target/visible-handoff-real-backend-*` and `target/visible-handoff-backend-check.cjs`.
+
 ## Rendered visible-browser handoff — 2026-11-01
 
 - A local rendered fixture exercised the headless-to-visible handoff at 1440×900 and 390×844. Mocked API responses showed the expected close request followed by a visible inspection request, with no page errors or horizontal overflow. Button spacing was adjusted after visual inspection. This did not launch the real application backend or an employer browser, so it does not validate actual session reopening. Screenshots and the local harness are retained under `target/reopen-visible-*`.
