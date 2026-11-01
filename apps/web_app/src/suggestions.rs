@@ -92,7 +92,10 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect();
-    let plain = normalized.strip_prefix("your").unwrap_or(&normalized);
+    let plain = ["applicants", "applicant", "candidates", "candidate", "your"]
+        .iter()
+        .find_map(|prefix| normalized.strip_prefix(prefix))
+        .unwrap_or(&normalized);
     match key {
         "full_name" => matches!(plain, "name" | "fullname"),
         "first_name" => matches!(plain, "firstname" | "givenname"),
@@ -1666,6 +1669,7 @@ mod tests {
             "Reference email address",
             "Emergency contact email",
             "Supervisor email",
+            "Candidate reference email",
             "E-Mail des Vorgesetzten",
         ] {
             schema.fields[0].label = label.into();
@@ -1682,6 +1686,16 @@ mod tests {
         assert!(result
             .iter()
             .any(|item| item.field_selector == "#candidate"));
+        for label in ["Applicant's email address", "Candidate email address"] {
+            schema.fields[0].label = label.into();
+            let result = suggest_exact(&schema, &json!({"email":"avery@example.invalid"})).unwrap();
+            assert!(
+                result
+                    .iter()
+                    .any(|item| item.field_selector == "#candidate"),
+                "{label}"
+            );
+        }
     }
     #[test]
     fn maps_labels_without_sending_candidate_values_to_model() {
