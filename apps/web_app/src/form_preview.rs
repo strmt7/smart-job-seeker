@@ -1574,9 +1574,12 @@ mod tests {
         .unwrap();
         println!("fictional Portuguese visual review: {visual}");
         assert_eq!(visual["comparisons"][0]["status"], "matches_transcription");
-        for label in [
-            "Tem autorização legal para trabalhar neste país?",
-            "Concorda com o tratamento dos seus dados pessoais?",
+        for (label, expected) in [
+            ("Tem autorização legal para trabalhar neste país?", ""),
+            (
+                "Concorda com o tratamento dos seus dados pessoais?",
+                "unchecked",
+            ),
         ] {
             let matching: Vec<_> = visual["observations"]
                 .as_array()
@@ -1585,7 +1588,10 @@ mod tests {
                 .filter(|item| item["label"] == label)
                 .collect();
             assert_eq!(matching.len(), 1, "visual label {label}");
-            assert_eq!(matching[0]["visible_value"], "", "visual value for {label}");
+            assert_eq!(
+                matching[0]["visible_value"], expected,
+                "visual value for {label}"
+            );
         }
         assert_eq!(
             driver.read_attribute("body", "data-submitted").unwrap(),
