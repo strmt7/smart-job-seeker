@@ -87,9 +87,20 @@ fn aria_invalid_tracks_visible_fields_and_correction() {
         .iter()
         .filter(|wall| wall.starts_with(waypoint_browser::INVALID_FIELD_REVIEW_PREFIX))
         .collect();
-    assert_eq!(invalid.len(), 2, "walls: {:?}", live.walls);
-    assert!(invalid.iter().any(|wall| wall.contains("Email address")));
-    assert!(invalid.iter().any(|wall| wall.contains("Full name")));
+    assert_eq!(invalid.len(), 3, "walls: {:?}", live.walls);
+    assert!(invalid
+        .iter()
+        .any(|wall| wall.contains("Email address")
+            && wall.contains("Enter a complete email address.")));
+    assert!(invalid
+        .iter()
+        .any(|wall| wall.contains("Full name") && wall.contains("site error detail unavailable")));
+    assert!(invalid
+        .iter()
+        .any(|wall| wall.contains("Address") && wall.contains("site error detail unavailable")));
+    assert!(!invalid.iter().any(|wall| wall.contains("Hidden detail")
+        || wall.contains("First detail")
+        || wall.contains("Second detail")));
     assert!(!invalid
         .iter()
         .any(|wall| wall.contains("Phone number") || wall.contains("Hidden field")));

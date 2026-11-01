@@ -3371,6 +3371,13 @@ mod tests {
         assert_eq!(preview.suggestions.len(), 1);
         assert!(preview.manual_review.contains(&warning));
         assert!(same_reviewable_walls(&preview, &[warning]));
+        assert!(!same_reviewable_walls(
+            &preview,
+            &[format!(
+                "{}First name — New site message",
+                waypoint_browser::INVALID_FIELD_REVIEW_PREFIX
+            )]
+        ));
         assert!(!same_reviewable_walls(&preview, &[]));
     }
 

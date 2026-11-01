@@ -1,3 +1,8 @@
+## Site error details — 2026-11-01
+
+- Invalid-field warnings now include visible messages referenced by `aria-errormessage` when the references resolve unambiguously. Hidden, duplicate, missing, oversized or over-budget references are reported as unavailable. Reads are bounded to 32 unique references, four per field and a short inspection budget; changed warning text requires a fresh inspection. Messages are page-provided and may contain user data. Other error patterns remain undetected.
+- A fictional local-browser form showed a visible email error, withheld a hidden message and refused ambiguous duplicate IDs. Correcting the email cleared its warning on rescan; no submission occurred. Focused preview validation also checks that a changed error requires a fresh review. This does not establish behavior across employer sites.
+
 ## Site-reported invalid fields — 2026-11-01
 
 - Form inspection now reports visible fields whose site-provided `aria-invalid` attribute indicates an error, including the field label. These warnings remain reviewable so other fields can still be prepared; if a warning changes, the existing review binding requires a fresh inspection. Hidden fields and explicit `false` values do not create this warning. This is not a general form-validity check: sites may show errors without this attribute, and absence of a warning does not mean a field is valid.

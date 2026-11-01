@@ -1,6 +1,7 @@
 <!doctype html><html lang="en"><body><form>
-<label for="email">Email address</label><input id="email" aria-invalid="TRUE" oninput="this.setAttribute('aria-invalid','false')">
+<label for="email">Email address</label><input id="email" aria-invalid="TRUE" aria-errormessage="email-error" oninput="this.setAttribute('aria-invalid','false')"><span id="email-error">Enter a complete email address.</span>
 <label for="phone">Phone number</label><input id="phone" aria-invalid="false">
 <label for="hidden">Hidden field</label><input id="hidden" aria-invalid="true" style="display:none">
-<label for="name">Full name</label><input id="name" aria-invalid="spelling">
+<label for="name">Full name</label><input id="name" aria-invalid="spelling" aria-errormessage="name-error"><span id="name-error" style="display:none">Hidden detail</span>
+<label for="address">Address</label><input id="address" aria-invalid="true" aria-errormessage="duplicate-error"><span id="duplicate-error">First detail</span><span id="duplicate-error">Second detail</span>
 </form></body></html>

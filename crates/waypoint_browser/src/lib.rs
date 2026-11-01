@@ -3301,6 +3301,41 @@ impl CdpDriver {
         });
         let mut fields = vec![];
         let mut walls = wall_flags;
+        // Error references are read only for visible fields, and are resolved
+        // separately from accessible names so duplicate IDs cannot be guessed.
+        let mut wanted_errors = std::collections::HashSet::new();
+        for control in &controls {
+            if control.attrs.get("aria-invalid").is_some_and(|value| {
+                let value = value.trim();
+                !value.is_empty() && !value.eq_ignore_ascii_case("false")
+            }) {
+                if let Some(ids) = control
+                    .attrs
+                    .get("aria-errormessage")
+                    .filter(|ids| ids.len() <= 512 && ids.split_whitespace().count() <= 4)
+                {
+                    for id in ids.split_whitespace() {
+                        if wanted_errors.len() < 32 {
+                            wanted_errors.insert(id.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        let mut error_nodes: HashMap<String, Option<u64>> = HashMap::new();
+        walk(root, false, &mut |node, _| {
+            let attrs = attributes(node);
+            if let Some(id) = attrs.get("id").filter(|id| wanted_errors.contains(*id)) {
+                if error_nodes.contains_key(id) {
+                    error_nodes.insert(id.clone(), None);
+                } else {
+                    error_nodes.insert(id.clone(), node.get("nodeId").and_then(Value::as_u64));
+                }
+            }
+            true
+        });
+        let mut checked_errors: HashMap<u64, Option<String>> = HashMap::new();
+        let error_check_started = Instant::now();
         let page_text_joined = text
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -3565,7 +3600,39 @@ impl CdpDriver {
                 !value.is_empty() && !value.eq_ignore_ascii_case("false")
             }) {
                 let short_label: String = label.chars().take(160).collect();
-                walls.push(format!("{INVALID_FIELD_REVIEW_PREFIX}{short_label}"));
+                let details = control.attrs.get("aria-errormessage").map(|ids| {
+                    let references: Vec<_> = ids.split_whitespace().collect();
+                    if ids.len() > 512 || references.is_empty() || references.len() > 4 {
+                        return None;
+                    }
+                    references
+                        .into_iter()
+                        .map(|id| {
+                            let node = error_nodes.get(id).copied().flatten()?;
+                            if let Some(text) = checked_errors.get(&node) {
+                                return text.clone();
+                            }
+                            if error_check_started.elapsed() > Duration::from_secs(2) {
+                                return None;
+                            }
+                            let text = self
+                                .with_review_timeout(|driver| driver.rendered_section_heading(node))
+                                .ok()
+                                .flatten();
+                            checked_errors.insert(node, text.clone());
+                            text
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .map(|parts| parts.join("; "))
+                });
+                let suffix = match details {
+                    Some(Some(text)) => format!(" — {text}"),
+                    Some(None) => " — site error detail unavailable".into(),
+                    None => String::new(),
+                };
+                walls.push(format!(
+                    "{INVALID_FIELD_REVIEW_PREFIX}{short_label}{suffix}"
+                ));
             }
 
             let required = control.attrs.contains_key("required")
