@@ -1878,6 +1878,101 @@ mod tests {
             .iter()
             .all(|event| !event.contains("typed") && !event.contains("submitted")));
     }
+
+    #[test]
+    #[ignore = "starts one browser and requires a resource-gated resident local model"]
+    fn live_model_multilingual_postal_fixture() {
+        use waypoint_applications::driver::BrowserDriver;
+        struct Recording<I> {
+            inner: I,
+            calls: usize,
+            responses: Vec<Value>,
+        }
+        impl<I: Inference> Inference for Recording<I> {
+            fn set_context_tags(&mut self, tags: &[&str]) {
+                self.inner.set_context_tags(tags);
+            }
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.calls += 1;
+                let result = self.inner.generate_structured(schema, prompt, max)?;
+                self.responses.push(result.0.clone());
+                Ok(result)
+            }
+        }
+        let name =
+            std::env::var("WAYPOINT_FORM_BENCHMARK_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
+        assert_eq!(
+            crate::resident_model().unwrap().as_deref(),
+            Some(name.as_str())
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("postal.html");
+        std::fs::write(&path, r#"<!doctype html><html lang="de"><body><form><label for="street">Anschrift</label><input id="street" autocomplete="street-address" required><label for="city">Ort</label><input id="city" autocomplete="address-level2" required></form></body></html>"#).unwrap();
+        let url = url::Url::from_file_path(path.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let inner = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
+            .unwrap()
+            .with_resident_context();
+        let guarded =
+            crate::resident_inference::ResidentInference::new(inner, name, crate::resident_model);
+        let mut llm = Recording {
+            inner: guarded,
+            calls: 0,
+            responses: vec![],
+        };
+        let (mappings, warnings, _) = suggest_with_review(
+            &mut llm,
+            &live.schema,
+            &json!({"address":"10 Example Street","city":"Example City"}),
+        )
+        .unwrap();
+        println!("Fictional postal model responses: {:?}; mappings: {mappings:?}; warnings: {warnings:?}", llm.responses);
+        assert!(llm.calls > 0 && !llm.responses.is_empty());
+        for mapping in &mappings {
+            let field = live
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == mapping.field_selector)
+                .unwrap();
+            let expected = match field.autocomplete.as_deref() {
+                Some("street-address") => "10 Example Street",
+                Some("address-level2") => "Example City",
+                _ => panic!("unexpected suggestion"),
+            };
+            assert_eq!(mapping.value, PacketValue::Text(expected.into()));
+        }
+        let previous_responses = llm.responses.len();
+        let (incomplete, incomplete_warnings, _) =
+            suggest_with_review(&mut llm, &live.schema, &json!({"city":"Example City"})).unwrap();
+        println!("Fictional missing-street responses: {:?}; mappings: {incomplete:?}; warnings: {incomplete_warnings:?}", &llm.responses[previous_responses..]);
+        assert!(llm.responses.len() > previous_responses);
+        let street = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.autocomplete.as_deref() == Some("street-address"))
+            .unwrap();
+        assert!(!incomplete
+            .iter()
+            .any(|mapping| mapping.field_selector == street.selector));
+        assert!(incomplete_warnings
+            .iter()
+            .any(|warning| warning.contains("required field(s) have no suggestion")));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("typed") && !event.contains("submitted")));
+    }
     #[test]
     fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
         let mut schema = form();
