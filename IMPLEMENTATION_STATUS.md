@@ -1168,3 +1168,7 @@ The rendered-heading collector now preserves a word boundary at visible line bre
 ### Boxless label descendants (2026-11-01)
 
 Rendered label and inferred-heading extraction now retain visible text inside `display: contents` descendants, whose wrapper has no box of its own. Before the fix a fictional label was reduced from two words to one. Local-browser checks verified the full label and section context, while nested hidden text remained excluded; Clippy and formatting passed. The change does not establish visibility for all CSS layouts or when the label or heading itself lacks a box. No real form was filled or submitted.
+
+### Boxless label and heading roots (2026-11-01)
+
+Labels and inferred headings that themselves use `display: contents` can now provide context after bounded ancestor visibility checks; clipping in the checked path leaves the label unverified for manual review. Fictional browser tests covered a boxless label, a boxless multiline heading and a clipped label. A resource-gated `qwen3.5:9b` run on the updated heading fixture mapped the fictional applicant contact and flagged reference and manager fields for review; it also proposed the generic email question. Minimum available system memory sampled every two seconds was 17,716 MiB, and the model was unloaded. This is not a complete visibility or real-site accuracy guarantee. Clippy and formatting passed; no application was submitted.

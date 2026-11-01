@@ -1950,9 +1950,43 @@ impl CdpDriver {
         Ok((visible, path.to_owned(), available, needs_review))
     }
 
+    /// Boxless text containers have no client rectangle; reject clipping and
+    /// hidden ancestors before considering their rendered descendants.
+    fn boxless_text_root_visible(&mut self, node: u64) -> Result<bool, DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Text container disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || getComputedStyle(this).display !== 'contents') return false;
+            let node = this;
+            for (let depth = 0; node; depth++, node = node.parentElement) {
+                if (depth > 64) return false;
+                const style = getComputedStyle(node);
+                if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 ||
+                    ['hidden','clip'].includes(style.overflowX) || ['hidden','clip'].includes(style.overflowY) ||
+                    (style.display !== 'contents' && !node.getClientRects().length)) return false;
+            }
+            return true;
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result
+            .pointer("/result/value")
+            .and_then(Value::as_bool)
+            .unwrap_or(false))
+    }
+
     /// Read only rendered heading text; DOM text can include hidden descendants.
     fn rendered_section_heading(&mut self, node: u64) -> Result<Option<String>, DriverError> {
-        if !self.control_visibility_and_path(node)?.0 {
+        if !self.control_visibility_and_path(node)?.0 && !self.boxless_text_root_visible(node)? {
             return Ok(None);
         }
         let resolved = self
@@ -1966,6 +2000,7 @@ impl CdpDriver {
             .to_owned();
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
             if (!this.isConnected) return null;
+            const boxless = getComputedStyle(this).display === 'contents';
             const walker = document.createTreeWalker(this, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT), parts = [];
             let text = walker.nextNode(), count = 0, size = 0, previousBlock = null, haveText = false;
             while (text) {
@@ -1977,6 +2012,7 @@ impl CdpDriver {
                     if (depth > 64 || ['SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName)) { visible = false; break; }
                     const style = getComputedStyle(parent);
                     if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || (style.display !== 'contents' && !parent.getClientRects().length)) { visible = false; break; }
+                    if (boxless && (['hidden','clip'].includes(style.overflowX) || ['hidden','clip'].includes(style.overflowY))) return null;
                     if (parent === this) break;
                     if (!block && ['block','flow-root','flex','grid','list-item','table','table-row','table-cell'].includes(style.display)) block = parent;
                 }
@@ -2008,7 +2044,7 @@ impl CdpDriver {
 
     /// Read rendered label text, excluding controls and hidden descendants.
     fn rendered_form_label(&mut self, node: u64) -> Result<Option<String>, DriverError> {
-        if !self.control_visibility_and_path(node)?.0 {
+        if !self.control_visibility_and_path(node)?.0 && !self.boxless_text_root_visible(node)? {
             return Ok(None);
         }
         let resolved = self
@@ -2021,6 +2057,7 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Label disappeared".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
             if (!this.isConnected || this.tagName !== 'LABEL') return null;
+            const boxless = getComputedStyle(this).display === 'contents';
             const walker = document.createTreeWalker(this, NodeFilter.SHOW_TEXT), parts = [];
             let text = walker.nextNode(), count = 0, size = 0;
             while (text) {
@@ -2030,6 +2067,7 @@ impl CdpDriver {
                     if (depth > 64 || ['INPUT','TEXTAREA','SELECT','BUTTON','SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName) || (parent.getAttribute('aria-hidden') || '').toLowerCase() === 'true') { visible = false; break; }
                     const style = getComputedStyle(parent);
                     if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || (style.display !== 'contents' && !parent.getClientRects().length)) { visible = false; break; }
+                    if (boxless && (['hidden','clip'].includes(style.overflowX) || ['hidden','clip'].includes(style.overflowY))) return null;
                     if (parent === this) break;
                 }
                 if (visible) { const value = text.nodeValue || ''; size += value.length; if (size > 2000) return null; parts.push(value); }

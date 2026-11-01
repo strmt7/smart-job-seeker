@@ -1136,8 +1136,10 @@ fn rendered_labels_exclude_hidden_status_and_control_contents() {
         ["Current city", "Email", "Preferred region", "Postal code"]
     );
     assert!(labels[4].starts_with("Unverified label (review):"));
+    assert!(labels[5].starts_with("Unverified label (review):"));
     assert!(live.schema.fields[..4].iter().all(|field| !field.sensitive));
     assert!(live.schema.fields[4].sensitive);
+    assert!(live.schema.fields[5].sensitive);
     assert!(driver
         .trace
         .iter()
