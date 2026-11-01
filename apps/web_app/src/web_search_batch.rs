@@ -324,6 +324,20 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
         }
     }
 }
+
+/// Collect one page into bounded in-memory history even if no page is open.
+/// Client acknowledgements can still recover every collected page from history.
+pub fn collect_background() -> Result<(), String> {
+    let task = TASK
+        .lock()
+        .map_err(|_| "Web search unavailable")?
+        .as_ref()
+        .map(|task| (task.id.clone(), task.processed));
+    if let Some((id, processed)) = task {
+        poll(&id, processed)?;
+    }
+    Ok(())
+}
 pub fn cancel(id: &str) -> Result<(), String> {
     let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     let task = tasks
@@ -339,6 +353,50 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::time::Instant;
+    #[test]
+    fn background_collection_retains_pages_for_later_client_recovery() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "background-fixture".into(),
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+            total: 2,
+            processed: 0,
+            pending: None,
+            history: Vec::new(),
+            timed_out: Arc::new(AtomicBool::new(false)),
+            unreported: Arc::new(AtomicBool::new(false)),
+        });
+        tx.send(Message::Query(
+            "fictional".into(),
+            1,
+            Ok(json!({"results":[{"url":"https://example.test/one"}]})),
+        ))
+        .unwrap();
+        collect_background().unwrap();
+        tx.send(Message::Query(
+            "fictional".into(),
+            2,
+            Err("fixture failure".into()),
+        ))
+        .unwrap();
+        collect_background().unwrap();
+        let recovered = poll("background-fixture", 0).unwrap();
+        assert_eq!(recovered["history"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            recovered["history"][0]["data"]["results"][0]["url"],
+            "https://example.test/one"
+        );
+        assert_eq!(recovered["history"][1]["error"], "fixture failure");
+        tx.send(Message::Done(false)).unwrap();
+        collect_background().unwrap();
+        let result = poll("background-fixture", 0).unwrap();
+        assert_eq!(result["status"], "complete");
+        assert_eq!(result["coverage"]["succeeded_pages"], 1);
+        assert_eq!(result["coverage"]["failed_pages"], 1);
+        assert_eq!(pending().unwrap()["last"]["result"], result);
+    }
     #[test]
     fn cancelled_batch_releases_worker_and_keeps_buffered_page() {
         let _lock = TEST_LOCK.lock().unwrap();

@@ -6242,6 +6242,9 @@ fn serve_loop(
             if let Err(error) = discovery_task::collect_background(&mut ws) {
                 eprintln!("Background discovery collection failed: {error}");
             }
+            if let Err(error) = web_search_batch::collect_background() {
+                eprintln!("Background web search collection failed: {error}");
+            }
             next_discovery_collect = Instant::now() + Duration::from_secs(1);
         }
         if index_worker
