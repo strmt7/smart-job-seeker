@@ -12,10 +12,14 @@ struct Spec {
     name: &'static str,
     digest: &'static str,
 }
-const SPECS: [Spec; 2] = [
+const SPECS: [Spec; 3] = [
     Spec {
         name: "gemma4:12b-it-qat",
         digest: "38044be4f923e5a55264ed7df4eaac2676651a905f735197c504045140c02bd3",
+    },
+    Spec {
+        name: "ministral-3:14b",
+        digest: "4760c35aeb9d9e9c6174c2492562c0b999e80a222804fd96b1915ab72bbcdcf7",
     },
     Spec {
         name: "qwen3.5:9b",
@@ -338,9 +342,22 @@ mod tests {
         assert_eq!(crate::resident_model_status().unwrap(), before);
     }
     #[test]
+    #[ignore = "requires the reviewed 14B model already installed in the local runtime"]
+    fn live_existing_14b_manifest_is_verified_without_loading() {
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let selected = spec("ministral-3:14b").unwrap();
+        let before = crate::resident_model_status().unwrap();
+        let result = run(addr, selected, "fixture").unwrap();
+        assert_eq!(result["already_installed"], true);
+        assert_eq!(result["verified"], true);
+        assert_eq!(crate::resident_model_status().unwrap(), before);
+    }
+
+    #[test]
     fn download_rejects_cloud_or_unreviewed_model_names() {
         assert!(spec("anything-cloud").is_none());
         assert!(spec("gemma4:12b-it-qat").is_some());
         assert!(spec("qwen3.5:9b").is_some());
+        assert!(spec("ministral-3:14b").is_some());
     }
 }
