@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 waypoint_applications = { path = "../waypoint_applications" }
+waypoint_domain = { path = "../waypoint_domain" }
 waypoint_net = { path = "../waypoint_net" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -16,5 +17,4 @@ workspace = true
 
 [dev-dependencies]
 waypoint_workspace = { path = "../waypoint_workspace" }
-waypoint_domain = { path = "../waypoint_domain" }
 waypoint_store = { path = "../waypoint_store" }

@@ -538,7 +538,11 @@ fn multiple_pdf_files_are_attached_and_verified_as_a_set() {
     let first = root.join("resume.pdf");
     let second = root.join("certificate.pdf");
     let bad = root.join("notes.txt");
+    let alternate_dir = root.join("alternate");
+    std::fs::create_dir(&alternate_dir).unwrap();
+    let alternate = alternate_dir.join("resume.pdf");
     std::fs::write(&first, b"fictional resume").unwrap();
+    std::fs::write(&alternate, b"different resume").unwrap();
     std::fs::write(&second, b"fictional certificate").unwrap();
     std::fs::write(&bad, b"fictional text").unwrap();
     let mut driver = CdpDriver::launch(vec![]).unwrap();
@@ -571,6 +575,14 @@ fn multiple_pdf_files_are_attached_and_verified_as_a_set() {
         .attach_local_files_if_unchanged("#single", &[second.clone()], &[first.clone()])
         .unwrap();
     driver.verify_local_file("#single", &second).unwrap();
+    driver
+        .attach_local_files("#single", &[alternate.clone()])
+        .unwrap();
+    assert!(driver.verify_local_file("#single", &first).is_err());
+    assert!(driver
+        .attach_local_files_if_unchanged("#single", &[second.clone()], &[first.clone()])
+        .is_err());
+    driver.verify_local_file("#single", &alternate).unwrap();
     assert!(driver.attach_local_files("#single", &files).is_err());
     assert!(driver
         .attach_local_files("#multiple", &[first.clone(), bad.clone()])
@@ -585,9 +597,10 @@ fn multiple_pdf_files_are_attached_and_verified_as_a_set() {
     assert!(driver.verify_local_file("#multiple", &first).is_err());
     assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     drop(driver);
-    for path in [first, second, bad] {
+    for path in [first, second, bad, alternate] {
         std::fs::remove_file(path).unwrap();
     }
+    std::fs::remove_dir(alternate_dir).unwrap();
     std::fs::remove_dir(root).unwrap();
 }
 

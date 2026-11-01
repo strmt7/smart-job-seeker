@@ -786,7 +786,23 @@ impl CdpDriver {
             let size = std::fs::metadata(path)
                 .map_err(|e| DriverError(format!("Cannot read attachment: {e}")))?
                 .len();
-            expected.push(json!({"name":name,"size":size}));
+            // Bound memory in both the host and the browser when hashing selected files.
+            if size > 10 * 1024 * 1024 {
+                return Err(DriverError("Attachment is too large to verify".into()));
+            }
+            use std::io::Read;
+            let file = std::fs::File::open(path)
+                .map_err(|_| DriverError("Cannot read attachment".into()))?;
+            let mut bytes = Vec::new();
+            file.take(10 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| DriverError("Cannot read attachment".into()))?;
+            if bytes.len() as u64 != size {
+                return Err(DriverError("Attachment changed during verification".into()));
+            }
+            expected.push(
+                json!({"name":name,"size":size,"sha256":waypoint_domain::sha256_hex(&bytes)}),
+            );
         }
         let node = self
             .node_id(selector)?
@@ -799,7 +815,7 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
-        let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(expected) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && (expected.length === 1 || this.multiple) && this.files && this.files.length === expected.length && expected.every((file, i) => this.files[i].name === file.name && this.files[i].size === file.size); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"async function(expected) { const matches = () => this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && (expected.length === 1 || this.multiple) && this.files && this.files.length === expected.length && expected.every((file, i) => this.files[i].name === file.name && this.files[i].size === file.size); if (!matches() || !globalThis.crypto?.subtle) return false; try { const files = Array.from(this.files); for (let i = 0; i < files.length; i++) { const digest = await crypto.subtle.digest('SHA-256', await files[i].arrayBuffer()); const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join(''); if (hex !== expected[i].sha256) return false; } return matches() && files.every((file, i) => this.files[i] === file); } catch (_) { return false; } }","arguments":[{"value":expected}],"awaitPromise":true,"returnByValue":true})).map_err(derr)?;
         if retained.get("exceptionDetails").is_some()
             || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
