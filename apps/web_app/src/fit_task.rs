@@ -4414,6 +4414,16 @@ mod tests {
             assessments[0]["score_range"], assessments[1]["score_range"],
             "equivalent reordering changed the uncertainty range"
         );
+        let canonical_rubric = |assessment: &Value| {
+            let mut entries: Vec<_> = assessment["rubric"].as_array().unwrap().iter().map(|item| json!({"source":item["source"],"excerpt":item["excerpt"],"importance":item["importance"],"status":item["status"],"qualification":item["qualification"]}).to_string()).collect();
+            entries.sort_unstable();
+            entries
+        };
+        assert_eq!(
+            canonical_rubric(&assessments[0]),
+            canonical_rubric(&assessments[1]),
+            "the same score concealed different criteria or evidence"
+        );
         for assessment in assessments {
             assert!(
                 assessment["rubric"]
@@ -4438,6 +4448,56 @@ mod tests {
                 "SQL should remain unknown: {assessment}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "requires a resource-gated resident local model"]
+    fn live_fit_reordering_with_fictional_preferences() {
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut llm =
+            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let facts = vec![
+            "Built accessible web interfaces for screen-reader users".into(),
+            "Maintained backend services in Python for three years".into(),
+            "Lives in Berlin and prefers remote work".into(),
+        ];
+        let preferences = "Remote work is required; I prefer accessible product development.";
+        let listings = ["Example Labs seeks a software engineer. Required: Python, SQL and experience with web accessibility. Preferred: cloud deployment. The role is remote within Germany.", "Example Labs seeks a software engineer. The role is remote within Germany. Preferred: cloud deployment. Required: experience with web accessibility, SQL and Python."];
+        let mut outcomes = Vec::new();
+        for listing in listings {
+            outcomes.push(assess(&mut llm, &facts, preferences, listing).unwrap());
+        }
+        let canonical = |value: &Value| {
+            let mut items: Vec<_> = value["rubric"].as_array().unwrap().iter().map(|item| json!({"source":item["source"],"excerpt":item["excerpt"],"importance":item["importance"],"status":item["status"],"qualification":item["qualification"].as_str().map(|text| text.trim_end_matches('.'))}).to_string()).collect();
+            items.sort_unstable();
+            items
+        };
+        println!(
+            "Fictional reordered preference scores: {:?} and {:?}; ranges: {:?} and {:?}",
+            outcomes[0]["score"],
+            outcomes[1]["score"],
+            outcomes[0]["score_range"],
+            outcomes[1]["score_range"]
+        );
+        assert_eq!(
+            outcomes[0]["score"], outcomes[1]["score"],
+            "reordering changed the score"
+        );
+        assert_eq!(
+            outcomes[0]["score_range"], outcomes[1]["score_range"],
+            "reordering changed the range"
+        );
+        assert_eq!(
+            canonical(&outcomes[0]),
+            canonical(&outcomes[1]),
+            "reordering changed criteria or evidence"
+        );
     }
 
     #[test]
