@@ -577,12 +577,16 @@ impl CdpDriver {
                 // A virtualized list can omit options even when every rendered
                 // item fits inside our cap, so completeness is never assumed.
                 const options = []; let incomplete = true;
-                for (let i = 0; i < Math.min(nodes.length, 30); i++) {
+                const list = lists[0], listBounds = list.getBoundingClientRect(), listStyle = getComputedStyle(list);
+                for (let i = 0; i < Math.min(nodes.length, 500) && options.length < 30; i++) {
                     const node = nodes[i];
                     let visible = node.getClientRects().length > 0;
                     const box = node.getBoundingClientRect();
                     let left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
                     let top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
+                    if (['hidden','clip','auto','scroll'].includes(listStyle.overflowX)) { left = Math.max(left, listBounds.left + list.clientLeft); right = Math.min(right, listBounds.left + list.clientLeft + list.clientWidth); }
+                    if (['hidden','clip','auto','scroll'].includes(listStyle.overflowY)) { top = Math.max(top, listBounds.top + list.clientTop); bottom = Math.min(bottom, listBounds.top + list.clientTop + list.clientHeight); }
+                    if (!visible || right <= left || bottom <= top) continue;
                     for (let parent = node, depth = 0; parent; parent = parent.parentElement) {
                         if (++depth > 64) { visible = false; break; }
                         const style = getComputedStyle(parent);
@@ -678,6 +682,166 @@ impl CdpDriver {
         ))
     }
 
+    /// Move one bounded wheel step within a uniquely identified open list.
+    /// This does not click an option; page scroll handlers can still run.
+    pub fn custom_choice_scroll_available(
+        &mut self,
+        selector: &str,
+        down: bool,
+    ) -> Result<bool, DriverError> {
+        let (_, _, position, maximum, _) = self.custom_choice_scroll_target(selector)?;
+        Ok(if down {
+            position < maximum - 0.5
+        } else {
+            position > 0.5
+        })
+    }
+
+    pub fn scroll_custom_choice_options(
+        &mut self,
+        selector: &str,
+        down: bool,
+    ) -> Result<CustomChoice, DriverError> {
+        let before_url = self.current_url()?;
+        let (node, identity, before, maximum, height) =
+            self.custom_choice_scroll_target(selector)?;
+        if (down && before >= maximum - 0.5) || (!down && before <= 0.5) {
+            return Err(DriverError("Choice list is already at its boundary".into()));
+        }
+        let model = self
+            .cdp
+            .call("DOM.getBoxModel", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let quad = model
+            .pointer("/model/content")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("Choice list has no visible bounds".into()))?;
+        let values: Vec<_> = quad.iter().filter_map(Value::as_f64).collect();
+        if values.len() != 8 || values.iter().any(|value| !value.is_finite()) {
+            return Err(DriverError("Invalid choice list bounds".into()));
+        }
+        let x = (values[0] + values[2] + values[4] + values[6]) / 4.0;
+        let y = (values[1] + values[3] + values[5] + values[7]) / 4.0;
+        if x < 0.0 || y < 0.0 {
+            return Err(DriverError("Choice list is outside the viewport".into()));
+        }
+        let delta = (height * 0.7).clamp(20.0, 300.0) * if down { 1.0 } else { -1.0 };
+        self.cdp
+            .call(
+                "Input.dispatchMouseEvent",
+                json!({"type":"mouseWheel","x":x,"y":y,"deltaX":0,"deltaY":delta}),
+            )
+            .map_err(derr)?;
+        self.cdp.pump(Duration::from_millis(200));
+        let (_, after_identity, after, _, _) = self.custom_choice_scroll_target(selector)?;
+        if before_url != self.current_url()? {
+            return Err(DriverError(
+                "The page changed while scrolling the choice list".into(),
+            ));
+        }
+        if identity != after_identity {
+            return Err(DriverError(
+                "The choice list node changed while scrolling".into(),
+            ));
+        }
+        if (down && after <= before) || (!down && after >= before) {
+            return Err(DriverError(
+                "Choice list did not scroll; inspect it manually".into(),
+            ));
+        }
+        let choices = self.page_custom_choices()?;
+        let mut matches = choices
+            .choices
+            .into_iter()
+            .filter(|choice| choice.selector == selector && choice.expanded);
+        let choice = matches
+            .next()
+            .ok_or_else(|| DriverError("Choice changed while scrolling".into()))?;
+        if matches.next().is_some() {
+            return Err(DriverError(
+                "Choice became ambiguous while scrolling".into(),
+            ));
+        }
+        self.trace.push(format!("scrolled choice {selector}"));
+        Ok(choice)
+    }
+
+    fn custom_choice_scroll_target(
+        &mut self,
+        selector: &str,
+    ) -> Result<(u64, u64, f64, f64, f64), DriverError> {
+        let owner = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Choice disappeared".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":owner}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Choice disappeared".into()))?;
+        let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'true') return null;
+            const id = this.getAttribute('aria-controls') || this.getAttribute('aria-owns') || '';
+            if (!id || id.length > 256 || /\s/.test(id)) return null;
+            const root = this.getRootNode(), lists = root.querySelectorAll('#' + CSS.escape(id));
+            if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return null;
+            const list = lists[0], style = getComputedStyle(list), rect = list.getBoundingClientRect();
+            if (!['auto','scroll'].includes(style.overflowY) || list.scrollHeight <= list.clientHeight || rect.width < 8 || rect.height < 8 || rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) return null;
+            const hit = root.elementFromPoint((rect.left + rect.right)/2, (rect.top + rect.bottom)/2);
+            if (!hit || !(hit === list || list.contains(hit))) return null;
+            return list;
+        }"#, "returnByValue":false}));
+        let release_owner = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let found = found.map_err(derr)?;
+        release_owner.map_err(derr)?;
+        let list = found
+            .pointer("/result/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Choice list cannot be safely scrolled; inspect it manually".into())
+            })?;
+        let state = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":list,"functionDeclaration":"function() { return {top:this.scrollTop, maximum:this.scrollHeight-this.clientHeight, height:this.clientHeight}; }","returnByValue":true}));
+        let requested = self.cdp.call("DOM.requestNode", json!({"objectId":list}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":list}));
+        let state = state.map_err(derr)?;
+        let requested = requested.map_err(derr)?;
+        released.map_err(derr)?;
+        let number = |key: &str| {
+            state
+                .pointer(&format!("/result/value/{key}"))
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| DriverError("Choice scroll state unavailable".into()))
+        };
+        let node = requested
+            .get("nodeId")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(|| DriverError("Choice list disappeared".into()))?;
+        let described = self
+            .cdp
+            .call("DOM.describeNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let identity = described
+            .pointer("/node/backendNodeId")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(|| DriverError("Choice list identity unavailable".into()))?;
+        Ok((
+            node,
+            identity,
+            number("top")?,
+            number("maximum")?,
+            number("height")?,
+        ))
+    }
+
     /// Select one uniquely identified rendered option and verify the displayed
     /// value. The caller must bind this action to explicit user review.
     pub fn select_custom_choice_option(
@@ -761,7 +925,7 @@ impl CdpDriver {
             const lists = this.getRootNode().querySelectorAll('#' + CSS.escape(id));
             if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return null;
             const nodes = lists[0].querySelectorAll('[role="option"]');
-            if (nodes.length > 30) return null;
+            if (nodes.length > 500) return null;
             let result = null, count = 0;
             for (const option of nodes) {
                 const text = (option.getAttribute('aria-label') || option.innerText || '').trim().replace(/\s+/g,' ');
@@ -3526,7 +3690,7 @@ impl CdpDriver {
                 const owners = root.querySelectorAll(guard.owner_selector), lists = root.querySelectorAll('#' + CSS.escape(guard.list_id));
                 if ((this.getAttribute('role') || '').toLowerCase() !== 'option' || label !== guard.label || !list || list.id !== guard.list_id || lists.length !== 1 || owners.length !== 1 || (owners[0].getAttribute('role') || '').toLowerCase() !== 'combobox' || (owners[0].getAttribute('aria-expanded') || '').toLowerCase() !== 'true' || (owners[0].getAttribute('aria-controls') || owners[0].getAttribute('aria-owns')) !== guard.list_id) return false;
                 const options = list.querySelectorAll('[role="option"]');
-                if (options.length > 30) return false;
+                if (options.length > 500) return false;
                 let matches = 0;
                 for (const option of options) if ((option.getAttribute('aria-label') || option.innerText || '').trim().replace(/\s+/g,' ') === guard.label) matches++;
                 if (matches !== 1) return false;

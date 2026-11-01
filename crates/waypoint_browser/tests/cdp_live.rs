@@ -748,6 +748,60 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn scroll_choice_reveals_and_selects_later_option() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_scroll.html"))
+        .unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    let choice = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "City")
+        .unwrap();
+    let selector = choice.selector.clone();
+    assert!(driver
+        .screenshot_custom_choice_option(&selector, "City 01")
+        .is_err());
+    assert!(driver
+        .scroll_custom_choice_options(&selector, false)
+        .is_err());
+    let mut later = choice.clone();
+    for _ in 0..12 {
+        later = driver
+            .scroll_custom_choice_options(&selector, true)
+            .unwrap();
+        if later.options.iter().any(|option| option == "City 35") {
+            break;
+        }
+    }
+    assert!(
+        later.options.iter().any(|option| option == "City 35"),
+        "{:?}",
+        later.options
+    );
+    assert!(driver
+        .screenshot_custom_choice_option(&selector, "City 35")
+        .is_ok());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+    driver
+        .select_custom_choice_option(&selector, "City 35")
+        .unwrap();
+    assert!(driver
+        .verify_custom_choice_value(&selector, "City 35")
+        .is_ok());
+    assert!(driver
+        .scroll_custom_choice_options(&selector, false)
+        .is_ok());
+    let (text, _) = driver.page_text_bounded(5000).unwrap();
+    assert!(text.contains("NOT SUBMITTED"));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn option_capture_targets_later_unique_choice_without_clicking() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver

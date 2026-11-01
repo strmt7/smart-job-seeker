@@ -103,5 +103,33 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   const recovery=run(new Node('panel'),{session_id:'session'},element,recoveryApi);await recovery.choicesButton.listeners.click();
   const recovered=recovery.choicesPanel.children[0];assert.match(recovered.children[0].text,/Berlin/);
   await recovered.children[1].listeners.click();assert.ok(recovered.children.some(item=>/selected value was visually checked/.test(item.text)));assert.equal(stored.size,0);assert.equal(oldDrained,true);
+  const scrollCalls=[];
+  const scrollApi=async(path,body)=>{
+    scrollCalls.push(path);
+    if(path==='/api/form/custom-choices')return openInventory;
+    if(path==='/api/form/control-vision-pending'||path==='/api/form/custom-choice-action-pending')return {active:false};
+    if(path==='/api/form/custom-choice-vision-start')return {task_id:'scroll-vision'};
+    if(path==='/api/form/control-vision-status')return {status:'complete',choice:true,session_id:'session',label:'Job location',comparison:'label_observed',capture_saved:true,result_saved:true,pending_finished:true};
+    if(path==='/api/form/custom-choice-scroll'){assert.equal(body.direction,'down');assert.equal(body.reviewed,true);return {task_id:'scroll-action'};}
+    if(path==='/api/form/custom-choice-action-status')return {status:'complete',scrolled:true,record_saved:true,previous_fields_verified:true};
+    throw new Error(`Unexpected request ${path}`);
+  };
+  const scrolling=run(new Node('panel'),{session_id:'session'},element,scrollApi);await scrolling.choicesButton.listeners.click();
+  const scrollSection=scrolling.choicesPanel.children[0];await scrollSection.children[3].listeners.click();
+  const scrollResult=scrollSection.children[4],scrollReview=scrollResult.children[1],down=scrollResult.children[3];
+  await down.listeners.click();assert.ok(!scrollCalls.includes('/api/form/custom-choice-scroll'));
+  scrollReview.children[0].checked=true;await down.listeners.click();assert.ok(scrollCalls.includes('/api/form/custom-choice-scroll'));
+  assert.ok(scrollResult.children.some(item=>/List moved/.test(item.text)));
+  let inventoryCalls=0;
+  const resumedApi=async(path,body)=>{
+    if(path==='/api/form/custom-choices'){inventoryCalls++;return {...openInventory,can_open:inventoryCalls>1};}
+    if(path==='/api/form/control-vision-pending')return {active:false};
+    if(path==='/api/form/custom-choice-vision-start')return {task_id:'after-scroll'};
+    if(path==='/api/form/control-vision-status')return {status:'complete',choice:true,session_id:'session',label:'Job location',comparison:'label_observed',capture_saved:true,result_saved:true,pending_finished:true,post_choice_review_finished:true};
+    throw new Error(`Unexpected request ${path}`);
+  };
+  const resumed=run(new Node('panel'),{session_id:'session'},element,resumedApi);await resumed.choicesButton.listeners.click();
+  const resumedSection=resumed.choicesPanel.children[0];await resumedSection.children[3].listeners.click();
+  assert.equal(inventoryCalls,2);assert.ok(resumedSection.children[4].children.some(item=>item.text==='Show later options'));
   console.log('Custom choice review UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

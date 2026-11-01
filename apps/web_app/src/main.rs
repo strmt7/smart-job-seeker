@@ -4204,10 +4204,22 @@ fn serve(
                 json!({"task_id":task_id,"screenshot":image,"capture_saved":capture_saved}),
             );
         }
-        "/api/form/custom-choice-open" | "/api/form/custom-choice-select" => {
+        "/api/form/custom-choice-open"
+        | "/api/form/custom-choice-select"
+        | "/api/form/custom-choice-scroll" => {
             let selecting = path == "/api/form/custom-choice-select";
+            let scrolling = path == "/api/form/custom-choice-scroll";
+            let scroll = if scrolling {
+                Some(match body["direction"].as_str() {
+                    Some("down") => true,
+                    Some("up") => false,
+                    _ => return Err("Choose a valid scroll direction".into()),
+                })
+            } else {
+                None
+            };
             if body["reviewed"] != true || body["source_reviewed"] != true {
-                return Err("Review the destination and choice before opening it".into());
+                return Err("Review the destination and choice before interacting".into());
             }
             if custom_choice_action::busy() {
                 return Err("A choice action is already running".into());
@@ -4333,7 +4345,7 @@ fn serve(
                 }
                 Some(value.to_owned())
             } else {
-                if matches[0].expanded
+                if matches[0].expanded != scrolling
                     || evidence["label"].as_str() != Some(matches[0].label.as_str())
                 {
                     return Err("Choice changed or is already open; inspect again".into());
@@ -4363,14 +4375,24 @@ fn serve(
             ) {
                 return Err("Choice or visual evidence changed; inspect again".into());
             }
-            let record = current
-                .record
-                .as_mut()
-                .ok_or("A disk-backed application record is required before opening a choice")?;
-            record.event(json!({"type":"custom_choice_action_requested","time":now(),"selector":selector,"option":option,"visual_task_id":task_id,"note":"Explicitly reviewed; no submission authorized."}))?;
+            if let Some(down) = scroll {
+                if !current
+                    .driver
+                    .with_review_timeout(|driver| {
+                        driver.custom_choice_scroll_available(&selector, down)
+                    })
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("The choice list is already at that boundary".into());
+                }
+            }
+            let record = current.record.as_mut().ok_or(
+                "A disk-backed application record is required before interacting with a choice",
+            )?;
+            record.event(json!({"type":"custom_choice_action_requested","time":now(),"selector":selector,"option":option,"scroll_down":scroll,"visual_task_id":task_id,"note":"Explicitly reviewed; no submission authorized."}))?;
             control_vision::consume_choice_evidence(task_id)?;
             let grant_id = random_id()?;
-            let payload = json!({"action":if selecting {"select_custom_choice"} else {"open_custom_choice"},"selector":selector,"option":option,"snapshot_digest":before,"visual_task_id":task_id}).to_string();
+            let payload = json!({"action":if selecting {"select_custom_choice"} else if scrolling {"scroll_custom_choice"} else {"open_custom_choice"},"selector":selector,"option":option,"scroll_down":scroll,"snapshot_digest":before,"visual_task_id":task_id}).to_string();
             ws.record_consumed_prefill_grant(&waypoint_store::prefill_grants::PrefillGrantRecord {
                 id: grant_id.clone(),
                 job_id: current.job_id.as_str().into(),
@@ -4387,9 +4409,14 @@ fn serve(
             let action_id = random_id()?;
             let revision = custom_choice_action::begin_pending(ws, &current.job_id, &action_id)?;
             let current = session.take().ok_or("Form session expired")?;
-            if let Err((current, error)) =
-                custom_choice_action::start(action_id.clone(), current, selector, option, revision)
-            {
+            if let Err((current, error)) = custom_choice_action::start(
+                action_id.clone(),
+                current,
+                selector,
+                option,
+                scroll,
+                revision,
+            ) {
                 let cleanup =
                     custom_choice_action::finish_pending(ws, &current.job_id, &action_id, revision);
                 *session = Some(*current);

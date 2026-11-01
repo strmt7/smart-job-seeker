@@ -205,6 +205,24 @@ unloaded afterward. These few cases do not establish general accuracy; other
 options may be absent from a virtualized list, and the user must review the
 suggestion and visual evidence.
 
+## Inspecting longer custom-choice lists
+
+The review panel can move one bounded wheel step up or down in a uniquely
+identified open, scrollable choice list after a saved, current visual check
+and an explicit review gesture. The action is recorded, rechecks previous
+values and requires a fresh visual review before another action. Scrolling can
+run site handlers. The browser inspects at most 500 option nodes and reports
+only currently rendered options; larger or differently implemented lists can
+still require manual work.
+
+On a fictional 41-option list, the browser revealed and selected `City 35`
+without submitting; a hidden duplicate of `City 01` was rejected. A separate
+fictional API run recorded a scroll and completed its post-scroll visual check
+with `gemma4:12b-it-qat`. The first model probe correctly failed to verify an
+accessible label that was not visibly rendered; the successful fixture made
+that label visible. These checks do not establish behavior on employer sites.
+The model was unloaded afterward.
+
 On a further fictional probe, `gemma4:12b-it-qat` chose Lisbon for an answer
 rejecting Berlin, abstained when two locations were acceptable or sponsorship
 was unknown, and ignored an instruction-like option in one test each. The

@@ -73,6 +73,7 @@ pub fn start(
     mut session: ReviewSession,
     selector: String,
     option: Option<String>,
+    scroll: Option<bool>,
     revision: i64,
 ) -> Result<(), (Box<ReviewSession>, String)> {
     let mut task = match TASK.lock() {
@@ -97,7 +98,12 @@ pub fn start(
     drop(task);
     std::thread::spawn(move || {
         let action = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if let Some(value) = option.as_deref() {
+            if let Some(down) = scroll {
+                session
+                    .driver
+                    .scroll_custom_choice_options(&selector, down)
+                    .map(Some)
+            } else if let Some(value) = option.as_deref() {
                 session
                     .driver
                     .select_custom_choice_option(&selector, value)
@@ -113,7 +119,7 @@ pub fn start(
             .with_review_timeout(|driver| driver.screenshot_base64())
             .ok();
         let saved = match (&mut session.record, &screenshot) {
-            (Some(record), Some(image)) => record.screenshot_with_name(image).and_then(|name| record.event(json!({"type":"custom_choice_action_result","time":now(),"selector":selector,"option":option,"succeeded":action.is_ok(),"screenshot":format!("screenshots/{name}"),"note":"A new visual review is required before further action."}))).is_ok(),
+            (Some(record), Some(image)) => record.screenshot_with_name(image).and_then(|name| record.event(json!({"type":"custom_choice_action_result","time":now(),"selector":selector,"option":option,"scroll_down":scroll,"succeeded":action.is_ok(),"screenshot":format!("screenshots/{name}"),"note":"A new visual review is required before further action."}))).is_ok(),
             _ => false,
         };
         let check = session.completed_selectors.first().cloned().map(|first| {
@@ -135,7 +141,7 @@ pub fn start(
         .is_ok();
         let result = match action {
             Ok(Some(choice)) => {
-                json!({"status":"complete","opened":true,"choice":choice,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
+                json!({"status":"complete","opened":scroll.is_none(),"scrolled":scroll.is_some(),"choice":choice,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
             }
             Ok(None) => {
                 json!({"status":"complete","selected":true,"option":option,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
@@ -480,7 +486,11 @@ mod tests {
             json!({"task_id":"choice-after"}),
         )
         .unwrap();
-        assert_eq!(visual["post_choice_review_finished"], true);
+        assert_eq!(
+            visual["post_choice_review_finished"], true,
+            "{:?}",
+            visual["comparison"]
+        );
         assert!(session.as_ref().unwrap().pending_choice_visual.is_none());
         let current = session.as_mut().unwrap();
         assert_eq!(
@@ -763,5 +773,192 @@ mod tests {
             .page_text_bounded(2000)
             .unwrap();
         assert!(text.contains("NOT SUBMITTED"), "{text}");
+
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_custom_choice_scroll.html");
+        let scroll_url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let scroll_job = JobIdentityId::new("scroll-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: scroll_job.clone(),
+            title: "Role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(scroll_url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let mut current = session.take().unwrap();
+        let live = current.driver.open(scroll_url.as_str()).unwrap();
+        current.id = "scroll-session".into();
+        current.job_id = scroll_job.clone();
+        current.url = scroll_url.to_string();
+        current.preview = form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        current.selected_choices.clear();
+        current.completed_selectors.clear();
+        current.filled = false;
+        current.pending_choice_visual = None;
+        current.record =
+            crate::attempt_record::AttemptRecord::start(&ws, &scroll_job, "scroll-fixture", now())
+                .unwrap();
+        session = Some(current);
+        let (inventory, digest) =
+            crate::custom_choice_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
+        let selector = inventory
+            .choices
+            .iter()
+            .find(|choice| choice.label == "City")
+            .unwrap()
+            .selector
+            .clone();
+        let image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_field_context(&selector)
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .record
+            .as_mut()
+            .unwrap()
+            .screenshot_with_name(&image)
+            .unwrap();
+        let revision =
+            crate::control_vision::begin_pending(&ws, &scroll_job, "scroll-visual", now()).unwrap();
+        crate::control_vision::set_choice_fixture(
+            "scroll-visual",
+            "scroll-session",
+            scroll_job.as_str(),
+            revision,
+            (&selector, &digest, &image, "City"),
+            true,
+        );
+        request(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-status",
+            json!({"task_id":"scroll-visual"}),
+        )
+        .unwrap();
+        let boundary = json!({"session_id":"scroll-session","visual_task_id":"scroll-visual","direction":"up","reviewed":true,"source_reviewed":true});
+        assert!(request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choice-scroll",
+            boundary
+        )
+        .unwrap_err()
+        .contains("boundary"));
+        let approval = json!({"session_id":"scroll-session","visual_task_id":"scroll-visual","direction":"down","reviewed":true,"source_reviewed":true});
+        let started = request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choice-scroll",
+            approval.clone(),
+        )
+        .unwrap();
+        let task = started["task_id"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let scrolled = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/custom-choice-action-status",
+                json!({"task_id":task}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(scrolled["scrolled"], true, "{:?}", scrolled["error"]);
+        assert_eq!(scrolled["record_saved"], true);
+        assert!(session.as_ref().unwrap().pending_choice_visual.is_some());
+        assert!(request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choice-scroll",
+            approval
+        )
+        .is_err());
+        let (_, digest) =
+            crate::custom_choice_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
+        let image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_field_context(&selector)
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .record
+            .as_mut()
+            .unwrap()
+            .screenshot_with_name(&image)
+            .unwrap();
+        let task = if std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref() == Ok("1") {
+            request(
+                &mut ws,
+                &mut session,
+                "/api/form/custom-choice-vision-start",
+                json!({"session_id":"scroll-session","selector":selector,"snapshot_digest":digest}),
+            )
+            .unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        } else {
+            let revision =
+                crate::control_vision::begin_pending(&ws, &scroll_job, "scroll-after", now())
+                    .unwrap();
+            crate::control_vision::set_choice_fixture(
+                "scroll-after",
+                "scroll-session",
+                scroll_job.as_str(),
+                revision,
+                (&selector, &digest, &image, "City"),
+                true,
+            );
+            "scroll-after".to_owned()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let visual = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/control-vision-status",
+                json!({"task_id":task}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(
+            visual["post_choice_review_finished"], true,
+            "{:?}",
+            visual["comparison"]
+        );
+        assert!(session.as_ref().unwrap().pending_choice_visual.is_none());
+        let (text, _) = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .page_text_bounded(5000)
+            .unwrap();
+        assert!(text.contains("NOT SUBMITTED"));
     }
 }

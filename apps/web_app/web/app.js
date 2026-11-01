@@ -472,6 +472,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
       if(!pending){const active=await api('/api/form/control-vision-pending',{});if(active.active){if(active.choice!==true || active.session_id!==result.session_id)throw new Error('Another control visual check is pending');pending={task:active.task_id,session:result.session_id,selector:choice.selector};}else{const started=await api('/api/form/custom-choice-vision-start',{session_id:result.session_id,selector:choice.selector,snapshot_digest:inventory.snapshot_digest});pending={task:started.task_id,session:result.session_id,selector:choice.selector};}sessionStorage.setItem('waypoint-choice-vision',JSON.stringify(pending));}
       let outcome;do{await new Promise(resolve=>setTimeout(resolve,1000));outcome=await api('/api/form/control-vision-status',{task_id:pending.task});}while(outcome.status==='running');
       sessionStorage.removeItem('waypoint-choice-vision');if(outcome.status!=='complete'||outcome.choice!==true||outcome.session_id!==result.session_id||outcome.label!==choice.label)throw new Error(outcome.error || 'Choice visual check does not match this control; inspect again');
+      if(outcome.post_choice_review_finished===true){const current=await api('/api/form/custom-choices',{session_id:result.session_id});if(current.snapshot_digest!==inventory.snapshot_digest)throw new Error('The page changed; inspect choices again');inventory.can_open=current.can_open;}
       visualResult.replaceChildren(element('p',outcome.comparison==='label_observed'?'The local model observed the label. Review the live control; this does not verify its action.':'The label could not be reliably verified. Review the live control manually.','review-label'));
       if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured choice control';image.src=`data:image/png;base64,${outcome.screenshot}`;visualResult.append(image);}
       if(outcome.capture_saved===false || outcome.result_saved===false)visualResult.append(element('p','The visual evidence could not be saved to the application record.','review-label'));
@@ -488,6 +489,20 @@ function showFormPreview(job,result){setWorkspaceView('applications');
          visualResult.append(element('p','Choice opened. Inspect the options and run a new visual check before any further action.','review-label'));if(opened.screenshot){const image=document.createElement('img');image.alt='Choice after opening';image.src=`data:image/png;base64,${opened.screenshot}`;visualResult.append(image);}
         }catch(error){visualResult.append(element('p',`Choice action needs review and was not retried: ${error.message}`,'review-label'));}
        });
+      }
+      if(outcome.comparison==='label_observed' && outcome.capture_saved===true && outcome.result_saved===true && outcome.pending_finished===true && inventory.can_open===true && choice.expanded){
+       const review=element('label',''),confirm=document.createElement('input');confirm.type='checkbox';review.append(confirm,document.createTextNode(' I reviewed this choice and destination. Scrolling may trigger site activity.'));visualResult.append(review);
+       let moving=false;for(const direction of ['up','down']){const move=element('button',direction==='up'?'Show earlier options':'Show later options');move.type='button';visualResult.append(move);move.addEventListener('click',async()=>{
+        if(moving)return;if(!confirm.checked){visualResult.append(element('p','Confirm the choice and destination first.','review-label'));return;}moving=true;move.disabled=true;
+        try{
+         let action;try{action=JSON.parse(sessionStorage.getItem('waypoint-choice-action')||'null');}catch(_){}
+         if(action && action.session!==result.session_id)throw new Error('Another choice action is pending');
+         if(!action){const active=await api('/api/form/custom-choice-action-pending',{});if(active.active){if(active.session_id!==result.session_id)throw new Error('Another choice action is pending');action={task:active.task_id,session:result.session_id};}else{const started=await api('/api/form/custom-choice-scroll',{session_id:result.session_id,visual_task_id:pending.task,direction,reviewed:true,source_reviewed:true});action={task:started.task_id,session:result.session_id};}sessionStorage.setItem('waypoint-choice-action',JSON.stringify(action));}
+         let moved;do{await new Promise(resolve=>setTimeout(resolve,700));moved=await api('/api/form/custom-choice-action-status',{task_id:action.task});}while(moved.status==='running');sessionStorage.removeItem('waypoint-choice-action');
+         if(moved.status!=='complete' || moved.scrolled!==true || moved.record_saved!==true || moved.previous_fields_verified!==true)throw new Error(moved.error || 'The result needs manual review');
+         visualResult.append(element('p','List moved. Inspect choices again and visually review the control before further action.','review-label'));if(moved.screenshot){const image=document.createElement('img');image.alt='Choice after scrolling';image.src=`data:image/png;base64,${moved.screenshot}`;visualResult.append(image);}
+        }catch(error){visualResult.append(element('p',`Choice action needs review and was not retried: ${error.message}`,'review-label'));}
+       });}
       }
      }catch(error){visualResult.replaceChildren(element('p',`Choice visual check unavailable: ${error.message}`,'review-label'));}finally{visual.disabled=false;}
     });section.append(visual,visualResult);
