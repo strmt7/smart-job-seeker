@@ -1,3 +1,8 @@
+## Interrupted search plan recovery — 2026-11-01
+
+- Wider-web batch checkpoints retain the approved phrase and page plan, including at the first checkpoint before a page is collected. After a restart, the interface can prepare phrases with failed or unsaved pages for the user to review and search again. It does not start a search automatically or replace text already entered in the form; rerunning repeats all requested pages for those phrases and replaces the displayed batch results. The interface warns about both.
+- The checkpoint remains subject to successful encrypted workspace persistence and periodic checkpoint timing; a crash before the first checkpoint can still lose the plan, and an in-flight page remains unknown. Older checkpoints without a plan have no retry control. Fourteen batch tests, focused UI checks and web-app Clippy passed, including a zero-result checkpoint and reopen fixture. No live provider or employer was contacted in this change, and no application was submitted.
+
 ## Email duplicate recheck gate — 2026-11-01
 
 - Email approval, rehearsal and reservation now treat an active legacy duplicate-recheck cursor as pending indexing, even when every job already has an index row. The check occurs in the same database transaction as the existing handoff gate. Acknowledging bounded coverage does not bypass pending work; an existing approval is not consumed by the refusal.
