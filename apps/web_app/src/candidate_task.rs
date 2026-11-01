@@ -61,6 +61,14 @@ fn bounded(value: &str, max: usize) -> String {
 }
 
 fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
+    parse_structured(scripts, url, false)
+}
+
+fn parse_structured(
+    scripts: &[String],
+    url: &str,
+    allow_partial: bool,
+) -> Result<Option<Value>, String> {
     let mut found = Vec::new();
     for script in scripts {
         let Ok(data) = serde_json::from_str::<Value>(script) else {
@@ -110,7 +118,7 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
         job["hiringOrganization"]["name"].as_str().unwrap_or(""),
         200,
     );
-    if title.is_empty() || employer.is_empty() {
+    if !allow_partial && (title.is_empty() || employer.is_empty()) {
         return Err(MISSING_STRUCTURED_IDENTITY.into());
     }
     let raw = job["description"].as_str().unwrap_or("");
@@ -210,17 +218,62 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
 
 /// Only a single structured posting missing its identity may use the text
 /// fallback. Multiple postings and other structural errors remain ambiguous.
-fn structured_or_fallback(scripts: &[String], url: &str) -> Result<(Option<Value>, bool), String> {
+fn structured_or_fallback(
+    scripts: &[String],
+    url: &str,
+) -> Result<(Option<Value>, Option<Value>), String> {
     match parse(scripts, url) {
-        Ok(posting) => Ok((posting, false)),
-        Err(error) if error == MISSING_STRUCTURED_IDENTITY => Ok((None, true)),
+        Ok(posting) => Ok((posting, None)),
+        Err(error) if error == MISSING_STRUCTURED_IDENTITY => {
+            Ok((None, parse_structured(scripts, url, true)?))
+        }
         Err(error) => Err(error),
     }
 }
 
-fn warn_incomplete_structured(job: &mut Value, incomplete: bool) {
-    if incomplete {
+fn merge_partial_structured(job: &mut Value, partial: Option<&Value>) {
+    if let Some(partial) = partial {
         job["extraction_warnings"].as_array_mut().expect("fallback warnings").push(json!("The page's structured job data omitted its title or employer; the identity was recovered from page text and requires review."));
+        let normalized = |value: &str| {
+            value
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        let known: Vec<_> = ["title", "employer"]
+            .into_iter()
+            .filter_map(|key| {
+                partial[key]
+                    .as_str()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| (key, value))
+            })
+            .collect();
+        let agrees = !known.is_empty()
+            && known.iter().all(|(key, value)| {
+                job[*key]
+                    .as_str()
+                    .is_some_and(|other| normalized(other) == normalized(value))
+            });
+        if agrees {
+            let mut copied = Vec::new();
+            for key in ["description", "requisition_id"] {
+                if partial[key]
+                    .as_str()
+                    .is_some_and(|value| !value.trim().is_empty())
+                {
+                    job[key] = partial[key].clone();
+                    copied.push(key);
+                }
+            }
+            if !copied.is_empty() {
+                job["extraction_warnings"].as_array_mut().expect("fallback warnings").push(json!("Description or requisition came from incomplete structured data; verify its connection to the recovered listing."));
+                job["partial_structured_fields"] = json!(copied);
+            }
+        } else if !known.is_empty() {
+            job["extraction_warnings"].as_array_mut().expect("fallback warnings").push(json!("Structured identity conflicts with recovered page text; structured details were not used."));
+        }
     }
 }
 
@@ -476,7 +529,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
                 let mut job=extract_page_text(&mut inference,&page_text,&current)?;
                 job["page_text_truncated"]=json!(truncated);
-                warn_incomplete_structured(&mut job, incomplete_structured);
+                merge_partial_structured(&mut job, incomplete_structured.as_ref());
                 job
             };
             if !frame_warnings.is_empty() {
@@ -983,11 +1036,11 @@ mod tests {
     }
     #[test]
     fn incomplete_structured_posting_uses_reviewable_text_fallback_only() {
-        let partial = json!({"@type":"JobPosting","title":"Research Engineer"}).to_string();
+        let partial = json!({"@type":"JobPosting","title":"Research Engineer","identifier":{"value":"EX-123"},"description":"Detailed fictional responsibilities"}).to_string();
         let (job, incomplete) =
             structured_or_fallback(std::slice::from_ref(&partial), "https://example.org/job")
                 .unwrap();
-        assert!(job.is_none() && incomplete);
+        assert!(job.is_none() && incomplete.is_some());
         let capture = json!({"source_url":"https://example.org/job","structured_source_status":"captured","structured_source_scripts":[partial.clone()]}).to_string();
         assert!(captured_posting_evidence(capture.as_bytes())
             .unwrap()
@@ -1000,7 +1053,32 @@ mod tests {
             json!({"title":"Research Engineer","employer":"Example Lab","location":"Berlin","description":"Build materials systems in a cross-functional team."}),
         );
         let mut job = extract_page_text(&mut model, source, "https://example.org/job").unwrap();
-        warn_incomplete_structured(&mut job, incomplete);
+        merge_partial_structured(&mut job, incomplete.as_ref());
+        assert_eq!(job["requisition_id"], "EX-123");
+        assert_eq!(job["description"], "Detailed fictional responsibilities");
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        crate::manual_job::add(&mut ws, &job, 1).unwrap();
+        crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/another","title":"Laboratory Specialist","employer":"Example Lab","requisition_id":"EX-123"}), 2).unwrap();
+        assert!(ws
+            .possible_duplicates()
+            .unwrap()
+            .iter()
+            .any(|pair| pair.reason.contains("Matching requisition")));
+        let mut conflict = extract_page_text(&mut Fake(json!({"title":"Research Engineer","employer":"Example Lab","location":"Berlin","description":""})), source, "https://example.org/job").unwrap();
+        let mut different = incomplete.clone().unwrap();
+        different["title"] = json!("Unrelated Role");
+        merge_partial_structured(&mut conflict, Some(&different));
+        assert!(conflict["requisition_id"].is_null());
+        assert!(conflict["extraction_warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("conflicts")));
+        let mut unbound = incomplete.clone().unwrap();
+        unbound["title"] = json!("");
+        let mut job_without_anchor = extract_page_text(&mut Fake(json!({"title":"Research Engineer","employer":"Example Lab","location":"Berlin","description":""})), source, "https://example.org/job").unwrap();
+        merge_partial_structured(&mut job_without_anchor, Some(&unbound));
+        assert!(job_without_anchor["requisition_id"].is_null());
         assert!(job["extraction_warnings"]
             .as_array()
             .unwrap()
@@ -1020,7 +1098,7 @@ mod tests {
         let scripts = browser.structured_data_scripts().unwrap();
         let (job, incomplete) =
             structured_or_fallback(&scripts, "https://example.org/job").unwrap();
-        assert!(job.is_none() && incomplete);
+        assert!(job.is_none() && incomplete.is_some());
         let (text, truncated) = browser.page_text_bounded(16_000).unwrap();
         assert!(!truncated);
         let name = crate::resident_model().unwrap().unwrap();
@@ -1030,10 +1108,11 @@ mod tests {
         let mut model =
             crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
         let mut job = extract_page_text(&mut model, &text, "https://example.org/job").unwrap();
-        warn_incomplete_structured(&mut job, incomplete);
+        merge_partial_structured(&mut job, incomplete.as_ref());
         println!("Partial listing model result: {job}");
         assert_eq!(job["title"], "Research Engineer");
         assert_eq!(job["employer"], "Example Lab");
+        assert_eq!(job["requisition_id"], "EX-123");
         assert!(job["extraction_warnings"]
             .as_array()
             .unwrap()
