@@ -7217,6 +7217,67 @@ mod tests {
         assert_eq!(reopened["result"], result);
     }
 
+    #[cfg(all(windows, feature = "sqlcipher"))]
+    #[test]
+    #[ignore = "requires a resource-gated resident local model"]
+    fn live_sequential_drafts_save_for_two_fictional_jobs() {
+        let _guard = draft_task::TEST_LOCK.lock().unwrap();
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        assert!(resident_model().unwrap().is_some());
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open_encrypted(dir.path()).unwrap();
+        ws.add_fact(
+            "Built Rust services and tested them with users.",
+            FactOrigin::UserAttested,
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let request = |ws: &mut Workspace, path: &str, body: Value| -> Value {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = body.to_string();
+            write!(client,"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            serve(&mut server, ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        for (index, title) in ["Rust developer", "Software engineer"].iter().enumerate() {
+            let added = manual_job::add(&mut ws, &json!({"url":format!("https://example.org/role-{index}"),"title":title,"employer":"Fictional employer","description":"Build and test Rust services."}), 1).unwrap();
+            let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            ws.set_state(&id, ApplicationState::Shortlisted).unwrap();
+            let started = request(
+                &mut ws,
+                "/api/draft/start",
+                json!({"id":id.as_str(),"kind":"cv","priority_ids":[]}),
+            );
+            let task = started["task_id"].as_str().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(240);
+            loop {
+                let result = request(&mut ws, "/api/draft/status", json!({"task_id":task}));
+                if result["status"] != "running" {
+                    assert_eq!(result["status"], "complete", "{result}");
+                    assert_eq!(result["saved"], true);
+                    assert_eq!(result["current"], true);
+                    assert!(!result["draft"]["paragraphs"].as_array().unwrap().is_empty());
+                    let saved = request(
+                        &mut ws,
+                        "/api/draft/read",
+                        json!({"id":id.as_str(),"draft_id":task}),
+                    );
+                    assert_eq!(saved["current"], true);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "draft timed out");
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+    }
+
     #[test]
     fn reviewed_answers_require_known_non_sensitive_fields_and_unique_options() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
