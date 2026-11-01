@@ -16,10 +16,42 @@ static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::ne
 const RETENTION: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn words(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
-        .filter(|word| word.chars().count() >= 3 && word.len() <= 48)
-        .map(|word| word.to_lowercase())
-        .collect()
+    let mut result = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        if !character.is_alphanumeric() && character != '+' && character != '#' {
+            continue;
+        }
+        let mut end = start + character.len_utf8();
+        while let Some(&(index, next)) = chars.peek() {
+            if !next.is_alphanumeric() && next != '+' && next != '#' {
+                break;
+            }
+            chars.next();
+            end = index + next.len_utf8();
+        }
+        let word = &text[start..end];
+        let dotnet = word.eq_ignore_ascii_case("net")
+            && text[..start].strip_suffix('.').is_some_and(|prefix| {
+                prefix
+                    .chars()
+                    .next_back()
+                    .is_none_or(|previous| !previous.is_alphanumeric())
+            });
+        if word.len() <= 48
+            && (word.chars().count() >= 3
+                || matches!(word, "C" | "R")
+                || word.eq_ignore_ascii_case("c#")
+                || word.eq_ignore_ascii_case("f#"))
+        {
+            result.push(if dotnet {
+                ".net".into()
+            } else {
+                word.to_lowercase()
+            });
+        }
+    }
+    result
 }
 fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     if !name.to_ascii_lowercase().ends_with(".docx") {
@@ -555,5 +587,36 @@ mod tests {
                 .any(|fact| fact == "Used Python for research")
         );
         assert!(report("cv.txt", b"", "A role", &[]).is_err());
+    }
+
+    #[test]
+    fn short_technology_names_and_dotnet_remain_distinct() {
+        assert_eq!(
+            words("C C# C++ F# R .NET net example.net a I"),
+            vec!["c", "c#", "c++", "f#", "r", ".net", "net", "example", "net"]
+        );
+        let result = report(
+            "cv.txt",
+            b"Fictional engineer: C#, C++, R and .NET.",
+            "Experience with C#, C++, R, .NET and F#; net income reporting.",
+            &["Used F# for analysis".into()],
+        )
+        .unwrap();
+        let terms = result["terms"].as_array().unwrap();
+        for term in ["c#", "c++", "r", ".net"] {
+            assert!(
+                terms
+                    .iter()
+                    .any(|item| item["term"] == term && item["present"] == true),
+                "{term}"
+            );
+        }
+        let fsharp = terms.iter().find(|item| item["term"] == "f#").unwrap();
+        assert_eq!(fsharp["present"], false);
+        assert_eq!(fsharp["matching_qualifications"][0], "Used F# for analysis");
+        assert_eq!(
+            terms.iter().find(|item| item["term"] == "net").unwrap()["present"],
+            false
+        );
     }
 }
