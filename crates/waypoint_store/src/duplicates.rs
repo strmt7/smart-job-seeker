@@ -241,7 +241,13 @@ impl Store {
                 params![job.id.as_str(), token],
             )?;
         }
-        if tokens.is_empty() {
+        let missing_employer = tokens.is_empty();
+        let usable_requisition = job
+            .requisition_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| id.len() >= 3);
+        if missing_employer && usable_requisition.is_none() {
             self.conn.execute("INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,'missing_employer',0)", [job.id.as_str()])?;
             self.conn.execute(
                 "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
@@ -281,6 +287,34 @@ impl Store {
                 if candidates.len() >= 200 {
                     break;
                 }
+            }
+        }
+        // A missing employer cannot share a token. An exact requisition plus
+        // corroborating title or description can still warrant user review.
+        // The requisition index bounds this search; it never merges jobs.
+        if let Some(requisition) = usable_requisition.filter(|_| candidates.len() < 200) {
+            let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j INDEXED BY jobs_requisition_lookup WHERE lower(trim(j.requisition_id))=?1 AND j.id<>?2 AND (?3 OR NOT EXISTS (SELECT 1 FROM job_employer_tokens t WHERE t.job_id=j.id)) ORDER BY j.id LIMIT 200")?;
+            let mut count = 0usize;
+            for row in stmt.query_map(
+                params![
+                    requisition.to_ascii_lowercase(),
+                    job.id.as_str(),
+                    missing_employer
+                ],
+                Self::row_to_job,
+            )? {
+                count += 1;
+                let other = row?;
+                if seen.insert(other.id.as_str().to_owned()) {
+                    candidates.push(other);
+                }
+                if candidates.len() >= 200 {
+                    bounded = true;
+                    break;
+                }
+            }
+            if count >= 200 {
+                bounded = true;
             }
         }
         let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM job_employer_tokens t JOIN jobs j ON j.id=t.job_id WHERE t.token=?1 AND j.id<>?2 ORDER BY j.id LIMIT 200")?;
@@ -339,7 +373,8 @@ impl Store {
         let candidate_count = candidates.len();
         let mut result = Vec::new();
         for other in candidates {
-            let employer_score = overlap(&employer_tokens, &employer_words(&other.employer));
+            let other_employer = employer_words(&other.employer);
+            let employer_score = overlap(&employer_tokens, &other_employer);
             let same_acronym = acronym
                 .as_ref()
                 .is_some_and(|key| employer_acronym(&other.employer).as_ref() == Some(key));
@@ -352,7 +387,12 @@ impl Store {
                 });
             // An exact identifier with a related employer is a review signal,
             // not proof: different employers may reuse identifiers.
-            if employer_score < 65 && !(same_requisition && employer_score >= 40) && !same_acronym {
+            let missing_employer_pair = employer_tokens.is_empty() || other_employer.is_empty();
+            if employer_score < 65
+                && !(same_requisition && employer_score >= 40)
+                && !same_acronym
+                && !(same_requisition && missing_employer_pair)
+            {
                 continue;
             }
             let score = title_score(&job.title, &other.title);
@@ -363,6 +403,11 @@ impl Store {
             } else {
                 0
             };
+            // Requisition identifiers can be reused across unrelated employers;
+            // missing employer data requires independent textual corroboration.
+            if missing_employer_pair && same_requisition && score < 65 && description_score < 85 {
+                continue;
+            }
             if score < 65
                 && !(score >= 30 && description_score >= 75)
                 && description_score < 85
@@ -375,7 +420,7 @@ impl Store {
             } else {
                 (other.id.as_str(), job.id.as_str())
             };
-            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, description overlap {description_score}%. {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" });
+            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, description overlap {description_score}%. {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=excluded.reason", params![job_a,job_b,score,reason])?;
             let (status, preferred_job) = self.conn.query_row(
                 "SELECT status,preferred_job FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
@@ -395,7 +440,13 @@ impl Store {
             "INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,?2,?3)",
             params![
                 job.id.as_str(),
-                if bounded { "bounded" } else { "complete" },
+                if missing_employer {
+                    "missing_employer"
+                } else if bounded {
+                    "bounded"
+                } else {
+                    "complete"
+                },
                 candidate_count as i64
             ],
         )?;
@@ -614,6 +665,79 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn missing_employer_with_matching_requisition_and_role_is_reviewed_in_either_order() {
+        for reverse in [false, true] {
+            let mut store = Store::in_memory().unwrap();
+            let known = job(
+                "known",
+                "Senior Software Engineer",
+                "Example Labs",
+                Some("REQ-481"),
+            );
+            let missing = job("missing", "Software Engineer", "", Some("req-481"));
+            for item in if reverse {
+                [&missing, &known]
+            } else {
+                [&known, &missing]
+            } {
+                store.upsert_job(item).unwrap();
+                store.find_possible_duplicates(item).unwrap();
+            }
+            let matches = store.possible_duplicates().unwrap();
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].status, "pending");
+            assert!(matches[0].reason.contains("Employer missing"));
+            assert!(store.has_duplicate_hold("known").unwrap());
+            assert!(store.has_duplicate_hold("missing").unwrap());
+            assert_eq!(store.all_jobs().unwrap().len(), 2);
+            assert_eq!(store.duplicate_coverage_counts().unwrap().3, 1);
+        }
+    }
+
+    #[test]
+    fn missing_employer_allows_distinct_titles_with_strong_description_evidence() {
+        let mut store = Store::in_memory().unwrap();
+        let known = job(
+            "known",
+            "Computational biologist",
+            "Example Institute",
+            Some("REQ-481"),
+        );
+        let missing = job("missing", "Genomics specialist", "", Some("REQ-481"));
+        let description = "Analyze genomic sequencing data using Python and statistical methods collaborate with research teams prepare reproducible results manage experiments communicate findings across interdisciplinary scientific projects and maintain accurate documentation daily";
+        for item in [&known, &missing] {
+            store.upsert_job(item).unwrap();
+            store
+                .set_job_description(&item.id, Some(description))
+                .unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        let matches = store.possible_duplicates().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].reason.contains("description overlap 100%"));
+        assert_eq!(matches[0].status, "pending");
+    }
+
+    #[test]
+    fn missing_employer_requisition_alone_is_not_sufficient() {
+        let mut store = Store::in_memory().unwrap();
+        let known = job(
+            "known",
+            "Research Scientist",
+            "Example Labs",
+            Some("REQ-481"),
+        );
+        let unrelated = job("other", "Restaurant Manager", "", Some("REQ-481"));
+        let other_id = job("other-id", "Research Scientist", "", Some("REQ-999"));
+        let no_id = job("no-id", "Research Scientist", "", None);
+        for item in [&known, &unrelated, &other_id, &no_id] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        assert!(store.possible_duplicates().unwrap().is_empty());
     }
 
     #[test]
