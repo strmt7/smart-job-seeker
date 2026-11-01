@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Focused native-choice visual review — 2026-11-01
+
+- On a fictional browser datalist (fixture SHA-256 `349daa309d0eb70c02f376b9b5dbe20c09a0206e88330d259222ae29138c9c65`), `gemma4:12b-it-q4_K_M` first read the selected value but appended an empty section separator to its label, leaving the match unobserved. The focused prompt now instructs the model to use a separator only between visible headings and field labels. On rerun, the selected value was visually matched and checked against the live control; the blank changing field was not confirmed.
+- The isolated CPU test took 17.82 seconds after preload, with at least 17.66 GiB RAM available during the run. A separate regression run passed the full-page, focused-heading and control-only section checks in 54.36 seconds, with at least 17.09 GiB available; RAM returned to 27.0 GiB after cleanup. Focused unit tests and lint passed. These fictional cases do not establish general model reliability. Outputs are retained under `target/model-eval/isolated-gemma-datalist-prompt-20261101` and `target/model-eval/isolated-gemma-section-prompt-regression-20261101`.
+
 ## Focused visual-review prompt — 2026-11-01
 
 - A fictional sectioned form exposed prompt contamination: when the requested qualified label was included in the focused prompt, `gemma4:12b-it-q4_K_M` returned that label even for an image containing only the control and no visible label or heading. The focused prompt now asks for visible fields without supplying the requested label; matching to the expected label happens afterward. A mock-service test checks that the requested label is absent from the prompt.
