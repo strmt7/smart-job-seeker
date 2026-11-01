@@ -11,9 +11,9 @@ const context={selectedCandidates:selected,candidateSelectionReady:true,lastRend
 const render=vm.runInNewContext(`${candidate}\n${source.slice(start,end)}\nrenderWebBatch`,context);
 const items=Array.from({length:120},(_,i)=>({url:`https://example.test/${i}`,title:`Role ${i}`,snippet:''}));
 Object.assign(items[0],{engines:['fixture'],published_date:'2026-10-01',alternative_published_dates:['2026-10-02'],engines_limited:false,dates_limited:true});
-const batch={groups:[{query:'roles',page:1,data:{results:items}}]};
+const batch={groups:[{query:'roles',page:1,data:{results:items}},{query:'other',page:2,data:{results:[],repeated_references:[{url:'https://example.test/0',engines:['second'],published_date:'2026-10-03'},{url:'https://example.test/unrelated',engines:['wrong']}],repeated_references_omitted:1}}]};
 function select(){const controls=panel.children[0],button=controls.children.find(item=>item.textContent==='Select this page');button.listeners.click();}
-render(batch);select();assert.equal(selected.size,40);assert.equal(JSON.stringify(selected.get('https://example.test/0').search_context),JSON.stringify({engines:['fixture'],published_date:'2026-10-01',alternative_published_dates:['2026-10-02'],engines_limited:false,dates_limited:true}));
+render(batch);select();assert.equal(selected.size,40);assert.equal(JSON.stringify(selected.get('https://example.test/0').search_context),JSON.stringify({engines:['fixture','second'],published_date:'2026-10-01',alternative_published_dates:['2026-10-02','2026-10-03'],engines_limited:false,dates_limited:true,coverage_limited:true}));assert.deepEqual(items[0].engines,['fixture']);
 context.webBatchPage=1;render(batch);select();assert.equal(selected.size,80);
 context.webBatchPage=2;render(batch);select();assert.equal(selected.size,100);assert.match(notices[0],/20 listings were not selected/);
 const clear=panel.children[0].children.find(item=>item.textContent==='Clear selected listings');clear.listeners.click();assert.equal(selected.size,0);

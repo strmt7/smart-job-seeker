@@ -34,16 +34,21 @@ pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
     let dates_limited = value["dates_limited"]
         .as_bool()
         .ok_or("Invalid search context flag")?;
+    let coverage_limited = match value.get("coverage_limited") {
+        None => false,
+        Some(flag) => flag.as_bool().ok_or("Invalid search context flag")?,
+    };
     if engines.is_empty()
         && date.is_empty()
         && dates.is_empty()
         && !engines_limited
         && !dates_limited
+        && !coverage_limited
     {
         return Ok(None);
     }
     Ok(Some(
-        json!({"engines":engines,"published_date":date,"alternative_published_dates":dates,"engines_limited":engines_limited,"dates_limited":dates_limited}),
+        json!({"engines":engines,"published_date":date,"alternative_published_dates":dates,"engines_limited":engines_limited,"dates_limited":dates_limited,"coverage_limited":coverage_limited}),
     ))
 }
 
@@ -136,6 +141,16 @@ mod tests {
         let saved = validate(&json!([item])).unwrap();
         assert_eq!(saved[0]["search_context"]["engines"], json!(["one", "two"]));
         assert!(saved[0]["search_context"].get("untrusted_extra").is_none());
+        assert_eq!(saved[0]["search_context"]["coverage_limited"], false);
+        let mut limited = saved[0].clone();
+        limited["search_context"]["coverage_limited"] = json!(true);
+        assert_eq!(
+            validate(&json!([limited])).unwrap()[0]["search_context"]["coverage_limited"],
+            true
+        );
+        let mut bad = saved[0].clone();
+        bad["search_context"]["coverage_limited"] = json!("yes");
+        assert!(validate(&json!([bad])).is_err());
         let mut bad = saved[0].clone();
         bad["search_context"]["engines"] = json!(vec!["one"; 9]);
         assert!(validate(&json!([bad])).is_err());

@@ -1032,3 +1032,7 @@ Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging chec
 | Validation | `cargo fmt`; `cargo clippy --all-targets` -> 0 warnings; `cargo test --workspace` -> 183 pass (+5 real-browser tests, run in CI); `cargo audit --deny warnings` -> clean (yanked `yoke-derive` replaced by 0.8.4); live network + live model probes pass; `cargo deny check` -> licenses/bans/sources ok; release binary PE32+ 14.3 MB |
 | Known blockers | signing cert + installer; SQLCipher; production inference adapter; browser CDP wiring; a11y observation session |
 | Next smallest action | Wire `OllamaInference` into the drafting/interview flows, then SQLCipher integration |
+
+### Search attribution across batch pages (2026-11-01)
+
+The batch candidate view merges provider-reported engine names and dates from retained repeated references for the same exact URL before selection or inspection. It retains at most eight engines and four alternate dates and marks incomplete coverage when pages fail, are limited, or omit repeated references. These reports remain unverified; repeated references are themselves capped per page. A selection is a snapshot: clear and reselect it to include reports arriving later. Lost-save recovery compares the attribution as well as URL and title, and older selections without the coverage flag remain readable. Focused selection tests and the web UI checks passed locally; no external provider or employer was contacted for this change.
