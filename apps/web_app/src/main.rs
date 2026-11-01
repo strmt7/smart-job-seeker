@@ -749,6 +749,8 @@ fn read_fit_with_context(
                         fit_task::preference_coverage(&assessment)
                     };
                 assessment["preference_coverage"] = json!(coverage);
+                assessment["requirement_coverage"] =
+                    json!(fit_task::requirement_coverage(&assessment));
                 Ok(
                     json!({"status":"current","assessment":assessment,"model":value["model"],"user_review":value["user_review"],"review_history":value["review_history"],"review_history_omitted":value["review_history_omitted"],"review_revision":fit_review_revision(&value)}),
                 )
@@ -2650,7 +2652,7 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
-                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
+                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"requirement_coverage":value["assessment"]["requirement_coverage"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
                     }
                     Ok(value) => json!({"id":id.as_str(),"status":value["status"]}),
                     Err(_) => json!({"id":id.as_str(),"status":"unavailable"}),
@@ -8138,7 +8140,7 @@ mod tests {
         )
         .unwrap();
         let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
-        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","status":"contradicted","excerpt":"Fictional remote-only preference"}]});
+        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","importance":"required","status":"contradicted","excerpt":"Fictional remote-only preference"},{"source":"listing","importance":"required","status":"unknown","excerpt":"Fictional requirement"}]});
         ws.save_fit_assessment(
             &id,
             json!({"input_digest":digest,"assessment":assessment,"model":"fixture","user_review":{"score":75,"score_range":{"lower":50,"upper":100},"decisions":[{"private":"Fictional private review"}]}})
@@ -8161,6 +8163,7 @@ mod tests {
             json["results"][0]["preference_coverage"],
             "possible_conflict"
         );
+        assert_eq!(json["results"][0]["requirement_coverage"], "needs_review");
         assert_eq!(json["results"][0]["review_score"], 75);
         assert_eq!(
             json["results"][0]["review_range"],

@@ -745,6 +745,8 @@ fn assess_with_source(
                         assessment["requirement_audit"] = completeness;
                         assessment["preference_audit"] = preference_audit;
                         assessment["preference_coverage"] = json!(preference_coverage(&assessment));
+                        assessment["requirement_coverage"] =
+                            json!(requirement_coverage(&assessment));
                         assessment["redundancy_review"] =
                             review_redundant_criteria(model, &assessment, listing);
                         return Ok(assessment);
@@ -837,6 +839,53 @@ pub(crate) fn reviewed_rubric(assessment: &Value, decisions: &Value) -> Result<V
     Ok(
         json!({"decisions":clean,"score":round(supported * 2 + unknown, total * 2),"score_range":{"lower":round(supported,total),"upper":round(supported + unknown,total)},"note":"User-reviewed scenario; the original model assessment is unchanged."}),
     )
+}
+
+/// Summarize the model's required job criteria, not the completeness of the listing.
+pub(crate) fn requirement_coverage(assessment: &Value) -> &'static str {
+    let Some(rubric) = assessment["rubric"]
+        .as_array()
+        .filter(|items| !items.is_empty() && items.len() <= 12)
+    else {
+        return "unavailable";
+    };
+    let mut required = 0;
+    let mut unknown = false;
+    let mut conflict = false;
+    for item in rubric {
+        let Some(source) = item["source"]
+            .as_str()
+            .filter(|s| matches!(*s, "listing" | "preference"))
+        else {
+            return "unavailable";
+        };
+        let Some(importance) = item["importance"]
+            .as_str()
+            .filter(|s| matches!(*s, "required" | "preferred"))
+        else {
+            return "unavailable";
+        };
+        let Some(status) = item["status"]
+            .as_str()
+            .filter(|s| matches!(*s, "supported" | "unknown" | "contradicted"))
+        else {
+            return "unavailable";
+        };
+        if source == "listing" && importance == "required" {
+            required += 1;
+            unknown |= status == "unknown";
+            conflict |= status == "contradicted";
+        }
+    }
+    if conflict {
+        "possible_conflict"
+    } else if unknown {
+        "needs_review"
+    } else if required == 0 {
+        "none_identified"
+    } else {
+        "supported"
+    }
 }
 
 /// Summarize evidence gaps for the job-list badge without claiming that a
@@ -2219,6 +2268,25 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn required_job_coverage_exposes_unknown_conflict_and_missing_rubrics() {
+        let mut assessment = json!({"rubric":[
+            {"source":"listing","importance":"required","status":"supported"},
+            {"source":"listing","importance":"preferred","status":"unknown"},
+            {"source":"preference","importance":"required","status":"contradicted"}
+        ]});
+        assert_eq!(requirement_coverage(&assessment), "supported");
+        assessment["rubric"][0]["status"] = json!("unknown");
+        assert_eq!(requirement_coverage(&assessment), "needs_review");
+        assessment["rubric"][0]["status"] = json!("contradicted");
+        assert_eq!(requirement_coverage(&assessment), "possible_conflict");
+        assessment["rubric"][0]["importance"] = json!("preferred");
+        assert_eq!(requirement_coverage(&assessment), "none_identified");
+        assessment["rubric"][1]["status"] = json!("invalid");
+        assert_eq!(requirement_coverage(&assessment), "unavailable");
+        assert_eq!(requirement_coverage(&json!({})), "unavailable");
+    }
 
     #[test]
     fn previous_review_history_is_bounded_and_never_reapplied() {
