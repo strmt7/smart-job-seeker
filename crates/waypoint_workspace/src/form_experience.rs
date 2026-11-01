@@ -51,7 +51,7 @@ pub enum Outcome {
     Unknown,
 }
 
-/// Only categorical observations are stored: no arbitrary page text or applicant data.
+/// A user-reviewed observation. Free text remains untrusted even after review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Experience {
@@ -67,6 +67,12 @@ pub struct Experience {
     pub response: Response,
     #[serde(default)]
     pub outcome: Outcome,
+    /// Optional short user note, kept sealed.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Explicit permission to include this note in local model context.
+    #[serde(default)]
+    pub use_note_in_model: bool,
 }
 
 /// Known categories are weak hints; tenant-specific behavior must still be inspected.
@@ -92,6 +98,19 @@ fn validate(experience: &Experience) -> Result<(), WorkspaceError> {
     if experience.version != 1 || !experience.reviewed || experience.observed_at <= 0 {
         return Err(WorkspaceError::Export(
             "Experience must have a supported version, review and observation time".into(),
+        ));
+    }
+    if experience.note.as_ref().is_some_and(|note| {
+        note.trim().is_empty()
+            || note.len() > 512
+            || note.chars().count() > 280
+            || note.chars().any(char::is_control)
+    }) {
+        return Err(WorkspaceError::Export("Experience note must be 1–280 characters, at most 512 bytes, without control characters".into()));
+    }
+    if experience.use_note_in_model && experience.note.is_none() {
+        return Err(WorkspaceError::Export(
+            "A note is required before enabling local model use".into(),
         ));
     }
     Ok(())
@@ -142,6 +161,42 @@ impl Workspace {
         expected: u64,
         outcome: Outcome,
     ) -> Result<u64, WorkspaceError> {
+        let mut experience = self.read_experience_at_revision(id, expected)?;
+        experience.outcome = outcome;
+        self.save_form_experience(id, expected, &experience)
+    }
+
+    /// Update or clear a note while preserving the rest of the reviewed record.
+    pub fn correct_form_experience_note(
+        &self,
+        id: &str,
+        expected: u64,
+        note: Option<String>,
+        use_note_in_model: bool,
+    ) -> Result<u64, WorkspaceError> {
+        let mut experience = self.read_experience_at_revision(id, expected)?;
+        experience.note = note;
+        experience.use_note_in_model = use_note_in_model;
+        self.save_form_experience(id, expected, &experience)
+    }
+
+    /// Enable or disable a reviewed experience without changing its content.
+    pub fn set_form_experience_enabled(
+        &self,
+        id: &str,
+        expected: u64,
+        enabled: bool,
+    ) -> Result<u64, WorkspaceError> {
+        let mut experience = self.read_experience_at_revision(id, expected)?;
+        experience.enabled = enabled;
+        self.save_form_experience(id, expected, &experience)
+    }
+
+    fn read_experience_at_revision(
+        &self,
+        id: &str,
+        expected: u64,
+    ) -> Result<Experience, WorkspaceError> {
         let (revision, bytes) = self
             .store
             .form_experience(id)?
@@ -151,11 +206,10 @@ impl Workspace {
                 "Experience changed; reload before correcting it".into(),
             ));
         }
-        let mut experience: Experience = serde_json::from_slice(&bytes)
+        let experience: Experience = serde_json::from_slice(&bytes)
             .map_err(|e| WorkspaceError::Export(format!("Invalid stored experience: {e}")))?;
         validate(&experience)?;
-        experience.outcome = outcome;
-        self.save_form_experience(id, expected, &experience)
+        Ok(experience)
     }
 
     /// A bounded list of fallible hints, freshly read on every call. A platform
@@ -236,6 +290,8 @@ mod tests {
             observation: Observation::ValueChanged,
             response: Response::VerifyValueAgain,
             outcome: Outcome::Unknown,
+            note: None,
+            use_note_in_model: false,
         }
     }
     #[test]
@@ -276,9 +332,8 @@ mod tests {
             .related_form_experiences(Stage::Review, Control::Text, Some(Platform::Lever))
             .unwrap()
             .is_empty());
-        let mut changed = lesson();
-        changed.enabled = false;
-        ws.save_form_experience(id, 1, &changed).unwrap();
+        assert_eq!(ws.set_form_experience_enabled(id, 1, false).unwrap(), 2);
+        assert!(ws.set_form_experience_enabled(id, 1, true).is_err());
         assert!(ws.save_form_experience(id, 1, &lesson()).is_err());
         assert_eq!(
             ws.related_form_experiences(
@@ -295,6 +350,12 @@ mod tests {
             .related_form_experiences(Stage::EnterInformation, Control::Text, None)
             .unwrap()
             .is_empty());
+        assert_eq!(ws.set_form_experience_enabled(id, 2, true).unwrap(), 3);
+        let restored = ws
+            .related_form_experiences(Stage::EnterInformation, Control::Text, None)
+            .unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].experience, lesson());
     }
 
     #[test]
@@ -338,7 +399,56 @@ mod tests {
     fn older_records_leave_the_outcome_unknown() {
         let mut value = serde_json::to_value(lesson()).unwrap();
         value.as_object_mut().unwrap().remove("outcome");
+        value.as_object_mut().unwrap().remove("note");
+        value.as_object_mut().unwrap().remove("use_note_in_model");
         let recovered: Experience = serde_json::from_value(value).unwrap();
         assert_eq!(recovered.outcome, Outcome::Unknown);
+        assert_eq!(recovered.note, None);
+        assert!(!recovered.use_note_in_model);
+    }
+
+    #[test]
+    fn context_notes_are_bounded_and_survive_outcome_corrections() {
+        let mut ws = Workspace::in_memory().unwrap();
+        ws.store = Store::in_memory()
+            .unwrap()
+            .with_sealer(waypoint_seal::platform_sealer().unwrap());
+        let id = "00000000000000000000000000000011";
+        let mut item = lesson();
+        item.note =
+            Some("Choose the visible add-entry control before opening the next section".into());
+        ws.save_form_experience(id, 0, &item).unwrap();
+        ws.correct_form_experience_outcome(id, 1, Outcome::Helped)
+            .unwrap();
+        assert_eq!(ws.form_experiences().unwrap()[0].experience.note, item.note);
+        for invalid in [
+            "x".repeat(281),
+            " ".into(),
+            "bad\nline".into(),
+            "🙂".repeat(129),
+        ] {
+            item.note = Some(invalid);
+            assert!(ws.save_form_experience(id, 2, &item).is_err());
+        }
+        assert!(ws.correct_form_experience_note(id, 1, None, false).is_err());
+        assert!(ws
+            .correct_form_experience_note(id, 2, Some(" ".into()), false)
+            .is_err());
+        assert_eq!(
+            ws.correct_form_experience_note(id, 2, Some("Check the label context".into()), true)
+                .unwrap(),
+            3
+        );
+        let updated = &ws.form_experiences().unwrap()[0].experience;
+        assert_eq!(updated.note.as_deref(), Some("Check the label context"));
+        assert!(updated.use_note_in_model);
+        assert_eq!(updated.outcome, Outcome::Helped);
+        assert_eq!(updated.observed_at, item.observed_at);
+        assert!(ws.correct_form_experience_note(id, 3, None, true).is_err());
+        assert_eq!(
+            ws.correct_form_experience_note(id, 3, None, false).unwrap(),
+            4
+        );
+        assert_eq!(ws.form_experiences().unwrap()[0].experience.note, None);
     }
 }

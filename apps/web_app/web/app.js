@@ -899,6 +899,7 @@ document.querySelector('#experience-related').addEventListener('click',async()=>
   for(const item of data.experiences){
    const e=item.experience,label=x=>String(x||'unknown').replaceAll('_',' ');
    relatedExperienceList.append(element('p',`${label(e.observation)} → ${label(e.response)} · reported outcome: ${label(e.outcome)} (${item.same_platform?'same platform hint':'platform not matched'})`,'review-label'));
+   if(e.note)relatedExperienceList.append(element('p',`Context: ${e.note}`));
   }
   relatedExperienceStatus.textContent=data.experiences.length?'Related observations are hints; check the current form. Search again after changing or removing a lesson.':'No related lessons found.';
  }catch(error){if(request===relatedExperienceRequest)relatedExperienceStatus.textContent=`Could not find related lessons: ${error.message}`;}
@@ -912,26 +913,45 @@ async function loadExperiences(){
    const row=element('div',null,'notice experience-record');
    const e=item.experience;
    const label=x=>String(x||'unknown').replaceAll('_',' ');
-   row.append(element('p',`${label(e.stage)} · ${label(e.control)} · ${label(e.platform)}: ${label(e.observation)} → ${label(e.response)} · reported outcome: ${label(e.outcome)}`));
+   row.append(element('p',`${e.enabled?'Enabled':'Disabled'} · ${label(e.stage)} · ${label(e.control)} · ${label(e.platform)}: ${label(e.observation)} → ${label(e.response)} · reported outcome: ${label(e.outcome)}`));
+   if(e.note)row.append(element('p',`Context: ${e.note}`));
    const editLabel=element('label','Correct reported outcome');
    const edit=document.createElement('select');
    for(const [value,text] of [['unknown','Not established'],['helped','Helped in this case'],['did_not_help','Did not help']]){const option=document.createElement('option');option.value=value;option.textContent=text;edit.append(option);}
    edit.value=e.outcome;editLabel.append(edit);row.append(editLabel);
    const saveOutcome=element('button','Save corrected outcome');saveOutcome.type='button';
    saveOutcome.addEventListener('click',async()=>{
-    saveOutcome.disabled=remove.disabled=true;
+    saveOutcome.disabled=saveNote.disabled=remove.disabled=toggleEnabled.disabled=true;
     try{await api('/api/form-experiences/correct-outcome',{id:item.id,revision:item.revision,outcome:edit.value,confirmed:true});clearRelatedExperiences();await loadExperiences();}
-    catch(error){experienceStatus.textContent=error.message;saveOutcome.disabled=remove.disabled=false;}
+    catch(error){experienceStatus.textContent=error.message;saveOutcome.disabled=saveNote.disabled=remove.disabled=toggleEnabled.disabled=false;}
    });
    row.append(saveOutcome);
+   const noteLabel=element('label','Correct context (optional)');
+   const noteInput=document.createElement('input');noteInput.maxLength=280;noteInput.value=e.note||'';noteLabel.append(noteInput);row.append(noteLabel);
+   const modelNoteLabel=element('label',null,'experience-note-permission');
+   const modelNote=document.createElement('input');modelNote.type='checkbox';modelNote.checked=Boolean(e.use_note_in_model);
+   modelNoteLabel.append(modelNote,element('span','Allow the local model to consider this note'));row.append(modelNoteLabel);
+   const saveNote=element('button','Save corrected context');saveNote.type='button';
+   saveNote.addEventListener('click',async()=>{
+    saveNote.disabled=saveOutcome.disabled=remove.disabled=toggleEnabled.disabled=true;
+    try{await api('/api/form-experiences/correct-note',{id:item.id,revision:item.revision,note:noteInput.value.trim()||null,use_note_in_model:modelNote.checked,confirmed:true});clearRelatedExperiences();await loadExperiences();}
+    catch(error){experienceStatus.textContent=error.message;saveNote.disabled=saveOutcome.disabled=remove.disabled=toggleEnabled.disabled=false;}
+   });
+   row.append(saveNote);
    const remove=element('button','Remove lesson');remove.type='button';
    remove.addEventListener('click',async()=>{
     if(!window.confirm('Remove this lesson from future use? Old encrypted backups may still contain it.'))return;
-    remove.disabled=true;
+    remove.disabled=saveOutcome.disabled=saveNote.disabled=toggleEnabled.disabled=true;
     try{await api('/api/form-experiences/revoke',{id:item.id,revision:item.revision,confirmed:true});clearRelatedExperiences();await loadExperiences();}
-    catch(error){experienceStatus.textContent=error.message;remove.disabled=false;}
+    catch(error){experienceStatus.textContent=error.message;remove.disabled=saveOutcome.disabled=saveNote.disabled=toggleEnabled.disabled=false;}
    });
-   row.append(remove);experienceList.append(row);
+   const toggleEnabled=element('button',e.enabled?'Disable lesson':'Enable lesson');toggleEnabled.type='button';
+   toggleEnabled.addEventListener('click',async()=>{
+    toggleEnabled.disabled=remove.disabled=saveOutcome.disabled=saveNote.disabled=true;
+    try{await api('/api/form-experiences/set-enabled',{id:item.id,revision:item.revision,enabled:!e.enabled,confirmed:true});clearRelatedExperiences();await loadExperiences();}
+    catch(error){experienceStatus.textContent=error.message;toggleEnabled.disabled=remove.disabled=saveOutcome.disabled=saveNote.disabled=false;}
+   });
+   row.append(toggleEnabled,remove);experienceList.append(row);
   }
   experienceStatus.textContent=data.experiences.length?`${data.experiences.length} reviewed lessons. Relevant lessons may be supplied to the local model during form inspection; verify every suggestion.`:'No reviewed lessons yet.';
  }catch(error){experienceStatus.textContent=`Could not load lessons: ${error.message}`;}
@@ -942,8 +962,8 @@ experienceForm.addEventListener('submit',async event=>{
  if(!fields.has('confirmed'))return;
  button.disabled=true;experienceStatus.textContent='Saving lesson…';
  try{
-  await api('/api/form-experiences/save',{confirmed:true,experience:{stage:fields.get('stage'),control:fields.get('control'),platform:fields.get('platform')||null,observation:fields.get('observation'),response:fields.get('response'),outcome:fields.get('outcome')}});
-  experienceForm.elements.confirmed.checked=false;clearRelatedExperiences();await loadExperiences();
+  await api('/api/form-experiences/save',{confirmed:true,experience:{stage:fields.get('stage'),control:fields.get('control'),platform:fields.get('platform')||null,observation:fields.get('observation'),response:fields.get('response'),outcome:fields.get('outcome'),note:String(fields.get('note')||'').trim()||null,use_note_in_model:fields.has('use_note_in_model')}});
+  experienceForm.elements.confirmed.checked=false;experienceForm.elements.use_note_in_model.checked=false;experienceForm.elements.note.value='';clearRelatedExperiences();await loadExperiences();
  }catch(error){experienceStatus.textContent=`Could not save lesson: ${error.message}`;}
  finally{button.disabled=false;}
 });

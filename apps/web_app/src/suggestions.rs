@@ -347,6 +347,33 @@ pub fn suggest_with_review(
             multi_step: schema.multi_step,
             steps: schema.steps,
         };
+        let mut context_tags = Vec::new();
+        if chunk.iter().any(|field| {
+            matches!(
+                field.field_type,
+                FormFieldType::Text
+                    | FormFieldType::Email
+                    | FormFieldType::TextArea
+                    | FormFieldType::Date
+                    | FormFieldType::Month
+                    | FormFieldType::Time
+                    | FormFieldType::DateTimeLocal
+            )
+        }) {
+            context_tags.push("form_text");
+        }
+        if chunk.iter().any(|field| {
+            matches!(
+                field.field_type,
+                FormFieldType::Select { .. }
+                    | FormFieldType::MultiSelect { .. }
+                    | FormFieldType::Checkbox
+                    | FormFieldType::Radio { .. }
+            )
+        }) {
+            context_tags.push("form_choice");
+        }
+        inference.set_context_tags(&context_tags);
         let response = match inference.generate_structured("form_mapping", &prompt, 1024) {
             Ok((mut output, _)) => {
                 restore_model_selectors(&mut output, chunk, descriptions);

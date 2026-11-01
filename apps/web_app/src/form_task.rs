@@ -235,6 +235,51 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
         .map(|task| (task.id.clone(), task.job_id.as_str().to_owned())))
 }
 
+/// Lessons describe classes of controls, not selectors or field values.
+/// Only pass a class when a non-sensitive field of that class is present.
+fn relevant_experiences(
+    schema: &waypoint_applications::form_mapping::FormSchema,
+    experiences: &[ExperienceMatch],
+) -> Vec<ExperienceMatch> {
+    use waypoint_applications::form_mapping::FormFieldType as Field;
+    use waypoint_workspace::form_experience::{Control, Stage};
+    let has_text = schema.fields.iter().any(|field| {
+        !field.sensitive
+            && matches!(
+                field.field_type,
+                Field::Text
+                    | Field::Email
+                    | Field::TextArea
+                    | Field::Date
+                    | Field::Month
+                    | Field::Time
+                    | Field::DateTimeLocal
+            )
+    });
+    let has_choice = schema.fields.iter().any(|field| {
+        !field.sensitive
+            && matches!(
+                field.field_type,
+                Field::Select { .. }
+                    | Field::MultiSelect { .. }
+                    | Field::Checkbox
+                    | Field::Radio { .. }
+            )
+    });
+    experiences
+        .iter()
+        .filter(|item| {
+            item.experience.stage == Stage::EnterInformation
+                && match item.experience.control {
+                    Control::Text => has_text,
+                    Control::Choice => has_choice,
+                    Control::Upload | Control::Navigation => false,
+                }
+        })
+        .cloned()
+        .collect()
+}
+
 pub fn start(
     id: String,
     job_id: JobIdentityId,
@@ -280,6 +325,7 @@ pub fn start(
             let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
                 .map_err(|e| e.to_string())?;
             let (live, navigation_warning) = open_application_page(&mut driver, &url)?;
+            let relevant = relevant_experiences(&live.schema, &experiences);
             let mut preview = if let Some(model) = model {
                 let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                     .map_err(|e| e.to_string())?
@@ -289,10 +335,14 @@ pub fn start(
                     model,
                     crate::resident_model,
                 );
-                let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &experiences);
+                let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);
                 let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
-                if !experiences.is_empty() {
-                    preview.manual_review.push("Reviewed lessons were supplied as fallible context; verify every suggestion against this form.".into());
+                if informed.attempted_with_hints() {
+                    preview.manual_review.push("A model mapping request included reviewed lessons as fallible context; verify every suggestion against this form.".into());
+                    let (included, omitted) = informed.note_attempts();
+                    if included + omitted > 0 {
+                        preview.manual_review.push(format!("Across attempted mapping requests, opted-in note inclusions prepared: {included}; omitted by the context budget: {omitted}. A note can be counted more than once. This does not prove model receipt or use."));
+                    }
                 }
                 preview
             } else {
@@ -395,6 +445,168 @@ mod tests {
     };
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    #[test]
+    fn lesson_selection_uses_live_non_sensitive_control_types() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType as Field, FormSchema};
+        use waypoint_workspace::form_experience::{
+            Control, Experience, Observation, Outcome, Response, Stage,
+        };
+        let make = |control| ExperienceMatch {
+            id: format!("{control:?}"),
+            revision: 1,
+            same_platform: false,
+            experience: Experience {
+                version: 1,
+                reviewed: true,
+                enabled: true,
+                observed_at: 1,
+                platform: None,
+                stage: Stage::EnterInformation,
+                control,
+                observation: Observation::AmbiguousLabel,
+                response: Response::InspectContext,
+                outcome: Outcome::Unknown,
+                note: None,
+                use_note_in_model: false,
+            },
+        };
+        let experiences = vec![
+            make(Control::Text),
+            make(Control::Choice),
+            make(Control::Upload),
+        ];
+        let mut schema = FormSchema {
+            origin: "https://example.invalid".into(),
+            fields: vec![],
+            multi_step: false,
+            steps: 1,
+        };
+        assert!(relevant_experiences(&schema, &experiences).is_empty());
+        let field = |field_type, sensitive| FormField {
+            selector: "#fixture".into(),
+            label: "Fixture".into(),
+            field_type,
+            required: false,
+            sensitive,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        schema.fields.push(field(Field::Email, false));
+        schema.fields.push(field(Field::Checkbox, true));
+        assert_eq!(
+            relevant_experiences(&schema, &experiences)
+                .iter()
+                .map(|x| x.experience.control)
+                .collect::<Vec<_>>(),
+            vec![Control::Text]
+        );
+        schema.fields[1].sensitive = false;
+        assert_eq!(relevant_experiences(&schema, &experiences).len(), 2);
+        schema.fields.clear();
+        schema.fields.push(field(Field::File, false));
+        assert!(relevant_experiences(&schema, &experiences).is_empty());
+    }
+
+    #[cfg(all(windows, feature = "sqlcipher"))]
+    #[test]
+    #[ignore = "starts a fictional local browser and needs a preloaded local model and resource preflight"]
+    fn live_inspection_worker_with_reviewed_note() {
+        use waypoint_workspace::form_experience::{
+            Control, Experience, Observation, Outcome, Response, Stage,
+        };
+        let _guard = TEST_LOCK.lock().unwrap();
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-ambiguous-contact.html");
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let id = "00000000000000000000000000000001";
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = waypoint_workspace::Workspace::open_encrypted(dir.path()).unwrap();
+        let experience = Experience {
+            version: 1,
+            reviewed: true,
+            enabled: true,
+            observed_at: 1,
+            platform: None,
+            stage: Stage::EnterInformation,
+            control: Control::Text,
+            observation: Observation::AmbiguousLabel,
+            response: Response::InspectContext,
+            outcome: Outcome::Helped,
+            note: Some("Review contact questions that do not name a specific channel".into()),
+            use_note_in_model: true,
+        };
+        assert_eq!(
+            workspace.save_form_experience(id, 0, &experience).unwrap(),
+            1
+        );
+        let experiences = workspace
+            .related_form_experiences(Stage::EnterInformation, Control::Text, None)
+            .unwrap();
+        assert_eq!(experiences.len(), 1);
+        assert_eq!(experiences[0].experience.note, experience.note);
+        start(
+            "fixture-note-inspection".into(),
+            JobIdentityId::new("fixture-job").unwrap(),
+            url,
+            serde_json::json!({"email":"alex@example.invalid"}),
+            Some(model),
+            false,
+            (0, experiences),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        loop {
+            if let Some(done) = poll("fixture-note-inspection").unwrap() {
+                assert_eq!(done.experience_revisions, vec![(id.to_owned(), 1)]);
+                let (driver, preview) = done.result.unwrap();
+                println!(
+                    "fictional note inspection warnings: {:?}, mappings: {:?}",
+                    preview.manual_review, preview.suggestions
+                );
+                assert!(preview.manual_review.iter().any(
+                    |reason| reason.contains("model mapping request included reviewed lessons")
+                ));
+                assert!(preview.manual_review.iter().any(|reason| reason.contains(
+                    "opted-in note inclusions prepared: 1; omitted by the context budget: 0"
+                )));
+                assert!(!preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason
+                        .contains("only exact labels or standard autocomplete hints")));
+                assert!(preview
+                    .suggestions
+                    .iter()
+                    .any(|m| m.field_selector == "#email"));
+                assert!(!preview
+                    .suggestions
+                    .iter()
+                    .any(|m| m.field_selector == "#contact" || m.field_selector == "#reach"));
+                assert!(driver
+                    .trace
+                    .iter()
+                    .all(|entry| !entry.contains("submitted")));
+                assert!(workspace.revoke_form_experience(id, 1).unwrap());
+                assert!(workspace
+                    .related_form_experiences(Stage::EnterInformation, Control::Text, None)
+                    .unwrap()
+                    .is_empty());
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "inspection did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn new_experience_can_be_saved_during_inspection_but_not_revoked() {
@@ -442,6 +654,13 @@ mod tests {
         let (blocked, _) = request(
             "/api/form-experiences/revoke",
             serde_json::json!({"confirmed":true,"id":value["id"],"revision":value["revision"]}),
+        );
+        assert!(blocked
+            .unwrap_err()
+            .contains("Close the active form review"));
+        let (blocked, _) = request(
+            "/api/form-experiences/set-enabled",
+            serde_json::json!({"confirmed":true,"id":value["id"],"revision":value["revision"],"enabled":false}),
         );
         assert!(blocked
             .unwrap_err()

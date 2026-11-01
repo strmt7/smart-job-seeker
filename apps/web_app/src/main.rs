@@ -257,6 +257,18 @@ fn experience_snapshot_current(
     })
 }
 
+/// A listing source is only a retrieval hint; the application may be hosted elsewhere.
+fn experience_platform_hint(source: &str) -> Option<waypoint_workspace::form_experience::Platform> {
+    use waypoint_workspace::form_experience::Platform;
+    match source {
+        "greenhouse" => Some(Platform::Greenhouse),
+        "lever" => Some(Platform::Lever),
+        "ashby" => Some(Platform::Ashby),
+        "workday" => Some(Platform::Workday),
+        _ => None,
+    }
+}
+
 fn draft_request_id(value: &Value) -> Result<Option<String>, String> {
     match value {
         Value::Null => Ok(None),
@@ -2109,6 +2121,55 @@ fn serve(
                 serde_json::from_value(body["outcome"].clone()).map_err(|_| "Invalid outcome")?;
             let revision = ws
                 .correct_form_experience_outcome(id, revision, outcome)
+                .map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"revision":revision}));
+        }
+        "/api/form-experiences/correct-note" => {
+            if form_task::busy()
+                || session
+                    .as_ref()
+                    .is_some_and(|s| s.created.elapsed() <= s.ttl)
+            {
+                return Err("Close the active form review before changing lessons".into());
+            }
+            if body["confirmed"] != true {
+                return Err("Confirm the corrected context".into());
+            }
+            let id = body["id"].as_str().ok_or("Missing experience ID")?;
+            let revision = body["revision"]
+                .as_u64()
+                .ok_or("Missing experience revision")?;
+            let note = match body.get("note").ok_or("Missing context")? {
+                Value::Null => None,
+                Value::String(text) => Some(text.clone()),
+                _ => return Err("Invalid context".into()),
+            };
+            let use_note_in_model = body["use_note_in_model"]
+                .as_bool()
+                .ok_or("Choose whether the local model may use this note")?;
+            let revision = ws
+                .correct_form_experience_note(id, revision, note, use_note_in_model)
+                .map_err(|e| e.to_string())?;
+            json_reply(stream, "200 OK", json!({"revision":revision}));
+        }
+        "/api/form-experiences/set-enabled" => {
+            if form_task::busy()
+                || session
+                    .as_ref()
+                    .is_some_and(|s| s.created.elapsed() <= s.ttl)
+            {
+                return Err("Close the active form review before changing lessons".into());
+            }
+            if body["confirmed"] != true {
+                return Err("Confirm the lesson change".into());
+            }
+            let id = body["id"].as_str().ok_or("Missing experience ID")?;
+            let revision = body["revision"]
+                .as_u64()
+                .ok_or("Missing experience revision")?;
+            let enabled = body["enabled"].as_bool().ok_or("Missing enabled state")?;
+            let revision = ws
+                .set_form_experience_enabled(id, revision, enabled)
                 .map_err(|e| e.to_string())?;
             json_reply(stream, "200 OK", json!({"revision":revision}));
         }
@@ -4171,12 +4232,17 @@ fn serve(
             let model = resident_model().ok().flatten();
             let experiences = if model.is_some() {
                 use waypoint_workspace::form_experience::{Control, Stage};
+                let platform_hint = experience_platform_hint(&job.source);
                 let mut items = ws
-                    .related_form_experiences(Stage::EnterInformation, Control::Text, None)
+                    .related_form_experiences(Stage::EnterInformation, Control::Text, platform_hint)
                     .map_err(|e| e.to_string())?;
                 items.extend(
-                    ws.related_form_experiences(Stage::EnterInformation, Control::Choice, None)
-                        .map_err(|e| e.to_string())?,
+                    ws.related_form_experiences(
+                        Stage::EnterInformation,
+                        Control::Choice,
+                        platform_hint,
+                    )
+                    .map_err(|e| e.to_string())?,
                 );
                 items
             } else {
@@ -10323,7 +10389,7 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let mut workspace = Workspace::open(&path).unwrap();
             let mut session = None;
-            for _ in 0..10 {
+            for _ in 0..17 {
                 let (mut stream, _) = listener.accept().unwrap();
                 if let Err(error) = serve(
                     &mut stream,
@@ -10344,7 +10410,7 @@ mod tests {
             stream.read_to_string(&mut response).unwrap();
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
         };
-        let experience = json!({"stage":"enter_information","control":"text","platform":"lever","observation":"value_changed","response":"verify_value_again","outcome":"did_not_help"});
+        let experience = json!({"stage":"enter_information","control":"text","platform":"lever","observation":"value_changed","response":"verify_value_again","outcome":"did_not_help","note":"Check the preceding section"});
         assert!(send(
             "/api/form-experiences/save",
             json!({"experience":experience})
@@ -10376,13 +10442,49 @@ mod tests {
         let updated = send("/api/form-experiences/list", json!({}));
         assert_eq!(updated["experiences"][0]["experience"]["outcome"], "helped");
         assert_eq!(
+            updated["experiences"][0]["experience"]["note"],
+            "Check the preceding section"
+        );
+        assert_eq!(
             updated["experiences"][0]["experience"]["observed_at"],
             listed["experiences"][0]["experience"]["observed_at"]
         );
+        let corrected_note = send(
+            "/api/form-experiences/correct-note",
+            json!({"confirmed":true,"id":saved["id"],"revision":corrected["revision"],"note":"Check the grouping","use_note_in_model":true}),
+        );
+        assert_eq!(corrected_note["revision"], 3);
+        assert!(send(
+            "/api/form-experiences/correct-note",
+            json!({"confirmed":true,"id":saved["id"],"revision":corrected["revision"],"note":null,"use_note_in_model":false})
+        )["error"]
+            .is_string());
+        assert_eq!(
+            send("/api/form-experiences/list", json!({}))["experiences"][0]["experience"]["note"],
+            "Check the grouping"
+        );
+        let disabled = send(
+            "/api/form-experiences/set-enabled",
+            json!({"confirmed":true,"id":saved["id"],"revision":corrected_note["revision"],"enabled":false}),
+        );
+        assert_eq!(disabled["revision"], 4);
+        assert!(send(
+            "/api/form-experiences/related",
+            json!({"stage":"enter_information","control":"text","platform":"lever"})
+        )["experiences"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(send("/api/form-experiences/set-enabled",json!({"confirmed":true,"id":saved["id"],"revision":corrected_note["revision"],"enabled":true}))["error"].is_string());
+        let enabled = send(
+            "/api/form-experiences/set-enabled",
+            json!({"confirmed":true,"id":saved["id"],"revision":disabled["revision"],"enabled":true}),
+        );
+        assert_eq!(enabled["revision"], 5);
         assert_eq!(
             send(
                 "/api/form-experiences/revoke",
-                json!({"confirmed":true,"id":saved["id"],"revision":corrected["revision"]})
+                json!({"confirmed":true,"id":saved["id"],"revision":enabled["revision"]})
             )["ok"],
             true
         );
@@ -10420,6 +10522,8 @@ mod tests {
                 observation: Observation::ValueChanged,
                 response: Response::VerifyValueAgain,
                 outcome: Outcome::Unknown,
+                note: None,
+                use_note_in_model: false,
             },
         };
         let snapshot = vec![(item.id.clone(), item.revision)];
@@ -10434,6 +10538,21 @@ mod tests {
         disabled.experience.enabled = false;
         assert!(!experience_snapshot_current(&snapshot, &[disabled]));
         assert!(!experience_snapshot_current(&snapshot, &[]));
+    }
+
+    #[test]
+    fn experience_platform_hint_uses_exact_source_categories_only() {
+        use waypoint_workspace::form_experience::Platform;
+        assert_eq!(experience_platform_hint("lever"), Some(Platform::Lever));
+        assert_eq!(
+            experience_platform_hint("greenhouse"),
+            Some(Platform::Greenhouse)
+        );
+        assert_eq!(experience_platform_hint("ashby"), Some(Platform::Ashby));
+        assert_eq!(experience_platform_hint("workday"), Some(Platform::Workday));
+        assert_eq!(experience_platform_hint("not-lever"), None);
+        assert_eq!(experience_platform_hint("web_search"), None);
+        assert_eq!(experience_platform_hint("Lever"), None);
     }
 
     #[test]

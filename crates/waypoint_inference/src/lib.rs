@@ -76,6 +76,9 @@ impl std::fmt::Display for InferenceError {
 impl std::error::Error for InferenceError {}
 
 pub trait Inference {
+    /// Advisory tags for the next bounded request. Backends may ignore them.
+    fn set_context_tags(&mut self, _tags: &[&str]) {}
+
     /// Optional in-flight admission check. Implementations without a
     /// cancellable transport may leave this unsupported.
     fn set_request_guard(
