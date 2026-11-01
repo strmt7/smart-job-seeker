@@ -1128,3 +1128,7 @@ A publicly hosted university CV was retained outside the repository for a local 
 ### PDF edits with explicit Unicode mapping (2026-11-01)
 
 The PDF stream editor now supports single-byte `charmap` fonts only when each character has an unambiguous explicit Unicode mapping. A fictional font fixture verified stream editing and rejection of an unmapped replacement character. On the previously captured public CV, a short replacement using mapped glyphs succeeded, preserved the original file and passed the existing whole-document text, glyph and visual-difference checks; the first rendered page was inspected locally. The replacement kept its original starting position rather than recentering. The earlier longer replacement remained unsupported because its letters were absent from the subset font; general PDFs, layout preservation and arbitrary replacements remain unproven. Web Clippy and formatting passed. No CV content was committed and no application was submitted.
+
+### PDF stream regression in CI (2026-11-01)
+
+The fictional Unicode-map PDF stream check now runs in a separate Windows CI job using Python 3.13 and the app's pinned pypdf 6.10.0 version. The same check passed locally with pypdf 6.10.0. It covers the stream editor's mapped and unmapped character cases, not the complete PDF rendering pipeline or arbitrary font encodings. Hosted execution is pending the pushed commit. No application was submitted.
