@@ -12,6 +12,8 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 #[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(test)]
 pub(crate) fn set_completed_fixture(id: &str, result: Value) {
     *COMPLETED.lock().unwrap() = Some((id.to_owned(), result, std::time::Instant::now()));
 }
@@ -424,7 +426,23 @@ pub fn export_provenance(
         .join("\n\n")
         .replace("\r\n", "\n")
         .replace('\r', "\n");
-    let result = json!({"draft_id":draft_id,"generated_text_sha256":waypoint_domain::sha256_hex(generated.as_bytes()),"reviewed_text_sha256":waypoint_domain::sha256_hex(reviewed_text.as_bytes()),"edited":generated != reviewed_text,"draft":draft,"note":"Evidence checks apply only to the generated paragraphs, not later edits or generated opening and closing."});
+    let mut provenance_draft = draft.clone();
+    if let Some(vision) = provenance_draft
+        .get_mut("template_vision")
+        .and_then(Value::as_object_mut)
+    {
+        if let Some(image) = vision
+            .remove("image")
+            .and_then(|v| v.as_str().map(str::to_owned))
+        {
+            vision.insert(
+                "image_base64_sha256".into(),
+                json!(waypoint_domain::sha256_hex(image.as_bytes())),
+            );
+            vision.insert("image_note".into(), json!("The image is not included in this bounded export record; the saved draft retains it when available."));
+        }
+    }
+    let result = json!({"draft_id":draft_id,"generated_text_sha256":waypoint_domain::sha256_hex(generated.as_bytes()),"reviewed_text_sha256":waypoint_domain::sha256_hex(reviewed_text.as_bytes()),"edited":generated != reviewed_text,"draft":provenance_draft,"note":"Evidence checks apply only to the generated paragraphs, not later edits or generated opening and closing."});
     if serde_json::to_vec(&result)
         .map_err(|_| "Could not serialize draft provenance")?
         .len()
@@ -731,6 +749,23 @@ mod tests {
         let edited =
             export_provenance(&cached, "task", "job", "cover_letter", "context", "Edited").unwrap();
         assert_eq!(edited["edited"], true);
+        let mut with_image = cached.clone();
+        let image = "a".repeat(200_000);
+        with_image["draft"]["template_vision"] = json!({"image":image,"text":"Fictional"});
+        let bounded = export_provenance(
+            &with_image,
+            "task",
+            "job",
+            "cover_letter",
+            "context",
+            "Edited",
+        )
+        .unwrap();
+        assert!(bounded["draft"]["template_vision"]["image"].is_null());
+        assert_eq!(
+            bounded["draft"]["template_vision"]["image_base64_sha256"],
+            waypoint_domain::sha256_hex(image.as_bytes())
+        );
         assert_ne!(
             edited["generated_text_sha256"],
             edited["reviewed_text_sha256"]
@@ -1358,6 +1393,7 @@ mod tests {
     #[test]
     #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
     fn live_scanned_template_draft_uses_local_vision() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let model = crate::resident_model()
             .unwrap()
             .expect("eligible resident model");
@@ -1622,6 +1658,7 @@ mod tests {
     }
     #[test]
     fn completed_draft_is_replayable_and_pending_is_identified() {
+        let _guard = TEST_LOCK.lock().unwrap();
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-draft".into(),
             job_id: "fictional-job".into(),

@@ -355,6 +355,10 @@ const MIGRATIONS: &[&str] = &[
        WHEN NEW.content IS NOT NULL
        BEGIN UPDATE possible_duplicates SET revision=revision+1 WHERE job_a=NEW.job_id OR job_b=NEW.job_id; END;
      UPDATE meta SET value='35' WHERE key='schema_version';",
+    // v36 — retain individually identified, sealed generated document drafts.
+    "CREATE TABLE generated_drafts(id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), kind TEXT NOT NULL CHECK(kind IN ('cv','cover_letter')), created_at INTEGER NOT NULL, sealed_content BLOB NOT NULL);
+     CREATE INDEX generated_drafts_by_job ON generated_drafts(job_id,created_at DESC,id DESC);
+     UPDATE meta SET value='36' WHERE key='schema_version';",
 
 ];
 
@@ -362,6 +366,7 @@ pub mod documents;
 pub mod duplicates;
 pub mod email_handoff;
 pub mod fit_assessments;
+pub mod generated_drafts;
 pub mod job_capture;
 pub mod mail_credentials;
 pub mod prefill_grants;
@@ -665,7 +670,10 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
-        Ok(claims + packets + documents + profile > 0)
+        let drafts: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM generated_drafts", [], |r| r.get(0))?;
+        Ok(claims + packets + documents + profile + drafts > 0)
     }
 
     /// The value actually stored for a claim's text: sealed bytes when the
@@ -1322,7 +1330,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "35");
+        assert_eq!(version, "36");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

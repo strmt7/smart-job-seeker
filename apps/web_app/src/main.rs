@@ -628,6 +628,20 @@ fn draft_context_digest(
     Ok(Sha256Digest::of(&json!({"job":job,"description":description,"facts_digest":facts_digest,"profile":profile,"template_hash":template_hash,"kind":kind}).to_string()).as_str().to_owned())
 }
 
+fn load_draft_result(ws: &Workspace, job: &JobIdentityId, id: &str) -> Result<Value, String> {
+    match draft_task::poll(id) {
+        Ok(value) => Ok(value),
+        Err(error) if error == "Draft task not found" => {
+            let bytes = ws
+                .generated_draft(id, job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Draft task not found")?;
+            serde_json::from_slice(&bytes).map_err(|_| "Saved draft is invalid".into())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn fit_review_revision(value: &Value) -> String {
     Sha256Digest::of(
         &json!({"assessment":value["assessment"],"user_review":value["user_review"]}).to_string(),
@@ -5736,7 +5750,7 @@ fn serve(
             let draft_provenance = match body.get("draft_id") {
                 None | Some(Value::Null) => None,
                 Some(Value::String(draft_id)) if !draft_id.is_empty() && draft_id.len() <= 128 => {
-                    match draft_task::poll(draft_id) {
+                    match load_draft_result(ws, &id, draft_id) {
                         Ok(cached) if cached["status"] == "complete" => {
                             Some(draft_task::export_provenance(
                                 &cached,
@@ -5884,7 +5898,7 @@ fn serve(
                 let previous = body["template_draft_id"]
                     .as_str()
                     .ok_or("Original draft is required")?;
-                let cached = draft_task::poll(previous)?;
+                let cached = load_draft_result(ws, &id, previous)?;
                 Some(draft_task::reviewed_template(
                     &cached,
                     id.as_str(),
@@ -5937,9 +5951,48 @@ fn serve(
                     != result["digest"].as_str()
                 {
                     result = json!({"status":"failed","error":"The job, qualifications, profile or template changed while drafting; draft again"});
+                } else {
+                    let bytes =
+                        serde_json::to_vec(&result).map_err(|_| "Could not serialize draft")?;
+                    result["saved"] = json!(ws
+                        .save_generated_draft(id, &job_id, kind, now(), &bytes)
+                        .is_ok());
                 }
             }
             json_reply(stream, "200 OK", result);
+        }
+        "/api/draft/list" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
+                .map_err(|e| e.to_string())?;
+            let mut entries = ws.generated_drafts(&job).map_err(|e| e.to_string())?;
+            let truncated = entries.len() > 50;
+            entries.truncate(50);
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"drafts":entries.into_iter().map(|(id, kind, created_at)| json!({"id":id,"kind":kind,"created_at":created_at})).collect::<Vec<_>>(),"truncated":truncated}),
+            );
+        }
+        "/api/draft/read" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
+                .map_err(|e| e.to_string())?;
+            let id = body["draft_id"].as_str().ok_or("missing draft id")?;
+            let bytes = ws
+                .generated_draft(id, &job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Saved draft not found")?;
+            let value: Value =
+                serde_json::from_slice(&bytes).map_err(|_| "Saved draft is invalid")?;
+            let kind = value["kind"].as_str().ok_or("Saved draft is invalid")?;
+            if value["job_id"].as_str() != Some(job.as_str())
+                || !matches!(kind, "cv" | "cover_letter")
+                || value["status"] != "complete"
+            {
+                return Err("Saved draft is invalid".into());
+            }
+            let current =
+                draft_context_digest(ws, &job, kind).ok().as_deref() == value["digest"].as_str();
+            json_reply(stream, "200 OK", json!({"current":current,"result":value}));
         }
         "/api/packet/read" => {
             let id = JobIdentityId::new(body["id"].as_str().ok_or("missing id")?)
@@ -7026,6 +7079,90 @@ mod tests {
         assert!(duplicate_inputs(&ws, &first, &second).is_ok());
         assert!(ws.decide_duplicate(&first, &second, false).unwrap());
         assert!(duplicate_inputs(&ws, &first, &second).is_err());
+    }
+
+    #[cfg(all(windows, feature = "sqlcipher"))]
+    #[test]
+    fn saved_generated_draft_reopens_and_marks_changed_context() {
+        let _guard = draft_task::TEST_LOCK.lock().unwrap();
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open_encrypted(dir.path()).unwrap();
+        let job = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/role","title":"Engineer","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let id = JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
+        let digest = draft_context_digest(&ws, &id, "cv").unwrap();
+        let result = json!({"status":"complete","job_id":id.as_str(),"kind":"cv","digest":digest,"draft":{"kind":"cv","paragraphs":[{"text":"Fictional experience","facts":[1]}]}});
+        draft_task::set_completed_fixture("draft-fixture", result.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let request = |ws: &mut Workspace, path: &str, body: Value| -> Value {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = body.to_string();
+            write!(client,"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            serve(&mut server, ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        assert_eq!(
+            request(
+                &mut ws,
+                "/api/draft/status",
+                json!({"task_id":"draft-fixture"})
+            )["saved"],
+            true
+        );
+        assert_eq!(
+            request(
+                &mut ws,
+                "/api/draft/status",
+                json!({"task_id":"draft-fixture"})
+            )["saved"],
+            true
+        );
+        assert_eq!(
+            request(&mut ws, "/api/draft/list", json!({"id":id.as_str()}))["drafts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(ws);
+        let mut ws = Workspace::open_encrypted(dir.path()).unwrap();
+        draft_task::set_completed_fixture("unrelated", json!({"status":"failed"}));
+        assert_eq!(
+            load_draft_result(&ws, &id, "draft-fixture").unwrap(),
+            result
+        );
+        let read = request(
+            &mut ws,
+            "/api/draft/read",
+            json!({"id":id.as_str(),"draft_id":"draft-fixture"}),
+        );
+        assert_eq!(read["current"], true);
+        assert_eq!(
+            read["result"]["draft"]["paragraphs"][0]["text"],
+            "Fictional experience"
+        );
+        ws.save_candidate_profile(&json!({"document_instructions":"Different style"}).to_string())
+            .unwrap();
+        assert_eq!(
+            request(
+                &mut ws,
+                "/api/draft/read",
+                json!({"id":id.as_str(),"draft_id":"draft-fixture"})
+            )["current"],
+            false
+        );
     }
 
     #[test]

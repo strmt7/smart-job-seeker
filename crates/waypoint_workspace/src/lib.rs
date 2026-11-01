@@ -504,6 +504,32 @@ impl Workspace {
         Ok(self.store.fit_assessment(id.as_str())?)
     }
 
+    pub fn save_generated_draft(
+        &self,
+        id: &str,
+        job: &JobIdentityId,
+        kind: &str,
+        created_at: i64,
+        content: &[u8],
+    ) -> Result<(), WorkspaceError> {
+        Ok(self
+            .store
+            .save_generated_draft(id, job.as_str(), kind, created_at, content)?)
+    }
+    pub fn generated_draft(
+        &self,
+        id: &str,
+        job: &JobIdentityId,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        Ok(self.store.generated_draft(id, job.as_str())?)
+    }
+    pub fn generated_drafts(
+        &self,
+        job: &JobIdentityId,
+    ) -> Result<Vec<(String, String, i64)>, WorkspaceError> {
+        Ok(self.store.generated_drafts(job.as_str())?)
+    }
+
     /// Persist a consumed prefill record before any browser field writes.
     pub fn record_consumed_prefill_grant(
         &mut self,
