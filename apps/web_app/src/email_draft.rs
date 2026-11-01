@@ -29,6 +29,19 @@ fn subject_words(subject: &str) -> String {
     out.join("\r\n ")
 }
 
+// RFC 2231 extended parameters preserve UTF-8 names alongside the ASCII fallback.
+fn extended_filename(name: &str) -> String {
+    let mut encoded = String::new();
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(b));
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    encoded
+}
+
 pub fn build(
     recipient: &str,
     subject: &str,
@@ -64,11 +77,13 @@ pub fn build(
     }
     let mut message = format!("To: {email}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{boundary}\"\r\n\r\n--{boundary}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", subject_words(subject), lines(body.as_bytes()));
     let mut used_names = std::collections::HashSet::new();
+    let mut used_extended_names = std::collections::HashSet::new();
     for (name, bytes) in attachments {
         if !is_pdf_attachment(name, bytes) {
             return Err("Attachments must be PDF files".into());
         }
-        let stem = &name[..name.len() - 4];
+        let portable = crate::attempt_record::attachment_filename(name);
+        let stem = &portable[..portable.len() - 4];
         let safe_stem: String = stem
             .chars()
             .map(|c| {
@@ -81,12 +96,15 @@ pub fn build(
             .take(96)
             .collect();
         let safe = format!("{safe_stem}.pdf");
-        if !used_names.insert(safe.to_ascii_lowercase()) {
+        if !used_names.insert(safe.to_ascii_lowercase())
+            || !used_extended_names.insert(portable.to_lowercase())
+        {
             return Err(
                 "PDF attachment names conflict after sanitizing; rename one and try again".into(),
             );
         }
-        message.push_str(&format!("--{boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"{safe}\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", lines(bytes)));
+        let extended = extended_filename(&portable);
+        message.push_str(&format!("--{boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"{safe}\";\r\n filename*=UTF-8''{extended}\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", lines(bytes)));
     }
     message.push_str(&format!("--{boundary}--\r\n"));
     Ok(message.into_bytes())
@@ -146,7 +164,11 @@ mod tests {
         )
         .unwrap();
         assert!(draft.contains(&format!("filename=\"{}.pdf\"", "a".repeat(96))));
-        for names in [("résumé.pdf", "r_sum_.pdf"), ("CV.PDF", "cv.pdf")] {
+        for names in [
+            ("résumé.pdf", "r_sum_.pdf"),
+            ("CV.PDF", "cv.pdf"),
+            ("CON.pdf", "_CON.pdf"),
+        ] {
             let attachments = [
                 (names.0.to_owned(), b"%PDF-one".to_vec()),
                 (names.1.to_owned(), b"%PDF-two".to_vec()),
@@ -161,6 +183,38 @@ mod tests {
             .unwrap_err()
             .contains("names conflict"));
         }
+    }
+
+    #[test]
+    fn international_attachment_name_uses_utf8_extended_parameter() {
+        let draft = String::from_utf8(
+            build(
+                "hiring@example.org",
+                "Subject",
+                "Body",
+                &[("résumé '2026'.pdf".into(), b"%PDF-fictional".to_vec())],
+                "boundary",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(draft.contains("filename=\"r_sum___2026_.pdf\""));
+        assert!(draft.contains("filename*=UTF-8''r%C3%A9sum%C3%A9%20%272026%27.pdf"));
+        let injected = String::from_utf8(
+            build(
+                "hiring@example.org",
+                "Subject",
+                "Body",
+                &[(
+                    "cv\r\nBcc: evil@example.org.pdf".into(),
+                    b"%PDF-fictional".to_vec(),
+                )],
+                "boundary",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!injected.contains("\r\nBcc:"));
     }
 
     #[test]
