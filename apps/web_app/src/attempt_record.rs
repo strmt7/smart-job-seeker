@@ -1464,14 +1464,34 @@ pub fn capture_inspection(
     screenshot: Option<&str>,
     timestamp: i64,
 ) -> Result<(), String> {
-    record_initial_inspection(record, origin, reasons, screenshot, timestamp)?;
-    if let Err(error) = record.inspected_fields(fields, timestamp) {
-        return Err(record_capture_failure(record, error, timestamp));
-    }
+    record_inspection_evidence(record, origin, reasons, fields, screenshot, timestamp)?;
     if let Err(error) = capture_page(driver, record, timestamp) {
         return Err(record_capture_failure(record, error, timestamp));
     }
     Ok(())
+}
+
+fn record_inspection_evidence(
+    record: &mut AttemptRecord,
+    origin: &str,
+    reasons: &[String],
+    fields: &[waypoint_applications::form_mapping::FormField],
+    screenshot: Option<&str>,
+    timestamp: i64,
+) -> Result<(), String> {
+    // Preserve either artifact even if writing the other one fails.
+    let questions = record.inspected_fields(fields, timestamp);
+    let page = record_initial_inspection(record, origin, reasons, screenshot, timestamp);
+    match (questions, page) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(record_capture_failure(record, error, timestamp)),
+        (Ok(()), Err(error)) => Err(error),
+        (Err(questions), Err(page)) => Err(record_capture_failure(
+            record,
+            format!("Questions could not be saved: {questions}; page capture failed: {page}"),
+            timestamp,
+        )),
+    }
 }
 
 fn record_initial_inspection(
@@ -1973,6 +1993,72 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("could not mark attempt for manual review"));
+    }
+
+    #[test]
+    fn inspection_retains_questions_when_the_screenshot_fails() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        fs::create_dir(root.path().join("screenshots")).unwrap();
+        fs::create_dir(root.path().join("answers")).unwrap();
+        fs::write(
+            root.path().join("attempt.json"),
+            br#"{"status":"preparation_in_progress"}"#,
+        )
+        .unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_path_buf(),
+            sequence: 0,
+        };
+        let field = serde_json::from_value(json!({"selector":"#email","label":"Email","field_type":"email","required":true,"sensitive":false})).unwrap();
+        assert!(record_inspection_evidence(
+            &mut record,
+            "https://example.invalid",
+            &[],
+            &[field],
+            Some("invalid image"),
+            2
+        )
+        .is_err());
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.path().join("answers/0001.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["type"], "fields_inspected");
+        assert_eq!(saved["fields"][0]["question"], "Email");
+        let meta: Value =
+            serde_json::from_slice(&fs::read(root.path().join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(meta["status"], "manual_review");
+    }
+
+    #[test]
+    fn inspection_retains_page_event_when_questions_cannot_be_saved() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        fs::write(
+            root.path().join("attempt.json"),
+            br#"{"status":"preparation_in_progress"}"#,
+        )
+        .unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_path_buf(),
+            sequence: 0,
+        };
+        assert!(record_inspection_evidence(
+            &mut record,
+            "https://example.invalid",
+            &[],
+            &[],
+            None,
+            2
+        )
+        .is_err());
+        let events = fs::read_to_string(root.path().join("events.jsonl")).unwrap();
+        assert!(events
+            .lines()
+            .any(|line| serde_json::from_str::<Value>(line).unwrap()["type"] == "page_inspected"));
+        let meta: Value =
+            serde_json::from_slice(&fs::read(root.path().join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(meta["status"], "manual_review");
     }
 
     #[test]
