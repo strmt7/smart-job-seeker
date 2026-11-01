@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><body>
+<div id="captcha-fixture">Verification requires manual review</div>
+<form id="application"></form>
+<script>
+setTimeout(() => {
+  document.querySelector('#application').innerHTML =
+    '<label for="first">First name</label><input id="first" required>';
+}, 400);
+setTimeout(() => {
+  document.querySelector('#application').insertAdjacentHTML('beforeend',
+    '<label for="last">Last name</label><input id="last" required>');
+}, 1200);
+</script>
+</body></html>

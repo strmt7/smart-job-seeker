@@ -3051,21 +3051,27 @@ impl BrowserDriver for CdpDriver {
             }
         }
         let mut result = self.inspect_current()?;
-        // Client-rendered applications can expose their form shortly after the
-        // load event. Reinspect only an empty form, without interacting with
-        // the page, and keep any previously observed walls conservative.
+        // Client-rendered forms may appear in stages. If the initial inspection
+        // is empty, allow a later nonempty schema one further observation to
+        // settle, while retaining any previously observed review walls.
         let dynamic_deadline = Instant::now() + Duration::from_secs(3);
-        for _ in 0..3 {
-            if !result.schema.fields.is_empty() || Instant::now() >= dynamic_deadline {
-                break;
+        if result.schema.fields.is_empty() {
+            for _ in 0..3 {
+                if Instant::now() >= dynamic_deadline {
+                    break;
+                }
+                self.cdp.pump(
+                    Duration::from_millis(750)
+                        .min(dynamic_deadline.saturating_duration_since(Instant::now())),
+                );
+                let mut next = self.inspect_current()?;
+                let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
+                retain_observed_walls(result.walls, &mut next);
+                result = next;
+                if stable {
+                    break;
+                }
             }
-            self.cdp.pump(
-                Duration::from_millis(750)
-                    .min(dynamic_deadline.saturating_duration_since(Instant::now())),
-            );
-            let mut next = self.inspect_current()?;
-            retain_observed_walls(result.walls, &mut next);
-            result = next;
         }
         // A same-document route has no new loader or HTTP response. For an
         // ordinary HTTP navigation, bind the status to the main frame and

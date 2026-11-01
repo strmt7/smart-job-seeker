@@ -58,3 +58,13 @@ suggestions; screenshot transcription produced 0, 0 and 2 observations.
 No field was filled, no control clicked and no application submitted. The model
 was unloaded. This small comparison does not establish reliable loading, field
 coverage, visual accuracy, or support for these sites' application flows.
+
+## Staged rendering follow-up
+
+If the first inspection is empty, the bounded retry now checks for one unchanged
+nonempty schema instead of stopping as soon as the first control appears. A
+fictional browser fixture rendering two fields in separate stages passed, as did
+the earlier delayed-form fixture; both retained the CAPTCHA review wall. This
+remains a bounded heuristic: fields rendered after the final inspection can be
+missed, and an initially nonempty form is not monitored for later additions.
+No real employer form was filled or submitted in this check.
