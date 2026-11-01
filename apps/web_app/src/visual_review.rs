@@ -117,6 +117,7 @@ pub const MAX_EXPECTED_FIELDS: usize = 200;
 pub struct ExpectedFields {
     pub values: Vec<(String, String)>,
     pub ambiguous_labels: Vec<String>,
+    pub omitted_labels: Vec<String>,
 }
 
 pub fn expected_from_preview(
@@ -126,7 +127,7 @@ pub fn expected_from_preview(
     let completed_set: std::collections::HashSet<_> =
         completed.iter().map(String::as_str).collect();
     let mut accounted = std::collections::HashSet::new();
-    let mut omitted = false;
+    let mut omitted_labels = Vec::new();
     let mut eligible = Vec::new();
     for mapping in preview
         .suggestions
@@ -140,15 +141,41 @@ pub fn expected_from_preview(
             .iter()
             .find(|field| field.selector == mapping.field_selector);
         match (field, expected_value(&mapping.value)) {
-            (Some(field), Some(value)) => eligible.push((field.label.clone(), value)),
-            _ => omitted = true,
+            (Some(field), Some(value)) => eligible.push((field, value)),
+            (Some(field), None) => omitted_labels.push(crate::form_preview::field_review_label(
+                &preview.schema,
+                field,
+            )),
+            (None, _) => omitted_labels.push("Unidentified field".into()),
         }
     }
-    omitted |= completed_set
+    for selector in completed_set
         .iter()
-        .any(|selector| !accounted.contains(selector));
-    let (values, truncated) = bounded_expected(eligible);
-    let truncated = truncated || omitted;
+        .filter(|selector| !accounted.contains(*selector))
+    {
+        omitted_labels.push(
+            preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == **selector)
+                .map(|field| crate::form_preview::field_review_label(&preview.schema, field))
+                .unwrap_or_else(|| "Unidentified field".into()),
+        );
+    }
+    for (field, _) in eligible.iter().skip(MAX_EXPECTED_FIELDS) {
+        omitted_labels.push(crate::form_preview::field_review_label(
+            &preview.schema,
+            field,
+        ));
+    }
+    let (values, over_limit) = bounded_expected(
+        eligible
+            .into_iter()
+            .map(|(field, value)| (field.label.clone(), value)),
+    );
+    let truncated = over_limit || !omitted_labels.is_empty();
+    omitted_labels.truncate(MAX_EXPECTED_FIELDS);
     let repeated: std::collections::HashSet<_> =
         preview.repeated_label_selectors().into_iter().collect();
     let ambiguous_labels = preview
@@ -162,6 +189,7 @@ pub fn expected_from_preview(
         ExpectedFields {
             values,
             ambiguous_labels,
+            omitted_labels,
         },
         truncated,
     )
@@ -1631,6 +1659,10 @@ mod tests {
         let (limited, omitted) = expected_from_preview(&oversized, &["#one".into()]);
         assert!(omitted);
         assert!(limited.values.is_empty());
+        assert_eq!(
+            limited.omitted_labels,
+            vec!["Prénom complet (field 1 of 2)"]
+        );
         assert!(expected_from_preview(&preview, &["#unknown".into()]).1);
         let observed = validate(
             &json!({"observations":[{"label":"PRÉNOM\u{a0}COMPLET","visible_value":"Élodie"}]}),

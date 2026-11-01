@@ -1340,3 +1340,5 @@ Prefill now verifies each written field immediately and stops before later comma
 A fictional local-browser form confirmed that when the first filled control becomes hidden, prefill stops before touching the second control. Verification errors now distinguish repeated labels by their position in the inspected form. Scripted and local-browser checks passed; this does not cover every dynamic validation pattern.
 
 Visual form review now reports incomplete comparisons when a completed field has an unsupported or oversized value, or its mapping is unavailable, in addition to the existing 200-field limit. Previously such fields could be omitted without this warning. Focused comparison and UI checks passed; the notice does not identify which field was omitted.
+
+Visual-review results now list up to 200 omitted field labels, distinguishing repeated labels where the form schema permits. The capture record and recovered review retain the labels; an unknown field is identified generically. Focused comparison and interface checks passed. The overall warning remains when the list itself is limited.

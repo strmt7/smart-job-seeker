@@ -4390,6 +4390,7 @@ fn serve(
                     .as_ref()
                     .unwrap_or(&current.completed_selectors),
             );
+            let omitted_labels = expected.omitted_labels.clone();
             let result_path = current
                 .record
                 .as_ref()
@@ -4421,13 +4422,13 @@ fn serve(
             }
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
-                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"clip":if target.is_none() { json!({"x":x,"y":y,"width":clip_width,"height":clip_height}) } else { Value::Null },"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"clip":if target.is_none() { json!({"x":x,"y":y,"width":clip_width,"height":clip_height}) } else { Value::Null },"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"omitted_labels":omitted_labels,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
                 }).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"task_id":task_id,"screenshot":screenshot,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"page_signature":signature.as_str(),"record_saved":record_saved}),
+                json!({"task_id":task_id,"screenshot":screenshot,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"omitted_labels":omitted_labels,"page_signature":signature.as_str(),"record_saved":record_saved}),
             );
         }
         "/api/form/visual-review-status" => {

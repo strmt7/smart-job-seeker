@@ -148,7 +148,7 @@ fn same_review_label(left: &str, right: &str) -> bool {
 
 /// Repeated labels are common in address sections. Preserve the site's label
 /// while making each unresolved control distinguishable in review messages.
-fn field_review_label(
+pub(crate) fn field_review_label(
     schema: &FormSchema,
     field: &waypoint_applications::form_mapping::FormField,
 ) -> String {
