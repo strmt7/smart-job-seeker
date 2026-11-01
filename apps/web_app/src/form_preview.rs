@@ -2921,6 +2921,13 @@ mod tests {
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
         assert!(!live.schema.fields.is_empty(), "no fields detected");
+        if let Some(path) = std::env::var_os("WAYPOINT_PUBLIC_APPLICATION_SCREENSHOT") {
+            use base64::Engine;
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(driver.screenshot_base64().unwrap())
+                .unwrap();
+            std::fs::write(path, png).unwrap();
+        }
         let choices = driver.page_custom_choices().unwrap();
         println!(
             "fields={} required={} sensitive={} custom_choices={} expanded={} incomplete_choices={} inventory_incomplete={}",

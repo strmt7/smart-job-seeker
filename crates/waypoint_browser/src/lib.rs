@@ -3144,6 +3144,7 @@ impl CdpDriver {
                 } else {
                     if needs_review {
                         wall_flags.push("a custom control needs manual review".into());
+                        wall_flags.push("a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into());
                     }
                     if rendered && !available {
                         let required = control.attrs.contains_key("required")

@@ -225,6 +225,10 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
         .walls
         .iter()
         .any(|wall| wall == "a custom control needs manual review"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("obscured, clipped or transparent")));
     assert!(!live
         .schema
         .fields
@@ -298,6 +302,27 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
             "accepted {selector}"
         );
     }
+}
+
+#[test]
+#[ignore = "starts one local browser against a fictional overlay"]
+fn obscured_form_reports_how_to_resume_without_interaction() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_obscured_overlay.html"))
+        .unwrap();
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#name"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("obscured, clipped or transparent")));
+    assert!(driver.trace.iter().all(|entry| !entry.contains("clicked")
+        && !entry.contains("typed")
+        && !entry.contains("submitted")));
 }
 
 #[test]
