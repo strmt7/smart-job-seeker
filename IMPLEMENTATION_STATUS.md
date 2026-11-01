@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Visible-browser handoff — 2026-11-01
+
+- When a headless form needs manual review, the panel now offers an explicit action to close that session and start a visible inspection of the original listing. It warns that unsaved site changes and panel answers may be lost, blocks the action during filling or visual review and after filling, and uses the existing pending-inspection recovery path if reopening fails. Simulated interface tests covered success, close failure, start failure and the fill guards. This has not been exercised in a rendered browser or against a live employer; it does not interact with or submit the form.
+
 ## Workable page and obscured-field guidance — 2026-11-01
 
 - An eight-second settled Crawl4AI capture of a public Workable application returned substantive page content (native capture SHA-256 `7f19caad51b1611d6a1fcc9b709677111ac018496eed5fe4fd99bc324b76d3dc`). An isolated CPU run of `gemma4:12b-it-q4_K_M` inspected the live form with fictional profile values and suggested a phone number and LinkedIn URL; a salary question, CAPTCHA, required hidden control and custom choices remained for review. A viewport capture (SHA-256 `526eb4a3636f83f8bfda8283775bde2bdf6635c8a3fd754754c0ff4c9b425366`) showed a cookie overlay obscuring the name and email fields. The initial screenshot test used a path relative to the wrong working directory and failed; an absolute-path retry succeeded.
