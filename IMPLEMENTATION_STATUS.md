@@ -1156,3 +1156,7 @@ The updated fixture was subsequently exercised once through the production sugge
 ### Redirected Start Menu folder (2026-11-01)
 
 The package installer now resolves the current user's Programs folder from Windows rather than constructing it under `APPDATA`. If that folder is unavailable, installation stops before copying and offers the existing `-NoShortcut` option. Fictional redirected and missing-folder checks and the installer fixture passed in PowerShell 7 and Windows PowerShell 5.1. This did not change Windows folder redirection or create a real shortcut; a clean-host install and default browser provisioning remain unverified.
+
+### Browser provisioning research (2026-11-01)
+
+Chromium's download documentation says its snapshots and Chrome for Testing builds do not auto-update; Chromium's security FAQ limits Chrome for Testing to trusted content. These distributions therefore do not resolve the need for an automatically maintained browser for arbitrary employer sites. The existing launcher prefers installed browsers over a bundled fallback, except for an explicit user choice. The package README now states the limitation. Official-page crawl receipts were retained outside Git: download-page SHA-256 `5239847a5c1dd75cf346037076b0ca421a532f3f60591ff8c3b3f4a5253fae53` and official GitHub mirror FAQ SHA-256 `a6e7b5bb1dd819f4184e2f086d940c968b0d1b31eaed6b24ffdd2d2674772ee8`. A separate googlesource FAQ crawl failed with an HTTP 503 access challenge and was retained. No browser was installed or updated; automated browser provisioning remains open.
