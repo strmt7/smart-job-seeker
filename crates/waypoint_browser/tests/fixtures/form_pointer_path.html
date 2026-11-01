@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><body>
+<form onsubmit="document.querySelector('#status').textContent='SUBMITTED';return false">
+  <button id="first" type="button" style="position:absolute;left:80px;top:80px;width:100px;height:50px" onclick="document.querySelector('#events').dataset.moves='0'">First</button>
+  <button id="second" type="button" style="position:absolute;left:500px;top:300px;width:100px;height:50px" onclick="document.querySelector('#status').textContent='SECOND CLICKED'">Second</button>
+  <output id="events" data-moves="0"></output><output id="status">NOT SUBMITTED</output>
+</form>
+<script>
+document.addEventListener('mousemove', () => {
+  const events = document.querySelector('#events');
+  events.dataset.moves = String(Number(events.dataset.moves) + 1);
+});
+</script>
+</body></html>

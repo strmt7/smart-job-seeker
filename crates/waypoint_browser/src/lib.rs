@@ -228,6 +228,7 @@ pub struct CdpDriver {
     /// reports. Never contains field values that were typed.
     pub trace: Vec<String>,
     load_wait: Duration,
+    pointer_position: Option<(f64, f64)>,
     // Status belongs to one browser frame and loader, never to an origin alone.
     document_status: Option<(String, String, u64)>,
 }
@@ -480,6 +481,7 @@ impl CdpDriver {
             root_node: None,
             trace: vec![],
             load_wait: Duration::from_secs(10),
+            pointer_position: None,
             document_status: None,
         };
         driver.cdp.call("Page.enable", json!({})).map_err(derr)?;
@@ -2997,12 +2999,64 @@ impl CdpDriver {
         }
         let x = (nums[0] + nums[2] + nums[4] + nums[6]) / 4.0;
         let y = (nums[1] + nums[3] + nums[5] + nums[7]) / 4.0;
-        self.cdp
-            .call(
-                "Input.dispatchMouseEvent",
-                json!({ "type": "mouseMoved", "x": x, "y": y }),
-            )
+        let metrics = self
+            .cdp
+            .call("Page.getLayoutMetrics", json!({}))
             .map_err(derr)?;
+        let viewport = metrics
+            .get("cssVisualViewport")
+            .or_else(|| metrics.get("visualViewport"))
+            .ok_or_else(|| {
+                DriverError("Click viewport is unavailable; review it manually".into())
+            })?;
+        let width = viewport
+            .get("clientWidth")
+            .and_then(Value::as_f64)
+            .filter(|v| *v > 1.0 && v.is_finite())
+            .ok_or_else(|| {
+                DriverError("Click viewport is unavailable; review it manually".into())
+            })?;
+        let height = viewport
+            .get("clientHeight")
+            .and_then(Value::as_f64)
+            .filter(|v| *v > 1.0 && v.is_finite())
+            .ok_or_else(|| {
+                DriverError("Click viewport is unavailable; review it manually".into())
+            })?;
+        if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 || x >= width || y >= height {
+            return Err(DriverError(
+                "Click target is outside the viewport; review it manually".into(),
+            ));
+        }
+        // The first position is not observable through CDP. Subsequent moves
+        // follow a bounded curve from the last point, with no artificial wait.
+        let (start_x, start_y) = self.pointer_position.unwrap_or((x, y));
+        let (start_x, start_y) = (
+            start_x.clamp(0.0, width - 0.01),
+            start_y.clamp(0.0, height - 0.01),
+        );
+        let dx = x - start_x;
+        let dy = y - start_y;
+        let distance = dx.hypot(dy);
+        let steps = if distance < 1.0 { 1 } else { 5 };
+        for step in 1..=steps {
+            let t = f64::from(step) / f64::from(steps);
+            let progress = t * t * (3.0 - 2.0 * t);
+            let curve = if distance > 0.0 {
+                (distance * 0.07).min(12.0) * (std::f64::consts::PI * t).sin() / distance
+            } else {
+                0.0
+            };
+            let px = (start_x + dx * progress - dy * curve).clamp(0.0, width - 0.01);
+            let py = (start_y + dy * progress + dx * curve).clamp(0.0, height - 0.01);
+            self.cdp
+                .call(
+                    "Input.dispatchMouseEvent",
+                    json!({"type":"mouseMoved","x":px,"y":py}),
+                )
+                .map_err(derr)?;
+            self.pointer_position = Some((px, py));
+        }
         // Hover handlers can move or cover a control. Recheck the target after
         // moving the pointer so a changed page cannot redirect the click.
         let resolved = self

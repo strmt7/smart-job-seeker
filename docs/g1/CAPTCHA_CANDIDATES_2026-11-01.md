@@ -78,7 +78,7 @@ differences in typing, scrolling and mouse behavior for seven tested agents;
 its results are limited to the tested tasks and configurations. Neither source
 establishes that adding random delays or interpolated pointer paths makes an
 agent indistinguishable from a person. Waypoint previously inserted text in
-whole strings and still moves directly to click coordinates. Any change needs
+whole strings and moved directly to click coordinates. Any change needs
 to preserve exact text entry, verification and the user's no-submission
 boundary while measuring added time.
 
@@ -105,7 +105,7 @@ version of this check. After aligning the click and hit test to the border
 center, the overlay, nested-frame and nested-shadow fixtures and browser-crate
 Clippy passed. A page can still change between inspection and click, and this
 check alone does not prove that every frame ancestor or site-side action is
-safe. Pointer motion itself is not yet changed.
+safe.
 
 A subsequent local fixture exposed a parent-page submit control covering an
 embedded input: the earlier check allowed the click. The driver now follows
@@ -116,6 +116,15 @@ clickable, then that an overlay prevents the click without submitting the
 fixture. The overlay and existing nested-frame and shadow fixtures and
 browser-crate Clippy passed. This is not proof against all coordinate mappings,
 cross-origin pages, or changes between inspection and the actual click.
+
+Subsequent clicks now move from the last known pointer position to the next
+target in up to five bounded curved steps, without artificial sleeps. The
+first click still moves directly because the prior pointer position is not
+observable. One fictional two-button fixture reported about 77 ms for the
+second movement and click; this is a single-host observation without a
+before-and-after comparison. All 62 browser fixtures and browser-crate Clippy
+passed. This does not establish human-equivalent behavior or evasion of bot
+detection; pointer movement can itself trigger page hover handlers.
 
 Crawl4AI receipts, both HTTP 200 with substantive extracted content:
 

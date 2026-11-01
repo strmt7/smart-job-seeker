@@ -747,6 +747,40 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches a browser against a fictional pointer fixture"]
+fn pointer_moves_in_bounded_steps_between_clicks() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_pointer_path.html")).unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#first".into(),
+        })
+        .unwrap();
+    let start = std::time::Instant::now();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#second".into(),
+        })
+        .unwrap();
+    println!(
+        "fictional pointer movement and click: {:?}",
+        start.elapsed()
+    );
+    let moves = driver
+        .read_attribute("#events", "data-moves")
+        .unwrap()
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        (2..=5).contains(&moves),
+        "unexpected pointer event count: {moves}"
+    );
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("SECOND CLICKED"), "{text}");
+}
+
+#[test]
 #[ignore = "launches a browser against a fictional covered frame"]
 fn click_stops_if_an_ancestor_frame_is_covered() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
