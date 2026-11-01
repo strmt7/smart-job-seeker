@@ -109,10 +109,11 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     // A passage deliberately selected by the user is source material for the
     // rewrite, even if it has not been added to the reviewed fact inventory.
     // Preserve its provenance: selecting text does not independently verify it.
-    let mut sources = vec![format!(
+    let selected_source = format!(
         "User-selected template passage (not independently verified): {}",
         input.before
-    )];
+    );
+    let mut sources = vec![selected_source.clone()];
     sources.extend(input.facts);
     let request=crate::answer_task::Inputs{max_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; do not add qualifications or details. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
     let mut suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
@@ -125,7 +126,33 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     let replacement = suggestion["text"].as_str().unwrap_or_default();
     suggestion["first_person_opening_changed"] =
         json!(first_person_opening(&input.before) != first_person_opening(replacement));
+    qualify_unverified_support(&mut suggestion, &selected_source);
     Ok(suggestion)
+}
+
+/// Reviews cite sources for the whole suggestion, not individual claims. If
+/// the selected passage is cited, no supported claim can be attributed solely
+/// to reviewed facts. Keep the model's judgment and explain the uncertainty.
+fn qualify_unverified_support(suggestion: &mut Value, selected_source: &str) {
+    let selected_cited = suggestion["sources"].as_array().is_some_and(|sources| {
+        sources
+            .iter()
+            .any(|source| source.as_str() == Some(selected_source))
+    });
+    if !selected_cited {
+        return;
+    }
+    if let Some(claims) = suggestion["evidence_check"]["claims"].as_array_mut() {
+        for claim in claims {
+            if claim["status"] == "supported" {
+                claim["status"] = json!("uncertain");
+                claim["model_status"] = json!("supported");
+                claim["provenance_guard"] = json!(true);
+                let explanation = claim["explanation"].as_str().unwrap_or_default();
+                claim["explanation"] = json!(format!("The model judged this supported, but the suggestion cites the independently unverified template passage and does not attribute sources to individual claims. Review the original evidence. Model explanation: {explanation}"));
+            }
+        }
+    }
 }
 
 fn first_person_opening(text: &str) -> bool {
@@ -238,6 +265,44 @@ mod tests {
         assert!(suggest(&mut model, input("Not present")).is_err());
         assert!(suggest(&mut model, input_with_passage("aaa", "aaaa")).is_err());
         assert!(suggest(&mut model, input_with_passage("éé", "ééé")).is_err());
+    }
+
+    #[test]
+    fn template_support_requires_review_when_unverified_source_is_cited() {
+        let source = "User-selected template passage (not independently verified): Wrote code";
+        let mut mixed = json!({"sources":[source,"Reviewed Python experience"],"evidence_check":{"status":"completed","claims":[
+            {"excerpt":"Wrote code","status":"supported","explanation":"Matches source"},
+            {"excerpt":"Led a team","status":"unsupported","explanation":"Missing"},
+            {"excerpt":"Five years","status":"uncertain","explanation":"Not clear"}
+        ]}});
+        qualify_unverified_support(&mut mixed, source);
+        assert_eq!(mixed["evidence_check"]["claims"][0]["status"], "uncertain");
+        assert_eq!(
+            mixed["evidence_check"]["claims"][0]["model_status"],
+            "supported"
+        );
+        assert_eq!(
+            mixed["evidence_check"]["claims"][0]["provenance_guard"],
+            true
+        );
+        assert!(mixed["evidence_check"]["claims"][0]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("Matches source"));
+        assert_eq!(
+            mixed["evidence_check"]["claims"][1]["status"],
+            "unsupported"
+        );
+        assert_eq!(mixed["evidence_check"]["claims"][2]["status"], "uncertain");
+        let mut reviewed = json!({"sources":["Reviewed Python experience"],"evidence_check":{"status":"completed","claims":[{"excerpt":"Python","status":"supported","explanation":"Matches"}]}});
+        qualify_unverified_support(&mut reviewed, source);
+        assert_eq!(
+            reviewed["evidence_check"]["claims"][0]["status"],
+            "supported"
+        );
+        let mut failed = json!({"sources":[source],"evidence_check":{"status":"invalid"}});
+        qualify_unverified_support(&mut failed, source);
+        assert_eq!(failed["evidence_check"]["status"], "invalid");
     }
 
     #[test]

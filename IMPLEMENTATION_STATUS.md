@@ -1,3 +1,8 @@
+## Template evidence provenance — 2026-11-01
+
+- When a template suggestion cites the selected, independently unverified passage, model judgments of supported claims are now reported as uncertain, with the original model judgment and explanation retained. The evidence check cites sources for the whole suggestion rather than individual claims, so this conservative rule also marks claims uncertain when another cited, reviewed fact might support them. Unsupported and already-uncertain judgments are unchanged; a failed check stays failed.
+- In the previously failing fictional local-model example, the model again judged both the template claim and a reviewed Python fact supported. Because both sources were cited, the app marked both claims uncertain and explained why. The previously failing live check passed; a separate invented-management claim remained flagged. This does not establish the truth of either source or general model accuracy. Minimum sampled available RAM was 19.38 GiB and the model was unloaded. No employer was contacted or application submitted. Local outputs are in `target/live_*qwen-live.log`.
+
 ## Evidence-check recovery — 2026-11-01
 
 - Answer and template evidence checks now retry once when the local model returns malformed structured output or a review that fails validation. The retry receives the fixed validation reason, and the same exact-quotation, status, explanation and numeric checks apply. Runtime failures are not retried. The interface identifies recovered checks; unrecovered checks remain visibly incomplete. A retry adds a model call and may be refused if the prompt exceeds the existing size limit.
