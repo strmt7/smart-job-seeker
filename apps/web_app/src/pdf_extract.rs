@@ -426,9 +426,11 @@ mod tests {
     fn public_cv_edit_either_succeeds_or_reports_manual_review() {
         let path = std::env::var_os("WAYPOINT_PUBLIC_CV_FIXTURE").expect("public CV fixture path");
         let before = std::fs::read(&path).unwrap();
+        let passage = std::env::var("WAYPOINT_PUBLIC_CV_PASSAGE")
+            .unwrap_or_else(|_| "Curriculum Vitae".into());
         let replacement = std::env::var("WAYPOINT_PUBLIC_CV_REPLACEMENT")
             .unwrap_or_else(|_| "Career Profile".into());
-        let outcome = super::edit(&before, "Curriculum Vitae", &replacement);
+        let outcome = super::edit(&before, &passage, &replacement);
         match outcome {
             Ok(pdf) => {
                 let text = super::extract(&pdf).unwrap();
