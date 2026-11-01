@@ -43,6 +43,41 @@ fn file_url(name: &str) -> String {
 }
 
 #[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn aria_required_tokens_are_case_insensitive() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_aria_required_case.html"))
+        .unwrap();
+    for label in ["Name", "Email"] {
+        assert!(
+            live.schema
+                .fields
+                .iter()
+                .find(|field| field.label == label)
+                .unwrap()
+                .required
+        );
+    }
+    assert!(
+        !live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Optional")
+            .unwrap()
+            .required
+    );
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a required field is disabled or read-only"));
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser and opens a nonexistent fictional file"]
 fn failed_navigation_does_not_return_an_inspected_form() {
     let missing = format!("waypoint-nonexistent-{}.html", std::process::id());

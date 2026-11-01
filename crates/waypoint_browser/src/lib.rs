@@ -3536,7 +3536,7 @@ impl CdpDriver {
                 || control
                     .attrs
                     .get("aria-required")
-                    .is_some_and(|v| v == "true");
+                    .is_some_and(|v| v.eq_ignore_ascii_case("true"));
             if control.attrs.contains_key("disabled")
                 || control.attrs.contains_key("readonly")
                 || control
