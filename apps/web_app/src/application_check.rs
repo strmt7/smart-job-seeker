@@ -298,15 +298,27 @@ fn eligible_external_redirect(original: &str, current: &str, allow_external: boo
             == Some(current)
 }
 
-/// A mail link is only a contact signal, not proof it accepts applications.
-fn email_contact_note(links: &[waypoint_applications::driver::PageLink]) -> Option<String> {
-    let inventory = crate::candidate_task::email_link_candidates(links);
+/// Addresses are contact signals, not proof they accept applications.
+fn email_contact_note(
+    links: Option<&[waypoint_applications::driver::PageLink]>,
+    page_text: Option<(&str, bool)>,
+) -> Option<String> {
+    let mut inventory = crate::candidate_task::email_link_candidates(links.unwrap_or(&[]));
+    let metadata = match page_text {
+        Some((text, truncated)) => {
+            serde_json::json!({"page_text_status":if truncated { "truncated" } else { "captured" },"page_text":text})
+        }
+        None => serde_json::json!({"page_text_status":"unavailable"}),
+    };
+    crate::candidate_task::add_page_text_contacts(&mut inventory, &metadata);
     let count = inventory["contacts"].as_array()?.len();
     if count == 0 {
         return None;
     }
-    let limited =
-        inventory["omitted"].as_u64().unwrap_or(0) > 0 || inventory["link_limit_reached"] == true;
+    let limited = links.is_none()
+        || inventory["text_status"] != "captured"
+        || inventory["omitted"].as_u64().unwrap_or(0) > 0
+        || inventory["link_limit_reached"] == true;
     Some(format!("The listing has {}{count} email contact{}; verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, if count == 1 { "it" } else { "any" }))
 }
 
@@ -388,10 +400,13 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                 .open(&url)
                 .map_err(|error| navigation_failure("listing page", &error))?;
             let contact_note = if page.walls.is_empty() {
-                browser
-                    .page_links()
-                    .ok()
-                    .and_then(|links| email_contact_note(&links))
+                let links = browser.page_links().ok();
+                let text = browser.page_text_bounded(32_000).ok();
+                email_contact_note(
+                    links.as_deref(),
+                    text.as_ref()
+                        .map(|(text, truncated)| (text.as_str(), *truncated)),
+                )
             } else {
                 None
             };
@@ -659,12 +674,19 @@ mod tests {
             url: url.into(),
             label: "Contact".into(),
         };
-        assert!(super::email_contact_note(&[link("https://example.org/job")]).is_none());
-        let note = super::email_contact_note(&[
-            link("mailto:jobs@example.org?subject=ignored"),
-            link("mailto:jobs@example.org"),
-            link("mailto:a@example.org,b@example.org"),
-        ])
+        assert!(super::email_contact_note(
+            Some(&[link("https://example.org/job")]),
+            Some(("No contact", false))
+        )
+        .is_none());
+        let note = super::email_contact_note(
+            Some(&[
+                link("mailto:jobs@example.org?subject=ignored"),
+                link("mailto:jobs@example.org"),
+                link("mailto:a@example.org,b@example.org"),
+            ]),
+            Some(("No contact", false)),
+        )
         .unwrap();
         assert!(note.contains("1 email contact"));
         assert!(note.contains("verify whether it accepts applications"));
@@ -672,9 +694,15 @@ mod tests {
         let many: Vec<_> = (0..9)
             .map(|i| link(&format!("mailto:job{i}@example.org")))
             .collect();
-        assert!(super::email_contact_note(&many)
-            .unwrap()
-            .contains("at least 8 email contacts"));
+        assert!(
+            super::email_contact_note(Some(&many), Some(("No contact", false)))
+                .unwrap()
+                .contains("at least 8 email contacts")
+        );
+        let text_only =
+            super::email_contact_note(None, Some(("Apply to jobs@example.org", true))).unwrap();
+        assert!(text_only.contains("at least 1 email contact"));
+        assert!(!text_only.contains("jobs@example.org"));
     }
 
     #[test]
@@ -1461,6 +1489,81 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a browser and local fictional listing server"]
+    fn route_check_reports_email_contact_end_to_end() {
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let stop = done.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut requests = Vec::new();
+            while !stop.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                        let mut data = [0u8; 2048];
+                        let n = stream.read(&mut data).unwrap_or(0);
+                        requests.push(
+                            String::from_utf8_lossy(&data[..n])
+                                .lines()
+                                .next()
+                                .unwrap_or("")
+                                .to_owned(),
+                        );
+                        let body = include_str!("../tests/application-check-email.html");
+                        let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(20))
+                    }
+                    Err(error) => panic!("fixture server: {error}"),
+                }
+            }
+            requests
+        });
+        super::start(
+            "fixture-email-worker".into(),
+            "fictional-job".into(),
+            format!("http://127.0.0.1:{port}/listing"),
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let (_, _, message, review) = loop {
+            if let Some(result) = poll("fixture-email-worker").unwrap() {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        acknowledge("fixture-email-worker").unwrap();
+        done.store(true, Ordering::Release);
+        let requests = server.join().unwrap();
+        assert!(review);
+        assert!(message.contains("2 email contacts"), "{message}");
+        assert!(
+            message.contains("verify whether any accepts applications"),
+            "{message}"
+        );
+        assert!(requests.iter().any(|request| request.starts_with("GET ")));
+        assert!(
+            requests
+                .iter()
+                .filter(|request| !request.is_empty())
+                .all(|request| request.starts_with("GET ")),
+            "unexpected requests: {requests:?}"
+        );
+    }
+
+    #[test]
     #[ignore = "starts one browser using a fictional local listing"]
     fn checks_email_contact_without_opening_or_sending_mail() {
         use waypoint_applications::driver::BrowserDriver;
@@ -1471,9 +1574,11 @@ mod tests {
         let url = url::Url::from_file_path(fixture).unwrap();
         let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         browser.open(url.as_str()).unwrap();
-        let message = super::email_contact_note(&browser.page_links().unwrap()).unwrap();
-        assert!(message.contains("1 email contact"));
-        assert!(message.contains("verify whether it accepts applications"));
+        let links = browser.page_links().unwrap();
+        let (text, truncated) = browser.page_text_bounded(32_000).unwrap();
+        let message = super::email_contact_note(Some(&links), Some((&text, truncated))).unwrap();
+        assert!(message.contains("2 email contacts"));
+        assert!(message.contains("verify whether any accepts applications"));
         assert!(!message.contains("careers@example.invalid"));
         assert!(browser
             .trace

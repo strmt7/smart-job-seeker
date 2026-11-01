@@ -88,7 +88,7 @@ pub(crate) fn email_link_candidates(links: &[waypoint_applications::driver::Page
 
 /// Collect bounded email-like text as unverified contact evidence, including
 /// an exact excerpt. This does not infer whether a contact accepts applications.
-fn add_page_text_contacts(email: &mut Value, metadata: &Value) {
+pub(crate) fn add_page_text_contacts(email: &mut Value, metadata: &Value) {
     let link_status = email["status"].as_str().unwrap_or("unavailable").to_owned();
     let text_status = metadata["page_text_status"]
         .as_str()
