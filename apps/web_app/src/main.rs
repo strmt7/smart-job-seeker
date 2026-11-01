@@ -5,6 +5,7 @@ mod application_check;
 pub mod application_email;
 mod ats_check;
 mod attempt_record;
+mod candidate_selection;
 mod candidate_task;
 mod contact_advice;
 mod control_rank;
@@ -2195,6 +2196,20 @@ fn serve(
         "/api/web-search/batch-pending" => {
             json_reply(stream, "200 OK", web_search_batch::pending_with_saved(ws)?);
         }
+        "/api/web-search/selection" => match body["action"].as_str() {
+            Some("load") => {
+                let (revision, items) = candidate_selection::load(ws)?;
+                json_reply(stream, "200 OK", json!({"revision":revision,"items":items}));
+            }
+            Some("save") => {
+                let revision = body["revision"]
+                    .as_u64()
+                    .ok_or("Missing selection revision")?;
+                let revision = candidate_selection::save(ws, revision, &body["items"])?;
+                json_reply(stream, "200 OK", json!({"revision":revision}));
+            }
+            _ => return Err("Invalid selection action".into()),
+        },
         "/api/web-search/batch-cancel" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             web_search_batch::cancel(id)?;

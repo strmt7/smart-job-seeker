@@ -24,6 +24,8 @@ For application inspection, an explicit `WAYPOINT_BROWSER` executable takes prio
 
 Public-board and batch web searches continue while the local app is running even if the web page is closed. Board results are saved incrementally. The latest web-search batch is sealed to the Windows user for recovery after restart; an active batch is normally checkpointed every five seconds and saved once more at normal shutdown. An interrupted batch is shown as incomplete and is not automatically resumed. A crash can lose pages since the last checkpoint, and the interface reports checkpoint or completed-history saving failures.
 
+Up to 100 selected search links are sealed and restored from the workspace. Selecting a link does not inspect or apply for it. If another window changes the selection, reload before saving further changes.
+
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.
 
 The project uses free local tools and must not require paid APIs. Wider-web search uses a user-configured SearXNG-compatible provider; use a free or self-hosted instance. The app cannot determine an independent provider's pricing or guarantee its availability. Local-model features use Ollama rather than a paid inference API.

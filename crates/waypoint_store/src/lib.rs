@@ -362,6 +362,9 @@ const MIGRATIONS: &[&str] = &[
     // v37 — retain one completed web-search history, sealed to this user.
     "CREATE TABLE latest_web_search(id INTEGER PRIMARY KEY CHECK(id=1), task_id TEXT NOT NULL, sealed_content BLOB NOT NULL);
      UPDATE meta SET value='37' WHERE key='schema_version';",
+    // v38 — keep selected unverified search links sealed for later inspection.
+    "CREATE TABLE selected_web_candidates(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>0), sealed_content BLOB NOT NULL);
+     UPDATE meta SET value='38' WHERE key='schema_version';",
 
 ];
 
@@ -1334,7 +1337,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "37");
+        assert_eq!(version, "38");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

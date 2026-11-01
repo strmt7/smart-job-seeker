@@ -500,6 +500,18 @@ impl Workspace {
         Ok(self.store.latest_web_search()?)
     }
 
+    pub fn save_selected_web_candidates(
+        &self,
+        expected: u64,
+        content: &[u8],
+    ) -> Result<u64, WorkspaceError> {
+        Ok(self.store.save_selected_web_candidates(expected, content)?)
+    }
+
+    pub fn selected_web_candidates(&self) -> Result<Option<(u64, Vec<u8>)>, WorkspaceError> {
+        Ok(self.store.selected_web_candidates()?)
+    }
+
     pub fn save_fit_assessment(
         &self,
         id: &JobIdentityId,
