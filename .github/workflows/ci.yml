@@ -28,11 +28,13 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - name: Install the pinned PDF parser
+      - name: Install pinned PDF dependencies
         run: |
-          python -m pip install --only-binary=:all: pypdf==6.10.0
+          python -m pip install --only-binary=:all: pypdf==6.10.0 pypdfium2==5.14.0 Pillow==12.3.0
       - name: Check fictional PDF Unicode mapping
         run: python -B apps/web_app/tests/pdf-stream-charmap.test.py
+      - name: Check fictional PDF passage selection
+        run: python -B apps/web_app/tests/pdf-edit-selection.test.py
 
   build-and-test:
     runs-on: windows-latest

@@ -1138,3 +1138,7 @@ The fictional Unicode-map PDF stream check now runs in a separate Windows CI job
 A second public PDF (428,065 bytes, 29 pages) extracted 94,502 UTF-8 bytes, with selectable text on every page. The original test initially requested a passage absent from this document, so its manual-review result did not establish an editing limitation. The test now accepts a configurable passage. A unique existing passage was shortened successfully; the original was unchanged and the existing whole-document text, glyph and visual-difference checks passed. This is one additional example, not evidence of support for arbitrary edits or layouts. The original and edited files remain local and were not committed.
 
 The first hosted CI run for this change was rejected before jobs started because a colon in the inline pip command made the workflow invalid YAML. The command now uses a YAML block; local YAML parsing passed. Hosted validation of the correction remains pending.
+
+### PDF passage selection feedback (2026-11-01)
+
+PDF edits now distinguish a passage that is absent, repeated, or split across text objects, and suggest the appropriate next step. Fictional PDFs exercised all three refusals through the real PDF editing process and PDFium; the Unicode-map stream check also passed. The Windows CI PDF job now includes the selection check and the pinned PDF rendering dependencies; its new hosted run remains pending. This improves guidance only: editing across text objects is still unsupported.

@@ -48,8 +48,13 @@ try:
                 targets.append((index, value, obj.get_bounds(), count))
         textpage.close()
         page.close()
-    if len(targets) != 1 or targets[0][3] != 1 or sum(matches(text, before) for text in originals) != 1:
-        raise ValueError('Select a unique passage contained in one PDF text object; review manually')
+    occurrences = sum(matches(text, before) for text in originals)
+    if occurrences == 0:
+        raise ValueError('The selected passage was not found in the PDF text; check the exact text or review manually')
+    if occurrences != 1:
+        raise ValueError('The selected passage occurs more than once; choose a unique passage or review manually')
+    if len(targets) != 1 or targets[0][3] != 1:
+        raise ValueError('The selected passage spans PDF text objects or is ambiguous; choose a shorter passage or review manually')
     index, old_object, old_bounds, _ = targets[0]
     expected_object = old_object.replace(before, after, 1)
     try:
