@@ -747,6 +747,33 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches one browser against a fictional click-overlay fixture"]
+fn click_stops_if_hover_covers_target_with_submit_control() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_click_overlay.html")).unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#safe".into(),
+        })
+        .unwrap();
+    let error = driver
+        .execute(&BrowserCommand::Click {
+            selector: "#target".into(),
+        })
+        .unwrap_err();
+    assert!(error.0.contains("covered"), "{error}");
+    let error = driver
+        .execute(&BrowserCommand::Click {
+            selector: "#asymmetric".into(),
+        })
+        .unwrap_err();
+    assert!(error.0.contains("covered"), "{error}");
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("SAFE CLICK"), "{text}");
+    assert!(text.contains("NOT SUBMITTED"), "{text}");
+}
+
+#[test]
 #[ignore = "launches one browser against a fictional keyboard fixture"]
 fn text_entry_emits_keys_and_stops_when_focus_moves() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><body>
+<form onsubmit="document.querySelector('#status').textContent='SUBMITTED';return false">
+  <button id="safe" type="button" onclick="document.querySelector('#safe-status').textContent='SAFE CLICK'">Safe</button>
+  <button id="target" type="button" style="position:absolute;left:200px;top:150px;width:160px;height:60px">Continue</button>
+  <button id="overlay" type="submit" style="display:none;position:absolute;left:200px;top:150px;width:160px;height:60px">Submit</button>
+  <button id="asymmetric" type="button" style="position:absolute;left:420px;top:150px;width:200px;height:60px;padding-left:120px">Next</button>
+  <button id="asymmetric-overlay" type="submit" style="position:absolute;left:500px;top:150px;width:50px;height:60px">Send</button>
+  <output id="safe-status"></output><output id="status">NOT SUBMITTED</output>
+</form>
+<script>
+document.querySelector('#target').addEventListener('mouseenter', () => {
+  document.querySelector('#overlay').style.display = 'block';
+}, {once:true});
+</script>
+</body></html>

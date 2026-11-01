@@ -2988,7 +2988,7 @@ impl CdpDriver {
             .call("DOM.getBoxModel", json!({ "nodeId": node }))
             .map_err(derr)?;
         let quad = model
-            .pointer("/model/content")
+            .pointer("/model/border")
             .and_then(|v| v.as_array())
             .ok_or_else(|| DriverError(format!("{selector} has no layout box")))?;
         let nums: Vec<f64> = quad.iter().filter_map(|v| v.as_f64()).collect();
@@ -3003,6 +3003,61 @@ impl CdpDriver {
                 json!({ "type": "mouseMoved", "x": x, "y": y }),
             )
             .map_err(derr)?;
+        // Hover handlers can move or cover a control. Recheck the target after
+        // moving the pointer so a changed page cannot redirect the click.
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Click target disappeared; review it manually".into()))?;
+        let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i]')) return false;
+            const rect = this.getBoundingClientRect();
+            const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
+            if (rect.width <= 0 || rect.height <= 0 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
+            for (let node = this, depth = 0; node; node = node.parentElement) {
+                if (++depth > 64) return false;
+                const style = getComputedStyle(node);
+                if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;
+            }
+            const root = this.getRootNode();
+            const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x, y) : null;
+            return !!hit && (hit === this || this.contains(hit));
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let checked = checked.map_err(derr)?;
+        released.map_err(derr)?;
+        if checked.get("exceptionDetails").is_some()
+            || checked.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Click target is hidden, covered, or unavailable; review it manually".into(),
+            ));
+        }
+        let current = self
+            .cdp
+            .call("DOM.getBoxModel", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let quad = current
+            .pointer("/model/border")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("Click target moved; review it manually".into()))?;
+        let coordinates: Vec<_> = quad.iter().filter_map(Value::as_f64).collect();
+        if coordinates.len() < 8
+            || (((coordinates[0] + coordinates[2] + coordinates[4] + coordinates[6]) / 4.0) - x)
+                .abs()
+                > 0.5
+            || (((coordinates[1] + coordinates[3] + coordinates[5] + coordinates[7]) / 4.0) - y)
+                .abs()
+                > 0.5
+        {
+            return Err(DriverError("Click target moved; review it manually".into()));
+        }
         self.cdp
             .call(
                 "Input.dispatchMouseEvent",

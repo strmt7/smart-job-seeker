@@ -96,6 +96,17 @@ fixtures, a printable-character unit test and browser-crate Clippy passed.
 This is not evidence of
 human-equivalent behavior or successful avoidance of bot detection.
 
+Before changing pointer trajectories, the shared click path was updated to
+inspect its target after hover and reject a hidden, disabled, covered or moved
+element. A local fixture checks both a submit control appearing over the
+target on hover and a pre-existing overlay over an asymmetrically padded
+button; neither was clicked. All 60 browser fixtures passed with the first
+version of this check. After aligning the click and hit test to the border
+center, the overlay, nested-frame and nested-shadow fixtures and browser-crate
+Clippy passed. A page can still change between inspection and click, and this
+check alone does not prove that every frame ancestor or site-side action is
+safe. Pointer motion itself is not yet changed.
+
 Crawl4AI receipts, both HTTP 200 with substantive extracted content:
 
 - Cloudflare: `c48e6a5619f498512f7109bd54402062430aa59c8cba071a605301ece065c513`
