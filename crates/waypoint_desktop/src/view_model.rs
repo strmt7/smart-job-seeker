@@ -245,6 +245,7 @@ mod tests {
             strict: vec![RankedJob {
                 job: job("Rust Engineer", "ashby"),
                 description_available: true,
+                remote_status: None,
                 unknown_constraints: vec!["salary: not stated".into()],
                 score: 0.5,
                 matched_skills: vec!["Rust".into()],
@@ -253,6 +254,11 @@ mod tests {
             excluded: vec![ExcludedJob {
                 job: job("Sales Lead", "lever"),
                 reasons: vec!["salary: salary not stated".into()],
+                description_available: false,
+                remote_status: None,
+                unknown_constraints: vec![],
+                score: 0.0,
+                matched_skills: vec![],
             }],
         };
         let (rows, excluded) = rows_from_ranked(&results);

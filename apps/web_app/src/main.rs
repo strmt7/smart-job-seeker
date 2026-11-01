@@ -197,7 +197,58 @@ const PROFILE_FIELDS: &[&str] = &[
     "cover_template_id",
     "document_instructions",
     "auto_assess_ai",
+    "search_remote_only",
+    "search_locations",
 ];
+
+fn campaign_constraints(profile: &Value) -> Result<CampaignConstraints, String> {
+    let remote = profile
+        .get("search_remote_only")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !["", "on"].contains(&remote) {
+        return Err("Invalid remote-only setting".into());
+    }
+    let locations = profile
+        .get("search_locations")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let locations: Vec<String> = locations
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if locations.len() > 50 || locations.iter().any(|line| line.len() > 200) {
+        return Err("Enter at most 50 locations, each at most 200 bytes".into());
+    }
+    Ok(CampaignConstraints {
+        remote_only: remote == "on",
+        locations,
+        ..Default::default()
+    })
+}
+
+fn profile_fit_instructions(profile: &Value) -> Result<String, String> {
+    let constraints = campaign_constraints(profile)?;
+    let mut parts = Vec::new();
+    if constraints.remote_only {
+        parts.push("Remote work is required.".to_owned());
+    }
+    if !constraints.locations.is_empty() {
+        parts.push(format!(
+            "Allowed job locations (any one): {}.",
+            constraints.locations.join("; ")
+        ));
+    }
+    if let Some(text) = profile["instructions"]
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+    {
+        parts.push(text.to_owned());
+    }
+    Ok(parts.join("\n"))
+}
 
 fn search_plan_context(
     ws: &Workspace,
@@ -275,7 +326,7 @@ fn fit_assessment_digest(
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
     };
-    let full_instructions = profile["instructions"].as_str().unwrap_or("");
+    let full_instructions = profile_fit_instructions(&profile)?;
     let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v45","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
@@ -311,7 +362,7 @@ fn fit_source_coverage(
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
     };
-    let full_instructions = profile["instructions"].as_str().unwrap_or("");
+    let full_instructions = profile_fit_instructions(&profile)?;
     let (reviewed_total, oversized) = ws.reviewed_fact_coverage(1000).map_err(|e| e.to_string())?;
     let eligible = reviewed_total.saturating_sub(oversized);
     let bounded = eligible.min(500);
@@ -378,9 +429,7 @@ fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
     };
-    let instructions: String = profile["instructions"]
-        .as_str()
-        .unwrap_or("")
+    let instructions: String = profile_fit_instructions(&profile)?
         .chars()
         .take(2000)
         .collect();
@@ -1530,13 +1579,24 @@ fn serve(
             .filter(|fact| !fact.requires_review && !fact.text.trim().is_empty())
             .map(|fact| fact.text.clone())
             .collect();
+        let profile = match ws.candidate_profile().map_err(|e| e.to_string())? {
+            Some(content) => {
+                serde_json::from_str::<Value>(&content).map_err(|_| "stored profile is invalid")?
+            }
+            None => json!({}),
+        };
+        let constraints = campaign_constraints(&profile)?;
         let ranked = ws
-            .ranked(&CampaignConstraints::default(), &skills, now())
+            .ranked(&constraints, &skills, now())
             .map_err(|e| e.to_string())?;
-        let jobs: Vec<Value> = ranked.strict.iter().map(|row| {
+        let mut jobs: Vec<Value> = ranked.strict.iter().map(|row| {
             let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
             json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"unknown_constraints":row.unknown_constraints})
         }).collect();
+        jobs.extend(ranked.excluded.iter().map(|row| {
+            let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
+            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"unknown_constraints":row.unknown_constraints,"excluded_reasons":row.reasons})
+        }));
         let facts: Vec<Value> = facts
             .iter()
             .map(|f| json!({"id":f.id,"text":f.text,"requires_review":f.requires_review}))
@@ -1548,12 +1608,6 @@ fn serve(
             .iter()
             .map(|review| json!({"job_id":review.job_id,"reason":review.reason,"revision":review.revision,"reason_count":review.reason_count}))
             .collect();
-        let profile = match ws.candidate_profile().map_err(|e| e.to_string())? {
-            Some(content) => {
-                serde_json::from_str::<Value>(&content).map_err(|_| "stored profile is invalid")?
-            }
-            None => json!({}),
-        };
         let (duplicate_total, duplicate_pending, duplicate_bounded, duplicate_missing) =
             ws.duplicate_coverage_counts().map_err(|e| e.to_string())?;
         json_reply(
@@ -2508,6 +2562,7 @@ fn serve(
                     }
                 }
             }
+            campaign_constraints(&Value::Object(profile.clone()))?;
             if !["", "on", "off"].contains(&profile["auto_assess_ai"].as_str().unwrap_or("")) {
                 return Err("Invalid automatic assessment setting".into());
             }
@@ -8019,6 +8074,18 @@ mod tests {
             .contains("profile fields must be text"));
         assert!(request("/api/profile", "test-token", r#"{"full_name":42}"#)
             .contains("profile fields must be text"));
+        assert!(request(
+            "/api/profile",
+            "test-token",
+            r#"{"search_remote_only":"invalid"}"#
+        )
+        .contains("Invalid remote-only setting"));
+        assert!(request(
+            "/api/profile",
+            "test-token",
+            r#"{"search_remote_only":"on","search_locations":"Berlin\nParis"}"#
+        )
+        .contains("200 OK"));
     }
 
     #[test]
@@ -8268,6 +8335,58 @@ mod tests {
         let pool = fit_semantic_pool(&facts, &format!("{question}\n{listing}"));
         assert!(pool[..20].contains(&facts[59]));
         assert!(pool.len() <= 60);
+    }
+
+    #[test]
+    fn saved_search_filters_reach_state_without_hiding_excluded_jobs() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            let body = r#"{"jobs":[{"id":"onsite","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/onsite","location":"Paris","isRemote":false},{"id":"unknown","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/unknown","location":"Paris"}]}"#;
+            let fetcher = waypoint_workspace::StaticFetcher::default()
+                .route("https://api.ashbyhq.com/posting-api/job-board/ashby", body);
+            assert_eq!(
+                ws.discover(&[DiscoveryTarget::new("ashby", "ashby")], &fetcher, 1)
+                    .inserted,
+                2
+            );
+            ws.save_candidate_profile(
+                &json!({"search_remote_only":"on","search_locations":"Berlin\nParis"}).to_string(),
+            )
+            .unwrap();
+            let (facts, instructions) = fit_candidate_context(&ws).unwrap();
+            assert!(facts.is_empty());
+            assert!(instructions.contains("Remote work is required"));
+            assert!(instructions.contains("Berlin; Paris"));
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+        });
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let state: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let rows = state["jobs"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["job"]["requisition_id"], "unknown");
+        assert!(rows[0]["unknown_constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value
+                .as_str()
+                .unwrap()
+                .contains("remote status not established")));
+        assert_eq!(rows[1]["job"]["requisition_id"], "onsite");
+        assert!(rows[1]["excluded_reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value.as_str().unwrap().contains("not remote")));
+        assert_eq!(state["profile"]["search_remote_only"], "on");
+        worker.join().unwrap();
     }
 
     #[test]

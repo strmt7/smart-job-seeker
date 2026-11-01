@@ -186,6 +186,11 @@ pub struct RankedJob {
 pub struct ExcludedJob {
     pub job: StoredJob,
     pub reasons: Vec<String>,
+    pub description_available: bool,
+    pub remote_status: Option<bool>,
+    pub unknown_constraints: Vec<String>,
+    pub score: f32,
+    pub matched_skills: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -1081,7 +1086,15 @@ impl Workspace {
                 if reasons.is_empty() {
                     results.strict.push(ranked);
                 } else {
-                    results.excluded.push(ExcludedJob { job, reasons });
+                    results.excluded.push(ExcludedJob {
+                        job,
+                        reasons,
+                        description_available: ranked.description_available,
+                        remote_status: ranked.remote_status,
+                        unknown_constraints: ranked.unknown_constraints,
+                        score: ranked.score,
+                        matched_skills: ranked.matched_skills,
+                    });
                 }
             },
         )?;
