@@ -675,7 +675,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -803,9 +803,10 @@ pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Res
 }
 /// Make a self-contained index for locally saved PNGs. Metadata supplies only
 /// validated numbers; captured page text and URLs never become HTML markup.
-fn listing_capture_view(metadata: &[u8], count: usize) -> String {
-    let capture: Value = serde_json::from_slice(metadata).unwrap_or(Value::Null);
-    let layout = (|| {
+type CaptureLayout = (f64, f64, Vec<(f64, f64, f64, f64)>);
+
+fn listing_capture_layout(capture: &Value, count: usize) -> Option<CaptureLayout> {
+    (|| {
         let width = capture["page_width"].as_f64()?;
         let height = capture["page_height"].as_f64()?;
         let rects = capture["segment_rectangles"].as_array()?;
@@ -843,20 +844,43 @@ fn listing_capture_view(metadata: &[u8], count: usize) -> String {
             result.push((x, y, w, h));
         }
         Some((width, height, result))
-    })();
+    })()
+}
+
+fn listing_capture_coverage(metadata: &[u8], count: usize) -> &'static str {
+    let Ok(capture) = serde_json::from_slice::<Value>(metadata) else {
+        return "unavailable";
+    };
+    let Some((width, height, rects)) = listing_capture_layout(&capture, count) else {
+        return if capture["full_dimensions_captured"] == false {
+            "partial"
+        } else {
+            "unavailable"
+        };
+    };
+    let area: f64 = rects.iter().map(|(_, _, w, h)| w * h).sum();
+    let overlap = rects.iter().enumerate().any(|(i, &(x, y, w, h))| {
+        rects
+            .iter()
+            .skip(i + 1)
+            .any(|&(x2, y2, w2, h2)| x < x2 + w2 && x2 < x + w && y < y2 + h2 && y2 < y + h)
+    });
+    if capture["full_dimensions_captured"] == true
+        && !overlap
+        && (area - width * height).abs() <= 0.01
+    {
+        "dimensions_covered"
+    } else {
+        "partial"
+    }
+}
+
+fn listing_capture_view(metadata: &[u8], count: usize) -> String {
+    let capture: Value = serde_json::from_slice(metadata).unwrap_or(Value::Null);
+    let layout = listing_capture_layout(&capture, count);
     let mut html = String::from("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Saved job page</title><style>body{font:16px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#202a35}.page{position:relative;width:100%;background:#eee}.page img{position:absolute}.fallback img{display:block;max-width:100%;height:auto;margin:1rem 0}</style></head><body><h1>Saved job page</h1><p>This is a captured image, not a live page. Hidden content and nested scrollers may be missing.</p>");
     if let Some((width, height, rects)) = layout {
-        let area: f64 = rects.iter().map(|(_, _, w, h)| w * h).sum();
-        let overlap = rects.iter().enumerate().any(|(i, &(x, y, w, h))| {
-            rects
-                .iter()
-                .skip(i + 1)
-                .any(|&(x2, y2, w2, h2)| x < x2 + w2 && x2 < x + w && y < y2 + h2 && y2 < y + h)
-        });
-        if capture["full_dimensions_captured"] != true
-            || overlap
-            || (area - width * height).abs() > 0.01
-        {
+        if listing_capture_coverage(metadata, count) != "dimensions_covered" {
             html.push_str("<p>Capture is incomplete; parts of the page may be missing.</p>");
         }
         html.push_str(&format!(
@@ -958,6 +982,10 @@ impl AttemptRecord {
             .as_ref()
             .and_then(|(metadata, _)| requested_url(metadata));
         let source_only_requested_url = source_only.as_deref().and_then(requested_url);
+        let page_capture_coverage = captured
+            .as_ref()
+            .map(|(metadata, segments)| listing_capture_coverage(metadata, segments.len()))
+            .unwrap_or("unavailable");
         let capture_source_url = captured.as_ref().and_then(|(metadata, _)| {
             serde_json::from_slice::<Value>(metadata)
                 .ok()
@@ -980,7 +1008,7 @@ impl AttemptRecord {
         fs::create_dir(&dir).map_err(|e| format!("Could not create a new attempt folder: {e}"))?;
         // Establish a discoverable incomplete record before writing the rest of
         // the archive. A later failure must not look like a completed snapshot.
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"page_capture_coverage":page_capture_coverage,"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
         let mut initial = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(&mut initial, &meta).map_err(|e| e.to_string())?;
         initial.flush().map_err(|e| e.to_string())?;
@@ -1010,6 +1038,7 @@ impl AttemptRecord {
             "description_sha256": description.as_deref().map(|text| Sha256Digest::of(text).as_str().to_owned()),
             "description": description,
             "page_capture_available": captured.is_some(),
+            "page_capture_coverage": page_capture_coverage,
             "source_only_metadata_available": source_only.is_some(),
             "source_only_text_status": source_text_status,
             "source_only_source_url": source_url,
@@ -2316,6 +2345,27 @@ mod tests {
     }
 
     #[test]
+    fn capture_coverage_requires_valid_complete_nonoverlapping_geometry() {
+        let mut capture = json!({"page_width": 2000, "page_height": 1000,
+        "full_dimensions_captured": true, "segment_rectangles": [
+            {"x": 0, "y": 0, "width": 1000, "height": 1000},
+            {"x": 1000, "y": 0, "width": 1000, "height": 1000}
+        ]});
+        let bytes = |value: &Value| serde_json::to_vec(value).unwrap();
+        assert_eq!(
+            listing_capture_coverage(&bytes(&capture), 2),
+            "dimensions_covered"
+        );
+        capture["full_dimensions_captured"] = json!(false);
+        assert_eq!(listing_capture_coverage(&bytes(&capture), 2), "partial");
+        capture["full_dimensions_captured"] = json!(true);
+        capture["segment_rectangles"][1]["x"] = json!(500);
+        assert_eq!(listing_capture_coverage(&bytes(&capture), 2), "partial");
+        assert_eq!(listing_capture_coverage(&bytes(&capture), 1), "unavailable");
+        assert_eq!(listing_capture_coverage(b"invalid", 2), "unavailable");
+    }
+
+    #[test]
     fn attempt_records_unknown_remote_status_as_null() {
         let root = tempfile::tempdir().unwrap();
         let mut ws = Workspace::open(root.path()).unwrap();
@@ -2473,6 +2523,7 @@ mod tests {
                 br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0,"page_text_status":"truncated","page_text":"Source-only fictional text"}"#
             );
             assert_eq!(listing["page_capture_available"], true);
+            assert_eq!(listing["page_capture_coverage"], "unavailable");
             assert_eq!(listing["page_capture_matches_current_url"], true);
             assert_eq!(
                 listing["page_capture_source_url"],
@@ -2528,6 +2579,10 @@ mod tests {
         assert_eq!(records["attempts"].as_array().unwrap().len(), 1);
         assert_eq!(records["attempts"][0]["status"], "manual_review");
         assert_eq!(records["attempts"][0]["started_at"], 123);
+        assert_eq!(
+            records["attempts"][0]["page_capture_coverage"],
+            "unavailable"
+        );
         #[cfg(windows)]
         assert_eq!(
             records["attempts"][0]["page_capture_matches_current_url"],
