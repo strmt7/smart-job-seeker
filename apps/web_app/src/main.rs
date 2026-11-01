@@ -5558,7 +5558,7 @@ fn serve(
                             driver.screenshot_tile(x, y, clip_width, clip_height).ok()
                         }
                     };
-                    let fresh_screenshot = current.driver.with_review_timeout(&capture);
+                    let fresh_screenshot = current.driver.with_review_timeout(capture);
                     let (verified, unconfirmed) = current.driver.with_review_timeout(|driver| {
                         visual_review::crosscheck_live_values(
                             driver,
@@ -5570,7 +5570,7 @@ fn serve(
                     let final_screenshot = if verified + unconfirmed == 0 {
                         fresh_screenshot.clone()
                     } else {
-                        current.driver.with_review_timeout(&capture)
+                        current.driver.with_review_timeout(capture)
                     };
                     let mut freshness = visual_review::interval_freshness(
                         result["screenshot_hash"].as_str(),
@@ -10076,6 +10076,89 @@ mod tests {
         let mut response = String::new();
         post.read_to_string(&mut response).unwrap();
         assert!(response.contains("Duplicate pair changed or was already decided"));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn incomplete_duplicate_decision_can_be_reviewed_through_endpoint() {
+        use waypoint_store::StoredJob;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let root = tempfile::tempdir_in(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+            )
+            .unwrap();
+            let mut ws = Workspace::open(root.path()).unwrap();
+            for id in ["first", "second"] {
+                ws.import_manual_job(
+                    StoredJob {
+                        id: JobIdentityId::new(id).unwrap(),
+                        title: "Engineer".into(),
+                        employer: "Example".into(),
+                        location: "Berlin".into(),
+                        state: ApplicationState::Discovered,
+                        canonical_url: Some(format!("https://example.invalid/{id}")),
+                        content_hash: None,
+                        first_seen: None,
+                        last_seen: None,
+                        remote: false,
+                        source: "user_supplied_url".into(),
+                        requisition_id: None,
+                        posted_at: None,
+                    },
+                    Some("Fictional duties"),
+                )
+                .unwrap();
+            }
+            let db = rusqlite::Connection::open(ws.db_path.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                db.execute(
+                    "UPDATE possible_duplicates SET status='same',preferred_job=NULL",
+                    []
+                )
+                .unwrap(),
+                1
+            );
+            drop(db);
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                if let Err(error) = serve(&mut stream, &mut ws, &mut None, "test-token", port) {
+                    json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+                }
+            }
+            assert!(!ws
+                .has_duplicate_hold(&JobIdentityId::new("first").unwrap())
+                .unwrap());
+            assert!(ws
+                .has_duplicate_hold(&JobIdentityId::new("second").unwrap())
+                .unwrap());
+        });
+        let request = |method: &str, path: &str, body: &str| {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            response
+        };
+        let state = request("GET", "/api/state", "");
+        let state: Value = serde_json::from_str(state.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let pair = &state["duplicates"][0];
+        assert_eq!(pair["status"], "pending");
+        assert!(pair["reason"].as_str().unwrap().contains("review it again"));
+        let revision = pair["revision"].as_i64().unwrap();
+        let body = |revision| {
+            json!({"keep_or_first":"first","other":"second","same":true,"revision":revision})
+                .to_string()
+        };
+        assert!(
+            request("POST", "/api/duplicates/decide", &body(revision + 1))
+                .contains("already decided")
+        );
+        assert!(request("POST", "/api/duplicates/decide", &body(revision)).contains("\"ok\":true"));
+        assert!(
+            request("POST", "/api/duplicates/decide", &body(revision)).contains("already decided")
+        );
         worker.join().unwrap();
     }
 
