@@ -77,6 +77,7 @@ pub const CHANGED_INFORMATIONAL_PREVIEW: &str = "The application changed during 
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
     if preview.manual_review.iter().any(|reason| {
         reason == "captcha present"
+            || reason == "ambiguous form controls need manual review"
             || reason == POST_CHOICE_VISUAL_REQUIRED
             || reason == CHANGED_INFORMATIONAL_PREVIEW
     }) || fresh_walls.iter().any(|wall| !is_custom_review(wall))
@@ -745,17 +746,23 @@ fn build_preview(
     profile: &Value,
     no_model_reason: &str,
 ) -> Result<FormPreview, String> {
-    let captcha_advisory = !live.schema.fields.is_empty()
-        && live.walls.iter().any(|wall| wall == "captcha present")
-        && live
-            .walls
-            .iter()
-            .all(|wall| wall == "captcha present" || is_custom_review(wall));
+    let has_captcha = live.walls.iter().any(|wall| wall == "captcha present");
+    let has_ambiguity = live
+        .walls
+        .iter()
+        .any(|wall| wall == "ambiguous form controls need manual review");
     let blocked = live.schema.fields.is_empty()
-        || (!captcha_advisory && live.walls.iter().any(|wall| !is_custom_review(wall)));
+        || live.walls.iter().any(|wall| {
+            wall != "captcha present"
+                && wall != "ambiguous form controls need manual review"
+                && !is_custom_review(wall)
+        });
     let mut manual_review = live.walls;
-    if captcha_advisory {
+    if has_captcha && !blocked {
         manual_review.push("CAPTCHA integration detected. Suggestions are for review only; inspect the page again after resolving the obstacle before filling.".into());
+    }
+    if has_ambiguity && !blocked {
+        manual_review.push("Some form controls are ambiguous. Suggestions are for review only; inspect the page again before filling.".into());
     }
     if live.schema.fields.is_empty() {
         manual_review.push("No form fields were detected; navigation, login, an embedded frame, or manual review may be required".into());
@@ -2802,6 +2809,20 @@ mod tests {
             suggest_for_live_form(live.clone(), &mut CompleteModel, &json!({"first_name":"A"}))
                 .unwrap();
         assert_eq!(modeled.suggestions.len(), 1);
+        assert!(!same_reviewable_walls(&modeled, &[]));
+
+        let mut ambiguous = live.clone();
+        ambiguous
+            .walls
+            .push("ambiguous form controls need manual review".into());
+        let modeled = suggest_for_live_form(
+            ambiguous.clone(),
+            &mut CompleteModel,
+            &json!({"first_name":"A"}),
+        )
+        .unwrap();
+        assert_eq!(modeled.suggestions.len(), 1);
+        assert!(!same_reviewable_walls(&modeled, &ambiguous.walls));
         assert!(!same_reviewable_walls(&modeled, &[]));
 
         let mut mixed = live;

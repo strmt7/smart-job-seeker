@@ -2111,7 +2111,15 @@ mod tests {
     #[test]
     #[ignore = "read-only public application worker inspection"]
     fn live_public_worker_rechecks_before_presenting_review() {
+        public_worker_recheck(
+            Err("model intentionally not started".into()),
+            serde_json::json!({}),
+        );
+    }
+
+    fn public_worker_recheck(model: Result<Option<String>, String>, profile: serde_json::Value) {
         let _guard = TEST_LOCK.lock().unwrap();
+        let expected_model = matches!(&model, Ok(Some(_)));
         let url =
             std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").expect("set public application URL");
         let parsed = url::Url::parse(&url).unwrap();
@@ -2126,13 +2134,13 @@ mod tests {
             "public-worker-fixture".into(),
             JobIdentityId::new("fictional-job").unwrap(),
             url,
-            serde_json::json!({}),
-            Err("model intentionally not started".into()),
+            profile,
+            model,
             false,
             (0, vec![]),
         )
         .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
         loop {
             if let Some(finished) = poll("public-worker-fixture").unwrap() {
                 match finished.result {
@@ -2152,11 +2160,35 @@ mod tests {
                                 .iter()
                                 .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
                         );
+                        println!("review warnings: {:?}", preview.manual_review);
+                        if expected_model
+                            && !preview
+                                .manual_review
+                                .iter()
+                                .any(|reason| reason == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
+                        {
+                            assert!(
+                                !preview.suggestions.is_empty(),
+                                "no local-model mapping was returned"
+                            );
+                            assert!(!preview.manual_review.iter().any(|reason| reason.contains("only exact labels or standard autocomplete hints are suggested")), "mapping used the deterministic fallback");
+                        }
                         for field in &preview.schema.fields {
                             println!(
                                 "field: required={} sensitive={} label={:?}",
                                 field.required, field.sensitive, field.label
                             );
+                        }
+                        for mapping in &preview.suggestions {
+                            if let Some(field) = preview
+                                .schema
+                                .fields
+                                .iter()
+                                .find(|field| field.selector == mapping.field_selector)
+                            {
+                                assert!(!field.sensitive, "sensitive field was suggested");
+                                println!("suggested field: {:?}", field.label);
+                            }
                         }
                         if preview
                             .manual_review
@@ -2186,6 +2218,46 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model and read-only public application"]
+    fn live_public_worker_with_resource_gated_model() {
+        let id = "fictional-public-model-evaluation";
+        crate::model_start::start(id.into(), "qwen3.5:9b".into()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
+        let result = loop {
+            let result = crate::model_start::poll(id).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "startup timed out; inspect runtime"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        assert_eq!(result["status"], "complete", "{result}");
+        struct Unload(bool);
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                if self.0 {
+                    let _ = waypoint_inference::ollama::http_request(
+                        "127.0.0.1:11434".parse().unwrap(),
+                        "POST",
+                        "/api/generate",
+                        Some(br#"{"model":"qwen3.5:9b","keep_alive":0}"#),
+                        10_000,
+                    );
+                }
+            }
+        }
+        let _unload = Unload(result["model"]["already_running"] != true);
+        public_worker_recheck(
+            Ok(Some("qwen3.5:9b".into())),
+            serde_json::json!({"full_name":"Avery Example","email":"avery@example.invalid","phone":"+1 202 555 0101","city":"Fictional City"}),
+        );
     }
 
     #[test]

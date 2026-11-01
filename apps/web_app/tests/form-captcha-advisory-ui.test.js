@@ -7,6 +7,7 @@ const end = source.indexOf('\n', start);
 assert.ok(start >= 0 && end > start);
 const allows = vm.runInNewContext(`(${source.slice(start, end)})`);
 assert.equal(allows({manual_review: ['captcha present']}), false);
+assert.equal(allows({manual_review: ['ambiguous form controls need manual review']}), false);
 assert.equal(allows({manual_review: ['The application changed during inspection; this view is informational only. Inspect again before filling.']}), false);
 assert.equal(allows({manual_review: []}), true);
 assert.equal(allows({}), false);

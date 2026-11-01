@@ -1300,6 +1300,11 @@ fn unlabelled_checkbox_group_context_is_advisory() {
         .filter(|field| field.label.contains("Have you worked here before?"))
         .collect();
     assert_eq!(group.len(), 2);
+    assert_ne!(group[0].selector, group[1].selector);
+    assert!(!live
+        .walls
+        .iter()
+        .any(|wall| wall == "ambiguous form controls need manual review"));
     assert!(group
         .iter()
         .all(|field| field.sensitive && field.label.starts_with("Possible question (review):")));

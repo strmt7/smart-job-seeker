@@ -3593,10 +3593,19 @@ impl CdpDriver {
         let mut checked_labels: HashMap<u64, Option<String>> = HashMap::new();
         let mut unannotated_choice_checks = 0usize;
         let mut unassociated_question_count = 0usize;
+        let mut selector_counts: HashMap<String, usize> = HashMap::new();
+        for control in &controls {
+            *selector_counts.entry(selector_for(control)).or_default() += 1;
+        }
         for control in controls {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector)
                 || supported_editing_host(&control.tag, &control.attrs)
+                || (control
+                    .attrs
+                    .get("type")
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("checkbox"))
+                    && selector_counts.get(&selector).copied().unwrap_or(0) > 1)
             {
                 css_paths
                     .get(&control.node_id)
