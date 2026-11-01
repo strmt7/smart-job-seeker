@@ -6972,7 +6972,9 @@ fn serve(
             };
             let template_scan_page = match &body["template_scan_page"] {
                 Value::Null => None,
-                Value::Number(number) if reviewed_template.is_none() => {
+                Value::Number(number)
+                    if reviewed_template.is_none() || body["retain_reviewed_pages"] == true =>
+                {
                     let page = number.as_u64().ok_or("Invalid scanned template page")?;
                     let previous = body["template_draft_id"]
                         .as_str()
@@ -6990,6 +6992,13 @@ fn serve(
                     return Err("Choose one scanned template page or reviewed transcription".into())
                 }
             };
+            if body["retain_reviewed_pages"] == true
+                && (reviewed_template.is_none() || template_scan_page.is_none())
+            {
+                return Err(
+                    "Review the current transcription and choose another scanned page".into(),
+                );
+            }
             let template_style_focus = match &body["template_style_focus"] {
                 Value::Null => None,
                 Value::String(text)

@@ -131,6 +131,68 @@ fn merge_scanned_page(
     Ok(page_texts.join("\n").trim().to_owned())
 }
 
+/// Reviewed pages are bounded and must correspond to distinct empty pages.
+fn merge_reviewed_pages(
+    mut page_texts: Vec<String>,
+    pages: &[(usize, String)],
+) -> Result<String, String> {
+    if pages.is_empty() || pages.len() > 3 {
+        return Err("Review between one and three scanned pages".into());
+    }
+    let mut used = std::collections::BTreeSet::new();
+    let mut total = 0usize;
+    for (page, text) in pages {
+        total = total
+            .checked_add(text.len())
+            .ok_or("Reviewed text is too large")?;
+        if !used.insert(*page)
+            || total > 24_000
+            || text.trim().is_empty()
+            || text.len() > 12_000
+            || text
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err("Invalid reviewed scanned pages".into());
+        }
+        let target = page_texts
+            .get_mut(*page)
+            .ok_or("Reviewed template page is unavailable")?;
+        if !target.trim().is_empty() {
+            return Err("Reviewed text must correspond to a scanned page".into());
+        }
+        *target = text.clone();
+    }
+    Ok(page_texts.join("\n").trim().to_owned())
+}
+
+fn retained_pages(vision: &Value, current: &str) -> Result<Vec<(usize, String)>, String> {
+    let entries = match &vision["reviewed_pages"] {
+        Value::Null => &[][..],
+        Value::Array(items) if items.len() <= 2 => items.as_slice(),
+        _ => return Err("Invalid reviewed scanned page history".into()),
+    };
+    let mut pages = Vec::new();
+    for entry in entries {
+        let page = entry["page"]
+            .as_u64()
+            .and_then(|p| p.checked_sub(1))
+            .and_then(|p| usize::try_from(p).ok())
+            .ok_or("Invalid reviewed template page")?;
+        let text = entry["text"]
+            .as_str()
+            .ok_or("Invalid reviewed template text")?;
+        pages.push((page, text.to_owned()));
+    }
+    let page = vision["page"]
+        .as_u64()
+        .and_then(|p| p.checked_sub(1))
+        .and_then(|p| usize::try_from(p).ok())
+        .ok_or("Invalid reviewed template page")?;
+    pages.push((page, current.to_owned()));
+    Ok(pages)
+}
+
 pub fn reviewed_template(
     cached: &Value,
     job: &str,
@@ -195,6 +257,39 @@ pub fn requested_scanned_template_page(
     Ok((page - 1) as usize)
 }
 
+fn transcribe_scanned_template(
+    bytes: &[u8],
+    page: Option<usize>,
+    model: &str,
+) -> Result<(String, Option<Value>, Value), String> {
+    let addr = "127.0.0.1:11434"
+        .parse()
+        .map_err(|_| "Invalid local runtime address")?;
+    scanned_template(bytes, page, |bytes, page| {
+        crate::pdf_transcribe::transcribe(
+            bytes,
+            page,
+            "full",
+            crate::pdf_extract::render_page,
+            |image| {
+                if crate::resident_model()?.as_deref() != Some(model) {
+                    return Err("Resident model changed during template transcription".into());
+                }
+                let output = crate::visual_review::generate_vision(
+                    addr,
+                    model,
+                    image,
+                    crate::pdf_transcribe::TRANSCRIBE_PROMPT,
+                )?;
+                if crate::resident_model()?.as_deref() != Some(model) {
+                    return Err("Resident model changed during template transcription".into());
+                }
+                Ok(output)
+            },
+        )
+    })
+}
+
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = {
         let mut task = TASK.lock().map_err(|_| "Draft state unavailable")?;
@@ -225,13 +320,50 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                     .ok_or("Selected template is unavailable")?;
                 let (_, coverage, page_texts) =
                     crate::pdf_extract::scan_coverage_with_pages(bytes)?;
-                let page = vision["page"]
-                    .as_u64()
-                    .and_then(|n| n.checked_sub(1))
-                    .and_then(|n| usize::try_from(n).ok())
-                    .ok_or("Invalid reviewed template page")?;
-                let text = merge_scanned_page(page_texts, page, reviewed)?;
-                (text, Some(coverage), Some(vision.clone()))
+                let mut pages = retained_pages(vision, reviewed)?;
+                let empty = coverage["pages_without_selectable_text"]
+                    .as_array()
+                    .ok_or("PDF page coverage unavailable")?;
+                let blank = coverage["structurally_blank_pages"]
+                    .as_array()
+                    .ok_or("PDF page coverage unavailable")?;
+                if pages.iter().any(|(page, _)| {
+                    page.checked_add(1)
+                        .is_none_or(|p| !empty.contains(&json!(p)) || blank.contains(&json!(p)))
+                }) {
+                    return Err("Reviewed page is no longer a nonblank scanned page".into());
+                }
+                // Validate retained text before starting another vision request.
+                merge_reviewed_pages(page_texts.clone(), &pages)?;
+                if let Some(next) = input.template_scan_page {
+                    if pages.len() >= 3 || pages.iter().any(|(page, _)| *page == next) {
+                        return Err(
+                            "Choose a different page; at most three scanned pages can be combined"
+                                .into(),
+                        );
+                    }
+                    let (_, _, mut next_vision) =
+                        transcribe_scanned_template(bytes, Some(next), &model)?;
+                    let new_text = next_vision["text"]
+                        .as_str()
+                        .ok_or("Invalid template transcription")?
+                        .to_owned();
+                    let retained = pages
+                        .iter()
+                        .map(|(page, text)| json!({"page":page + 1,"text":text}))
+                        .collect::<Vec<_>>();
+                    pages.push((next, new_text));
+                    let text = merge_reviewed_pages(page_texts, &pages)?;
+                    next_vision["reviewed_pages"] = json!(retained);
+                    next_vision["other_pages_not_transcribed"] = json!(coverage["pages"]
+                        .as_u64()
+                        .ok_or("PDF page coverage unavailable")?
+                        .saturating_sub(pages.len() as u64));
+                    (text, Some(coverage), Some(next_vision))
+                } else {
+                    let text = merge_reviewed_pages(page_texts, &pages)?;
+                    (text, Some(coverage), Some(vision.clone()))
+                }
             } else {
                 match &input.template {
                     Some((name, bytes)) => match extract_template(name, bytes) {
@@ -248,45 +380,10 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                                 && (error.to_ascii_lowercase().contains("no selectable text")
                                     || error == "PDF extractor returned invalid text") =>
                         {
-                            let addr = "127.0.0.1:11434"
-                                .parse()
-                                .map_err(|_| "Invalid local runtime address")?;
-                            let (text, coverage, vision) = scanned_template(
+                            let (text, coverage, vision) = transcribe_scanned_template(
                                 bytes,
                                 input.template_scan_page,
-                                |bytes, page| {
-                                    crate::pdf_transcribe::transcribe(
-                                        bytes,
-                                        page,
-                                        "full",
-                                        crate::pdf_extract::render_page,
-                                        |image| {
-                                            if crate::resident_model()?.as_deref()
-                                                != Some(model.as_str())
-                                            {
-                                                return Err(
-                                            "Resident model changed during template transcription"
-                                                .into(),
-                                        );
-                                            }
-                                            let output = crate::visual_review::generate_vision(
-                                                addr,
-                                                &model,
-                                                image,
-                                                crate::pdf_transcribe::TRANSCRIBE_PROMPT,
-                                            )?;
-                                            if crate::resident_model()?.as_deref()
-                                                != Some(model.as_str())
-                                            {
-                                                return Err(
-                                            "Resident model changed during template transcription"
-                                                .into(),
-                                        );
-                                            }
-                                            Ok(output)
-                                        },
-                                    )
-                                },
+                                &model,
                             )?;
                             (text, coverage, Some(vision))
                         }
@@ -886,6 +983,38 @@ mod tests {
         );
         assert!(merge_scanned_page(pages.clone(), 0, "Scanned page").is_err());
         assert!(merge_scanned_page(pages, 3, "Scanned page").is_err());
+    }
+
+    #[test]
+    fn reviewed_scanned_pages_merge_in_document_order_and_reject_ambiguity() {
+        let pages = vec![String::new(), "Selectable".into(), String::new()];
+        let chosen = vec![(2, "Third".into()), (0, "First".into())];
+        assert_eq!(
+            merge_reviewed_pages(pages.clone(), &chosen).unwrap(),
+            "First\nSelectable\nThird"
+        );
+        assert!(
+            merge_reviewed_pages(pages.clone(), &[(0, "First".into()), (0, "Again".into())])
+                .is_err()
+        );
+        assert!(merge_reviewed_pages(pages.clone(), &[(1, "Replace selectable".into())]).is_err());
+        assert!(merge_reviewed_pages(pages.clone(), &[(0, " ".into())]).is_err());
+        assert!(merge_reviewed_pages(pages.clone(), &[(0, "x".repeat(12_001))]).is_err());
+        assert!(merge_reviewed_pages(
+            pages,
+            &[
+                (0, "a".into()),
+                (1, "b".into()),
+                (2, "c".into()),
+                (3, "d".into())
+            ]
+        )
+        .is_err());
+        let vision = json!({"page":3,"reviewed_pages":[{"page":1,"text":"First"}]});
+        assert_eq!(
+            retained_pages(&vision, "Third").unwrap(),
+            chosen.into_iter().rev().collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1652,9 +1781,14 @@ mod tests {
             template_style_focus: None,
             template_scan_page: Some(1),
         };
-        start("fictional-selected-page".into(), model, input).unwrap();
+        start(
+            "fictional-selected-page".into(),
+            model.clone(),
+            input.clone(),
+        )
+        .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
-        loop {
+        let first = loop {
             let result = poll("fictional-selected-page").unwrap();
             if result["status"] != "running" {
                 assert_eq!(result["status"], "complete", "{result}");
@@ -1665,9 +1799,48 @@ mod tests {
                     .unwrap()
                     .trim()
                     .is_empty());
-                break;
+                break result;
             }
             assert!(std::time::Instant::now() < deadline, "draft timed out");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let mut next = input;
+        next.template_scan_page = Some(0);
+        next.reviewed_template = Some(
+            reviewed_template(
+                &first,
+                "fictional-selected-page",
+                "cv",
+                "fixture",
+                "Previously reviewed fictional page",
+            )
+            .unwrap(),
+        );
+        start("fictional-combined-pages".into(), model, next).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        loop {
+            let result = poll("fictional-combined-pages").unwrap();
+            if result["status"] != "running" {
+                assert_eq!(result["status"], "complete", "{result}");
+                assert_eq!(result["draft"]["template_vision"]["page"], 1);
+                assert_eq!(
+                    result["draft"]["template_vision"]["reviewed_pages"][0]["page"],
+                    2
+                );
+                assert_eq!(
+                    result["draft"]["template_vision"]["other_pages_not_transcribed"],
+                    0
+                );
+                assert!(result["draft"]["selection"]["template_style_sample"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Previously reviewed fictional page"));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "combined draft timed out"
+            );
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
