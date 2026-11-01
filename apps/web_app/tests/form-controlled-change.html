@@ -1,0 +1,4 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fictional changing form</title></head>
+<body><form><label for="first">First name</label><input id="first" autocomplete="given-name" required>
+<label for="email">Email</label><input id="email" type="email" required>
+<button type="button" id="change" onclick="const label=document.createElement('label');label.htmlFor='extra';label.textContent='Additional question';const input=document.createElement('input');input.id='extra';input.required=true;const wall=document.createElement('div');wall.className='g-recaptcha';document.querySelector('#later').append(label,input,wall);this.disabled=true">Change fictional form</button><div id="later"></div></form></body></html>

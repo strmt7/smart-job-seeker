@@ -838,6 +838,93 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a fictional browser and requires a resource-gated resident local model"]
+    fn live_model_preview_rechecks_controlled_form_change() {
+        use waypoint_applications::form_mapping::BrowserCommand;
+        use waypoint_inference::{CapabilityReport, Inference, InferenceError, UsageReport};
+        struct Counting<I> {
+            inner: I,
+            completed: usize,
+        }
+        impl<I: Inference> Inference for Counting<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn set_context_tags(&mut self, tags: &[&str]) {
+                self.inner.set_context_tags(tags);
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(serde_json::Value, UsageReport), InferenceError> {
+                let result = self.inner.generate_structured(schema, prompt, max)?;
+                self.completed += 1;
+                Ok(result)
+            }
+        }
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-controlled-change.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let initial = driver.open(url.as_str()).unwrap();
+        assert!(!initial.walls.iter().any(|wall| wall == "captcha present"));
+        let original_walls = initial.walls.clone();
+        let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
+            .unwrap()
+            .with_resident_context();
+        let mut llm = Counting {
+            inner: crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            ),
+            completed: 0,
+        };
+        let profile = serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"});
+        let mut preview = form_preview::suggest_for_live_form(initial, &mut llm, &profile).unwrap();
+        assert!(llm.completed > 0, "a local model response is required");
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#change".into(),
+            })
+            .unwrap();
+        let fresh = driver.inspect_current().unwrap();
+        assert!(merge_final_inspection(&mut preview, &fresh, &profile, &original_walls).unwrap());
+        assert!(preview
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.label == "Additional question"));
+        assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "captcha present"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == form_preview::CHANGED_INFORMATIONAL_PREVIEW));
+        for label in ["First name", "Email", "Additional question"] {
+            assert!(preview
+                .manual_review
+                .iter()
+                .any(|reason| reason == &format!("Required field needs review: {label}")));
+        }
+        assert!(!form_preview::same_reviewable_walls(&preview, &[]));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
+
+    #[test]
     fn final_inspection_preserves_late_walls_and_blocks_changed_schema() {
         use waypoint_applications::{
             driver::LiveForm,
