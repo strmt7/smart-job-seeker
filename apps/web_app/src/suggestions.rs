@@ -12,6 +12,22 @@ const MODEL_BATCH_FIELDS: usize = 20;
 const MAX_MAPPING_PROMPT: usize = 8_000;
 const MAX_FIELD_BATCH_BYTES: usize = 6_000;
 const MAX_PROFILE_VALUE: usize = 2000;
+// Only these candidate-entered contact fields are eligible for mapping.
+// Preferences, settings, template identifiers and sensitive answers are not.
+const AUTOFILL_PROFILE_FIELDS: &[&str] = &[
+    "full_name",
+    "first_name",
+    "last_name",
+    "email",
+    "phone",
+    "address",
+    "city",
+    "region",
+    "postal_code",
+    "country",
+    "linkedin",
+    "website",
+];
 type SuggestionsWithReview = (Vec<ProposedMapping>, Vec<String>, HashSet<String>);
 
 // Internal frame paths can be long and are not meaningful to a language model.
@@ -87,15 +103,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
         let keys: Vec<_> = profile
             .iter()
             .filter(|(key, value)| {
-                super::PROFILE_FIELDS.contains(&key.as_str())
-                    && !matches!(
-                        key.as_str(),
-                        "instructions"
-                            | "work_authorization"
-                            | "document_instructions"
-                            | "cv_template_id"
-                            | "cover_template_id"
-                    )
+                AUTOFILL_PROFILE_FIELDS.contains(&key.as_str())
                     && normalize(key) == normalize(&field.label)
                     && value.as_str().is_some_and(|text| {
                         !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE
@@ -197,12 +205,7 @@ pub fn suggest_with_review(
     let keys: Vec<&str> = profile
         .iter()
         .filter_map(|(key, value)| {
-            (super::PROFILE_FIELDS.contains(&key.as_str())
-                && key != "instructions"
-                && key != "work_authorization"
-                && key != "document_instructions"
-                && key != "cv_template_id"
-                && key != "cover_template_id"
+            (AUTOFILL_PROFILE_FIELDS.contains(&key.as_str())
                 && value
                     .as_str()
                     .is_some_and(|v| !v.trim().is_empty() && v.len() <= MAX_PROFILE_VALUE))
@@ -659,17 +662,7 @@ fn validate_suggestions(
                 .fields
                 .iter()
                 .find(|field| field.selector == selector)?;
-            if field.sensitive
-                || !super::PROFILE_FIELDS.contains(&key)
-                || matches!(
-                    key,
-                    "instructions"
-                        | "work_authorization"
-                        | "document_instructions"
-                        | "cv_template_id"
-                        | "cover_template_id"
-                )
-            {
+            if field.sensitive || !AUTOFILL_PROFILE_FIELDS.contains(&key) {
                 return None;
             }
             if !matches!(
@@ -1572,6 +1565,22 @@ mod tests {
             };
             assert!(suggest(&mut model, &form(), &profile).unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn application_settings_and_future_profile_fields_cannot_be_mapped() {
+        let mut schema = form();
+        schema.fields[0].label = "Auto assess ai".into();
+        let profile = json!({"auto_assess_ai":"on","future_setting":"secret","first_name":"Avery"});
+        assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+        let mut model = FakeInference {
+            response: json!({"mappings":[{"selector":"#candidate","profile_key":"auto_assess_ai"}],"manual_review":[]}),
+            last_prompt: String::new(),
+        };
+        assert!(suggest(&mut model, &schema, &profile).unwrap().is_empty());
+        assert!(!model.last_prompt.contains("auto_assess_ai"));
+        assert!(!model.last_prompt.contains("future_setting"));
+        assert!(!model.last_prompt.contains("secret"));
     }
 
     #[test]
