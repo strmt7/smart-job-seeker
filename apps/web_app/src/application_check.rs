@@ -62,6 +62,14 @@ fn navigation_failure(stage: &str, error: &waypoint_applications::driver::Driver
     }
 }
 
+fn browser_start_failure(error: &waypoint_applications::driver::DriverError) -> &'static str {
+    if error.0 == waypoint_browser::cdp::NO_BROWSER {
+        "No supported browser was found. Install Microsoft Edge, Google Chrome, or Chromium, then retry the application check."
+    } else {
+        "The local browser could not start. Check that your browser works, then retry the application check."
+    }
+}
+
 /// The model's judgment is advisory. A matching DOM excerpt supports where
 /// its evidence came from, but does not prove visibility or interpretation.
 fn visual_page_advice(
@@ -435,7 +443,7 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
         let mut contacts = Vec::new();
         let result = (|| -> Result<(String, bool), String> {
             let mut browser = waypoint_browser::CdpDriver::launch(vec![])
-                .map_err(|_| "The local browser could not start.")?;
+                .map_err(|error| browser_start_failure(&error).to_owned())?;
             let mut page = browser
                 .open(&url)
                 .map_err(|error| navigation_failure("listing page", &error))?;
@@ -764,6 +772,16 @@ mod tests {
         TASK,
     };
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[test]
+    fn browser_start_errors_distinguish_missing_browser_without_exposing_details() {
+        use waypoint_applications::driver::DriverError;
+        let missing = DriverError(waypoint_browser::cdp::NO_BROWSER.into());
+        assert!(super::browser_start_failure(&missing).contains("No supported browser"));
+        let failed = DriverError("spawn C:\\Users\\private\\chrome.exe: failed".into());
+        let message = super::browser_start_failure(&failed);
+        assert!(message.contains("could not start"));
+        assert!(!message.contains("private"));
+    }
     #[test]
     fn mail_links_are_advisory_contacts_not_confirmed_application_routes() {
         use waypoint_applications::driver::PageLink;

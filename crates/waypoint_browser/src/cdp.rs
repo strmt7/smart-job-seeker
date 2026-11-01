@@ -28,6 +28,9 @@ const MAX_EVENTS: usize = 64;
 #[derive(Debug)]
 pub struct CdpError(pub String);
 
+/// Stable discovery failure, separate from errors while starting a browser.
+pub const NO_BROWSER: &str = "no Chromium-family browser found (Edge/Chrome/Chromium)";
+
 impl std::fmt::Display for CdpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -252,7 +255,7 @@ impl BrowserProcess {
         visible: bool,
     ) -> Result<Self, CdpError> {
         if binaries.is_empty() {
-            return err("no Chromium-family browser found (Edge/Chrome/Chromium)");
+            return err(NO_BROWSER);
         }
         let deadline = Instant::now() + timeout;
         let mut last_error = None;
