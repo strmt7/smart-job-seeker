@@ -8805,6 +8805,20 @@ mod tests {
             &json!({"answers":[{"selector":"#answer","value":"A😀"}]})
         )
         .is_ok());
+        preview.schema.fields[0].min_length_utf16 = Some(20);
+        preview.schema.fields[0].max_length_utf16 = Some(35);
+        let long = "Maintained Python backend services for three years.";
+        let edited = "Maintained Python backend services";
+        assert!(prepare_reviewed_fill(
+            &preview,
+            &json!({"answers":[{"selector":"#answer","value":long}]})
+        )
+        .is_err());
+        assert!(prepare_reviewed_fill(
+            &preview,
+            &json!({"answers":[{"selector":"#answer","value":edited}]})
+        )
+        .is_ok());
     }
     #[test]
     fn queued_template_suggestion_requires_its_original_context() {

@@ -1,3 +1,8 @@
+## Length-limited draft recovery — 2026-11-01
+
+- A length repair now receives the prior valid draft, its measured UTF-16 length and the question. If a structurally valid answer remains too long or short after the bounded repair, the interface offers it as a draft requiring edits instead of discarding it. Its evidence check remains advisory; reviewed prefill still rejects the unedited out-of-range value. An explicit model abstention remains a failure. If the repair prompt cannot fit the context budget, the earlier draft can likewise be reviewed rather than silently lost.
+- In the fictional 20–35-unit test, `qwen3.5:9b` repeatedly returned the same 51-unit sentence. Focused shortening and exact-excerpt prompt variants did not make it fit; the latter was discarded. The live length test still fails its strict fit assertion, and the final output is explicitly marked `needs_edit`. A focused reviewed-fill test rejects that overlong sentence and accepts a shorter user-edited version. These are narrow observations, not evidence of general model reliability. Minimum sampled available RAM was 17.28 GiB in the final run; the model was unloaded. No employer was contacted or application submitted.
+
 ## Minimum form lengths — 2026-11-01
 
 - Native text and textarea minimum lengths now flow into the reviewed schema, mapping context, answer-drafting prompt and interface. Nonempty values are checked in UTF-16 code units before prefill; empty values remain exempt from the minimum, with requiredness handled separately. A changed minimum changes the schema identity. Drafts below the minimum get one bounded repair; contradictory minimum and maximum limits require manual review. Existing maximum-length checks remain in place.
