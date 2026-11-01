@@ -62,7 +62,7 @@ pub(crate) fn scanned_template<F>(
 where
     F: FnMut(&[u8], usize) -> Result<Value, String>,
 {
-    let (selectable, coverage) = crate::pdf_extract::scan_coverage(bytes)?;
+    let (_, coverage, page_texts) = crate::pdf_extract::scan_coverage_with_pages(bytes)?;
     let empty = coverage["pages_without_selectable_text"]
         .as_array()
         .ok_or("PDF page coverage unavailable")?;
@@ -94,16 +94,27 @@ where
         .as_str()
         .filter(|s| !s.is_empty() && s.len() <= 4 * 1024 * 1024)
         .ok_or("Template transcription image unavailable")?;
-    let combined = if selectable.is_empty() {
-        text.to_owned()
-    } else {
-        format!("{text}\n{selectable}")
-    };
+    let combined = merge_scanned_page(page_texts, page, text)?;
     Ok((
         combined,
         Some(coverage),
         json!({"page": page + 1, "pages": pages, "uncertain": uncertain, "text": text, "image": image, "other_pages_not_transcribed": pages - 1}),
     ))
+}
+
+fn merge_scanned_page(
+    mut page_texts: Vec<String>,
+    page: usize,
+    reviewed: &str,
+) -> Result<String, String> {
+    let target = page_texts
+        .get_mut(page)
+        .ok_or("Template transcription page is unavailable")?;
+    if !target.trim().is_empty() {
+        return Err("Template transcription does not correspond to a scanned page".into());
+    }
+    *target = reviewed.to_owned();
+    Ok(page_texts.join("\n").trim().to_owned())
 }
 
 pub fn reviewed_template(
@@ -164,12 +175,14 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                     .template
                     .as_ref()
                     .ok_or("Selected template is unavailable")?;
-                let (selectable, coverage) = crate::pdf_extract::scan_coverage(bytes)?;
-                let text = if selectable.is_empty() {
-                    reviewed.clone()
-                } else {
-                    format!("{reviewed}\n{selectable}")
-                };
+                let (_, coverage, page_texts) =
+                    crate::pdf_extract::scan_coverage_with_pages(bytes)?;
+                let page = vision["page"]
+                    .as_u64()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or("Invalid reviewed template page")?;
+                let text = merge_scanned_page(page_texts, page, reviewed)?;
                 (text, Some(coverage), Some(vision.clone()))
             } else {
                 match &input.template {
@@ -764,6 +777,17 @@ fn letter_framing(job: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scanned_template_text_keeps_original_page_order() {
+        let pages = vec!["First page".into(), "".into(), "Third page".into()];
+        assert_eq!(
+            merge_scanned_page(pages.clone(), 1, "Scanned page").unwrap(),
+            "First page\nScanned page\nThird page"
+        );
+        assert!(merge_scanned_page(pages.clone(), 0, "Scanned page").is_err());
+        assert!(merge_scanned_page(pages, 3, "Scanned page").is_err());
+    }
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
 
     #[test]

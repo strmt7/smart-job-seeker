@@ -72,7 +72,7 @@ try:
     result = "\n".join(parts).strip()
     if not result and sys.argv[1:] != ["allow-empty"]:
         raise ValueError("No selectable text was found; scanned PDFs need OCR")
-    response = {"text": result, "page_count": len(reader.pages), "empty_text_pages": empty_pages, "structurally_blank_pages": structurally_blank_pages, "mixed_image_pages": mixed_image_pages, "image_inventory_unknown_pages": image_inventory_unknown_pages}
+    response = {"text": result, "page_texts": parts, "page_count": len(reader.pages), "empty_text_pages": empty_pages, "structurally_blank_pages": structurally_blank_pages, "mixed_image_pages": mixed_image_pages, "image_inventory_unknown_pages": image_inventory_unknown_pages}
     sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
 except ImportError:
     print("PDF extraction requires pypdf in the configured local Python runtime")

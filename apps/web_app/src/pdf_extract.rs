@@ -175,24 +175,31 @@ fn run(
 }
 /// Extract selectable text and identify pages where none was found.
 pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
-    extract_coverage_inner(bytes, false)
+    extract_coverage_inner(bytes, false).map(|(text, coverage, _)| (text, coverage))
 }
 
 /// Inventory scanned pages even when the whole document has no selectable text.
+#[cfg(test)]
 pub(crate) fn scan_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
+    scan_coverage_with_pages(bytes).map(|(text, coverage, _)| (text, coverage))
+}
+
+pub(crate) fn scan_coverage_with_pages(
+    bytes: &[u8],
+) -> Result<(String, serde_json::Value, Vec<String>), String> {
     extract_coverage_inner(bytes, true)
 }
 
 fn extract_coverage_inner(
     bytes: &[u8],
     allow_empty: bool,
-) -> Result<(String, serde_json::Value), String> {
+) -> Result<(String, serde_json::Value, Vec<String>), String> {
     let data = run(
         bytes,
         bytes,
         include_str!("pdf_extract.py"),
         allow_empty.then_some("allow-empty"),
-        1_300_000,
+        2_600_000,
         true,
     )?;
     let result: serde_json::Value =
@@ -205,6 +212,19 @@ fn extract_coverage_inner(
         .as_u64()
         .filter(|pages| (1..=30).contains(pages))
         .ok_or("PDF extractor returned invalid page count")?;
+    let page_texts: Vec<String> = result["page_texts"]
+        .as_array()
+        .filter(|items| items.len() == pages as usize)
+        .and_then(|items| {
+            items
+                .iter()
+                .map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .ok_or("PDF extractor returned invalid page text")?;
+    if page_texts.join("\n").trim() != text {
+        return Err("PDF extractor returned inconsistent page text".into());
+    }
     let empty = result["empty_text_pages"]
         .as_array()
         .filter(|empty| empty.len() <= pages as usize)
@@ -216,6 +236,11 @@ fn extract_coverage_inner(
             .filter(|page| *page > previous && *page <= pages)
             .ok_or("PDF extractor returned invalid page coverage")?;
         previous = page;
+    }
+    if page_texts.iter().enumerate().any(|(index, text)| {
+        text.trim().is_empty() != empty.contains(&serde_json::json!(index + 1))
+    }) {
+        return Err("PDF extractor returned inconsistent page coverage".into());
     }
     let blank = result["structurally_blank_pages"]
         .as_array()
@@ -248,6 +273,7 @@ fn extract_coverage_inner(
     Ok((
         text.to_owned(),
         serde_json::json!({"pages":pages,"pages_without_selectable_text":empty,"structurally_blank_pages":blank,"pages_with_images_and_text":image_lists[0],"pages_with_unknown_image_inventory":image_lists[1]}),
+        page_texts,
     ))
 }
 
@@ -535,6 +561,7 @@ mod tests {
         }).unwrap();
         assert!(template.contains("Fictional scanned page"));
         assert!(template.contains(&text));
+        assert!(template.find(&text).unwrap() < template.find("Fictional scanned page").unwrap());
         assert_eq!(draft_coverage.unwrap(), coverage);
         assert_eq!(vision["page"], 2);
         assert_eq!(vision["other_pages_not_transcribed"], 1);
