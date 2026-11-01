@@ -660,6 +660,25 @@ impl CdpDriver {
         selector: &str,
         paths: &[std::path::PathBuf],
     ) -> Result<(), DriverError> {
+        self.attach_local_files_inner(selector, paths, None)
+    }
+
+    /// Refuse to overwrite a selection that differs from the reviewed prior set.
+    pub fn attach_local_files_if_unchanged(
+        &mut self,
+        selector: &str,
+        paths: &[std::path::PathBuf],
+        previous: &[std::path::PathBuf],
+    ) -> Result<(), DriverError> {
+        self.attach_local_files_inner(selector, paths, Some(previous))
+    }
+
+    fn attach_local_files_inner(
+        &mut self,
+        selector: &str,
+        paths: &[std::path::PathBuf],
+        previous: Option<&[std::path::PathBuf]>,
+    ) -> Result<(), DriverError> {
         if paths.is_empty() || paths.len() > 5 {
             return Err(DriverError("Choose one to five files".into()));
         }
@@ -712,6 +731,24 @@ impl CdpDriver {
             }
             check_file_accept(accept, filename)?;
         }
+        if let Some(previous) = previous {
+            if previous.is_empty() {
+                let empty = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && this.files && this.files.length === 0; }","returnByValue":true})).map_err(derr)?;
+                if empty.get("exceptionDetails").is_some()
+                    || empty.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+                {
+                    return Err(DriverError("The file field already contains an unreviewed selection; inspect it manually".into()));
+                }
+            } else {
+                self.verify_local_files(selector, previous).map_err(|_| {
+                    DriverError("The file selection changed; inspect it manually".into())
+                })?;
+            }
+        }
+        // Verification obtains a fresh document and invalidates earlier CDP node IDs.
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("File field not found".into()))?;
         self.cdp
             .call(
                 "DOM.setFileInputFiles",

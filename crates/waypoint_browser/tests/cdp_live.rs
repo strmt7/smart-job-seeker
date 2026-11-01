@@ -546,8 +546,31 @@ fn multiple_pdf_files_are_attached_and_verified_as_a_set() {
     assert!(driver.file_input_allows_multiple("#multiple").unwrap());
     assert!(!driver.file_input_allows_multiple("#single").unwrap());
     let files = vec![first.clone(), second.clone()];
-    driver.attach_local_files("#multiple", &files).unwrap();
+    driver
+        .attach_local_files_if_unchanged("#multiple", &[first.clone()], &[])
+        .unwrap();
+    assert!(driver
+        .attach_local_files_if_unchanged("#multiple", &files, &[])
+        .is_err());
+    driver.verify_local_file("#multiple", &first).unwrap();
+    driver
+        .attach_local_files_if_unchanged("#multiple", &files, &[first.clone()])
+        .unwrap();
+    assert!(driver
+        .attach_local_files_if_unchanged("#multiple", &[second.clone()], &[first.clone()])
+        .is_err());
     driver.verify_local_files("#multiple", &files).unwrap();
+    driver
+        .attach_local_files("#single", &[first.clone()])
+        .unwrap();
+    assert!(driver
+        .attach_local_files_if_unchanged("#single", &[second.clone()], &[])
+        .is_err());
+    driver.verify_local_file("#single", &first).unwrap();
+    driver
+        .attach_local_files_if_unchanged("#single", &[second.clone()], &[first.clone()])
+        .unwrap();
+    driver.verify_local_file("#single", &second).unwrap();
     assert!(driver.attach_local_files("#single", &files).is_err());
     assert!(driver
         .attach_local_files("#multiple", &[first.clone(), bad.clone()])

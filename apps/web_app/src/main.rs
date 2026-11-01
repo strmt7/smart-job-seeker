@@ -5574,19 +5574,20 @@ fn serve(
                 .driver
                 .file_input_allows_multiple(selector)
                 .map_err(|e| e.to_string())?;
+            let previous = current_attachment_groups(&current.attachments, &current.id)
+                .into_iter()
+                .find(|(field, _)| field == selector)
+                .map(|(_, paths)| paths)
+                .unwrap_or_default();
             let mut files = if multiple {
-                current_attachment_groups(&current.attachments, &current.id)
-                    .into_iter()
-                    .find(|(field, _)| field == selector)
-                    .map(|(_, paths)| paths)
-                    .unwrap_or_default()
+                previous.clone()
             } else {
                 Vec::new()
             };
-            if !files.is_empty() {
+            if !previous.is_empty() {
                 current
                     .driver
-                    .verify_local_files(selector, &files)
+                    .verify_local_files(selector, &previous)
                     .map_err(|_| "Previously attached files changed; review the field manually")?;
             }
             if files.iter().any(|path| {
@@ -5733,7 +5734,10 @@ fn serve(
             })
             .map_err(|e| e.to_string())?;
             current.staged_files.push(dir);
-            if let Err(error) = current.driver.attach_local_files(selector, &files) {
+            if let Err(error) = current
+                .driver
+                .attach_local_files_if_unchanged(selector, &files, &previous)
+            {
                 if let Some(record) = &mut current.record {
                     let _ = record.event(json!({"type":"attachment_incomplete","time":now(),"selector":selector,"error":error.to_string()}));
                 }
