@@ -48,6 +48,21 @@ fn is_disappeared_node_error(message: &str) -> bool {
 const CHANGED_DURING_INSPECTION: &str =
     "The page changed during inspection; review the form manually";
 
+// Spend the 720-pixel capture width on nearby context without excluding the
+// target's right edge. A wide target may leave little room for context.
+fn context_left_edge(
+    field_left: f64,
+    field_right: f64,
+    viewport_left: f64,
+    page_width: f64,
+) -> f64 {
+    (field_left - 240.0)
+        .max(field_right - 720.0)
+        .max(viewport_left)
+        .max(0.0)
+        .min(page_width)
+}
+
 fn retry_changed_inspection(
     mut result: Result<LiveForm, DriverError>,
     mut retry: impl FnMut(usize) -> Result<LiveForm, DriverError>,
@@ -1297,7 +1312,7 @@ impl CdpDriver {
             return Err(DriverError("Control is outside the visible viewport; scroll it into view before visual capture".into()));
         }
         let (left, top, width, height, scale) = if context {
-            let left = (x + page_x - 120.0).max(page_x).max(0.0).min(page_width);
+            let left = context_left_edge(x + page_x, right, page_x, page_width);
             // Include more section context when the field is short, while
             // preserving the previous 70-pixel margin for tall controls.
             let field_height = bottom - (y + page_y);
@@ -1330,7 +1345,7 @@ impl CdpDriver {
                 },
             )
         };
-        if right > left + width || bottom > top + height {
+        if left > x + page_x || top > y + page_y || right > left + width || bottom > top + height {
             return Err(DriverError(
                 "Field is too large for one visual capture".into(),
             ));
@@ -5714,6 +5729,13 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn context_capture_keeps_target_and_uses_available_left_space() {
+        assert_eq!(context_left_edge(400.0, 850.0, 0.0, 1400.0), 160.0);
+        assert_eq!(context_left_edge(400.0, 1050.0, 0.0, 1400.0), 330.0);
+        assert_eq!(context_left_edge(150.0, 400.0, 100.0, 1400.0), 100.0);
+    }
 
     #[test]
     fn changed_inspection_retries_boundedly_and_keeps_manual_review_wall() {
