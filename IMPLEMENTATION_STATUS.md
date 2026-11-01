@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Native time visual review — 2026-11-01
+
+- A fictional reviewed-fill browser fixture now verifies that a time answer is prepared through the review path, filled under a one-use grant, and cannot replay that grant. In an isolated CPU run, `gemma4:12b-it-q4_K_M` transcribed the displayed time as `01:30 PM` while the native value was `13:30`, initially producing a mismatch. The comparison now reconciles unambiguous 12-hour displays only for completed native time fields, then still verifies the live DOM value. A rerun produced a transcription match and live-value match; available RAM stayed at or above 16.47 GiB. A separate fictional test rejected ambiguous labels, left text fields unchanged, and refused confirmation after the live time changed. These observations do not establish general model accuracy. Evidence is retained under `target/model-eval/isolated-gemma-native-time-20261101` and `target/model-eval/isolated-gemma-native-time-normalized-20261101`.
+- Hosted CI for `236726e` passed browser end-to-end and agent-tool checks but failed Clippy on a single-element loop in the new fixture; that loop was removed. Its supply-chain audit also reported three vulnerabilities and five denied warnings. The local browser and web Clippy checks passed after the fixture change; hosted results for the subsequent commit remain to be checked.
+
 ## Reviewed native time input — 2026-11-01
 
 - Reviewed form answers now support native time fields at minute precision (`HH:MM`). The browser checks the control type, site limits and validity, then verifies the retained value. A fictional browser fixture rejected invalid and out-of-range values and filled `13:30` without submission; the review API rejects malformed times. Other special native controls still need manual handling. Seconds and fractional seconds are not supported, and visual transcription may differ from the stored 24-hour value.

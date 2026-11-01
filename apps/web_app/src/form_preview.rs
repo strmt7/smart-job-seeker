@@ -2808,6 +2808,104 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn reviewed_time_reaches_browser_under_a_one_use_grant() {
+        use waypoint_domain::GrantId;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_native_special_controls.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(live, &json!({}), "offline").unwrap();
+        let (preview, _) = crate::prepare_reviewed_fill(
+            &preview,
+            &json!({"selectors":[],"answers":[{"selector":"#time","value":"13:30"}]}),
+        )
+        .unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("time-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("time-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("time-grant").unwrap(),
+            intent_id: IntentId::new(intent.as_str()).unwrap(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        assert_eq!(
+            apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                url.as_str(),
+                &preview,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1,
+                    completed: &mut completed
+                }
+            )
+            .unwrap(),
+            1
+        );
+        assert!(grant.consumed);
+        driver.verify_text_value("#time", "13:30").unwrap();
+        assert_eq!(completed.len(), 1);
+        let mut replay_completed = Vec::new();
+        assert!(apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 2,
+                completed: &mut replay_completed
+            }
+        )
+        .is_err());
+        assert!(replay_completed.is_empty());
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted") && !entry.contains("clicked")));
+    }
+
+    #[test]
     #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_structure_is_read_only() {
         let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")

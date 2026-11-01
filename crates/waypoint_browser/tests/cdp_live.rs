@@ -140,12 +140,10 @@ fn native_special_controls_are_reported_for_manual_review() {
             |wall| wall.contains("custom control needs manual review") && wall.contains(label)
         ));
     }
-    for label in ["Start week"] {
-        assert!(live
-            .walls
-            .iter()
-            .any(|wall| wall.contains("required custom control") && wall.contains(label)));
-    }
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("required custom control") && wall.contains("Start week")));
     assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
         && !entry.contains("clicked")
         && !entry.contains("submitted")));

@@ -318,6 +318,105 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
     json!({"observations":items,"comparisons":comparisons,"observation_limit_reached":items.len() == MAX_OBSERVATIONS})
 }
 
+fn twelve_hour_time(value: &str) -> Option<String> {
+    let mut parts = value.split_whitespace();
+    let clock = parts.next()?;
+    let suffix = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let (hours, minutes) = clock.split_once(':')?;
+    if !(1..=2).contains(&hours.len())
+        || minutes.len() != 2
+        || !hours.bytes().all(|b| b.is_ascii_digit())
+        || !minutes.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let hour: u32 = hours.parse().ok()?;
+    let minute: u32 = minutes.parse().ok()?;
+    if !(1..=12).contains(&hour) || minute >= 60 {
+        return None;
+    }
+    let hour = if suffix.eq_ignore_ascii_case("am") {
+        hour % 12
+    } else if suffix.eq_ignore_ascii_case("pm") {
+        hour % 12 + 12
+    } else {
+        return None;
+    };
+    Some(format!("{hour:02}:{minute:02}"))
+}
+
+/// A native time control may display a 12-hour value while retaining a
+/// 24-hour DOM value. Only reconcile an unambiguous completed time field;
+/// the caller still has to verify the live control independently.
+fn reconcile_time_transcriptions(
+    preview: &crate::form_preview::FormPreview,
+    completed: &[String],
+    result: &mut Value,
+) {
+    use waypoint_applications::form_mapping::{FormFieldType, PacketValue};
+    let observations = result["observations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let Some(comparisons) = result["comparisons"].as_array_mut() else {
+        return;
+    };
+    for item in comparisons {
+        if item["status"] != "differs_from_transcription" {
+            continue;
+        }
+        let Some(label) = item["label"].as_str() else {
+            continue;
+        };
+        let fields: Vec<_> = preview
+            .schema
+            .fields
+            .iter()
+            .filter(|field| normalized_label(&field.label) == normalized_label(label))
+            .collect();
+        let [field] = fields.as_slice() else {
+            continue;
+        };
+        if field.field_type != FormFieldType::Time || !completed.contains(&field.selector) {
+            continue;
+        }
+        let Some(PacketValue::Date(expected)) = preview
+            .suggestions
+            .iter()
+            .find(|mapping| mapping.field_selector == field.selector)
+            .map(|mapping| &mapping.value)
+        else {
+            continue;
+        };
+        if item["expected"].as_str() != Some(expected.as_str()) {
+            continue;
+        }
+        let observed: Vec<_> = observations
+            .iter()
+            .filter(|observation| {
+                observation["label"]
+                    .as_str()
+                    .is_some_and(|name| normalized_label(name) == normalized_label(label))
+            })
+            .collect();
+        let [observation] = observed.as_slice() else {
+            continue;
+        };
+        if observation["visible_value"]
+            .as_str()
+            .and_then(twelve_hour_time)
+            .as_deref()
+            == Some(expected.as_str())
+        {
+            item["status"] = json!("matches_transcription");
+            item["comparison_note"] = json!("12-hour display normalized to 24-hour time");
+        }
+    }
+}
+
 /// Fields not visible in one segment may appear elsewhere; only a direct
 /// disagreement in this segment can establish a visual review concern here.
 pub fn transcription_mismatch_count(result: &Value) -> usize {
@@ -458,6 +557,7 @@ fn crosscheck_live_values_with_budget(
     budget: std::time::Duration,
 ) -> (usize, usize) {
     use waypoint_applications::form_mapping::{BrowserCommand, FormFieldType, PacketValue};
+    reconcile_time_transcriptions(preview, completed, result);
     let started = std::time::Instant::now();
     let Some(comparisons) = result["comparisons"].as_array_mut() else {
         return (0, 0);
@@ -1225,6 +1325,139 @@ mod tests {
             .trace
             .iter()
             .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "requires one local browser and a preloaded local vision model"]
+    fn live_vision_reads_fictional_native_time() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue, ProposedMapping};
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").expect("model name");
+        let (addr, context) = benchmark_target(&model).unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fictional-visual-time.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#time".into(),
+                value: PacketValue::Date("13:30".into()),
+            })
+            .unwrap();
+        driver.verify_text_value("#time", "13:30").unwrap();
+        let preview = crate::form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#time".into(),
+                value: PacketValue::Date("13:30".into()),
+            }],
+            manual_review: live.walls,
+            model_review_selectors: Default::default(),
+        };
+        let image = driver.screenshot_field_context("#time").unwrap();
+        let expected = vec![("Interview time".into(), "13:30".into())];
+        let mut result = analyze_targeted_with_context(
+            addr,
+            &model,
+            &image,
+            "Interview time",
+            &expected,
+            context,
+        )
+        .unwrap();
+        let verified =
+            crosscheck_live_values(&mut driver, &preview, &["#time".into()], &mut result);
+        println!("Fictional native time visual review: {result}; live checks={verified:?}");
+        assert_eq!(result["comparisons"].as_array().unwrap().len(), 1);
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    fn twelve_hour_time_requires_an_unambiguous_clock() {
+        assert_eq!(twelve_hour_time("01:30 PM").as_deref(), Some("13:30"));
+        assert_eq!(twelve_hour_time("12:00 AM").as_deref(), Some("00:00"));
+        assert_eq!(twelve_hour_time("12:00 PM").as_deref(), Some("12:00"));
+        for value in [
+            "00:30 AM",
+            "13:30 PM",
+            "1:60 PM",
+            "1:30",
+            "1:30 PM extra",
+            "1:30:00 PM",
+        ] {
+            assert_eq!(twelve_hour_time(value), None);
+        }
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn time_visual_reconciliation_requires_the_live_value() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue, ProposedMapping};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fictional-visual-time.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#time".into(),
+                value: PacketValue::Date("13:30".into()),
+            })
+            .unwrap();
+        let preview = crate::form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#time".into(),
+                value: PacketValue::Date("13:30".into()),
+            }],
+            manual_review: live.walls,
+            model_review_selectors: Default::default(),
+        };
+        let observation =
+            json!({"observations":[{"label":"Interview time","visible_value":"01:30 PM"}]});
+        let expected = vec![("Interview time".into(), "13:30".into())];
+        let mut ambiguous = compare(
+            &json!({"observations":[{"label":"Interview time","visible_value":"01:30 PM"},{"label":"Interview time","visible_value":"01:30 PM"}]}),
+            &expected,
+        );
+        reconcile_time_transcriptions(&preview, &["#time".into()], &mut ambiguous);
+        assert_eq!(ambiguous["comparisons"][0]["status"], "unobserved");
+        let mut other_type = preview.clone();
+        other_type.schema.fields[0].field_type =
+            waypoint_applications::form_mapping::FormFieldType::Text;
+        let mut literal = compare(&observation, &expected);
+        reconcile_time_transcriptions(&other_type, &["#time".into()], &mut literal);
+        assert_eq!(
+            literal["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let mut result = compare(&observation, &expected);
+        assert_eq!(
+            crosscheck_live_values(&mut driver, &preview, &["#time".into()], &mut result),
+            (1, 0)
+        );
+        assert_eq!(result["comparisons"][0]["dom_status"], "matches");
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#time".into(),
+                value: PacketValue::Date("14:30".into()),
+            })
+            .unwrap();
+        let mut stale = compare(&observation, &expected);
+        assert_eq!(
+            crosscheck_live_values(&mut driver, &preview, &["#time".into()], &mut stale),
+            (0, 1)
+        );
+        assert_eq!(stale["comparisons"][0]["status"], "unobserved");
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     #[test]
