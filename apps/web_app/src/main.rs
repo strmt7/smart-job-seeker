@@ -1105,6 +1105,13 @@ fn record_generated_evidence(
     })
 }
 
+fn require_duplicate_index_ready(ws: &Workspace) -> Result<(), String> {
+    if ws.duplicate_index_pending().map_err(|e| e.to_string())? {
+        return Err("Duplicate checks are still running; wait for indexing before interacting with an application".into());
+    }
+    Ok(())
+}
+
 fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task::Inputs, String> {
     let job = ws
         .job(id)
@@ -4275,6 +4282,7 @@ fn serve(
                         .into(),
                 );
             }
+            require_duplicate_index_ready(ws)?;
             let job = ws
                 .job(&current.job_id)
                 .map_err(|error| error.to_string())?
@@ -5924,6 +5932,7 @@ fn serve(
                     "Review possible duplicate jobs before filling this application".into(),
                 );
             }
+            require_duplicate_index_ready(ws)?;
             if current.id != requested {
                 return Err("Form session does not match".into());
             }
@@ -6299,6 +6308,7 @@ fn serve(
             {
                 return Err("Review possible duplicate jobs before attaching documents".into());
             }
+            require_duplicate_index_ready(ws)?;
             if current.id != requested || current.created.elapsed() > current.ttl {
                 return Err("Form session expired or does not match".into());
             }
@@ -9448,6 +9458,37 @@ mod tests {
     }
 
     #[test]
+    fn pending_duplicate_index_blocks_external_form_actions() {
+        let mut ws = Workspace::in_memory().unwrap();
+        assert!(require_duplicate_index_ready(&ws).is_ok());
+        let id = JobIdentityId::new("fictional-unindexed").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id,
+            title: "Software Engineering".into(),
+            employer: "Example Labs".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some("https://example.invalid/job".into()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        assert!(require_duplicate_index_ready(&ws)
+            .unwrap_err()
+            .contains("still running"));
+        assert_eq!(
+            ws.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("fictional-unindexed")
+        );
+        assert!(require_duplicate_index_ready(&ws).is_ok());
+    }
+
+    #[test]
     fn unresolved_duplicate_blocks_email_draft() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -10943,6 +10984,7 @@ mod tests {
                 posted_at: None,
             })
             .unwrap();
+            assert!(require_duplicate_index_ready(&ws).is_err());
             let profile = json!({"first_name":"Synthetic","country":"Germany","cv_template_id":"fixture-template"});
             ws.save_candidate_profile(&profile.to_string()).unwrap();
             ws.add_fact("Fictional research experience", FactOrigin::UserAttested)
@@ -11105,6 +11147,29 @@ mod tests {
             let (prepared, _) = prepare_reviewed_fill(&current.preview, &wrong_field).unwrap();
             let mut fields = form_preview::requested_field_records(&prepared).unwrap();
             assert!(attach_answer_provenance(&ws, current, &wrong_field, &mut fields).is_err());
+            let (mut stream, _) = listener.accept().unwrap();
+            let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
+            assert!(
+                error.contains("Duplicate checks are still running"),
+                "{error}"
+            );
+            assert_eq!(
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
+                    .text_value_snapshot("#candidate")
+                    .unwrap()
+                    .value,
+                ""
+            );
+            json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
+            drop(stream);
+            assert_eq!(
+                ws.index_next_duplicate_job("").unwrap().as_deref(),
+                Some(id.as_str())
+            );
+            assert!(require_duplicate_index_ready(&ws).is_ok());
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
             assert!(error.contains("Close the active review session"));
@@ -11685,6 +11750,15 @@ mod tests {
             );
             assert!(std::fs::read_dir(record.join("materials")).unwrap().count() >= 1);
         });
+        let pending = r##"{"session_id":"test-session","reviewed":true,"selectors":["#candidate"],"answers":[]}"##;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{pending}", pending.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.contains("Duplicate checks are still running"),
+            "{response}"
+        );
         let body = r#"{"id":"fixture-web","require_no_session":true}"#;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "POST /api/form/inspect-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();

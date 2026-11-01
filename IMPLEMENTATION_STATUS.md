@@ -1,3 +1,8 @@
+## Duplicate indexing before form actions — 2026-11-01
+
+- Reviewed form fills, document attachments and custom-choice actions now wait while any job remains queued for duplicate indexing, including migration rechecks. Existing duplicate-pair holds still apply. This is a conservative global wait: large or interrupted indexing can delay unrelated jobs. Completed bounded indexing does not guarantee every duplicate was found, and concurrent changes after the check remain possible.
+- A fictional browser endpoint test verified that pending indexing rejects a fill without changing the field and that the reviewed workflow can proceed after indexing. Its first run after the guard reached an unrelated screenshot-segment assertion failure; the rerun passed, and the expanded gate test passed. The web suite passed 436 tests with 227 ignored before the final fixture expansion; web-app Clippy passed afterward. No real application was submitted.
+
 ## Engineering title duplicate review — 2026-11-01
 
 - Duplicate candidate matching now treats the standalone title terms `engineering` and `engineer` alike, so closely worded roles can be flagged even without a requisition or description. This creates a pending review pair; it does not merge jobs or establish that the roles are the same. Migration 41 queues affected existing titles for the existing bounded background recheck and preserves prior decisions. Candidate and comparison limits still apply.
