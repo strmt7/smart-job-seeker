@@ -86,12 +86,39 @@ fn restore_model_selectors(
 // An autocomplete token identifies a data type, not whose data is requested.
 // The offline path only trusts it when the visible label also names the
 // applicant's own contact field. Unrecognized wording stays for review.
-fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
-    let normalized: String = label
-        .chars()
+fn normalize_field_name(text: &str) -> String {
+    text.chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
-        .collect();
+        .collect()
+}
+
+fn autocomplete_profile_key(
+    field: &waypoint_applications::form_mapping::FormField,
+) -> Option<&'static str> {
+    field
+        .autocomplete
+        .as_deref()?
+        .split_ascii_whitespace()
+        .last()
+        .and_then(|token| match token.to_ascii_lowercase().as_str() {
+            "name" => Some("full_name"),
+            "given-name" => Some("first_name"),
+            "family-name" => Some("last_name"),
+            "email" => Some("email"),
+            "tel" => Some("phone"),
+            "street-address" => Some("address"),
+            "address-level2" => Some("city"),
+            "address-level1" => Some("region"),
+            "postal-code" => Some("postal_code"),
+            "country-name" => Some("country"),
+            "url" => Some("website"),
+            _ => None,
+        })
+}
+
+fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
+    let normalized = normalize_field_name(label);
     let plain = ["applicants", "applicant", "candidates", "candidate", "your"]
         .iter()
         .find_map(|prefix| normalized.strip_prefix(prefix))
@@ -121,12 +148,6 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
         return Err("Form exceeds the 200-field mapping limit".into());
     }
     let profile = profile.as_object().ok_or("Profile must be an object")?;
-    let normalize = |text: &str| {
-        text.chars()
-            .filter(|c| c.is_alphanumeric())
-            .flat_map(char::to_lowercase)
-            .collect::<String>()
-    };
     let mut result = Vec::new();
     for field in &schema.fields {
         if field.sensitive {
@@ -136,7 +157,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             .iter()
             .filter(|(key, value)| {
                 AUTOFILL_PROFILE_FIELDS.contains(&key.as_str())
-                    && normalize(key) == normalize(&field.label)
+                    && normalize_field_name(key) == normalize_field_name(&field.label)
                     && value.as_str().is_some_and(|text| {
                         !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE
                     })
@@ -144,24 +165,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             .collect();
         // HTML autocomplete tokens are site-provided hints, not proof. When a
         // label directly conflicts with a hint, leave the field for review.
-        let hint = field
-            .autocomplete
-            .as_deref()
-            .and_then(|value| value.split_ascii_whitespace().last())
-            .and_then(|token| match token.to_ascii_lowercase().as_str() {
-                "name" => Some("full_name"),
-                "given-name" => Some("first_name"),
-                "family-name" => Some("last_name"),
-                "email" => Some("email"),
-                "tel" => Some("phone"),
-                "street-address" => Some("address"),
-                "address-level2" => Some("city"),
-                "address-level1" => Some("region"),
-                "postal-code" => Some("postal_code"),
-                "country-name" => Some("country"),
-                "url" => Some("website"),
-                _ => None,
-            });
+        let hint = autocomplete_profile_key(field);
         let key = match (keys.as_slice(), hint) {
             ([(key, _)], Some(hint)) if key.as_str() != hint => continue,
             ([(key, _)], _) => key.as_str(),
@@ -708,6 +712,17 @@ fn validate_suggestions(
                 .iter()
                 .find(|field| field.selector == selector)?;
             if field.sensitive || !AUTOFILL_PROFILE_FIELDS.contains(&key) {
+                return None;
+            }
+            let direct = AUTOFILL_PROFILE_FIELDS.iter().copied().find(|candidate| {
+                normalize_field_name(candidate) == normalize_field_name(&field.label)
+            });
+            let hint = autocomplete_profile_key(field);
+            if direct.is_some_and(|direct| direct != key || hint.is_some_and(|hint| hint != direct))
+                || hint.is_some_and(|hint| {
+                    hint != key && hint_matches_applicant_label(&field.label, hint)
+                })
+            {
                 return None;
             }
             if matches!(field.field_type, FormFieldType::Email) && key != "email" {
@@ -1605,6 +1620,8 @@ mod tests {
         .unwrap();
         assert!(mappings.is_empty());
         assert!(invalid.contains("#candidate"));
+        schema.fields[0].label = "Email".into();
+        schema.fields[0].autocomplete = Some("email".into());
         let (mappings, invalid, _) = validate_suggestions(
             &schema,
             profile.as_object().unwrap(),
@@ -1613,6 +1630,25 @@ mod tests {
         .unwrap();
         assert_eq!(mappings.len(), 1);
         assert!(invalid.is_empty());
+    }
+    #[test]
+    fn model_cannot_replace_an_unavailable_explicit_profile_field() {
+        let mut schema = form();
+        let profile = json!({"last_name":"Example"});
+        let model_output =
+            json!({"mappings":[{"selector":"#candidate","profile_key":"last_name"}]});
+        for (label, hint) in [
+            ("First name", None),
+            ("Your given name", Some("given-name")),
+            ("First name", Some("family-name")),
+        ] {
+            schema.fields[0].label = label.into();
+            schema.fields[0].autocomplete = hint.map(str::to_owned);
+            let (mapped, invalid, _) =
+                validate_suggestions(&schema, profile.as_object().unwrap(), &model_output).unwrap();
+            assert!(mapped.is_empty(), "{label}");
+            assert!(invalid.contains("#candidate"), "{label}");
+        }
     }
     #[test]
     fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
