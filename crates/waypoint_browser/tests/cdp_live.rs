@@ -1335,6 +1335,17 @@ fn unlabelled_checkbox_group_context_is_advisory() {
         assert!(live.schema.fields.iter().any(|field| field.sensitive
             && field.label == format!("Question context unavailable (review): {option}")));
     }
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.sensitive
+            && field.label == "Question context unavailable (review): Custom"));
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Separate"));
     assert!(!live
         .schema
         .fields

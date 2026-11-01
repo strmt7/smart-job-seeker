@@ -2342,12 +2342,24 @@ impl CdpDriver {
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Choice disappeared".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(kind) {
-            if (!this.isConnected || !(this instanceof HTMLInputElement) || this.type !== kind || !['radio','checkbox'].includes(kind) || !this.name || !this.form) return null;
+            if (!this.isConnected || !(this instanceof HTMLInputElement) || this.type !== kind || !['radio','checkbox'].includes(kind) || (!this.name && kind !== 'checkbox') || !this.form) return null;
             let branch = this, foundGroup = false;
             for (let depth = 0; depth < 8; depth++) {
                 const parent = branch.parentElement;
                 if (!parent || ['FORM','FIELDSET','SECTION','BODY'].includes(parent.tagName) || parent.children.length > 20) return foundGroup ? '' : null;
-                const controls = parent.querySelectorAll('input:not([type="hidden" i]),textarea,select,button,[contenteditable="true"]');
+                let controls = Array.from(parent.querySelectorAll('input:not([type="hidden" i]),textarea,select,button,[contenteditable="true"]'));
+                if (!this.name) {
+                    controls = controls.filter(control => control === this || (control.getClientRects().length && getComputedStyle(control).visibility === 'visible'));
+                    if (controls.length > 20 || controls.some(control => !(control instanceof HTMLInputElement) || control.type !== kind || control.form !== this.form)) return null;
+                    if (controls.length >= 3) {
+                        const others = controls.filter(control => control !== this);
+                        const names = new Set(others.map(control => control.name));
+                        if (names.size === 1 && !names.has('')) return '';
+                        return null;
+                    }
+                    branch = parent;
+                    continue;
+                }
                 if (controls.length > 20 || Array.from(controls).some(control => !(control instanceof HTMLInputElement) || control.type !== kind || control.name !== this.name || control.form !== this.form)) return foundGroup ? '' : null;
                 if (controls.length >= 2) {
                     foundGroup = true;
