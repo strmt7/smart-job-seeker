@@ -115,6 +115,17 @@ def provision_libreoffice(stage, local_msi=None):
     (office / msi.name).unlink(missing_ok=True)
     return office
 
+def check_windows_bundle_path(relative, seen, component):
+    """Reject paths that cannot be reliably extracted onto Windows."""
+    parts = relative.split('/')
+    key = relative.casefold()
+    if (any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in parts)
+        or any(re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in parts)
+        or re.search(r'[\\:*?"<>|\x00-\x1f]', relative)
+        or key in seen):
+        raise ValueError(f'Unsupported {component} file path: {relative}')
+    seen.add(key)
+
 def add_libreoffice(archive, root):
     """Bundle an existing complete distribution without modifying the host."""
     root = Path(root).resolve(strict=True)
@@ -122,7 +133,7 @@ def add_libreoffice(archive, root):
         raise ValueError('LibreOffice directory must contain program/soffice.com')
     if not any((root / name).is_file() for name in ('LICENSE', 'LICENSE.txt', 'LICENSE.html')):
         raise ValueError('LibreOffice distribution must include its license')
-    files = []
+    files, seen = [], set()
     total = 0
     for path in root.rglob('*'):
         if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
@@ -130,8 +141,7 @@ def add_libreoffice(archive, root):
         if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
-        if any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in relative.split('/')) or re.search(r'[\\:*?"<>|\x00-\x1f]', relative):
-            raise ValueError(f'Unsupported LibreOffice file path: {relative}')
+        check_windows_bundle_path(relative, seen, 'LibreOffice')
         total += path.stat().st_size
         files.append((path, relative))
         if len(files) > 50000 or total > 2 * 1024 * 1024 * 1024:
@@ -162,13 +172,7 @@ def add_chromium(archive, root):
         if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
-        parts = relative.split('/')
-        if (any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in parts)
-            or any(re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in parts)
-            or re.search(r'[\\:*?"<>|\x00-\x1f]', relative)
-            or relative.casefold() in seen):
-            raise ValueError(f'Unsupported Chromium file path: {relative}')
-        seen.add(relative.casefold())
+        check_windows_bundle_path(relative, seen, 'Chromium')
         total += path.stat().st_size
         files.append((path, relative))
         if len(files) > 50000 or total > 2 * 1024**3:

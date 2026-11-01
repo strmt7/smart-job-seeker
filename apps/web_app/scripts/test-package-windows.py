@@ -13,6 +13,19 @@ spec = importlib.util.spec_from_file_location('waypoint_packager', script)
 packager = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packager)
 
+# Check Windows extraction rules even when the host filesystem cannot create
+# reserved names or distinguish two files solely by case.
+for component in ('LibreOffice', 'Chromium'):
+    seen = set()
+    packager.check_windows_bundle_path('program/naïve #1.dat', seen, component)
+    for invalid in ('program/NAÏVE #1.DAT', 'program/CON.txt', 'program/file.', 'program/a:b'):
+        try:
+            packager.check_windows_bundle_path(invalid, seen, component)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f'{component} accepted incompatible path {invalid}')
+
 target = script.resolve().parents[3] / 'target'
 target.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target) as temp:
