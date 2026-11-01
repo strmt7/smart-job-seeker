@@ -1040,3 +1040,7 @@ The batch candidate view merges provider-reported engine names and dates from re
 ### Rich-text overlay checks (2026-11-01)
 
 The browser now applies its existing center-point hit test to contenteditable fields as well as native controls. A fictional local-browser fixture confirmed that a covered rich-text field and one covered on focus are left unchanged, while an unobscured rich-text field is filled and verified. The existing hidden-before-write browser fixture, web Clippy and formatting checks also passed. This is a point-in-time center hit test, not proof that every overlay or partially obscured field is detected; pointer-events-disabled overlays and later page changes can evade it. No employer site was contacted and no application was submitted.
+
+### Final input event verification (2026-11-01)
+
+Text filling now rechecks the field's focus and rendered visibility after the final inserted segment, before reporting success. A fictional browser fixture covered a Unicode input event that displays an overlay and another that moves focus; both return an error for review, and an already-entered partial value may remain. The existing hidden-field fixture, web Clippy and formatting passed. The check is point-in-time and cannot guarantee detection of every overlay or later change. No employer site was contacted and no application was submitted.

@@ -4118,6 +4118,10 @@ impl CdpDriver {
                             .map_err(derr)?;
                     }
                 }
+                // The final input event can itself hide or replace the control,
+                // move focus, or display an overlay. Do not report a completed
+                // fill until the same field is still visible and focused.
+                self.ensure_text_focus(node, object)?;
                 let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)

@@ -8,4 +8,10 @@
   <div id="focus-overlay" hidden style="position:absolute;inset:0;background:white">Overlay</div>
 </div>
 <div id="clear" role="textbox" aria-label="Visible answer" contenteditable="true" style="width:300px;height:50px"></div>
+<div style="position:relative;width:300px;height:50px">
+  <div id="input-covered" role="textbox" aria-label="Answer covered on input" contenteditable="true" style="width:300px;height:50px" oninput="document.getElementById('input-overlay').hidden=false"></div>
+  <div id="input-overlay" hidden style="position:absolute;inset:0;background:white">Overlay</div>
+</div>
+<label for="focus-shift">Focus changes on input</label><input id="focus-shift" oninput="document.getElementById('other').focus()">
+<input id="other" aria-label="Other field">
 </form></body></html>

@@ -3751,6 +3751,21 @@ mod tests {
         driver
             .verify_text_value("#clear", "Fictional answer")
             .unwrap();
+        // The last inserted segment can change the page after pre-write checks.
+        // A partial value can remain, but must not be reported as success.
+        for selector in ["#input-covered", "#focus-shift"] {
+            assert!(driver
+                .execute(&BrowserCommand::Fill {
+                    selector: selector.into(),
+                    value: PacketValue::Text("\u{03a9}".into()),
+                })
+                .is_err());
+        }
+        assert_eq!(
+            driver.text_value_snapshot("#input-covered").unwrap().value,
+            "\u{03a9}"
+        );
+        assert_eq!(driver.text_value_snapshot("#other").unwrap().value, "");
     }
 
     #[test]
