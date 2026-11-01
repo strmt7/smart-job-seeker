@@ -482,14 +482,19 @@ impl Store {
 
     /// Index and compare one previously unindexed job; caller schedules bounded work.
     pub fn index_next_duplicate_job(&self, after: &str) -> rusqlite::Result<Option<String>> {
+        // One idle indexing step is atomic: partial pair updates and index
+        // markers roll back together if any comparison or write fails.
+        let transaction = self.conn.unchecked_transaction()?;
         let next = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j WHERE j.id>?1 AND NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) ORDER BY j.id LIMIT 1", [after], Self::row_to_job).optional()?;
-        if let Some(job) = next {
+        let indexed = if let Some(job) = next {
             let id = job.id.as_str().to_owned();
             self.find_possible_duplicates(&job)?;
-            Ok(Some(id))
+            Some(id)
         } else {
-            Ok(None)
-        }
+            None
+        };
+        transaction.commit()?;
+        Ok(indexed)
     }
 
     pub fn duplicate_index_pending(&self) -> rusqlite::Result<bool> {
@@ -774,6 +779,110 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "bounded in-memory duplicate-index timing fixture"]
+    fn measure_duplicate_index_on_distinct_titles_and_long_descriptions() {
+        let mut store = Store::in_memory().unwrap();
+        let description = (0..2500)
+            .map(|i| format!("skill{i:04} "))
+            .collect::<String>();
+        for index in 0..200 {
+            let item = job(
+                &format!("candidate-{index:03}"),
+                "Software Engineer",
+                "Example Labs",
+                None,
+            );
+            store.upsert_job(&item).unwrap();
+            store
+                .set_job_description(&item.id, Some(&description))
+                .unwrap();
+            store.find_possible_duplicates(&item).unwrap();
+        }
+        let target = job("target", "Computational Scientist", "Example Labs", None);
+        store.upsert_job(&target).unwrap();
+        store
+            .set_job_description(&target.id, Some(&description))
+            .unwrap();
+        let start = std::time::Instant::now();
+        let matches = store.find_possible_duplicates(&target).unwrap();
+        println!(
+            "Fictional duplicate index: {} candidates, description bytes {}, elapsed {:?}",
+            matches.len(),
+            description.len(),
+            start.elapsed()
+        );
+        assert_eq!(matches.len(), 200);
+    }
+
+    #[cfg(feature = "sqlcipher")]
+    #[test]
+    #[ignore = "bounded encrypted disk duplicate-index timing fixture"]
+    fn measure_encrypted_duplicate_index_on_distinct_titles_and_long_descriptions() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        let path = root.join(format!(
+            "waypoint-index-timing-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(!path.exists() && path.starts_with(&root));
+        {
+            let mut store = Store::open_encrypted(&path, &[17; 32]).unwrap();
+            let description = (0..2500)
+                .map(|i| format!("skill{i:04} "))
+                .collect::<String>();
+            store.conn.execute_batch("BEGIN").unwrap();
+            for index in 0..200 {
+                let item = job(
+                    &format!("candidate-{index:03}"),
+                    "Software Engineer",
+                    "Example Labs",
+                    None,
+                );
+                store.upsert_job(&item).unwrap();
+                store
+                    .set_job_description(&item.id, Some(&description))
+                    .unwrap();
+                store
+                    .conn
+                    .execute(
+                        "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example')",
+                        [item.id.as_str()],
+                    )
+                    .unwrap();
+                store
+                    .conn
+                    .execute(
+                        "INSERT INTO job_employer_indexed(job_id) VALUES(?1)",
+                        [item.id.as_str()],
+                    )
+                    .unwrap();
+                store.conn.execute("INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,'complete',0)", [item.id.as_str()]).unwrap();
+            }
+            store.conn.execute_batch("COMMIT").unwrap();
+            let target = job("target", "Computational Scientist", "Example Labs", None);
+            store.upsert_job(&target).unwrap();
+            store
+                .set_job_description(&target.id, Some(&description))
+                .unwrap();
+            let start = std::time::Instant::now();
+            assert_eq!(
+                store.index_next_duplicate_job("").unwrap().as_deref(),
+                Some("target")
+            );
+            let matches = store.possible_duplicates().unwrap();
+            println!("Fictional SQLCipher disk duplicate index: {} candidates, description bytes {}, elapsed {:?}", matches.len(), description.len(), start.elapsed());
+            assert_eq!(matches.len(), 200);
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
     fn strong_title_candidate_does_not_load_descriptions_but_different_titles_do() {
         let mut store = Store::in_memory().unwrap();
         let first = job("first", "Software Engineer", "Example Labs", None);
@@ -852,6 +961,48 @@ mod tests {
             store.upsert_job(&other).unwrap();
             assert!(store.find_possible_duplicates(&other).unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn idle_index_rolls_back_partial_pairs_after_a_write_failure() {
+        let mut store = Store::in_memory().unwrap();
+        let a = job("a", "Engineer", "Example Labs", None);
+        let b = job("b", "Engineer", "Example Labs", None);
+        let target = job("target", "Engineer", "Example Labs", None);
+        for item in [&a, &b] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        store.upsert_job(&target).unwrap();
+        store.conn.execute_batch("CREATE TRIGGER fixture_fail_second_pair BEFORE INSERT ON possible_duplicates WHEN NEW.job_a='b' AND NEW.job_b='target' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(store.index_next_duplicate_job("").is_err());
+        assert!(store.duplicate_index_pending().unwrap());
+        let count: u64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM possible_duplicates WHERE job_b='target'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fixture_fail_second_pair")
+            .unwrap();
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("target")
+        );
+        assert_eq!(
+            store
+                .possible_duplicates()
+                .unwrap()
+                .iter()
+                .filter(|pair| pair.job_b == "target")
+                .count(),
+            2
+        );
     }
 
     #[test]
