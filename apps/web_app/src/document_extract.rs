@@ -138,6 +138,8 @@ fn extract_docx(bytes: &[u8]) -> Result<String, String> {
 fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
     let mut reader = NsReader::from_reader(xml);
     let mut in_text = false;
+    let mut run_depth = 0usize;
+    let mut tab_stops_depth = 0usize;
     let mut removed_revision_depth = 0usize;
     loop {
         let (namespace, event) = reader
@@ -168,6 +170,14 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
             continue;
         }
         match event {
+            Event::Start(e) if word && e.local_name().as_ref() == b"r" => run_depth += 1,
+            Event::End(e) if word && e.local_name().as_ref() == b"r" => {
+                run_depth = run_depth.saturating_sub(1)
+            }
+            Event::Start(e) if word && e.local_name().as_ref() == b"tabs" => tab_stops_depth += 1,
+            Event::End(e) if word && e.local_name().as_ref() == b"tabs" => {
+                tab_stops_depth = tab_stops_depth.saturating_sub(1)
+            }
             Event::Start(e) if word && e.local_name().as_ref() == b"t" => in_text = true,
             Event::End(e) if word && e.local_name().as_ref() == b"t" => in_text = false,
             Event::Text(e) if in_text => {
@@ -183,7 +193,12 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
                     quick_xml::escape::unescape(&entity).map_err(|_| "Unsupported DOCX entity")?;
                 output.push_str(&decoded);
             }
-            Event::Empty(e) | Event::Start(e) if word && e.local_name().as_ref() == b"tab" => {
+            Event::Empty(e) | Event::Start(e)
+                if word
+                    && run_depth > 0
+                    && tab_stops_depth == 0
+                    && e.local_name().as_ref() == b"tab" =>
+            {
                 output.push('\t')
             }
             // These are characters in a Word text run, not formatting-only
@@ -281,6 +296,24 @@ mod tests {
         assert_eq!(
             extract("cv.docx", &archive(xml)).unwrap(),
             "Rust\tSQL\nfull\u{2011}stack\u{00ad}work\nDone"
+        );
+    }
+
+    #[test]
+    fn paragraph_tab_stop_settings_do_not_become_extracted_tabs() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr><w:r><w:t>Python</w:t><w:tab/><w:t>SQL</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="1440"/></w:tabs></w:pPr><w:r><w:t>Data analyst</w:t></w:r></w:p></w:body></w:document>"#;
+        assert_eq!(
+            extract("cv.docx", &archive(xml)).unwrap(),
+            "Python\tSQL\nData analyst"
+        );
+    }
+
+    #[test]
+    fn nested_word_runs_keep_real_tabs_but_ignore_tab_stops() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Lead</w:t><w:txbxContent><w:p><w:pPr><w:tabs><w:tab w:val="left"/></w:tabs></w:pPr><w:r><w:t>Inner</w:t></w:r></w:p></w:txbxContent><w:tab/><w:t>After</w:t></w:r></w:p></w:body></w:document>"#;
+        assert_eq!(
+            extract("cv.docx", &archive(xml)).unwrap(),
+            "LeadInner\n\tAfter"
         );
     }
 
