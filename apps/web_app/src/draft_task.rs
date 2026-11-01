@@ -1281,6 +1281,72 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
+    fn live_scanned_template_draft_uses_local_vision() {
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let fact = "Built Rust services and tested them with users.".to_owned();
+        let input = Inputs {
+            job_id: "fictional-scanned-draft".into(),
+            digest: "fixture".into(),
+            kind: "cv".into(),
+            job: json!({"title":"Rust developer", "employer":"Example", "description":"Build Rust services."}),
+            facts: vec![fact.clone()],
+            available_facts: 1,
+            contact_facts: vec![],
+            priority_facts: vec![fact],
+            selection_listing: "Rust developer: build Rust services".into(),
+            instructions: "Use concise factual language.".into(),
+            template: Some((
+                "fictional.pdf".into(),
+                include_bytes!("../tests/fictional-scanned-cv.pdf").to_vec(),
+            )),
+        };
+        start("fictional-scanned-draft".into(), model, input).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        loop {
+            let result = poll("fictional-scanned-draft").unwrap();
+            if result["status"] != "running" {
+                assert_eq!(result["status"], "complete", "{result}");
+                let draft = &result["draft"];
+                assert_eq!(draft["template_vision"]["page"], 1);
+                assert!(!draft["template_vision"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .trim()
+                    .is_empty());
+                let transcribed = draft["template_vision"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .to_lowercase();
+                for expected in [
+                    "maya example",
+                    "2020-2024",
+                    "rust",
+                    "sql",
+                    "german b2",
+                    "berlin",
+                ] {
+                    assert!(
+                        transcribed.contains(expected),
+                        "missing {expected}: {transcribed}"
+                    );
+                }
+                assert_eq!(draft["template_used"], true);
+                assert!(!draft["paragraphs"].as_array().unwrap().is_empty());
+                println!(
+                    "Fictional template transcription: {}",
+                    draft["template_vision"]["text"]
+                );
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "draft did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+
+    #[test]
     #[ignore = "requires a preloaded local gemma3:4b model and resource preflight"]
     fn live_small_model_draft_receives_and_uses_prioritized_fact() {
         struct Recording<T>(T);
