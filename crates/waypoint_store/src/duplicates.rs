@@ -698,6 +698,35 @@ mod tests {
     }
 
     #[test]
+    fn rechecking_missing_employer_does_not_reverse_a_user_decision() {
+        let mut store = Store::in_memory().unwrap();
+        let known = job(
+            "known",
+            "Senior Software Engineer",
+            "Example Labs",
+            Some("REQ-481"),
+        );
+        let missing = job("missing", "Software Engineer", "", Some("REQ-481"));
+        for item in [&known, &missing] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        assert!(store.decide_duplicate("known", "missing", false).unwrap());
+        store.find_possible_duplicates(&missing).unwrap();
+        assert!(store.possible_duplicates().unwrap().is_empty());
+        assert!(!store.has_duplicate_hold("known").unwrap());
+        let status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM possible_duplicates WHERE job_a='known' AND job_b='missing'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "different");
+    }
+
+    #[test]
     fn missing_employer_allows_distinct_titles_with_strong_description_evidence() {
         let mut store = Store::in_memory().unwrap();
         let known = job(

@@ -290,6 +290,13 @@ const MIGRATIONS: &[&str] = &[
          OR lower(title) LIKE '% d-%' OR lower(title) LIKE '% x-%'
      );
      UPDATE meta SET value='30' WHERE key='schema_version';",
+    // v31 — reconsider missing-employer jobs with a usable requisition.
+    // Only the index marker is removed; user duplicate decisions remain.
+    "DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT j.id FROM jobs j JOIN job_duplicate_coverage c ON c.job_id=j.id
+       WHERE c.status='missing_employer' AND length(CAST(trim(j.requisition_id) AS BLOB))>=3
+     );
+     UPDATE meta SET value='31' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1063,6 +1070,47 @@ mod tests {
     }
 
     #[test]
+    fn missing_employer_migration_requeues_only_requisition_jobs_and_keeps_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &MIGRATIONS[..30] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute_batch(r#"INSERT INTO jobs(id,title,employer,location,state,requisition_id) VALUES
+            ('a','Senior Software Engineer','Example Labs','','"discovered"','REQ-481'),
+            ('b','Software Engineer','','','"discovered"','REQ-481'),
+            ('c','Unrelated role','','','"discovered"',NULL);
+            INSERT INTO job_employer_tokens(job_id,token) VALUES('a','example'),('a','labs');
+            INSERT INTO job_employer_indexed(job_id) VALUES('a'),('b'),('c');
+            INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES('a','complete',0),('b','missing_employer',0),('c','missing_employer',0);
+            INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES('a','c',0,'prior decision','different');"#).unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert_eq!(store.duplicate_coverage_counts().unwrap().1, 1);
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("b")
+        );
+        assert!(!store.duplicate_index_pending().unwrap());
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(
+            (&pairs[0].job_a, &pairs[0].job_b, &pairs[0].status),
+            (&"a".to_owned(), &"b".to_owned(), &"pending".to_owned())
+        );
+        let old_status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM possible_duplicates WHERE job_a='a' AND job_b='c'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_status, "different");
+    }
+
+    #[test]
     fn title_notation_migration_requeues_candidates_without_losing_decisions() {
         let conn = Connection::open_in_memory().unwrap();
         #[cfg(feature = "sqlcipher")]
@@ -1172,7 +1220,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "30");
+        assert_eq!(version, "31");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
