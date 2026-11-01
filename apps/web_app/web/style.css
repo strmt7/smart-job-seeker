@@ -180,3 +180,5 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 #pdf-preview{container-type:inline-size}.pdf-transcription{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}.pdf-transcription h4,.pdf-transcription .review-label{grid-column:1/-1}.pdf-transcription textarea{display:block;box-sizing:border-box;width:100%;min-height:260px;padding:10px;border:1px solid #ccd8e6;border-radius:5px;font:14px/1.5 Segoe UI,system-ui,sans-serif;resize:vertical}.pdf-transcription button{grid-column:1;justify-self:start}@container (min-width:650px){.pdf-transcription{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.pdf-transcription button{grid-column:2}}
 
 .draft-template-image{display:block;max-width:100%;height:auto;margin:12px 0}
+
+.reviewed-sort{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}.reviewed-sort [role="status"]{flex-basis:100%;font-size:.85rem;color:var(--muted,#526375)}
