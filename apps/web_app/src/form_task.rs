@@ -1960,6 +1960,66 @@ mod tests {
             .all(|entry| !entry.contains("submitted")));
     }
     #[test]
+    #[ignore = "read-only public application worker inspection"]
+    fn live_public_worker_rechecks_before_presenting_review() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let url =
+            std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").expect("set public application URL");
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        start(
+            "public-worker-fixture".into(),
+            JobIdentityId::new("fictional-job").unwrap(),
+            url,
+            serde_json::json!({}),
+            Err("model intentionally not started".into()),
+            false,
+            (0, vec![]),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if let Some(finished) = poll("public-worker-fixture").unwrap() {
+                match finished.result {
+                    Ok((driver, preview)) => {
+                        println!(
+                            "review returned: fields={} warnings={} captcha={}",
+                            preview.schema.fields.len(),
+                            preview.manual_review.len(),
+                            preview
+                                .manual_review
+                                .iter()
+                                .any(|wall| wall == "captcha present")
+                        );
+                        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+                            && !entry.contains("clicked")
+                            && !entry.contains("submitted")));
+                    }
+                    Err(error) => {
+                        println!("review not returned: {error}");
+                        assert!(
+                            error.contains("changed") || error.contains("Final form check failed"),
+                            "unexpected failure: {error}"
+                        );
+                    }
+                }
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "inspection did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    #[test]
     #[ignore = "starts one headless browser against a fictional local fixture"]
     fn background_inspection_returns_the_live_form_without_filling() {
         let _guard = TEST_LOCK.lock().unwrap();
