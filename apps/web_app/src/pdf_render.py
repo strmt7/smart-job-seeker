@@ -67,12 +67,21 @@ try:
                 geometry['status'] = 'no_selectable_text'
             elif count_chars <= 5000:
                 boxes = []
+                page_bounds = page.get_bbox()
+                if (not all(math.isfinite(v) for v in page_bounds)
+                        or page_bounds[2] <= page_bounds[0] or page_bounds[3] <= page_bounds[1]):
+                    raise ValueError('Invalid page bounds')
+                clipped_chars = 0
                 for i in range(count_chars):
                     left, bottom, right, top = textpage.get_charbox(i)
                     if not all(math.isfinite(v) for v in (left, bottom, right, top)):
                         raise ValueError('Invalid text geometry')
                     if right > left and top > bottom:
                         boxes.append((left, right, bottom, top, i))
+                        # Ignore tiny glyph metric excursions at the page edge.
+                        if (left < page_bounds[0] - .5 or bottom < page_bounds[1] - .5
+                                or right > page_bounds[2] + .5 or top > page_bounds[3] + .5):
+                            clipped_chars += 1
                 boxes.sort()
                 if not boxes:
                     geometry['status'] = 'no_selectable_text'
@@ -96,7 +105,8 @@ try:
                         break
                     active.append((left, right, bottom, top, i))
                 if boxes and comparisons <= 100000:
-                    geometry = {'status': 'checked', 'overlapping_pairs': overlaps}
+                    geometry = {'status': 'checked', 'overlapping_pairs': overlaps,
+                                'clipped_chars': clipped_chars}
         except Exception:
             pass  # An unavailable geometric observation is never a clean result.
         finally:

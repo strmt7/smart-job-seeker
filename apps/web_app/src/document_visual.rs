@@ -68,7 +68,10 @@ where
                 Some("checked")
                     if page["text_geometry"]["overlapping_pairs"]
                         .as_u64()
-                        .is_some_and(|n| n <= 100_000) =>
+                        .is_some_and(|n| n <= 100_000)
+                        && page["text_geometry"]["clipped_chars"]
+                            .as_u64()
+                            .is_some_and(|n| n <= 5000) =>
                 {
                     page["text_geometry"].clone()
                 }
@@ -141,6 +144,7 @@ pub fn needs_followup(review: &Value) -> bool {
             || !page["issues"].as_array().is_some_and(Vec::is_empty)
             || page["text_geometry"]["status"] != "checked"
             || page["text_geometry"]["overlapping_pairs"].as_u64() != Some(0)
+            || page["text_geometry"]["clipped_chars"].as_u64() != Some(0)
     })
 }
 
@@ -276,6 +280,7 @@ mod tests {
         let overlap = crate::pdf_extract::render_page_for_review(bytes, 1).unwrap();
         assert_eq!(clean["text_geometry"]["status"], "checked");
         assert_eq!(clean["text_geometry"]["overlapping_pairs"], 0);
+        assert_eq!(clean["text_geometry"]["clipped_chars"], 0);
         assert_eq!(overlap["text_geometry"]["status"], "checked");
         assert!(
             overlap["text_geometry"]["overlapping_pairs"]
@@ -288,6 +293,18 @@ mod tests {
         let dense = crate::pdf_extract::render_page_for_review(limits, 1).unwrap();
         assert_eq!(blank["text_geometry"]["status"], "no_selectable_text");
         assert_eq!(dense["text_geometry"]["status"], "unavailable");
+        let clipped = include_bytes!("../tests/fictional-document-clipped.pdf");
+        for page in 0..3 {
+            let rendered = crate::pdf_extract::render_page_for_review(clipped, page).unwrap();
+            assert_eq!(rendered["text_geometry"]["status"], "checked");
+            let outside = rendered["text_geometry"]["clipped_chars"].as_u64().unwrap();
+            assert_eq!(outside == 0, page == 0, "page {page}: {outside}");
+        }
+        let clipped_review = inspect(clipped, crate::pdf_extract::render_page_for_review, |_| {
+            Ok(json!({"issues":[]}))
+        })
+        .unwrap();
+        assert!(needs_followup(&json!({"report":clipped_review})));
         let mut calls = 0;
         let partial = inspect(bytes, crate::pdf_extract::render_page_for_review, |_| {
             calls += 1;
@@ -316,7 +333,7 @@ mod tests {
     }
     #[test]
     fn followup_distinguishes_completed_review_from_clean_observations() {
-        let clean = json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}]}});
+        let clean = json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}]}});
         assert!(!needs_followup(&clean));
         for (key, value) in [
             ("complete", json!(false)),
@@ -334,10 +351,12 @@ mod tests {
             .remove("complete");
         assert!(needs_followup(&incomplete_metadata));
         for page in [
-            json!({"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Clipped"}],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
-            json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":1}}),
+            json!({"page":1,"vision_status":"complete","issues":[{"category":"layout","description":"Clipped"}],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}),
+            json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":1,"clipped_chars":0}}),
+            json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":1}}),
+            json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
             json!({"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"unavailable"}}),
-            json!({"page":2,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0}}),
+            json!({"page":2,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}),
         ] {
             assert!(needs_followup(
                 &json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[page]}})
@@ -364,7 +383,7 @@ mod tests {
             let mut call = 0;
             let report = inspect(
                 b"fictional",
-                |_, page| Ok(json!({"pages":2,"image":format!("page{page}"),"text_geometry":{"status":"checked","overlapping_pairs":3}})),
+                |_, page| Ok(json!({"pages":2,"image":format!("page{page}"),"text_geometry":{"status":"checked","overlapping_pairs":3,"clipped_chars":0}})),
                 |_| {
                     let current = call;
                     call += 1;

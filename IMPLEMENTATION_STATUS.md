@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## PDF page-boundary review — 2026-11-01
+
+- The local PDF worker now counts selectable character boxes extending more than 0.5 PDF points beyond the intersection of the media and crop boxes. A nonzero or unavailable count keeps the document for manual review, and the interface explains the warning. Older reports without this observation also need review. This is an advisory geometry check; it does not detect every form of clipping or assess nonselectable content.
+- A fictional three-page fixture exercised an unclipped page, text beyond a page edge, and text outside a crop box. The local PDF worker, focused review tests, interface checks and lint passed. No vision model or real application was used in this check.
+
 ## Styled DOCX conversion fixture — 2026-11-01
 
 - A fictional styled DOCX was edited across text runs and converted with local LibreOffice. The one-page PDF's extracted text contained the replacement and omitted the original; a manually inspected render retained the visible mixed text styles. The fixture test now checks PDF text extraction as well as DOCX text. The source SHA-256 was `8edfc3c730cd4852d421a074ed408cf8f288d368db962833ef5d42944bc92d58` and the manually inspected PDF SHA-256 was `f80ff80ae414ddc527a4493e210144eefc0e26b75a63ecdec4fdf368d1f9c9b9`. This is one synthetic template, not a local-model visual review or evidence of general template fidelity.
