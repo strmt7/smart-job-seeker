@@ -128,7 +128,11 @@ pub fn start(
         });
         let previous_verified = check.as_ref().is_none_or(|check| {
             check.selected_retained && check.failed_labels.is_empty() && check.unverified == 0
-        });
+        }) && crate::verify_selected_choices_except(
+            &mut session,
+            option.as_ref().map(|_| selector.as_str()),
+        )
+        .is_ok();
         let result = match action {
             Ok(Some(choice)) => {
                 json!({"status":"complete","opened":true,"choice":choice,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
@@ -246,6 +250,7 @@ mod tests {
             staged_files: vec![],
             attachments: vec![],
             pending_choice_visual: None,
+            selected_choices: vec![],
             last_visual_freshness_key: None,
             record: Some(record),
         });
@@ -513,7 +518,7 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(50));
         };
-        assert_eq!(selected["selected"], true, "{selected}");
+        assert_eq!(selected["selected"], true, "{:?}", selected["error"]);
         assert_eq!(selected["option"], "Berlin");
         assert!(request(
             &mut ws,
@@ -612,6 +617,34 @@ mod tests {
         };
         assert_eq!(visual["post_choice_review_finished"], true);
         assert!(session.as_ref().unwrap().pending_choice_visual.is_none());
+        assert_eq!(
+            session.as_ref().unwrap().selected_choices,
+            vec![(selector.clone(), "Berlin".into())]
+        );
+        assert!(crate::verify_selected_choices(session.as_mut().unwrap()).is_ok());
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .select_custom_choice_option(&selector, "Lisbon")
+            .unwrap();
+        assert!(crate::verify_selected_choices(session.as_mut().unwrap()).is_err());
+        let inventory = request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choices",
+            json!({"session_id":"choice-session"}),
+        )
+        .unwrap();
+        assert_eq!(inventory["can_open"], false);
+        let error = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            json!({"session_id":"choice-session","reviewed":true}),
+        )
+        .unwrap_err();
+        assert!(error.contains("previously selected choice"), "{error}");
         let (text, _) = session
             .as_mut()
             .unwrap()

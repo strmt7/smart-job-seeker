@@ -777,30 +777,7 @@ impl CdpDriver {
         )?;
         for _ in 0..4 {
             self.cdp.pump(Duration::from_millis(200));
-            let Some(current) = self.node_id(selector)? else {
-                break;
-            };
-            let resolved = self
-                .cdp
-                .call("DOM.resolveNode", json!({"nodeId":current}))
-                .map_err(derr)?;
-            let object = resolved
-                .pointer("/object/objectId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    DriverError("Choice changed after selection; review it manually".into())
-                })?;
-            let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label) {
-                if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox') return false;
-                const text = this instanceof HTMLInputElement ? this.value : this.innerText;
-                return typeof text === 'string' && text.trim().replace(/\s+/g,' ') === label;
-            }"#, "arguments":[{"value":label}],"returnByValue":true}));
-            let released = self
-                .cdp
-                .call("Runtime.releaseObject", json!({"objectId":object}));
-            let checked = checked.map_err(derr)?;
-            released.map_err(derr)?;
-            if checked.pointer("/result/value").and_then(Value::as_bool) == Some(true) {
+            if self.verify_custom_choice_value(selector, label).is_ok() {
                 return Ok(());
             }
         }
@@ -808,6 +785,69 @@ impl CdpDriver {
             "Choice may have changed but its displayed value was not verified; review it manually"
                 .into(),
         ))
+    }
+
+    /// Verify a previously selected custom choice without modifying the page.
+    pub fn verify_custom_choice_value(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<(), DriverError> {
+        self.verify_custom_choice_values(&[(selector, label)])
+    }
+
+    /// Recheck a bounded group against a single control inventory.
+    pub fn verify_custom_choice_values(
+        &mut self,
+        values: &[(&str, &str)],
+    ) -> Result<(), DriverError> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        if values.len() > 30 {
+            return Err(DriverError("Too many custom choices to verify".into()));
+        }
+        let inventory = self.page_custom_choices()?;
+        for (selector, label) in values {
+            if inventory
+                .choices
+                .iter()
+                .filter(|choice| choice.selector == *selector)
+                .count()
+                != 1
+            {
+                return Err(DriverError(
+                    "Previously selected choice is unavailable or ambiguous".into(),
+                ));
+            }
+            let node = self
+                .node_id(selector)?
+                .ok_or_else(|| DriverError("Previously selected choice disappeared".into()))?;
+            let resolved = self
+                .cdp
+                .call("DOM.resolveNode", json!({"nodeId":node}))
+                .map_err(derr)?;
+            let object = resolved
+                .pointer("/object/objectId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DriverError("Previously selected choice disappeared".into()))?;
+            let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label) {
+            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox' || this.matches(':disabled') || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]')) return false;
+            const text = this instanceof HTMLInputElement ? this.value : this.innerText;
+            return typeof text === 'string' && text.trim().replace(/\s+/g,' ') === label;
+        }"#, "arguments":[{"value":label}],"returnByValue":true}));
+            let released = self
+                .cdp
+                .call("Runtime.releaseObject", json!({"objectId":object}));
+            let checked = checked.map_err(derr)?;
+            released.map_err(derr)?;
+            if checked.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
+                return Err(DriverError(
+                    "Previously selected choice changed or could not be verified".into(),
+                ));
+            }
+        }
+        Ok(())
     }
     pub fn launch(upload_dirs: Vec<PathBuf>) -> Result<Self, DriverError> {
         Self::launch_with_mode(upload_dirs, false)

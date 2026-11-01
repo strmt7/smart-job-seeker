@@ -2587,6 +2587,7 @@ mod tests {
             staged_files: vec![],
             attachments: vec![],
             pending_choice_visual: None,
+            selected_choices: vec![],
             last_visual_freshness_key: None,
             record: None,
         });

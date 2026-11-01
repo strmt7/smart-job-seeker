@@ -317,9 +317,13 @@ pub fn start(
     });
     drop(tasks);
     std::thread::spawn(move || {
+        let navigating = target.is_some();
         let mut navigation_capture_warning = None;
         let navigation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<form_preview::FormPreview, String> {
+                if navigating {
+                    crate::check_answer_page(&mut session)?;
+                }
                 let fresh = session
                     .driver
                     .inspect_current()
@@ -420,6 +424,10 @@ pub fn start(
             .map(|new_id| {
                 if !session.attachments.is_empty() {
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
+                }
+                if navigating && !session.selected_choices.is_empty() {
+                    preview.manual_review.push("Custom choices from an earlier section cannot be rechecked here; verify them before submitting".into());
+                    session.selected_choices.clear();
                 }
                 session.id = new_id;
                 session.answer_drafts.clear();

@@ -190,3 +190,14 @@ simulated. A separate model probe transcribed both the visible option and the
 displayed value. Neither test establishes reliability across employer sites,
 and site scripts can still have side effects. No employer form was operated
 or application submitted in these tests. The model was unloaded afterward.
+
+## Rechecking earlier custom choices
+
+Visually confirmed selections are tracked in the active form session and
+rechecked before later filling, attachments, choice actions and navigation.
+They are also checked after filling, attaching or another choice action. The
+check uses one bounded control inventory for up to 30 tracked choices. In the
+fictional form, changing a confirmed value from `Berlin` to `Lisbon` caused
+the next fill request to be refused. Navigation to another section warns that
+previous selections can no longer be rechecked there; the tracking does not
+survive closing the browser session or prove that an employer retained values.

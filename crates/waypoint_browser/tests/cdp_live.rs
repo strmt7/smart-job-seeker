@@ -795,6 +795,15 @@ fn opening_custom_choice_rejects_submit_controls_and_reports_options() {
         .select_custom_choice_option(&location, "Berlin")
         .unwrap();
     assert!(driver
+        .verify_custom_choice_value(&location, "Berlin")
+        .is_ok());
+    assert!(driver
+        .verify_custom_choice_value(&location, "Lisbon")
+        .is_err());
+    assert!(driver
+        .verify_custom_choice_value("#missing-choice", "Berlin")
+        .is_err());
+    assert!(driver
         .select_custom_choice_option(&location, "Duplicate")
         .is_err());
     assert!(driver

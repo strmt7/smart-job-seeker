@@ -108,6 +108,7 @@ struct ReviewSession {
     ttl: Duration,
     filled: bool,
     completed_selectors: Vec<String>,
+    selected_choices: Vec<(String, String)>,
     answer_drafts: std::collections::HashMap<String, SavedFormAnswer>,
     visible: bool,
     staged_files: Vec<tempfile::TempDir>,
@@ -1430,7 +1431,31 @@ fn check_answer_page(session: &mut ReviewSession) -> Result<(), String> {
     {
         return Err("The page changed or needs manual attention; inspect again".into());
     }
+    verify_selected_choices(session)?;
     Ok(())
+}
+
+fn verify_selected_choices(session: &mut ReviewSession) -> Result<(), String> {
+    verify_selected_choices_except(session, None)
+}
+
+fn verify_selected_choices_except(
+    session: &mut ReviewSession,
+    excluded: Option<&str>,
+) -> Result<(), String> {
+    let choices: Vec<_> = session
+        .selected_choices
+        .iter()
+        .filter(|(selector, _)| excluded != Some(selector.as_str()))
+        .map(|(selector, value)| (selector.as_str(), value.as_str()))
+        .collect();
+    session
+        .driver
+        .with_review_timeout(|driver| driver.verify_custom_choice_values(&choices))
+        .map_err(|_| {
+            "A previously selected choice changed or could not be verified; inspect the form again"
+                .to_owned()
+        })
 }
 
 fn custom_choice_snapshot(
@@ -3931,6 +3956,7 @@ fn serve(
                 staged_files: vec![],
                 attachments: vec![],
                 pending_choice_visual: None,
+                selected_choices: vec![],
                 last_visual_freshness_key: None,
                 record,
             });
@@ -4204,6 +4230,14 @@ fn serve(
                 let value = evidence["label"]
                     .as_str()
                     .ok_or("Option evidence missing")?;
+                if current.selected_choices.len() >= 30
+                    && !current
+                        .selected_choices
+                        .iter()
+                        .any(|(previous, _)| previous == &selector)
+                {
+                    return Err("This section has reached the limit for tracked custom choices; inspect it manually".into());
+                }
                 if !matches[0].expanded
                     || matches[0]
                         .options
@@ -4792,12 +4826,29 @@ fn serve(
                                 if expected_visual
                                     && result["snapshot_digest"].as_str() == Some(digest.as_str())
                                 {
+                                    if let Some(value) = selected.as_deref() {
+                                        verify_selected_choices_except(current, Some(&selector))?;
+                                        current
+                                            .driver
+                                            .with_review_timeout(|driver| {
+                                                driver.verify_custom_choice_value(&selector, value)
+                                            })
+                                            .map_err(|_| {
+                                                "Selected value changed during visual review"
+                                            })?;
+                                    }
                                     custom_choice_action::finish_pending(
                                         ws,
                                         &current.job_id,
                                         &action_id,
                                         revision,
                                     )?;
+                                    if let Some(value) = selected {
+                                        current
+                                            .selected_choices
+                                            .retain(|(previous, _)| previous != &selector);
+                                        current.selected_choices.push((selector, value));
+                                    }
                                     current.pending_choice_visual = None;
                                     current.preview.manual_review.retain(|reason| {
                                         reason != form_preview::POST_CHOICE_VISUAL_REQUIRED
@@ -5729,7 +5780,7 @@ fn serve(
             }
             let requested = body["session_id"].as_str().ok_or("missing session")?;
             let current = session
-                .as_ref()
+                .as_mut()
                 .ok_or("Form session expired; inspect it again")?;
             if ws
                 .has_duplicate_hold(&current.job_id)
@@ -5756,6 +5807,7 @@ fn serve(
             if Sha256Digest::of(&profile.to_string()) != current.profile_digest {
                 return Err("Profile changed; inspect the current page again".into());
             }
+            verify_selected_choices(current)?;
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
             let mut replacements = form_preview::ReviewedReplacements::new();
             if let Some(items) = body.get("reviewed_replacements") {
@@ -5999,6 +6051,21 @@ fn serve(
                     ));
                 }
             };
+            if verify_selected_choices(&mut current).is_err() {
+                let reason =
+                    "A previously selected choice changed after filling; inspect the form manually";
+                current.preview.manual_review.push(reason.into());
+                let recorded = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"custom_choice_verification_failed","time":now(),"note":reason})).is_ok());
+                let review = ws.mark_manual_review(&current.job_id, reason, now());
+                current.created = Instant::now();
+                *session = Some(current);
+                if !recorded || review.is_err() {
+                    return Err(format!(
+                        "{reason}. The review status or record could not be saved."
+                    ));
+                }
+                return Err(reason.into());
+            }
             if let Some(record) = &mut current.record {
                 if let Err(error) = record.answer_outcome(json!({"type":"fill_commands_verified","time":now(),"answer_file":requested_answer_file,"completed_commands":completed,"note":"All requested fields matched when checked after the fill commands. The site may change values later; this does not prove submission."})) {
                     let status_error = record.status("manual_review", now()).err();
@@ -6123,6 +6190,7 @@ fn serve(
             {
                 return Err("Form changed or requires manual attention; inspect again".into());
             }
+            verify_selected_choices(current)?;
             form_links::check_job_and_destination(
                 &job.source,
                 &live.origin,
@@ -6416,6 +6484,18 @@ fn serve(
                         .manual_review
                         .push("Attempt screenshot capture was incomplete".into());
                 }
+            }
+            if verify_selected_choices(current).is_err() {
+                let reason = "A previously selected choice changed after attachment; inspect the form manually";
+                current.preview.manual_review.push(reason.into());
+                let recorded = current.record.as_mut().is_some_and(|record| record.event(json!({"type":"custom_choice_verification_failed","time":now(),"note":reason})).is_ok());
+                let review = ws.mark_manual_review(&current.job_id, reason, now());
+                if !recorded || review.is_err() {
+                    return Err(format!(
+                        "{reason}. The review status or record could not be saved."
+                    ));
+                }
+                return Err(reason.into());
             }
             current.created = Instant::now();
             json_reply(
@@ -7218,6 +7298,7 @@ mod tests {
             staged_files: vec![],
             attachments: vec![],
             pending_choice_visual: None,
+            selected_choices: vec![],
             last_visual_freshness_key: None,
             record: None,
         });
@@ -7354,6 +7435,7 @@ mod tests {
             staged_files: vec![],
             attachments: vec![],
             pending_choice_visual: None,
+            selected_choices: vec![],
             last_visual_freshness_key: None,
             record: None,
         });
@@ -10161,6 +10243,7 @@ mod tests {
             staged_files: vec![],
             attachments: vec![],
             pending_choice_visual: None,
+            selected_choices: vec![],
             last_visual_freshness_key: None,
             record: None,
         });
@@ -10616,6 +10699,7 @@ mod tests {
                 staged_files: vec![],
                 attachments: vec![],
                 pending_choice_visual: None,
+                selected_choices: vec![],
                 last_visual_freshness_key: None,
                 record: None,
             });
