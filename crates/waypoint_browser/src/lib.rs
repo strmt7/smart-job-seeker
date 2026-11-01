@@ -2216,6 +2216,23 @@ impl CdpDriver {
 
     /* ------------------------------- actions -------------------------------- */
 
+    fn ensure_text_focus(&mut self, node: u64, object: &str) -> Result<(), DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Err(DriverError(
+                "Text field is no longer visible; review it manually".into(),
+            ));
+        }
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this.getRootNode().activeElement === this && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !this.matches(':disabled') && !this.readOnly; }","returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Text field lost focus; review it manually".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn fill(&mut self, selector: &str, value: &PacketValue) -> Result<(), DriverError> {
         let Some(node) = self.node_id(selector)? else {
             return Err(DriverError(format!("field {selector} not found")));
@@ -2295,16 +2312,21 @@ impl CdpDriver {
                 }
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
+                self.ensure_text_focus(node, object)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
+                self.ensure_text_focus(node, object)?;
                 if rich {
                     for (index, line) in t.split('\n').enumerate() {
+                        self.ensure_text_focus(node, object)?;
                         if index > 0 {
                             self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
+                            self.ensure_text_focus(node, object)?;
                             self.cdp.call("Input.dispatchKeyEvent", json!({"type":"char","key":"Enter","code":"Enter","text":"\r","unmodifiedText":"\r","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
                             self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
                         }
                         if !line.is_empty() {
+                            self.ensure_text_focus(node, object)?;
                             self.cdp
                                 .call("Input.insertText", json!({"text":line}))
                                 .map_err(derr)?;

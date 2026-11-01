@@ -2674,6 +2674,16 @@ mod tests {
             driver.text_value_snapshot("#focus-target").unwrap().value,
             ""
         );
+        driver
+            .execute(&fill("#stable-rich", "First line\nSecond line"))
+            .unwrap();
+        driver
+            .verify_text_value("#stable-rich", "First line\nSecond line")
+            .unwrap();
+        assert!(driver
+            .execute(&fill("#rich", "First line\nSecond line"))
+            .is_err());
+        assert_eq!(driver.text_value_snapshot("#other").unwrap().value, "");
         let hidden_radio = BrowserCommand::SelectRadio {
             selector: "#remote".into(),
             label: "Remote".into(),

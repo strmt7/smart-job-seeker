@@ -3,4 +3,6 @@
 <div id="clip" style="overflow:hidden;height:40px"><label for="last">Last name</label><input id="last"><label for="country">Country</label><select id="country"><option value="">Choose</option><option>Germany</option></select><label for="consent">Consent</label><input id="consent" type="checkbox"><label for="start">Start date</label><input id="start" type="date"><fieldset><legend>Arrangement</legend><label><input id="remote" type="radio" name="arrangement" value="remote">Remote</label><label><input type="radio" name="arrangement" value="office">Office</label></fieldset></div>
 <div id="focus-clip" style="overflow:hidden;height:40px"><label for="focus-target">Focus target</label><input id="focus-target" onfocus="document.getElementById('focus-clip').style.height='0px'"></div>
 <fieldset><legend>Preference</legend><label style="display:none"><input id="hidden-anchor" type="radio" name="preference" value="hidden">Hidden</label><label><input id="visible-option" type="radio" name="preference" value="visible">Visible</label></fieldset>
+<div role="textbox" aria-label="Stable experience" contenteditable="true" id="stable-rich"></div>
+<div role="textbox" aria-label="Experience" contenteditable="true" id="rich" oninput="document.getElementById('other').focus()"></div><label for="other">Other</label><input id="other">
 </form></body></html>
