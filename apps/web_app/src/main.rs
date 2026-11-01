@@ -1906,23 +1906,30 @@ fn serve(
                 Some((job_id, checked_url, result, review)) => {
                     let job_id = JobIdentityId::new(&job_id).map_err(|e| e.to_string())?;
                     let job = ws.job(&job_id).map_err(|e| e.to_string())?;
-                    let current = job.as_ref().is_some_and(|job| {
-                        job.canonical_url.as_deref() == Some(checked_url.as_str())
-                    });
+                    let current = result != application_check::STALE_CHECK
+                        && job.as_ref().is_some_and(|job| {
+                            job.canonical_url.as_deref() == Some(checked_url.as_str())
+                        });
                     let message = if current {
                         result
                     } else {
-                        "The listing changed during the application check; inspect its current URL again.".into()
+                        application_check::invalidate(id)?;
+                        application_check::STALE_CHECK.into()
                     };
                     if review && job.is_some() {
                         ws.mark_manual_review(&job_id, &message, now())
                             .map_err(|e| e.to_string())?;
                     }
+                    let contacts = if current {
+                        application_check::contacts(id)?
+                    } else {
+                        Vec::new()
+                    };
                     application_check::acknowledge(id)?;
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","result":message,"checked_url":checked_url,"current":current}),
+                        json!({"status":"complete","result":message,"checked_url":checked_url,"current":current,"contacts":contacts}),
                     );
                 }
                 None => json_reply(stream, "200 OK", json!({"status":"running"})),

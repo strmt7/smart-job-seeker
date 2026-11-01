@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(line=>line.startsWith('function routeContactActions('));
+assert.ok(line);
+const calls=[];
+function element(tag,text=''){return {tag,text,children:[],append(...nodes){this.children.push(...nodes)},addEventListener(_event,handler){this.handler=handler}};}
+const render=vm.runInNewContext(`(${line})`,{element,showEmailDraft:(...args)=>calls.push(args)});
+const job={id:'fictional',canonical_url:'https://example.invalid/job'};
+const check={current:true,url:job.canonical_url,contacts:[{address:'jobs@example.invalid'},{address:'access@example.invalid'}]};
+const box=render(check,job);
+assert.equal(calls.length,0);
+assert.match(box.children[0].text,/Unverified/);
+assert.equal(box.children.length,3);
+box.children[1].children[1].handler();
+assert.equal(calls.length,1);
+assert.equal(calls[0][0],job);
+assert.equal(calls[0][1],null);
+assert.equal(calls[0][2],'jobs@example.invalid');
+assert.equal(render({...check,current:false},job),null);
+assert.equal(render({...check,url:'https://example.invalid/old'},job),null);
+console.log('Route contact UI checks passed.');

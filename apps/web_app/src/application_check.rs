@@ -10,12 +10,15 @@ struct Task {
     id: String,
     job_id: String,
     url: String,
-    receiver: mpsc::Receiver<(String, bool)>,
-    result: Option<(String, bool)>,
+    receiver: mpsc::Receiver<(String, bool, Vec<Value>)>,
+    result: Option<(String, bool, Vec<Value>)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Retain only the most recently saved result for a lost response retry.
-static COMPLETED: Mutex<Option<(String, String, String, String)>> = Mutex::new(None);
+type CompletedCheck = (String, String, String, String, Vec<Value>);
+static COMPLETED: Mutex<Option<CompletedCheck>> = Mutex::new(None);
+pub const STALE_CHECK: &str =
+    "The listing changed during the application check; inspect its current URL again.";
 
 /// Only display a destination that is a public HTTPS URL on the original
 /// origin and has no query, fragment or credentials. Query strings can contain
@@ -298,11 +301,11 @@ fn eligible_external_redirect(original: &str, current: &str, allow_external: boo
             == Some(current)
 }
 
-/// Addresses are contact signals, not proof they accept applications.
-fn email_contact_note(
+/// Bounded, unverified contacts from the initially inspected listing.
+fn email_contact_inventory(
     links: Option<&[waypoint_applications::driver::PageLink]>,
     page_text: Option<(&str, bool)>,
-) -> Option<String> {
+) -> Value {
     let mut inventory = crate::candidate_task::email_link_candidates(links.unwrap_or(&[]));
     let metadata = match page_text {
         Some((text, truncated)) => {
@@ -311,12 +314,20 @@ fn email_contact_note(
         None => serde_json::json!({"page_text_status":"unavailable"}),
     };
     crate::candidate_task::add_page_text_contacts(&mut inventory, &metadata);
+    if links.is_none() {
+        inventory["link_status"] = serde_json::json!("unavailable");
+    }
+    inventory
+}
+
+/// Addresses are contact signals, not proof they accept applications.
+fn email_contact_note_from_inventory(inventory: &Value) -> Option<String> {
     let contacts = inventory["contacts"].as_array()?;
     let count = contacts.len();
     if count == 0 {
         return None;
     }
-    let limited = links.is_none()
+    let limited = inventory["link_status"] != "captured"
         || inventory["text_status"] != "captured"
         || inventory["omitted"].as_u64().unwrap_or(0) > 0
         || inventory["link_limit_reached"] == true;
@@ -328,6 +339,14 @@ fn email_contact_note(
         return None;
     }
     Some(format!("The listing has {}{count} email contact{}: {}. Verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, addresses.join(", "), if count == 1 { "it" } else { "any" }))
+}
+
+#[cfg(test)]
+fn email_contact_note(
+    links: Option<&[waypoint_applications::driver::PageLink]>,
+    page_text: Option<(&str, bool)>,
+) -> Option<String> {
+    email_contact_note_from_inventory(&email_contact_inventory(links, page_text))
 }
 
 fn classify_fields(
@@ -401,20 +420,22 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
     let (sender, receiver) = mpsc::channel();
     let inspected_url = url.clone();
     std::thread::spawn(move || {
+        let mut contacts = Vec::new();
         let result = (|| -> Result<(String, bool), String> {
             let mut browser = waypoint_browser::CdpDriver::launch(vec![])
                 .map_err(|_| "The local browser could not start.")?;
             let mut page = browser
                 .open(&url)
                 .map_err(|error| navigation_failure("listing page", &error))?;
-            let contact_note = if page.walls.is_empty() {
+            let contact_inventory = if page.walls.is_empty() {
                 let links = browser.page_links().ok();
                 let text = browser.page_text_bounded(32_000).ok();
-                email_contact_note(
+                let inventory = email_contact_inventory(
                     links.as_deref(),
                     text.as_ref()
                         .map(|(text, truncated)| (text.as_str(), *truncated)),
-                )
+                );
+                Some(inventory)
             } else {
                 None
             };
@@ -551,9 +572,15 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
-            if let Some(note) = contact_note {
-                message.push(' ');
-                message.push_str(&note);
+            if let Some(inventory) = contact_inventory {
+                if let Some(note) = email_contact_note_from_inventory(&inventory) {
+                    message.push(' ');
+                    message.push_str(&note);
+                    contacts = inventory["contacts"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                }
             }
             if let Some(warning) = link_warning {
                 message.push(' ');
@@ -587,9 +614,12 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             }
             Ok((report_inspected_page(message, inspected_url), review))
         })();
-        let message =
+        if result.is_err() {
+            contacts.clear();
+        }
+        let (message, review) =
             result.unwrap_or_else(|error| (format!("{error} Manual review needed."), true));
-        let _ = sender.send(message);
+        let _ = sender.send((message, review, contacts));
     });
     *task = Some(Task {
         id,
@@ -609,8 +639,8 @@ pub fn poll(id: &str) -> Result<Option<(String, String, String, bool)>, String> 
             .map_err(|_| "Application check unavailable")?;
         return completed
             .as_ref()
-            .filter(|(task_id, _, _, _)| task_id == id)
-            .map(|(_, job_id, url, result)| {
+            .filter(|(task_id, _, _, _, _)| task_id == id)
+            .map(|(_, job_id, url, result, _)| {
                 Some((job_id.clone(), url.clone(), result.clone(), false))
             })
             .ok_or_else(|| "Application check not found".into());
@@ -622,10 +652,11 @@ pub fn poll(id: &str) -> Result<Option<(String, String, String, bool)>, String> 
             Err(mpsc::TryRecvError::Disconnected) => Some((
                 "Application check stopped unexpectedly; manual review needed.".into(),
                 true,
+                Vec::new(),
             )),
         };
     }
-    Ok(current.result.as_ref().map(|(result, review)| {
+    Ok(current.result.as_ref().map(|(result, review, _)| {
         (
             current.job_id.clone(),
             current.url.clone(),
@@ -633,6 +664,51 @@ pub fn poll(id: &str) -> Result<Option<(String, String, String, bool)>, String> 
             *review,
         )
     }))
+}
+
+/// Contacts are bound to the same task and retained with its replay result.
+pub fn contacts(id: &str) -> Result<Vec<Value>, String> {
+    let task = TASK.lock().map_err(|_| "Application check unavailable")?;
+    if let Some(current) = task.as_ref().filter(|task| task.id == id) {
+        return current
+            .result
+            .as_ref()
+            .map(|(_, _, contacts)| contacts.clone())
+            .ok_or_else(|| "Application check is still running".into());
+    }
+    COMPLETED
+        .lock()
+        .map_err(|_| "Application check unavailable")?
+        .as_ref()
+        .filter(|(task_id, _, _, _, _)| task_id == id)
+        .map(|(_, _, _, _, contacts)| contacts.clone())
+        .ok_or_else(|| "Application check not found".into())
+}
+
+/// Once observed stale, a result and its contacts must not revive on URL rollback.
+pub fn invalidate(id: &str) -> Result<(), String> {
+    let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
+    if let Some(current) = task.as_mut().filter(|task| task.id == id) {
+        let (_, _, contacts) = current
+            .result
+            .as_mut()
+            .ok_or("Application check is still running")?;
+        contacts.clear();
+        if let Some((message, _, _)) = current.result.as_mut() {
+            *message = STALE_CHECK.into();
+        }
+        return Ok(());
+    }
+    let mut completed = COMPLETED
+        .lock()
+        .map_err(|_| "Application check unavailable")?;
+    let (_, _, _, message, contacts) = completed
+        .as_mut()
+        .filter(|(task_id, _, _, _, _)| task_id == id)
+        .ok_or("Application check not found")?;
+    *message = STALE_CHECK.into();
+    contacts.clear();
+    Ok(())
 }
 
 /// Release a completed result only after its review entry has been saved.
@@ -644,14 +720,14 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
             .map_err(|_| "Application check unavailable")?;
         return if completed
             .as_ref()
-            .is_some_and(|(task_id, _, _, _)| task_id == id)
+            .is_some_and(|(task_id, _, _, _, _)| task_id == id)
         {
             Ok(())
         } else {
             Err("Application check not found".into())
         };
     };
-    let (result, _) = current
+    let (result, _, contacts) = current
         .result
         .as_ref()
         .ok_or("Application check is still running")?;
@@ -662,6 +738,7 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
         current.job_id.clone(),
         current.url.clone(),
         result.clone(),
+        contacts.clone(),
     ));
     *task = None;
     Ok(())
@@ -1252,6 +1329,43 @@ mod tests {
         acknowledge("fictional-interrupted-check").unwrap();
     }
     #[test]
+    fn current_route_contacts_survive_status_replay() {
+        use std::io::{Read, Write};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job = crate::manual_job::add(&mut ws, &serde_json::json!({"url":"https://example.org/job","title":"Role","employer":"Fixture"}), 1).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "contact-check".into(),
+            job_id: job["id"].as_str().unwrap().into(),
+            url: "https://example.org/job".into(),
+            receiver,
+            result: Some((
+                "Unverified contact".into(),
+                true,
+                vec![serde_json::json!({"address":"jobs@example.invalid","source":"page_text"})],
+            )),
+        });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for _ in 0..2 {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = serde_json::json!({"task_id":"contact-check"}).to_string();
+            write!(client,"POST /api/application-check/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let result: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(result["current"], true);
+            assert_eq!(result["contacts"][0]["address"], "jobs@example.invalid");
+        }
+    }
+
+    #[test]
     fn changed_listing_is_reported_stale_on_status_and_replay() {
         use std::io::{Read, Write};
         let _guard = TASK_TEST_LOCK.lock().unwrap();
@@ -1265,11 +1379,15 @@ mod tests {
             job_id,
             url: "https://example.org/old".into(),
             receiver,
-            result: Some(("3 fields detected on old page".into(), true)),
+            result: Some((
+                "3 fields detected on old page".into(),
+                true,
+                vec![serde_json::json!({"address":"old@example.invalid"})],
+            )),
         });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        for _ in 0..2 {
+        for attempt in 0..2 {
             let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
             let body = serde_json::json!({"task_id":"stale-check"}).to_string();
             write!(client,"POST /api/application-check/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
@@ -1281,11 +1399,19 @@ mod tests {
             let result: serde_json::Value =
                 serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
             assert_eq!(result["current"], false);
+            assert_eq!(result["contacts"], serde_json::json!([]));
             assert!(result["result"]
                 .as_str()
                 .unwrap()
                 .contains("listing changed"));
             assert!(!result["result"].as_str().unwrap().contains("3 fields"));
+            if attempt == 0 {
+                let job_id =
+                    waypoint_domain::JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
+                let mut restored = ws.job(&job_id).unwrap().unwrap();
+                restored.canonical_url = Some("https://example.org/old".into());
+                ws.import_job(restored).unwrap();
+            }
         }
     }
     #[test]
@@ -1557,7 +1683,13 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(50));
         };
+        let contacts = super::contacts("fixture-email-worker").unwrap();
+        assert_eq!(contacts.len(), 2);
+        assert!(contacts
+            .iter()
+            .any(|contact| contact["address"] == "careers@example.invalid"));
         acknowledge("fixture-email-worker").unwrap();
+        assert_eq!(super::contacts("fixture-email-worker").unwrap(), contacts);
         done.store(true, Ordering::Release);
         let requests = server.join().unwrap();
         assert!(review);
