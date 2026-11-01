@@ -2038,7 +2038,9 @@ fn serve(
                 Some(source) => Some(source),
                 None => ws.job_capture_metadata(&id).map_err(|e| e.to_string())?,
             };
-            let (evidence, captured_at, matches_current_url) = if let Some(metadata) = metadata {
+            let (evidence, captured_at, matches_current_url, provenance) = if let Some(metadata) =
+                metadata
+            {
                 let evidence = candidate_task::captured_posting_evidence(&metadata)?;
                 let capture: Value = serde_json::from_slice(&metadata)
                     .map_err(|_| "Saved listing metadata is invalid")?;
@@ -2049,14 +2051,16 @@ fn serve(
                 let matches_current_url = source_url
                     .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
                     .map(|(source, current)| source == current);
-                (evidence, captured_at, matches_current_url)
+                let current = json!({"title":job.title,"employer":job.employer,"location":job.location,"description":ws.job_description(&id).map_err(|e| e.to_string())?,"requisition_id":job.requisition_id,"remote":job.remote});
+                let provenance = candidate_task::extraction_provenance(&capture, &current);
+                (evidence, captured_at, matches_current_url, provenance)
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
             json_reply(
                 stream,
                 "200 OK",
-                json!({"salary_evidence":evidence.as_ref().map(|v| &v["salary_evidence"]),"posting_date_evidence":evidence.as_ref().map(|v| &v["posting_date_evidence"]),"valid_through_evidence":evidence.as_ref().map(|v| &v["valid_through_evidence"]),"captured_at":captured_at,"matches_current_url":matches_current_url}),
+                json!({"salary_evidence":evidence.as_ref().map(|v| &v["salary_evidence"]),"posting_date_evidence":evidence.as_ref().map(|v| &v["posting_date_evidence"]),"valid_through_evidence":evidence.as_ref().map(|v| &v["valid_through_evidence"]),"captured_at":captured_at,"matches_current_url":matches_current_url,"extraction_provenance":provenance}),
             );
         }
         "/api/listing-inspect/discard" => {

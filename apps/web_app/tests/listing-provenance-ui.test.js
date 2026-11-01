@@ -1,0 +1,22 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function showListingProvenance(');
+const end = source.indexOf('\nfunction ', start);
+assert.ok(start >= 0 && end > start);
+function element(tag, text = '') { return {tag, text}; }
+const context = {element};
+vm.runInNewContext(source.slice(start, end), context);
+const panel = {items:[], append(...items){this.items.push(...items)}};
+context.showListingProvenance(panel,{matches_current_url:true,extraction_provenance:{kind:'local_model',matches_current_listing:true,partial_structured_fields:['requisition_id'],page_text_truncated:true,warnings:['Review source']}});
+let text=panel.items.map(item=>item.text).join('\n');
+assert.match(text,/Local model/);
+assert.match(text,/requisition number/);
+assert.match(text,/truncated/);
+assert.doesNotMatch(text,/may not match the current listing/);
+panel.items=[];
+context.showListingProvenance(panel,{matches_current_url:false,extraction_provenance:{kind:'structured',matches_current_listing:false}});
+text=panel.items.map(item=>item.text).join('\n');
+assert.match(text,/may not match the current listing/);
+console.log('Listing provenance UI checks passed.');

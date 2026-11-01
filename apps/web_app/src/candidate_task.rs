@@ -13,6 +13,102 @@ pub struct InspectedListing {
     pub job: Value,
     pub capture: ListingCapture,
 }
+
+/// Bind source provenance to the values that can be saved for this listing.
+pub fn listing_digest(job: &Value) -> Option<String> {
+    let text = |key: &str| job[key].as_str().unwrap_or("").trim();
+    if text("title").is_empty() || text("employer").is_empty() {
+        return None;
+    }
+    let value = json!({"title":text("title"),"employer":text("employer"),"location":text("location"),"description":text("description"),"requisition_id":text("requisition_id"),"remote":job["remote"].as_bool().unwrap_or(false)});
+    Some(
+        waypoint_domain::Sha256Digest::of(&value.to_string())
+            .as_str()
+            .to_owned(),
+    )
+}
+
+fn attach_provenance(capture: &mut ListingCapture, job: &Value) {
+    let kind = job["extraction"]
+        .as_str()
+        .filter(|kind| matches!(*kind, "structured" | "local_model"));
+    let fields: Vec<&str> = job["partial_structured_fields"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|field| matches!(*field, "description" | "requisition_id"))
+        .take(2)
+        .collect();
+    let warnings: Vec<String> = job["extraction_warnings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .take(10)
+        .map(|warning| bounded(warning, 300))
+        .collect();
+    capture.metadata["extraction_provenance"] = json!({"kind":kind,"partial_structured_fields":fields,"warnings":warnings,"page_text_truncated":job["page_text_truncated"].as_bool(),"listing_digest":listing_digest(job)});
+    if serde_json::to_vec(&capture.metadata)
+        .ok()
+        .is_none_or(|bytes| bytes.len() > 512 * 1024)
+    {
+        capture
+            .metadata
+            .as_object_mut()
+            .unwrap()
+            .remove("page_text");
+        capture.metadata["page_text_status"] = json!("omitted_size_limit");
+    }
+    if serde_json::to_vec(&capture.metadata)
+        .ok()
+        .is_none_or(|bytes| bytes.len() > 512 * 1024)
+    {
+        capture
+            .metadata
+            .as_object_mut()
+            .unwrap()
+            .remove("extraction_provenance");
+        capture.metadata["extraction_provenance_status"] = json!("omitted_size_limit");
+    }
+}
+
+pub fn extraction_provenance(capture: &Value, current: &Value) -> Option<Value> {
+    let saved = capture["extraction_provenance"].as_object()?;
+    let kind = saved
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| matches!(*kind, "structured" | "local_model"))?;
+    let fields: Vec<&str> = saved
+        .get("partial_structured_fields")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|field| matches!(*field, "description" | "requisition_id"))
+        .take(2)
+        .collect();
+    let warnings: Vec<String> = saved
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .take(10)
+        .map(|warning| bounded(warning, 300))
+        .collect();
+    let saved_digest = saved
+        .get("listing_digest")
+        .and_then(Value::as_str)
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let current_digest = listing_digest(current);
+    let matches = saved_digest
+        .zip(current_digest.as_deref())
+        .map(|(saved, current)| saved == current);
+    Some(
+        json!({"kind":kind,"partial_structured_fields":fields,"warnings":warnings,"page_text_truncated":saved.get("page_text_truncated").and_then(Value::as_bool),"matches_current_listing":matches}),
+    )
+}
 struct Task {
     id: String,
     url: String,
@@ -538,7 +634,8 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 }
                 job["extraction_warnings"].as_array_mut().expect("warnings array").extend(frame_warnings.into_iter().map(Value::String));
             }
-            let capture=capture_listing(&mut browser,&url,&current,&scripts);
+            let mut capture=capture_listing(&mut browser,&url,&current,&scripts);
+            attach_provenance(&mut capture, &job);
             Ok(InspectedListing { job, capture })
         })
         .unwrap_or_else(|_| Err("Listing inspection stopped unexpectedly".into()));
@@ -663,6 +760,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn provenance_is_bounded_and_detects_changed_listing() {
+        let job = json!({"title":"Engineer","employer":"Example","location":"Berlin","description":"Fictional work","requisition_id":"REQ-1","remote":false,"extraction":"local_model","partial_structured_fields":["description","requisition_id"],"extraction_warnings":["Review the source"]});
+        let mut capture = ListingCapture {
+            metadata: json!({"page_text":"x".repeat(512*1024),"page_text_status":"captured"}),
+            segments: vec![],
+        };
+        attach_provenance(&mut capture, &job);
+        assert_eq!(capture.metadata["page_text_status"], "omitted_size_limit");
+        assert!(capture.metadata["page_text"].is_null());
+        let same = extraction_provenance(&capture.metadata, &job).unwrap();
+        assert_eq!(same["matches_current_listing"], true);
+        assert_eq!(
+            same["partial_structured_fields"],
+            json!(["description", "requisition_id"])
+        );
+        let mut changed = job.clone();
+        changed["description"] = json!("Changed work");
+        assert_eq!(
+            extraction_provenance(&capture.metadata, &changed).unwrap()["matches_current_listing"],
+            false
+        );
+        assert!(extraction_provenance(&json!({}), &job).is_none());
+    }
+
+    #[test]
     fn failed_save_retains_inspection_and_success_response_can_be_retried() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
@@ -725,7 +847,12 @@ mod tests {
                 .unwrap()
                 .as_mut()
                 .unwrap();
-            Arc::get_mut(listing).unwrap().job["employer"] = json!("Example");
+            let listing = Arc::get_mut(listing).unwrap();
+            listing.job["employer"] = json!("Example");
+            listing.job["extraction"] = json!("local_model");
+            listing.job["partial_structured_fields"] = json!(["requisition_id"]);
+            listing.job["extraction_warnings"] = json!(["Verify the recovered identity"]);
+            attach_provenance(&mut listing.capture, &listing.job);
         }
         let (_, response) = call(status, request());
         let first: Value =
@@ -744,6 +871,15 @@ mod tests {
             assert_eq!(salary["salary_evidence"]["value"]["minValue"], 60000);
             assert_eq!(salary["captured_at"], 1750000000);
             assert_eq!(salary["matches_current_url"], true);
+            assert_eq!(salary["extraction_provenance"]["kind"], "local_model");
+            assert_eq!(
+                salary["extraction_provenance"]["matches_current_listing"],
+                true
+            );
+            assert_eq!(
+                salary["extraction_provenance"]["partial_structured_fields"],
+                json!(["requisition_id"])
+            );
         }
         let (_, response) = call(status, request());
         assert_eq!(
