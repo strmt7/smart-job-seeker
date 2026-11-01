@@ -1,3 +1,8 @@
+## Placeholder and repeated-label model checks — 2026-11-01
+
+- In a fictional form, the production-admitted `qwen3.5:9b` transcribed a placeholder email as an entered value, failing the raw-vision test. The separate live-value check correctly left it unconfirmed. A proposed prompt instruction about lighter placeholder text did not improve that example and was discarded. The UI now explicitly explains this limitation and the live-value check.
+- On another fictional form, the model distinguished repeated email labels by section; it initially omitted punctuation in one value, while a focused review matched it, and a crop lacking section context remained unobserved. These are single-case observations, not a general reliability claim. Minimum sampled free RAM was 18.83 and 18.88 GiB across the two runs; the model was unloaded. UI checks passed. The navigation panel also now correctly explains its five-per-pass limit. No employer application was used or submitted. Local evidence is in `target/qwen-placeholder-before-contrast-prompt.log` and `target/live_*qwen-live.log`.
+
 ## Portuguese form vision regression — 2026-11-01
 
 - On a fictional Portuguese form, the `qwen3.5:9b` model correctly flagged legal eligibility and consent for review and left them untouched, but the previous full-page prompt returned no visual observations in two runs. The earlier prompt returned the fields in one run; that run also exposed an incorrect fixture expectation that an unchecked checkbox should be transcribed as empty. The fixture now expects `unchecked`, consistent with the prompt and the separately verified live checkbox state.
