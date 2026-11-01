@@ -115,7 +115,7 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     );
     let mut sources = vec![selected_source.clone()];
     sources.extend(input.facts);
-    let request=crate::answer_task::Inputs{max_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; do not add qualifications or details. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
+    let request=crate::answer_task::Inputs{max_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; add other candidate facts only if the writing preferences request it. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
     let mut suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
     if suggestion["text"]
         .as_str()
@@ -126,6 +126,13 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     let replacement = suggestion["text"].as_str().unwrap_or_default();
     suggestion["first_person_opening_changed"] =
         json!(first_person_opening(&input.before) != first_person_opening(replacement));
+    suggestion["additional_sources_cited"] = json!(["sources", "initial_draft_sources"]
+        .iter()
+        .any(
+            |key| suggestion[*key].as_array().is_some_and(|sources| sources
+                .iter()
+                .any(|source| source.as_str() != Some(selected_source.as_str())))
+        ));
     qualify_unverified_support(&mut suggestion, &selected_source);
     Ok(suggestion)
 }
@@ -248,6 +255,7 @@ mod tests {
         );
         assert_eq!(model.calls, 4);
         assert_eq!(result["evidence_check"]["status"], "invalid");
+        assert_eq!(result["selection"]["template_context_omitted"], 1);
         assert_eq!(result["first_person_opening_changed"], false);
         let changed_voice = suggest(
             &mut model,
@@ -303,6 +311,45 @@ mod tests {
         let mut failed = json!({"sources":[source],"evidence_check":{"status":"invalid"}});
         qualify_unverified_support(&mut failed, source);
         assert_eq!(failed["evidence_check"]["status"], "invalid");
+    }
+
+    #[test]
+    fn template_suggestion_reports_citations_beyond_selected_passage() {
+        struct ExtraSource;
+        impl Inference for ExtraSource {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let value = if schema == "application_answer_evidence_check" {
+                    json!({"claims":[]})
+                } else if schema == "application_answer_style" {
+                    json!({"text":"Built websites and maintained Python services.","facts":[1]})
+                } else {
+                    json!({"text":"Built websites and maintained Python services.","facts":[1,2]})
+                };
+                Ok((
+                    value,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let mut input = input_with_passage("Built websites.", "Built websites.");
+        input.facts = vec!["Maintained Python services.".into()];
+        input.instructions = "Include the Python experience.".into();
+        let result = suggest(&mut ExtraSource, input).unwrap();
+        assert_eq!(result["additional_sources_cited"], true);
+        assert_eq!(result["sources"].as_array().unwrap().len(), 1);
+        assert_eq!(result["initial_draft_sources"].as_array().unwrap().len(), 2);
     }
 
     #[test]
@@ -405,6 +452,22 @@ mod tests {
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_template_suggestion_preserves_selected_fictional_experience() {
+        struct Recording<I>(I);
+        impl<I: Inference> Inference for Recording<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let result = self.0.generate_structured(schema, prompt, max)?;
+                println!("Fictional {schema} response: {}", result.0);
+                Ok(result)
+            }
+        }
         let passage = "Designed accessible interfaces for screen-reader users.";
         let mut input = input_with_passage(passage, passage);
         input.facts = vec!["Maintained Python services.".into()];
@@ -413,11 +476,12 @@ mod tests {
             .unwrap()
             .with_context_window(4096)
             .unwrap();
-        let mut model = crate::resident_inference::ResidentInference::new(
+        let model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
             crate::resident_model,
         );
+        let mut model = Recording(model);
         let result = suggest(&mut model, input).unwrap();
         println!("Fictional template suggestion: {result}");
         let text = result["text"].as_str().unwrap().to_lowercase();
@@ -432,6 +496,16 @@ mod tests {
         assert!(
             !text.contains("ten years") && !text.contains("10 years"),
             "unsupported duration: {text}"
+        );
+        if text.contains("python") {
+            assert_eq!(
+                result["additional_sources_cited"], true,
+                "the added qualification should be flagged"
+            );
+        }
+        assert!(
+            !text.contains("python"),
+            "unrelated qualification added to selected passage: {text}"
         );
         let evidence = &result["evidence_check"];
         assert_eq!(
@@ -449,6 +523,39 @@ mod tests {
                 })),
             "unverified template evidence should require review: {evidence}"
         );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_template_rewrite_can_add_explicitly_requested_fact() {
+        let passage = "Designed accessible interfaces for screen-reader users.";
+        let mut input = input_with_passage(passage, passage);
+        input.facts = vec!["Maintained Python services.".into()];
+        input.listing =
+            "Developer: build accessible interfaces and maintain Python services.".into();
+        input.instructions =
+            "Include my Python service maintenance experience in this passage.".into();
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let result = suggest(&mut model, input).unwrap();
+        println!("Fictional requested addition: {result}");
+        let text = result["text"].as_str().unwrap().to_lowercase();
+        assert!(
+            text.contains("python"),
+            "requested experience omitted: {text}"
+        );
+        assert!(
+            text.contains("accessib"),
+            "original experience omitted: {text}"
+        );
+        assert_eq!(result["additional_sources_cited"], true);
     }
 
     #[test]

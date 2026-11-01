@@ -122,6 +122,16 @@ fn generate_with_required_selection(
     } else {
         None
     };
+    // With no writing preferences there is no request to expand the selected
+    // passage. Keep unrelated qualifications out of both drafting passes.
+    // Nonempty preferences may request additions, so retain the reviewed pool.
+    let template_context_omitted = if require_first && input.instructions.trim().is_empty() {
+        let omitted = input.facts.len().saturating_sub(1);
+        input.facts.truncate(1);
+        omitted
+    } else {
+        0
+    };
     let (selected, selection) = crate::fit_task::select_answer_facts(
         llm,
         &input.facts,
@@ -180,6 +190,7 @@ fn generate_with_required_selection(
     if require_first {
         selection["selected_passage_retained"] = json!(true);
         selection["selected_passage_displaced_fact"] = json!(displaced);
+        selection["template_context_omitted"] = json!(template_context_omitted);
     }
     let mut answer = if require_first {
         generate_for_context(llm, input, true)?
@@ -478,7 +489,7 @@ fn generate_for_context(
     });
     let data = json!({"question":input.question,"listing":input.listing,"facts":input.facts,"writing_preferences":input.instructions});
     let voice_instruction = if template {
-        " The first candidate fact contains the original template passage. Unless writing preferences explicitly request otherwise, preserve its grammatical person and tense: if it begins with I, keep I; if it omits a subject pronoun, do not introduce I or we."
+        " The first candidate fact contains the original template passage. Unless writing preferences explicitly request otherwise, preserve its grammatical person and tense: if it begins with I, keep I; if it omits a subject pronoun, do not introduce I or we. Rewrite only the original passage: other candidate facts are context and must not be introduced as new experiences or qualifications unless the writing preferences explicitly request them."
     } else {
         ""
     };
@@ -554,6 +565,9 @@ fn generate_for_context(
                     }) =>
                 {
                     answer["evidence_check"] = check_evidence(llm, &answer);
+                    if template {
+                        answer["initial_draft_sources"] = first["sources"].clone();
+                    }
                     if let Some(limit) = input.max_length_utf16 {
                         answer["length"] = json!({"used_utf16":answer["text"].as_str().unwrap_or("").encode_utf16().count(),"limit_utf16":limit});
                         answer["omission_check"] =
