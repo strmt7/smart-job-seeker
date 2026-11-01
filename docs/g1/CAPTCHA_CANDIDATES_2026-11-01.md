@@ -82,15 +82,18 @@ whole strings and still moves directly to click coordinates. Any change needs
 to preserve exact text entry, verification and the user's no-submission
 boundary while measuring added time.
 
-The browser driver now emits individual keyboard events for nonempty ASCII
-alphanumeric and space-only values of at most 64 bytes. It rechecks focus
+The browser driver now emits individual keyboard events for nonempty printable
+ASCII values of at most 64 bytes, using US keyboard metadata. It rechecks focus
 between events and verifies the retained value; other text continues to use
 the existing Unicode-aware insertion path. A fictional fixture verified the
 emitted keydown events, exact retained value and stopping when a page redirects
 focus. One run entered 37 characters in approximately 252 ms on this host,
 including browser protocol calls and verification; no baseline or cross-host
 performance claim follows from this single observation. All 59 browser
-fixtures and browser-crate Clippy passed. This is not evidence of
+fixtures passed with the earlier alphanumeric-only implementation. After
+extending it to punctuation, focused keyboard, retention and attachment
+fixtures, a printable-character unit test and browser-crate Clippy passed.
+This is not evidence of
 human-equivalent behavior or successful avoidance of bot detection.
 
 Crawl4AI receipts, both HTTP 200 with substantive extracted content:

@@ -79,6 +79,64 @@ fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
 }
 
+/// US keyboard metadata for printable ASCII. Unicode and other text use the
+/// browser's text insertion path instead of guessing a physical key layout.
+fn ascii_key(character: char) -> Option<(String, u32, u32, char)> {
+    if character == ' ' {
+        return Some(("Space".into(), 32, 0, ' '));
+    }
+    if character.is_ascii_alphabetic() {
+        let upper = character.to_ascii_uppercase();
+        return Some((
+            format!("Key{upper}"),
+            upper as u32,
+            if character.is_ascii_uppercase() { 8 } else { 0 },
+            character.to_ascii_lowercase(),
+        ));
+    }
+    const DIGITS: &str = "0123456789";
+    const SHIFTED_DIGITS: &str = ")!@#$%^&*(";
+    if let Some(index) = DIGITS.find(character) {
+        return Some((
+            format!("Digit{index}"),
+            b'0' as u32 + index as u32,
+            0,
+            character,
+        ));
+    }
+    if let Some(index) = SHIFTED_DIGITS.find(character) {
+        return Some((
+            format!("Digit{index}"),
+            b'0' as u32 + index as u32,
+            8,
+            (b'0' + index as u8) as char,
+        ));
+    }
+    for (plain, shifted, code, key_code) in [
+        ('-', '_', "Minus", 189),
+        ('=', '+', "Equal", 187),
+        ('[', '{', "BracketLeft", 219),
+        (']', '}', "BracketRight", 221),
+        ('\\', '|', "Backslash", 220),
+        (';', ':', "Semicolon", 186),
+        ('\'', '"', "Quote", 222),
+        (',', '<', "Comma", 188),
+        ('.', '>', "Period", 190),
+        ('/', '?', "Slash", 191),
+        ('`', '~', "Backquote", 192),
+    ] {
+        if character == plain || character == shifted {
+            return Some((
+                code.into(),
+                key_code,
+                if character == shifted { 8 } else { 0 },
+                plain,
+            ));
+        }
+    }
+    None
+}
+
 /// This is only a hint to request manual navigation, never authorization to click.
 fn possible_next_label(label: &str) -> bool {
     let normalized = label
@@ -2675,27 +2733,18 @@ impl CdpDriver {
                     }
                 } else if !t.is_empty()
                     && t.len() <= 64
-                    && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b' ')
+                    && t.chars().all(|character| ascii_key(character).is_some())
                 {
                     // Short, simple text can use individual key events. For
                     // other text retain Chromium's Unicode-aware insertion.
                     for character in t.chars() {
-                        let (code, key_code, modifiers) = if character == ' ' {
-                            ("Space".to_string(), 32, 0)
-                        } else if character.is_ascii_digit() {
-                            (format!("Digit{character}"), character as u32, 0)
-                        } else {
-                            (
-                                format!("Key{}", character.to_ascii_uppercase()),
-                                character.to_ascii_uppercase() as u32,
-                                if character.is_ascii_uppercase() { 8 } else { 0 },
-                            )
-                        };
+                        let (code, key_code, modifiers, unmodified) = ascii_key(character)
+                            .ok_or_else(|| DriverError("Unsupported keyboard character".into()))?;
                         let key = character.to_string();
                         self.ensure_text_focus(node, object)?;
                         self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":key,"code":code,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
                         self.ensure_text_focus(node, object)?;
-                        self.cdp.call("Input.dispatchKeyEvent", json!({"type":"char","key":key,"code":code,"text":key,"unmodifiedText":key,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
+                        self.cdp.call("Input.dispatchKeyEvent", json!({"type":"char","key":key,"code":code,"text":key,"unmodifiedText":unmodified.to_string(),"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
                         self.ensure_text_focus(node, object)?;
                         self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":key,"code":code,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
                     }
@@ -4125,6 +4174,18 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn printable_ascii_has_key_metadata_but_unicode_and_controls_do_not() {
+        for character in ' '..='~' {
+            assert!(ascii_key(character).is_some(), "missing {character:?}");
+        }
+        for character in ['\n', '\t', '\u{7f}', 'é'] {
+            assert!(ascii_key(character).is_none(), "unexpected {character:?}");
+        }
+        assert_eq!(ascii_key('@'), Some(("Digit2".into(), 50, 8, '2')));
+        assert_eq!(ascii_key('A'), Some(("KeyA".into(), 65, 8, 'a')));
+    }
 
     #[test]
     fn delayed_inspection_keeps_previously_observed_walls() {

@@ -767,6 +767,17 @@ fn text_entry_emits_keys_and_stops_when_focus_moves() {
         sample.len(),
         elapsed
     );
+    let email = "A.test+1@example.invalid";
+    driver.execute(&fill("#name", email)).unwrap();
+    driver.verify_text_value("#name", email).unwrap();
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(
+        text.contains(email),
+        "missing punctuation key events: {text}"
+    );
+    let unicode = "Renée 🧭";
+    driver.execute(&fill("#name", unicode)).unwrap();
+    driver.verify_text_value("#name", unicode).unwrap();
     assert!(driver.execute(&fill("#redirect", "xyz")).is_err());
     driver.verify_text_value("#other", "").unwrap();
     let (text, _) = driver.page_text_bounded(2000).unwrap();
