@@ -20,6 +20,8 @@ For development tests, use `./apps/web_app/scripts/build-windows.ps1 -Test`; add
 
 Start the resulting executable to open the local browser workspace. On Windows, use the notification-area menu to reopen the workspace or exit; double-click the icon to reopen it. The Windows default build uses SQLCipher for the workspace database with a key protected by the current Windows account's DPAPI. When an existing plaintext workspace is migrated, the original database is deliberately retained and the interface reports that it remains on disk; protect it as private data. Application-record folders remain readable as requested. The prototype does not send applications from its interface.
 
+For application inspection, an explicit `WAYPOINT_BROWSER` executable takes priority, followed by installed browsers and then any bundled Chromium fallback. Bundled browsers do not update automatically; replace them through a newly reviewed package when needed.
+
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.
 
 The project uses free local tools and must not require paid APIs. Wider-web search uses a user-configured SearXNG-compatible provider; use a free or self-hosted instance. The app cannot determine an independent provider's pricing or guarantee its availability. Local-model features use Ollama rather than a paid inference API.

@@ -49,13 +49,16 @@ fn candidate_binaries(
     discovered: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
+    let explicit_bundle = explicit.as_ref().is_some_and(|path| {
+        root.is_some_and(|root| {
+            same_binary_path(path, &root.join("dependencies/chromium/chrome.exe"))
+        })
+    });
     if let Some(path) = explicit {
         candidates.push(path);
     }
-    if let Some(root) = root {
-        candidates.push(root.join("dependencies/chromium/chrome.exe"));
-    }
     candidates.extend(discovered);
+    let bundled = root.map(|root| root.join("dependencies/chromium/chrome.exe"));
     let mut found: Vec<PathBuf> = Vec::new();
     for path in candidates {
         if path.is_file()
@@ -64,6 +67,25 @@ fn candidate_binaries(
                 .any(|existing| same_binary_path(existing, &path))
         {
             found.push(path);
+        }
+    }
+    // Prefer installed browsers, which may update independently. Keep the
+    // bundled browser within the launcher's twelve-candidate budget so it
+    // remains available when the installed candidates cannot start.
+    if let Some(bundled) = bundled.filter(|path| path.is_file()) {
+        if let Some(index) = found
+            .iter()
+            .position(|existing| same_binary_path(existing, &bundled))
+        {
+            // An explicit browser remains the user's first choice.
+            if !explicit_bundle {
+                found.remove(index);
+                found.truncate(11);
+                found.push(bundled);
+            }
+        } else {
+            found.truncate(11);
+            found.push(bundled);
         }
     }
     found
@@ -79,6 +101,14 @@ fn same_binary_path(first: &Path, second: &Path) -> bool {
     {
         first == second
     }
+}
+
+fn candidate_budget(remaining: Duration, index: usize, total: usize) -> Duration {
+    if index + 1 == total {
+        return remaining;
+    }
+    let reserve = (remaining / 2).min(Duration::from_secs(5));
+    ((remaining - reserve) / (total - index - 1) as u32).min(Duration::from_secs(5))
 }
 
 #[cfg(windows)]
@@ -266,11 +296,7 @@ impl BrowserProcess {
             if remaining.is_zero() {
                 break;
             }
-            let budget = if index + 1 == candidates.len() {
-                remaining
-            } else {
-                (remaining / 2).min(Duration::from_secs(5))
-            };
+            let budget = candidate_budget(remaining, index, candidates.len());
             attempted += 1;
             match Self::launch_one(exe, budget, visible) {
                 Ok(browser) => return Ok(browser),
@@ -697,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_prefers_explicit_then_bundled_and_skips_missing_duplicates() {
+    fn discovery_prefers_explicit_then_installed_and_retains_bundled_fallback() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../target")
             .join(format!(
@@ -710,16 +736,43 @@ mod tests {
             ));
         let bundled = root.join("dependencies/chromium/chrome.exe");
         let explicit = root.join("custom.exe");
+        let installed = root.join("installed.exe");
         std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
         std::fs::write(&bundled, b"fixture").unwrap();
         std::fs::write(&explicit, b"fixture").unwrap();
+        std::fs::write(&installed, b"fixture").unwrap();
         let found = candidate_binaries(
             Some(explicit.clone()),
             Some(&root),
-            vec![bundled.clone(), root.join("missing.exe")],
+            vec![installed.clone(), bundled.clone(), root.join("missing.exe")],
         );
-        assert_eq!(found, vec![explicit, bundled]);
+        assert_eq!(found, vec![explicit, installed, bundled]);
+        let many: Vec<_> = (0..15)
+            .map(|n| {
+                let path = root.join(format!("installed-{n}.exe"));
+                std::fs::write(&path, b"fixture").unwrap();
+                path
+            })
+            .collect();
+        let found = candidate_binaries(None, Some(&root), many);
+        assert_eq!(found.len(), 12);
+        assert_eq!(
+            found.last(),
+            Some(&root.join("dependencies/chromium/chrome.exe"))
+        );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn browser_startup_budget_reserves_time_for_fallback() {
+        let remaining = Duration::from_secs(20);
+        let first = candidate_budget(remaining, 0, 12);
+        assert!(first > Duration::ZERO);
+        assert!(first * 11 <= Duration::from_secs(15));
+        assert_eq!(
+            candidate_budget(Duration::from_secs(5), 11, 12),
+            Duration::from_secs(5)
+        );
     }
 
     #[test]
