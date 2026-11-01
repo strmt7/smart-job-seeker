@@ -25,6 +25,12 @@ def edit_pdf_stream(reader, page_index, before, after):
     matches_found = []
 
     def decode_byte(value, encoding, mapping):
+        if encoding == 'charmap':
+            # For a font without an explicit encoding, only trust characters
+            # actually present in its ToUnicode map. The later rendering and
+            # glyph checks still decide whether the edited PDF is usable.
+            result = mapping.get(chr(value))
+            return result if isinstance(result, str) and len(result) == 1 else None
         if not isinstance(encoding, dict):
             return None
         intermediate = encoding.get(value, chr(value))
@@ -47,7 +53,7 @@ def edit_pdf_stream(reader, page_index, before, after):
                 current = None
         elif op in (b'Tj', b'TJ') and current is not None:
             encoding, mapping = current
-            if not isinstance(encoding, dict):
+            if not isinstance(encoding, dict) and encoding != 'charmap':
                 continue
             elements = operands[0] if op == b'TJ' else operands
             pieces = []
