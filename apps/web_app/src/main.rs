@@ -11082,6 +11082,32 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn preferred_name_profile_survives_workspace_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut workspace = Workspace::open(&path).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut workspace, &mut None, "test-token", port).unwrap();
+            drop(workspace);
+            let reopened = Workspace::open(&path).unwrap();
+            serde_json::from_str::<Value>(&reopened.candidate_profile().unwrap().unwrap()).unwrap()
+        });
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = r#"{"full_name":"Avery Example","preferred_name":"Ace"}"#;
+        write!(stream, "POST /api/profile HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("200 OK"));
+        let profile = worker.join().unwrap();
+        assert_eq!(profile["full_name"], "Avery Example");
+        assert_eq!(profile["preferred_name"], "Ace");
+    }
+
+    #[test]
     fn packet_requires_shortlist_and_preserves_existing_draft() {
         use waypoint_store::StoredJob;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
