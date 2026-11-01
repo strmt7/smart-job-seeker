@@ -369,6 +369,29 @@ fn native_special_controls_are_reported_for_manual_review() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn custom_choice_inventory_reaches_later_controls_and_reports_its_cap() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_paging.html"))
+        .unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    assert_eq!(inventory.choices.len(), 45, "{inventory:?}");
+    assert!(inventory
+        .choices
+        .iter()
+        .any(|choice| choice.label == "Choice 16"));
+    assert!(inventory
+        .choices
+        .iter()
+        .any(|choice| choice.label == "Choice 45"));
+    assert!(inventory.incomplete, "the 46th control exceeds the cap");
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn native_time_is_filled_and_verified_within_site_limits() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

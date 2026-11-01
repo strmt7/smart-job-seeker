@@ -625,7 +625,9 @@ impl CdpDriver {
                     .is_some_and(|role| role.eq_ignore_ascii_case("combobox"))
                 && !tag.eq_ignore_ascii_case("select")
             {
-                if candidates.len() >= 15 {
+                // Keep the walk bounded while allowing the review interface
+                // to page beyond its first 15 controls on larger forms.
+                if candidates.len() >= 45 {
                     incomplete = true;
                     return true;
                 }
