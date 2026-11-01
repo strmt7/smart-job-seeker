@@ -1,0 +1,13 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf(" let loaded=false;box.addEventListener('toggle'");
+const end = source.indexOf('\n assess.type=', start);
+assert.ok(start >= 0 && end > start);
+const box = {open:true,addEventListener(event,listener){assert.equal(event,'toggle');this.toggle=listener;}};
+const output = {children:[],replaceChildren(...children){this.children=children;}};
+let calls=0,shown=0;
+const context={box,output,row:{job:{id:'fictional-job'}},element:(tag,text)=>({tag,textContent:text}),api:async(path,body)=>{assert.equal(path,'/api/fit/read');assert.equal(body.id,'fictional-job');if(++calls===1)throw new Error('Temporarily unavailable');return {status:'current',assessment:{},model:'fixture'};},showAssessment:()=>{shown++;}};
+vm.runInNewContext(source.slice(start,end),context);
+(async()=>{await box.toggle();assert.match(output.children[0].textContent,/Close and reopen/);box.open=false;await box.toggle();box.open=true;await box.toggle();assert.equal(calls,2);assert.equal(shown,1);await box.toggle();assert.equal(calls,2);console.log('Saved fit retry UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1});
