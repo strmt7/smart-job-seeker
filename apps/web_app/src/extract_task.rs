@@ -1,21 +1,37 @@
 //! One background extraction task; no document content is persisted here.
 use serde_json::{json, Value};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 struct Task {
     id: String,
     outcome: Option<Result<(String, Option<Value>), String>>,
+    completed: Option<Instant>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+const RETENTION: Duration = Duration::from_secs(60);
+
+fn expire_completed(task: &mut Option<Task>) {
+    if task
+        .as_ref()
+        .and_then(|t| t.completed)
+        .is_some_and(|at| at.elapsed() >= RETENTION)
+    {
+        *task = None;
+    }
+}
+
 pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
     let mut task = TASK
         .lock()
         .map_err(|_| "Extraction task state unavailable")?;
-    if task.as_ref().is_some_and(|t| t.outcome.is_none()) {
-        return Err("A document extraction is already running".into());
+    expire_completed(&mut task);
+    if task.is_some() {
+        return Err("A document extraction is running or its result is awaiting collection; uncollected results expire after 60 seconds".into());
     }
     *task = Some(Task {
         id: id.clone(),
         outcome: None,
+        completed: None,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -26,6 +42,7 @@ pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
             if let Some(task) = task.as_mut() {
                 if task.id == id {
                     task.outcome = Some(outcome);
+                    task.completed = Some(Instant::now());
                 }
             }
         }
@@ -36,6 +53,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK
         .lock()
         .map_err(|_| "Extraction task state unavailable")?;
+    expire_completed(&mut tasks);
     let task = tasks
         .as_mut()
         .filter(|task| task.id == id)
@@ -90,6 +108,18 @@ mod tests {
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while super::TASK
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .outcome
+            .is_none()
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(super::start("second".into(), "other.txt".into(), b"Other".to_vec()).is_err());
         loop {
             let result = super::poll("fixture").unwrap();
             if result["status"] == "complete" {
@@ -99,5 +129,29 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        super::start("second".into(), "other.txt".into(), b"Other".to_vec()).unwrap();
+        loop {
+            let result = super::poll("second").unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["text"], "Other");
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn completed_result_is_retained_until_collection_or_expiry() {
+        let mut task = Some(super::Task {
+            id: "first".into(),
+            outcome: Some(Ok(("Fictional CV".into(), None))),
+            completed: Some(std::time::Instant::now()),
+        });
+        super::expire_completed(&mut task);
+        assert_eq!(task.as_ref().unwrap().id, "first");
+        task.as_mut().unwrap().completed = Some(std::time::Instant::now() - super::RETENTION);
+        super::expire_completed(&mut task);
+        assert!(task.is_none());
     }
 }

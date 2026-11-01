@@ -1,3 +1,8 @@
+## Document extraction handoff — 2026-11-01
+
+- A completed document extraction can no longer be overwritten by a new request before collection. One result is retained until it is collected or becomes eligible for expiry after 60 seconds; expiry is checked on the next extraction request or poll, not by a background timer. A conflicting request receives an explicit message. A rejected request also no longer invalidates a prior document review in the same interface.
+- Focused worker tests covered retention, expiry and starting another extraction after collection. A simulated interface test covered a conflicting request while the first review was pending; document-selection checks and web-app Clippy passed. No live model or employer site was involved, and no application was sent.
+
 ## Partial navigation advice — 2026-11-01
 
 - If the supplementary navigation pass fails, the app retains validated first-pass suggestions and explicitly warns that navigation advice is incomplete. A failed first pass still fails the request. Results are still checked against the live page state before use; advice does not click controls.
