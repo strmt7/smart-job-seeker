@@ -89,7 +89,19 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
         .any(|wall| wall == "a custom control needs manual review"));
     driver.verify_text_value("#visible", "Example").unwrap();
     driver.verify_text_value("#offscreen", "Example").unwrap();
-    for selector in ["#hidden", "#transparent", "#invisible"] {
+    driver
+        .verify_text_value("#dynamic-field", "Example")
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#hide-trigger".into(),
+            value: PacketValue::Text("change".into()),
+        })
+        .unwrap();
+    assert!(driver
+        .verify_text_value("#dynamic-field", "Example")
+        .is_err());
+    for selector in ["#hidden", "#transparent", "#invisible", "#clipped"] {
         assert!(
             driver.verify_text_value(selector, "Example").is_err(),
             "accepted {selector}"
@@ -125,8 +137,11 @@ fn verification_rejects_hidden_choices() {
     }
     for command in [
         checkbox("#check-hidden"),
+        checkbox("#check-clipped"),
         select("#select-hidden"),
+        select("#select-clipped"),
         radio("#radio-hidden"),
+        radio("#radio-first"),
         BrowserCommand::SelectOptions {
             selector: "#multi-hidden".into(),
             labels: vec!["Alpha".into()],

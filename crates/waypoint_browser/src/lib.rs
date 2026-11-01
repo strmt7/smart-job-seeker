@@ -2490,7 +2490,7 @@ impl CdpDriver {
           const choices = radios.filter(r => { const text = optionLabel(r); return text !== null && norm(text) === norm(label); });
           if (choices.length !== 1) return false;
           const chosen = choices[0];
-          const visible = node => { if (!node.getClientRects().length) return false; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return true; }; if (!apply && !visible(chosen)) return false;
+          const visible = node => { if (!node.getClientRects().length) return false; const rect = node.getBoundingClientRect(); let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; if (item !== node) { const box = item.getBoundingClientRect(); if (['hidden','clip'].includes(style.overflowX)) { left = Math.max(left, box.left + item.clientLeft); right = Math.min(right, box.left + item.clientLeft + item.clientWidth); } if (['hidden','clip'].includes(style.overflowY)) { top = Math.max(top, box.top + item.clientTop); bottom = Math.min(bottom, box.top + item.clientTop + item.clientHeight); } } } return right > left && bottom > top; }; if (!apply && !visible(chosen)) return false;
           if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
           return chosen.isConnected && chosen.checked && !unavailable(chosen) && chosen.validity.valid;
         }"#,"arguments":[{"value":label},{"value":apply}],"returnByValue":true})).map_err(derr)?;
@@ -2813,6 +2813,11 @@ impl BrowserDriver for CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Previously filled field is no longer present".into()))?;
+        if !self.control_visibility_and_path(node)?.0 {
+            return Err(DriverError(
+                "Previously filled field is not visibly rendered; review it manually".into(),
+            ));
+        }
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -2990,6 +2995,24 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn verify_choice(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
+        let selector = match command {
+            BrowserCommand::SelectOptions { selector, .. }
+            | BrowserCommand::SelectOption { selector, .. }
+            | BrowserCommand::SelectRadio { selector, .. }
+            | BrowserCommand::Fill {
+                selector,
+                value: PacketValue::Bool(_),
+            } => selector,
+            _ => return Err(DriverError("Unsupported choice verification".into())),
+        };
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Previously filled choice is missing".into()))?;
+        if !self.control_visibility_and_path(node)?.0 {
+            return Err(DriverError(
+                "Previously filled choice is not visibly rendered; review it manually".into(),
+            ));
+        }
         match command {
             BrowserCommand::SelectOptions { selector, labels } => {
                 self.select_options(selector, labels, false)

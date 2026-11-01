@@ -13,4 +13,8 @@
 <fieldset style="display:none"><legend>Hidden workplace</legend><label><input id="radio-hidden" type="radio" name="hiddenwork" checked>Remote</label></fieldset>
 <div style="position:relative;overflow:hidden;width:60px;height:40px"><label for="clipped">Clipped</label><input id="clipped" style="position:absolute;left:200px;top:0" value="Example"></div>
 <div style="position:relative;overflow:auto;width:60px;height:40px"><label for="scrollable">Scrollable</label><input id="scrollable" style="position:absolute;left:200px;top:0" value="Example"></div>
+<div style="position:relative;overflow:hidden;width:60px;height:40px"><input id="check-clipped" type="checkbox" checked style="position:absolute;left:200px;top:0"><select id="select-clipped" style="position:absolute;left:200px;top:0"><option selected>Alpha</option></select></div>
+<fieldset><legend>Clipped choice</legend><label><input id="radio-first" type="radio" name="mixed">Office</label><div style="position:relative;overflow:hidden;width:60px;height:40px"><label style="position:absolute;left:200px;top:0"><input id="radio-clipped" type="radio" name="mixed" checked>Remote</label></div></fieldset>
+<input id="hide-trigger" oninput="document.querySelector('#dynamic-holder').style.overflow='hidden'">
+<div id="dynamic-holder" style="position:relative;overflow:visible;width:60px;height:40px"><input id="dynamic-field" style="position:absolute;left:200px;top:0" value="Example"></div>
 </form></body></html>
