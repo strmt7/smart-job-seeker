@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Repeated visual labels — 2026-11-01
+
+- The previous section-prefix matching change also made distinct, fully qualified labels with the same final field name unobserved. The matcher now accepts exact, unique qualified labels while still refusing an unqualified label when its leaf could refer to multiple fields. Focused ambiguity tests and lint passed.
+- In an isolated CPU run, `gemma4:12b-it-q4_K_M` correctly distinguished both email values and their section headings in the full-page view of a fictional local browser form (fixture SHA-256 `ecd6533ec14df16410ad152cef70cd09d854abbd006fefbd5f4490da263920f4`). For a tighter reference-field crop it returned only `Email`, omitting the required section context. The comparison remained unobserved, and the live qualification test failed its targeted-confirmation assertion. No conclusion about general model or site accuracy follows from this one form. The test took 40.66 seconds after preload; the memory watchdog did not trip and available RAM was 27.2 GiB after cleanup. Captured output is under `target/model-eval/isolated-gemma-section-form-20261101`.
+
 ## Placeholder review with local vision — 2026-11-01
 
 - In a fictional browser form (fixture SHA-256 `667ebb2deecdcdd7d9bbe423a3fbdeb5b577eb01f4fe991123e73624c4eb4f0a`), CPU-hosted `gemma4:12b-it-q4_K_M` transcribed an empty email field's placeholder as though it were an entered value, despite the prompt. The app's separate live DOM check downgraded that apparent match to unobserved; an actually entered name remained confirmed. A raw-model qualification assertion failed in the first run, while a separate pipeline cross-check passed in a second run. This is one fixture and does not establish general model or site behavior.

@@ -296,8 +296,12 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
             let unique_expected = expected
                 .iter()
                 .filter(|(name, _)| {
-                    let normalized = normalized_label(name);
-                    normalized.rsplit('—').next().unwrap_or("").trim() == leaf
+                    let other = normalized_label(name);
+                    if normalized.contains('—') {
+                        other == normalized || (!other.contains('—') && other == leaf)
+                    } else {
+                        other.rsplit('—').next().unwrap_or("").trim() == leaf
+                    }
                 })
                 .count()
                 == 1;
@@ -855,9 +859,9 @@ mod tests {
     fn live_visual_distinguishes_identically_labelled_sections() {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::{BrowserCommand, PacketValue};
-        let model = crate::resident_model()
-            .unwrap()
-            .expect("eligible resident model");
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
+        let (addr, context) = benchmark_target(&model).unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_contact_headed_sections.html")
             .canonicalize()
@@ -895,11 +899,12 @@ mod tests {
             )
         })
         .collect();
-        let result = analyze(
-            "127.0.0.1:11434".parse().unwrap(),
+        let result = analyze_with_context(
+            addr,
             &model,
             &driver.screenshot_base64().unwrap(),
             &expected,
+            context,
         )
         .unwrap();
         println!("Fictional grouped visual review: {result}");
@@ -921,12 +926,12 @@ mod tests {
         }
         let crop = driver.screenshot_field_context("#reference").unwrap();
         let targeted = analyze_targeted_with_context(
-            "127.0.0.1:11434".parse().unwrap(),
+            addr,
             &model,
             &crop,
             &expected[1].0,
             &expected[1..],
-            Some(4096),
+            context,
         )
         .unwrap();
         println!("Fictional targeted reference review: {targeted}");
@@ -1814,6 +1819,18 @@ mod tests {
         let two = validate(&json!({"observations":[{"label":"Applicant — Name","visible_value":"Example"},{"label":"Reference — Name","visible_value":"Other"}]})).unwrap();
         let result = compare(&two, &[("Name".into(), "Example".into())]);
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        let result = compare(
+            &two,
+            &[
+                ("Applicant — Name".into(), "Example".into()),
+                ("Reference — Name".into(), "Other".into()),
+            ],
+        );
+        assert!(result["comparisons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["status"] == "matches_transcription"));
         let result = compare(
             &one,
             &[
