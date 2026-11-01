@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Rendered visible-browser handoff — 2026-11-01
+
+- A local rendered fixture exercised the headless-to-visible handoff at 1440×900 and 390×844. Mocked API responses showed the expected close request followed by a visible inspection request, with no page errors or horizontal overflow. Button spacing was adjusted after visual inspection. This did not launch the real application backend or an employer browser, so it does not validate actual session reopening. Screenshots and the local harness are retained under `target/reopen-visible-*`.
+
 ## Visible-browser handoff — 2026-11-01
 
 - When a headless form needs manual review, the panel now offers an explicit action to close that session and start a visible inspection of the original listing. It warns that unsaved site changes and panel answers may be lost, blocks the action during filling or visual review and after filling, and uses the existing pending-inspection recovery path if reopening fails. Simulated interface tests covered success, close failure, start failure and the fill guards. This has not been exercised in a rendered browser or against a live employer; it does not interact with or submit the form.
