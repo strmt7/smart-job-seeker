@@ -1242,7 +1242,7 @@ mod tests {
         let (mappings, warnings) = suggest_with_diagnostics(
             &mut model,
             &live.schema,
-            &json!({"first_name":"Avery","email":"avery@example.test"}),
+            &json!({"first_name":"Avery","email":"avery@example.test","auto_assess_ai":"on"}),
         )
         .unwrap();
         println!(
@@ -1250,6 +1250,7 @@ mod tests {
             model.responses
         );
         assert_eq!(model.responses.len(), 1);
+        assert!(!model.prompts[0].contains("auto_assess_ai"));
         let raw = model.responses[0]["mappings"].as_array().unwrap();
         for (field, key) in [(first, "first_name"), (email, "email")] {
             assert!(
