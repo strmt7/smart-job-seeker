@@ -1,5 +1,10 @@
 # smart-job-seeker (Waypoint)
 
+[![Codecov](https://img.shields.io/codecov/c/github/strmt7/smart-job-seeker?label=Codecov&logo=codecov)](https://codecov.io/gh/strmt7/smart-job-seeker)
+[![cocoindex-code](https://img.shields.io/static/v1?label=&message=cocoindex-code&color=555&logo=github&logoColor=white)](https://github.com/cocoindex-io/cocoindex-code)
+[![caveman](https://img.shields.io/static/v1?label=&message=caveman&color=555&logo=github&logoColor=white)](https://github.com/JuliusBrussee/caveman)
+[![crawl4ai](https://img.shields.io/static/v1?label=&message=crawl4ai&color=555&logo=github&logoColor=white)](https://github.com/unclecode/crawl4ai)
+
 Waypoint is a Windows-first, local job-search and application-assistance prototype written in Rust. Its current interface is a local web page; it uses local tools, including Ollama for optional model-assisted features. The prototype is under active development and is not yet a complete enterprise product.
 
 **Current status:** See [the web prototype checkpoint](docs/WEB_PROTOTYPE_CHECKPOINT.md) for the latest verified capabilities and limitations. Earlier gate documents describe historical work and do not establish current end-to-end readiness. No hiring-uplift, superiority or "undetectable AI" claims are made.
@@ -49,6 +54,7 @@ The build helper requires Rust and MSVC build tools; when no compatible OpenSSL 
 
 ## Documentation
 
+- [Development agent tools and measured coverage](docs/agent-tools.md).
 - Research/design handoff: `docs/waypoint-handoff/` (competitive atlas, Rust blueprint, 40-screen UI spec, schemas, fixtures).
 - Gate evidence: `docs/g0/`, `docs/g1/`, `docs/g6/`.
 - Honest limits: `KNOWN_LIMITATIONS.md`.

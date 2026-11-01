@@ -1,0 +1,51 @@
+import asyncio
+import json
+from pathlib import Path
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import AsyncMock, patch
+
+from tools import crawl4ai_research as research
+
+
+class CaptureTests(unittest.TestCase):
+    def test_native_result_and_robots_configuration_are_retained(self):
+        text = 'Fictional public page. ' * 15
+        result = SimpleNamespace(
+            markdown=SimpleNamespace(raw_markdown=text), status_code=200,
+            redirected_status_code=None, response_headers={}, error_message='', success=True,
+            model_dump=lambda **_: {'url': 'https://example.org/', 'markdown': text},
+        )
+        owner = SimpleNamespace(arun=AsyncMock(return_value=result))
+        module = SimpleNamespace(CacheMode=SimpleNamespace(BYPASS='bypass'),
+                                 CrawlerRunConfig=lambda **kwargs: kwargs)
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.dict(sys.modules, {'crawl4ai': module}), \
+                patch.object(research.importlib.metadata, 'version', return_value='fixture'):
+            path = Path(temporary) / 'capture.json'
+            row = asyncio.run(research.fetch(owner, 'https://example.org/', 'public page', path))
+            self.assertTrue(row['success'])
+            self.assertTrue(owner.arun.call_args.kwargs['config']['check_robots_txt'])
+            capture = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(capture['provider_version'], 'fixture')
+            self.assertEqual(capture['native_result']['markdown'], text)
+            with self.assertRaises(FileExistsError):
+                research.retain_capture(path, 'https://example.org/', result, row)
+
+    def test_provider_failure_is_written_and_private_url_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(research, 'crawler', side_effect=RuntimeError('fixture failure')), \
+                patch.object(research.importlib.metadata, 'version', return_value='fixture'):
+            path = Path(temporary) / 'failure.json'
+            args = SimpleNamespace(command='capture', url='https://example.org/', marker='', capture=path)
+            self.assertEqual(asyncio.run(research.execute(args)), 1)
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['diagnosis']['failure_category'], 'provider_error')
+            args.url = 'https://127.0.0.1/private'
+            with self.assertRaisesRegex(ValueError, 'nonpublic'):
+                asyncio.run(research.execute(args))
+
+
+if __name__ == '__main__':
+    unittest.main()

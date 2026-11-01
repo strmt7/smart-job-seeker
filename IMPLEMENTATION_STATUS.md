@@ -1,5 +1,23 @@
 # Implementation checkpoint
 
+## Agent tools and Rust coverage — 2026-11-01
+
+- Added repository-local agent skills, an isolated source-bound CocoIndex adapter,
+  and an isolated, pinned Crawl4AI source-build and capture workflow. The crawler
+  installed in a Waypoint-only cache, passed its local doctor and 19 transferred
+  package-contract checks, and captured a public documentation page with robots
+  checking and a native receipt. The CocoIndex adapter indexed and searched a
+  one-file fictional repository using a read-only existing CLI and a hash-checked
+  model; an earlier attempt using the default symlinked model cache failed on
+  this host, so the adapter now admits a pinned model in an ordinary directory.
+  Agent-tool boundary tests passed. The pre-existing shared CocoIndex MCP server
+  still failed to start on non-UTF-8 shared settings; it was not modified.
+- A local Windows `cargo-llvm-cov 0.9.1` workspace run produced an LCOV report
+  with 42,118 hit lines of 71,103 instrumented lines across 124 source records.
+  Ignored browser/model tests and non-Rust components are outside that result.
+  The new OIDC Codecov workflow and README badge have not yet been verified on
+  GitHub or Codecov; a local report is not evidence of a hosted upload.
+
 ## Local match repeatability — 2026-11-01
 
 - With an isolated CPU-only `gemma4:12b-it-q4_K_M` runtime and a 4096-token context, three assessments of the same fictional candidate, listing and preferences all validated and produced identical scores and sorted criteria/evidence. The qualification test took 221.66 seconds after preload; available RAM stayed at or above 13.8 GiB during the test. This measures repeatability on one case, not accuracy, calibration, general reliability or production GPU behavior. The test harness permits the isolated CPU runtime only when explicitly configured; production model eligibility is unchanged. Native output is under `target/model-eval/isolated-gemma-fit-repeatability-20261101`. Lint passed.

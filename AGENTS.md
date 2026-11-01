@@ -1,8 +1,24 @@
 # AGENTS.md — how to work in this repo (for AI coding agents and humans)
 
-Waypoint (smart-job-seeker) is a native-Rust, Windows-first, local-first job-seeker
-platform. This file is the single entry point for any agent (or person) picking the
+Waypoint (smart-job-seeker) is a Windows-first, local-first job-seeker prototype
+with a Rust backend and local web interface. This file is the single entry point for any agent (or person) picking the
 repo up cold. Read this first, then `README.md`, then the references below.
+
+## Agent efficiency and research
+
+- Apply [caveman](.agents/skills/caveman/SKILL.md) on every task. Keep internal
+  work bounded while preserving exact evidence and normal public communication.
+- Before broad or conceptual code navigation, use the source-bound
+  [CocoIndex workflow](.agents/skills/cocoindex-code-search/SKILL.md). Exact
+  names and small known scopes still use `rg`; confirm semantic results in live
+  source. Never change another checkout's registration or cache.
+- Use [Crawl4AI](.agents/skills/crawl4ai-research/SKILL.md) for web-page
+  reading, retain native results and disclose failures. Search snippets are not
+  page evidence. API and archive bytes retain their native transports. Follow
+  product privacy, source-permission and robots rules independently.
+- See [agent tools and coverage](docs/agent-tools.md) for explicit setup,
+  external caches, receipt limits and the scope of the Codecov report. These
+  are development tools, not application runtime dependencies.
 
 ## Non-negotiable product invariants (enforced by tests — do not break)
 
@@ -47,8 +63,8 @@ repo up cold. Read this first, then `README.md`, then the references below.
     rules become behaviour.
   - `waypoint_browser` — the real `BrowserDriver`: Chrome DevTools Protocol over a
     throwaway browser profile. Reads the form from the live DOM, types with real
-    input events, attaches files, clicks by box model. **It has no script
-    execution surface** — only DOM/Input/Page protocol calls. Captchas and login
+    input events, attaches files, clicks by box model, and uses bounded CDP
+    inspection. Captchas and login
     walls are reported as walls, never climbed.
   - `waypoint_seal` — sealing candidate material at rest. Windows DPAPI through a
     hand-written three-call FFI (the workspace's only `unsafe`, scoped to that
@@ -61,13 +77,13 @@ repo up cold. Read this first, then `README.md`, then the references below.
     approval, and the journal is append-only *enforced by database triggers* — an
     UPDATE or DELETE on it fails at the SQLite level.
 - `deny.toml` — license/supply-chain policy; `cargo deny check` must stay green.
-- CI (`.github/workflows/ci.yml`) enforces: fmt, clippy `-D warnings`, 183 tests,
+- CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, workspace tests,
   release build, `cargo audit` (with one documented informational ignore), deny checks.
 
 ## Build, test, quality commands
 
 ```bash
-cargo test --workspace                 # 183 tests (+5 ignored browser tests)
+cargo test --workspace                 # ignored live tests require explicit selection
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --release -p windows_app   # native PE32+ binary, ~14 MB
@@ -82,7 +98,9 @@ cargo test -p waypoint_inference --lib -- --ignored
 cargo test -p waypoint_connectors -- --ignored
 ```
 
-Windows/MSVC toolchain assumed; no Node/Python/WSL/Docker anywhere in the product stack.
+Windows/MSVC is the primary toolchain. The web interface uses JavaScript; document
+operations may use the configured local Python worker. Python and Node are also
+used by development tools and tests. Do not add WSL or Docker as product requirements.
 
 ## Ground rules for agents (from the handoff, still binding)
 
@@ -143,23 +161,13 @@ Windows/MSVC toolchain assumed; no Node/Python/WSL/Docker anywhere in the produc
 - Entity-escaping text through write/patch tooling corrupts `&`-style strings;
   write such code via line-index scripts, not string-replace through the tool.
 
-## Honest current state (2026-09-26)
+## Current state and next work
 
-All 50 backlog tasks through gate G6 are implemented, tested (115 green), audited
-(0 vulnerabilities; licenses/bans/sources clean), and CI is green on GitHub.
-Deliberately open (see KNOWN_LIMITATIONS.md): code signing + installer, SQLCipher
-encryption-at-rest, browser CDP wiring, interactive a11y observation, usability pilot.
-None of these are silently skippable, and none are claimed done.
-
-## Where to start next (highest value, in order)
-
-1. First real-submission verification on a third-party site, with a candidate's own
-   consent. The engine and the CDP driver are both done and tested against
-   real browsers on local fixtures; what is unproven is behaviour on a live
-   employer site (multi-step wizards, iframes, radio groups — see
-   KNOWN_LIMITATIONS item 7).
-2. Wire `OllamaInference` into the drafting/interview flows so materials are generated
-   through the real adapter (keeping a deterministic offline fallback).
-3. SQLCipher at-rest encryption behind the existing store API.
-4. Accessibility observation session (Narrator/IME/DPI) to close T006.
-5. Expand the adversarial fixture corpus toward the §14 benchmark targets.
+The 2026-09-26 gate results are historical, not evidence of the current checkout.
+Read `IMPLEMENTATION_STATUS.md`, `docs/WEB_PROTOTYPE_CHECKPOINT.md` and current
+source before selecting work. Preserve explicit unknowns and report measured
+results separately from targets. Never submit a real application without explicit
+authorization for that application; when instructed to stop before submission,
+all live-site work must respect that boundary.
+The product is a prototype; realistic employer-site behavior, accessibility,
+installation and local-model quality need further verification.
