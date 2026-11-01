@@ -14,7 +14,7 @@ async function run(fail, retained=true, otherFailed=false, changed=false) {
     image: {isConnected:true, src:''}, panel: {append:()=>{}},
     visualPanel: {replaceChildren:x=>messages.push(x.text), append:x=>messages.push(x.text)},
     element:(_tag,text)=>({text}), refresh:async()=>{},
-    api: async (path, body)=>{calls.push([path, body]);if(fail)throw new Error('fixture changed');return {screenshot:'fictional',record_saved:true,value_retained:retained,visual_freshness:changed?'changed':'same',verified_count:1,unverified_count:otherFailed?1:0,failed_fields:otherFailed?['Far email']:[],failed_details:otherFailed?['Far email: the value does not match the expected type']:[]};},
+    api: async (path, body)=>{calls.push([path, body]);if(fail)throw new Error('fixture changed');return {screenshot:'fictional',record_saved:true,failed_attachments:0,unverified_attachments:0,value_retained:retained,visual_freshness:changed?'changed':'same',verified_count:1,unverified_count:otherFailed?1:0,failed_fields:otherFailed?['Far email']:[],failed_details:otherFailed?['Far email: the value does not match the expected type']:[]};},
   };
   vm.runInNewContext(source.slice(start,end),context);
   await handler();

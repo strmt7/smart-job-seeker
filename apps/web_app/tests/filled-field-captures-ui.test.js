@@ -6,7 +6,7 @@ const start = source.indexOf('async function captureFilledFieldViews(');
 const end = source.indexOf('\nfunction showAutomaticFit(', start);
 assert.ok(start >= 0 && end > start);
 const capture = vm.runInNewContext(`${source.slice(start, end)}; captureFilledFieldViews`);
-const ok = () => ({record_saved:true,value_retained:true,visual_freshness:'same',unverified_count:0,failed_fields:[]});
+const ok = () => ({record_saved:true,failed_attachments:0,unverified_attachments:0,value_retained:true,visual_freshness:'same',unverified_count:0,failed_fields:[]});
 
 (async () => {
   let calls = [];
@@ -20,6 +20,11 @@ const ok = () => ({record_saved:true,value_retained:true,visual_freshness:'same'
   assert.deepEqual(calls, ['#a','#b']);
   assert.equal(result.saved, 2);
   assert.match(result.reason, /could not be verified/);
+  calls = [];
+  result = await capture(async (_path,body) => {calls.push(body.selector);return {...ok(),failed_attachments:1};}, 'session', ['#a','#b'], ()=>{}, ()=>true);
+  assert.deepEqual(calls,['#a']);
+  assert.equal(result.saved,1);
+  assert.match(result.reason,/attachment/);
   result = await capture(async () => ({...ok(), record_saved:false}), 'session', ['#a'], ()=>{}, ()=>true);
   assert.equal(result.saved, 0);
   assert.match(result.reason, /could not be saved/);

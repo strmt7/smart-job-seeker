@@ -5819,6 +5819,25 @@ fn serve(
                     selector,
                 )
             });
+            let relevant = current_attachment_groups(&current.attachments, &current.id);
+            let total_attachments: usize = relevant.iter().map(|(_, paths)| paths.len()).sum();
+            let (mut checked_attachments, mut failed_attachments) = (0usize, 0usize);
+            let started = Instant::now();
+            for (selector, paths) in relevant.iter().take(8) {
+                if started.elapsed() >= Duration::from_secs(4) {
+                    break;
+                }
+                checked_attachments += paths.len();
+                if !staged_attachments_unchanged(&current.attachments, &current.id, selector)
+                    || current
+                        .driver
+                        .with_review_timeout(|driver| driver.verify_local_files(selector, paths))
+                        .is_err()
+                {
+                    failed_attachments += paths.len();
+                }
+            }
+            let unverified_attachments = total_attachments.saturating_sub(checked_attachments);
             let screenshot = match current
                 .driver
                 .with_review_timeout(|driver| driver.screenshot_base64())
@@ -5841,9 +5860,14 @@ fn serve(
             let before_hash = Sha256Digest::of(&before);
             let freshness =
                 visual_review::image_freshness(Some(before_hash.as_str()), Some(&screenshot));
-            if !check.failed_labels.is_empty() || check.unverified > 0 || freshness != "same" {
+            if !check.failed_labels.is_empty()
+                || check.unverified > 0
+                || failed_attachments > 0
+                || unverified_attachments > 0
+                || freshness != "same"
+            {
                 let reason =
-                    "Filled fields or the visible form changed, or could not all be verified after visual navigation";
+                    "Filled fields, attachments or the visible form changed, or could not all be verified after visual navigation";
                 ws.mark_manual_review(&current.job_id, reason, now()).map_err(|e| format!("Field verification was incomplete and the review flag could not be saved: {e}"))?;
                 if !current
                     .preview
@@ -5857,12 +5881,12 @@ fn serve(
             let field_label = capture_field_label(&current.preview.schema, selector);
             let saved = current.record.as_mut().is_some_and(|record| {
                 let original = if freshness != "same" { record.screenshot_with_name(&before).map(Some) } else { Ok(None) };
-                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"field_label":field_label,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"failed_details":check.failed_details,"screenshot":format!("screenshots/{name}")})))).is_ok()
+                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"field_label":field_label,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"failed_details":check.failed_details,"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments,"screenshot":format!("screenshots/{name}")})))).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"failed_details":check.failed_details}),
+                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"failed_details":check.failed_details,"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments}),
             );
         }
         "/api/form/visual-review-start" => {
@@ -8086,7 +8110,7 @@ mod tests {
         use waypoint_applications::form_mapping::{BrowserCommand, PacketValue};
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_iframe_scroll.html");
-        let html = std::fs::read_to_string(fixture).unwrap().replace("</body></html>", "<style>@keyframes fixturemove{from{transform:translateX(0)}to{transform:translateX(110px)}}body.animate #marker{animation:fixturemove 0.35s infinite linear}#marker{position:fixed;top:250px;left:0;width:30px;height:30px;background:#a01}</style><div id='marker'></div><button id='arm-animation' type='button' onclick=\"document.body.classList.add('animate')\">Animate fictional marker</button></body></html>");
+        let html = std::fs::read_to_string(fixture).unwrap().replace("</body></html>", "<style>@keyframes fixturemove{from{transform:translateX(0)}to{transform:translateX(110px)}}body.animate #marker{animation:fixturemove 0.35s infinite linear}#marker{position:fixed;top:250px;left:0;width:30px;height:30px;background:#a01}</style><div id='marker'></div><input id='fixture-upload' type='file'><button id='arm-animation' type='button' onclick=\"document.body.classList.add('animate')\">Animate fictional marker</button></body></html>");
         let mut fixture_file = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
         fixture_file.write_all(html.as_bytes()).unwrap();
         fixture_file.flush().unwrap();
@@ -8192,6 +8216,21 @@ mod tests {
         .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let attachment = dir.path().join("fictional-document.pdf");
+        std::fs::write(&attachment, b"fictional document").unwrap();
+        {
+            let current = session.as_mut().unwrap();
+            current
+                .driver
+                .attach_local_files("#fixture-upload", std::slice::from_ref(&attachment))
+                .unwrap();
+            current.attachments.push((
+                "#fixture-upload".into(),
+                attachment.clone(),
+                "fixture-session".into(),
+                Sha256Digest::of("fictional document").as_str().to_owned(),
+            ));
+        }
         {
             let current = session.as_mut().unwrap();
             form_preview::verify_filled_field(&mut current.driver, &current.preview, &selector)
@@ -8200,6 +8239,7 @@ mod tests {
         for (step, (selected, allowed)) in [
             ("#other", false),
             (selector.as_str(), true),
+            (other.as_str(), true),
             (selector.as_str(), true),
             (selector.as_str(), true),
             (selector.as_str(), true),
@@ -8207,7 +8247,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            if step == 2 {
+            if step == 3 {
                 session
                     .as_mut()
                     .unwrap()
@@ -8218,7 +8258,7 @@ mod tests {
                     .unwrap();
                 std::thread::sleep(Duration::from_millis(200));
             }
-            if step == 3 {
+            if step == 4 {
                 let driver = &mut session.as_mut().unwrap().driver;
                 driver
                     .execute(&BrowserCommand::Fill {
@@ -8233,8 +8273,10 @@ mod tests {
                     .unwrap();
                 std::thread::sleep(Duration::from_millis(200));
             }
-            if step == 4 {
-                let driver = &mut session.as_mut().unwrap().driver;
+            if step == 5 {
+                let current = session.as_mut().unwrap();
+                std::fs::remove_file(&attachment).unwrap();
+                let driver = &mut current.driver;
                 driver
                     .execute(&BrowserCommand::Fill {
                         selector: other.clone(),
@@ -8275,19 +8317,27 @@ mod tests {
                 assert!(response.contains("\"visual_freshness\":\"same\""));
             }
             if step == 2 {
-                assert!(response.contains("\"value_retained\":false"));
+                assert!(response.contains("\"value_retained\":true"));
+                assert!(response.contains("\"record_saved\":true"));
+                assert!(response.contains("\"failed_attachments\":0"));
+                assert!(response.contains("\"unverified_attachments\":0"));
             }
             if step == 3 {
+                assert!(response.contains("\"value_retained\":false"));
+            }
+            if step == 4 {
                 assert!(response.contains("\"value_retained\":true"));
                 assert!(response.contains("Far email"));
             }
-            if step == 4 {
+            if step == 5 {
                 assert!(
                     response.contains("\"visual_freshness\":\"changed\""),
                     "{response}"
                 );
                 assert!(response.contains("\"value_retained\":false"));
                 assert!(response.contains("\"record_saved\":true"));
+                assert!(response.contains("\"failed_attachments\":1"));
+                assert!(response.contains("\"unverified_attachments\":0"));
             }
         }
         let record_dir = std::fs::read_dir(dir.path().join("application-records"))
@@ -8297,6 +8347,20 @@ mod tests {
             .unwrap()
             .path();
         let events = std::fs::read_to_string(record_dir.join("events.jsonl")).unwrap();
+        let captures: Vec<Value> = events
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|event: &Value| event["type"] == "visual_focus_capture")
+            .collect();
+        for field in [&selector, &other] {
+            let event = captures
+                .iter()
+                .find(|event| event["selector"] == *field && event["value_retained"] == true)
+                .unwrap();
+            assert!(record_dir
+                .join(event["screenshot"].as_str().unwrap())
+                .is_file());
+        }
         let changed = events
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
@@ -8304,6 +8368,7 @@ mod tests {
                 event["type"] == "visual_focus_capture" && event["visual_freshness"] == "changed"
             })
             .unwrap();
+        assert_eq!(changed["failed_attachments"], 1);
         assert!(record_dir
             .join(changed["before_screenshot"].as_str().unwrap())
             .is_file());
