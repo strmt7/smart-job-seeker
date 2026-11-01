@@ -2762,6 +2762,42 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a browser against a fictional form"]
+    fn native_special_controls_keep_other_fields_reviewable() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_native_special_controls.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let special: Vec<_> = live
+            .schema
+            .fields
+            .iter()
+            .filter(|field| field.label != "Name")
+            .map(|field| field.selector.clone())
+            .collect();
+        let preview = suggest_without_model(
+            live,
+            &json!({"first_name":"Avery","last_name":"Example"}),
+            "offline",
+        )
+        .unwrap();
+        assert!(!preview.manual_review.is_empty());
+        assert!(preview
+            .suggestions
+            .iter()
+            .all(|mapping| !special.contains(&mapping.field_selector)));
+        assert!(preview
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.label == "Name" && !field.sensitive));
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_structure_is_read_only() {
         let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")

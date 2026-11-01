@@ -112,6 +112,52 @@ fn radio_group_required_is_inherited_by_its_options() {
 }
 
 #[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn native_special_controls_are_reported_for_manual_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_native_special_controls.html"))
+        .unwrap();
+    let name = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Name")
+        .unwrap();
+    assert!(!name.sensitive);
+    for label in [
+        "Interview time",
+        "Start week",
+        "Appointment",
+        "Preference",
+        "Colour",
+    ] {
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == label)
+            .unwrap();
+        assert!(
+            field.sensitive,
+            "{label} must not receive automatic text mapping"
+        );
+        assert!(live.walls.iter().any(
+            |wall| wall.contains("custom control needs manual review") && wall.contains(label)
+        ));
+    }
+    for label in ["Interview time", "Start week"] {
+        assert!(live
+            .walls
+            .iter()
+            .any(|wall| wall.contains("required custom control") && wall.contains(label)));
+    }
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser and opens a nonexistent fictional file"]
 fn failed_navigation_does_not_return_an_inspected_form() {
     let missing = format!("waypoint-nonexistent-{}.html", std::process::id());

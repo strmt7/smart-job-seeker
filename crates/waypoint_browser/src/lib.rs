@@ -3599,8 +3599,27 @@ impl CdpDriver {
             if may_be_unannotated_choice {
                 walls.push(format!("a custom control needs manual review: {label}"));
             }
+            // These native widgets cannot be driven by the text-field path.
+            // Keep them visible in the schema, but require human handling.
+            let unsupported_native = control.tag == "input"
+                && matches!(
+                    input_type.as_str(),
+                    "time" | "week" | "datetime-local" | "range" | "color"
+                );
+            if unsupported_native {
+                let prefix = if required {
+                    "a required custom control needs manual review"
+                } else {
+                    "a custom control needs manual review"
+                };
+                walls.push(format!(
+                    "{prefix}: {}",
+                    label.chars().take(160).collect::<String>()
+                ));
+            }
             let sensitive = label_unverified
                 || may_be_unannotated_choice
+                || unsupported_native
                 || unassociated_textarea
                 || is_sensitive_label(&label)
                 || input_type == "password";

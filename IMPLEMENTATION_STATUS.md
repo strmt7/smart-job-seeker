@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Native special form controls — 2026-11-01
+
+- Native time, week, datetime-local, range and color inputs are now identified for manual review instead of being eligible for text mapping. Their labels and required status are reported, while ordinary fields remain reviewable. Local browser and preview fixtures and Clippy passed without entering values or submitting. These control types are not yet automatically filled.
+
 ## Web test suite and model-status fixture — 2026-11-01
 
 - After the shared-URL migration, a full web test run reported 429 passed, 216 ignored and one intermittent model-capability failure; the failed test passed alone. Its mock server could close a connection after reading only part of a split HTTP request. The fixture now consumes the declared body and checks the request path; a subsequent full run passed 430 tests with 216 ignored, and Clippy passed. This fixes a plausible fixture race but does not prove it caused the observed failure or establish live-model reliability.
