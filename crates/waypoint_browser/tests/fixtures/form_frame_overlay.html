@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><body>
+<form onsubmit="document.querySelector('#status').textContent='SUBMITTED';return false">
+  <iframe id="child" title="Fictional form" style="position:absolute;left:120px;top:120px;width:300px;height:160px" srcdoc="&lt;label&gt;Name &lt;input id='name' style='position:absolute;left:40px;top:40px;width:160px;height:32px'&gt;&lt;/label&gt;"></iframe>
+  <button id="cover" type="button" onclick="document.querySelector('#overlay').style.display='block'">Cover frame</button>
+  <button id="overlay" type="submit" style="display:none;position:absolute;left:120px;top:120px;width:300px;height:160px">Submit</button>
+  <output id="status">NOT SUBMITTED</output>
+</form>
+</body></html>

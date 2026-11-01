@@ -107,6 +107,16 @@ Clippy passed. A page can still change between inspection and click, and this
 check alone does not prove that every frame ancestor or site-side action is
 safe. Pointer motion itself is not yet changed.
 
+A subsequent local fixture exposed a parent-page submit control covering an
+embedded input: the earlier check allowed the click. The driver now follows
+accessible frame and shadow-root ancestry and checks each hit target; it
+refuses frames it cannot inspect or whose CSS transform cannot be safely
+mapped. The fixture verifies that an uncovered embedded input remains
+clickable, then that an overlay prevents the click without submitting the
+fixture. The overlay and existing nested-frame and shadow fixtures and
+browser-crate Clippy passed. This is not proof against all coordinate mappings,
+cross-origin pages, or changes between inspection and the actual click.
+
 Crawl4AI receipts, both HTTP 200 with substantive extracted content:
 
 - Cloudflare: `c48e6a5619f498512f7109bd54402062430aa59c8cba071a605301ece065c513`

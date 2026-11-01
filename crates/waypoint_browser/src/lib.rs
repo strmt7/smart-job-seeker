@@ -3023,9 +3023,22 @@ impl CdpDriver {
                 const style = getComputedStyle(node);
                 if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;
             }
-            const root = this.getRootNode();
-            const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x, y) : null;
-            return !!hit && (hit === this || this.contains(hit));
+            let current = this, view = window, px = x, py = y;
+            for (let depth = 0; depth < 64; depth++) {
+                const root = current.getRootNode();
+                const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(px, py) : null;
+                if (!hit || (hit !== current && !current.contains(hit))) return false;
+                if (root.nodeType === 11 && root.host) { current = root.host; continue; }
+                if (view === view.top) return true;
+                const frame = view.frameElement;
+                if (!frame || view.parent.getComputedStyle(frame).transform !== 'none') return false;
+                const bounds = frame.getBoundingClientRect();
+                px += bounds.left + frame.clientLeft;
+                py += bounds.top + frame.clientTop;
+                current = frame;
+                view = view.parent;
+            }
+            return false;
         }"#, "returnByValue":true}));
         let released = self
             .cdp

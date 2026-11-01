@@ -747,6 +747,34 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches a browser against a fictional covered frame"]
+fn click_stops_if_an_ancestor_frame_is_covered() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_frame_overlay.html")).unwrap();
+    let selector = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Name")
+        .expect("embedded field")
+        .selector
+        .clone();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: selector.clone(),
+        })
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#cover".into(),
+        })
+        .unwrap();
+    assert!(driver.execute(&BrowserCommand::Click { selector }).is_err());
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("NOT SUBMITTED"), "{text}");
+}
+
+#[test]
 #[ignore = "launches one browser against a fictional click-overlay fixture"]
 fn click_stops_if_hover_covers_target_with_submit_control() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
