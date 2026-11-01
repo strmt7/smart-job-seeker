@@ -90,6 +90,10 @@ where
     let uncertain = result["uncertain"]
         .as_bool()
         .ok_or("Template transcription uncertainty unavailable")?;
+    let image = result["image"]
+        .as_str()
+        .filter(|s| !s.is_empty() && s.len() <= 4 * 1024 * 1024)
+        .ok_or("Template transcription image unavailable")?;
     let combined = if selectable.is_empty() {
         text.to_owned()
     } else {
@@ -98,7 +102,7 @@ where
     Ok((
         combined,
         coverage,
-        json!({"page": page + 1, "pages": pages, "uncertain": uncertain, "text": text, "other_pages_not_transcribed": pages - 1}),
+        json!({"page": page + 1, "pages": pages, "uncertain": uncertain, "text": text, "image": image, "other_pages_not_transcribed": pages - 1}),
     ))
 }
 
