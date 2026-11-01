@@ -1865,6 +1865,31 @@ fn capture_page_unchanged(
     initial_url == current_url && initial_dimensions == current_dimensions
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CaptureChange {
+    Address,
+    Dimensions,
+    FirstTile,
+}
+
+fn final_capture_change(
+    initial_url: &str,
+    initial_dimensions: (f64, f64),
+    current_url: &str,
+    current_dimensions: (f64, f64),
+    first_tile_changed: bool,
+) -> Option<CaptureChange> {
+    if initial_url != current_url {
+        Some(CaptureChange::Address)
+    } else if initial_dimensions != current_dimensions {
+        Some(CaptureChange::Dimensions)
+    } else if first_tile_changed {
+        Some(CaptureChange::FirstTile)
+    } else {
+        None
+    }
+}
+
 enum CaptureError {
     DimensionsChanged,
     Other(String),
@@ -1944,12 +1969,25 @@ fn capture_page_once(
             .map_err(|e| e.to_string())?;
         let current_url = driver.current_url().map_err(|e| e.to_string())?;
         let dimensions = driver.page_dimensions().map_err(|e| e.to_string())?;
-        if original != waypoint_domain::Sha256Digest::of(&image)
-            || !capture_page_unchanged(&initial_url, (width, height), &current_url, dimensions)
-        {
+        let first_tile_changed = original != waypoint_domain::Sha256Digest::of(&image);
+        if let Some(change) = final_capture_change(
+            &initial_url,
+            (width, height),
+            &current_url,
+            dimensions,
+            first_tile_changed,
+        ) {
             let name = record.screenshot_with_name(&image)?;
-            record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"screenshot":format!("screenshots/{name}"),"note":"The first tile, page address or dimensions changed during capture; screenshots may show different states."}))?;
-            return Err("Page changed during capture; inspect and capture again".into());
+            record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"screenshot":format!("screenshots/{name}"),"address_changed":current_url != initial_url,"initial_dimensions":[width,height],"observed_dimensions":[dimensions.0,dimensions.1],"first_tile_changed":first_tile_changed,"note":"The first tile, page address or dimensions changed during capture; screenshots may show different states."}))?;
+            return match change {
+                CaptureChange::Dimensions => Err(CaptureError::DimensionsChanged),
+                CaptureChange::Address => {
+                    Err("Page address changed during capture; inspect and capture again".into())
+                }
+                CaptureChange::FirstTile => {
+                    Err("Page changed during capture; inspect and capture again".into())
+                }
+            };
         }
     }
     record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":tiles.len(),"full_dimensions_captured":within_limits,"note":"Address and dimensions stayed the same and the first tile matched a later capture. Other content changes, hidden content and nested scrollers may still be missed."}))?;
@@ -1994,6 +2032,22 @@ mod tests {
             "https://example.invalid/b",
             baseline
         ));
+        assert_eq!(
+            final_capture_change("a", baseline, "a", baseline, false),
+            None
+        );
+        assert_eq!(
+            final_capture_change("a", baseline, "a", baseline, true),
+            Some(CaptureChange::FirstTile)
+        );
+        assert_eq!(
+            final_capture_change("a", baseline, "a", (1200.0, 3001.0), true),
+            Some(CaptureChange::Dimensions)
+        );
+        assert_eq!(
+            final_capture_change("a", baseline, "b", (1200.0, 3001.0), true),
+            Some(CaptureChange::Address)
+        );
         assert!(!capture_page_unchanged(
             "https://example.invalid/a",
             baseline,
