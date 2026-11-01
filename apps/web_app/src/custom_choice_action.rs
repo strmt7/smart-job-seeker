@@ -250,6 +250,7 @@ mod tests {
             created: std::time::Instant::now(),
             ttl: std::time::Duration::from_secs(120),
             filled: false,
+            fill_attempted: false,
             completed_selectors: vec![],
             answer_drafts: Default::default(),
             visible: false,

@@ -110,6 +110,8 @@ struct ReviewSession {
     created: Instant,
     ttl: Duration,
     filled: bool,
+    /// Sticky across rescans and navigation within this browser session.
+    fill_attempted: bool,
     completed_selectors: Vec<String>,
     selected_choices: Vec<(String, String)>,
     answer_drafts: std::collections::HashMap<String, SavedFormAnswer>,
@@ -4393,7 +4395,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"status":"complete","fields":preview.fields_for_review(),"model_review_selectors":preview.model_review_selectors,"repeated_label_selectors":preview.repeated_label_selectors(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                json!({"status":"complete","fields":preview.fields_for_review(),"model_review_selectors":preview.model_review_selectors,"repeated_label_selectors":preview.repeated_label_selectors(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"fill_attempted":false,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
             );
             *session = Some(ReviewSession {
                 id: session_id,
@@ -4407,6 +4409,7 @@ fn serve(
                 created: Instant::now(),
                 ttl,
                 filled: false,
+                fill_attempted: false,
                 completed_selectors: vec![],
                 answer_drafts: Default::default(),
                 visible,
@@ -5650,7 +5653,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","fields":current.preview.fields_for_review(),"model_review_selectors":current.preview.model_review_selectors,"repeated_label_selectors":current.preview.repeated_label_selectors(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                        json!({"status":"complete","fields":current.preview.fields_for_review(),"model_review_selectors":current.preview.model_review_selectors,"repeated_label_selectors":current.preview.repeated_label_selectors(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"fill_attempted":current.fill_attempted,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
                     );
                     *session = Some(current);
                 }
@@ -6553,6 +6556,7 @@ fn serve(
                 }
             }
             current.filled = true;
+            current.fill_attempted = true;
             let mut completed = Vec::new();
             let result = form_preview::apply_reviewed_text_fields_with_replacements(
                 ws,
@@ -7100,7 +7104,7 @@ fn serve(
                 "200 OK",
                 match current {
                     Some(current) => {
-                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible})
+                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible,"fill_attempted":current.fill_attempted})
                     }
                     None => {
                         json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job})),"navigation":pending_navigation.map(|(task,job)| json!({"task":task,"job":job}))})
@@ -7933,6 +7937,7 @@ mod tests {
             created: Instant::now(),
             ttl: SESSION_TTL,
             filled: false,
+            fill_attempted: false,
             completed_selectors: vec![],
             answer_drafts: Default::default(),
             visible: false,
@@ -8070,6 +8075,7 @@ mod tests {
             created: Instant::now(),
             ttl: SESSION_TTL,
             filled: true,
+            fill_attempted: true,
             completed_selectors: vec![selector.clone(), other.clone()],
             answer_drafts: Default::default(),
             visible: false,
@@ -11433,6 +11439,7 @@ mod tests {
             created: Instant::now(),
             ttl: SESSION_TTL,
             filled: false,
+            fill_attempted: false,
             completed_selectors: vec![],
             answer_drafts: Default::default(),
             visible: false,
@@ -11890,6 +11897,7 @@ mod tests {
                 created: Instant::now(),
                 ttl: SESSION_TTL,
                 filled: false,
+                fill_attempted: false,
                 completed_selectors: vec![],
                 answer_drafts: Default::default(),
                 visible: false,
@@ -12092,6 +12100,27 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap();
             assert!(session.as_ref().unwrap().filled);
+            assert!(session.as_ref().unwrap().fill_attempted);
+            let status_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let status_port = status_listener.local_addr().unwrap().port();
+            let mut status_client = TcpStream::connect(("127.0.0.1", status_port)).unwrap();
+            let body = "{}";
+            write!(status_client,"POST /api/form/session-status HTTP/1.1\r\nHost: 127.0.0.1:{status_port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut status_server, _) = status_listener.accept().unwrap();
+            serve(
+                &mut status_server,
+                &mut ws,
+                &mut session,
+                "test-token",
+                status_port,
+            )
+            .unwrap();
+            drop(status_server);
+            let mut status_response = String::new();
+            status_client.read_to_string(&mut status_response).unwrap();
+            let status: Value =
+                serde_json::from_str(status_response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(status["fill_attempted"], true);
             assert_eq!(
                 session
                     .as_mut()

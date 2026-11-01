@@ -2830,6 +2830,7 @@ mod tests {
             created: std::time::Instant::now(),
             ttl: std::time::Duration::from_secs(120),
             filled: false,
+            fill_attempted: false,
             completed_selectors: vec![],
             answer_drafts: Default::default(),
             visible: false,
@@ -3264,6 +3265,9 @@ mod tests {
             choices.incomplete,
         );
         for field in &live.schema.fields {
+            if field.label.to_lowercase().contains("phone") {
+                println!("phone field label={:?}, type={:?}, required={}, sensitive={}, autocomplete={:?}", field.label, field.field_type, field.required, field.sensitive, field.autocomplete);
+            }
             if matches!(field.field_type, FormFieldType::Radio { .. }) {
                 println!(
                     "radio={:?} sensitive={} required={}",
@@ -3377,6 +3381,121 @@ mod tests {
             );
         }
         println!("walls={:?} manual={:?}", live.walls, preview.manual_review);
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "read-only public page, local browser and resource-gated resident model"]
+    fn live_public_phone_lesson_comparison_is_read_only() {
+        use waypoint_workspace::form_experience::{
+            Control, Experience, ExperienceMatch, Observation, Outcome, Platform, Response, Stage,
+        };
+        struct Counting<T> {
+            inner: T,
+            completed: usize,
+        }
+        impl<T: Inference> Inference for Counting<T> {
+            fn probe(
+                &mut self,
+            ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError>
+            {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
+            {
+                let result = self.inner.generate_structured(schema, prompt, max)?;
+                if schema == "form_mapping" {
+                    self.completed += 1;
+                }
+                Ok(result)
+            }
+        }
+        let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").expect("public application URL");
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let model = crate::resident_model()
+            .unwrap()
+            .expect("eligible resident model");
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+            .unwrap()
+            .with_resident_context();
+        let mut llm = Counting {
+            inner: crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            ),
+            completed: 0,
+        };
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let mut live = driver.open(&url).unwrap();
+        if live
+            .walls
+            .iter()
+            .any(|wall| wall == "The page changed during inspection; review the form manually")
+        {
+            live = driver.inspect_current().unwrap();
+        }
+        let phone: Vec<_> = live
+            .schema
+            .fields
+            .iter()
+            .filter(|field| field.label.trim().eq_ignore_ascii_case("phone") && !field.sensitive)
+            .map(|field| field.selector.clone())
+            .collect();
+        assert_eq!(
+            phone.len(),
+            1,
+            "expected one non-sensitive phone label; form may have changed"
+        );
+        let profile = json!({"first_name":"Avery","last_name":"Example","email":"avery@example.invalid","phone":"+12025550123"});
+        let baseline = suggest_for_live_form(live.clone(), &mut llm, &profile).unwrap();
+        assert!(
+            llm.completed > 0,
+            "baseline produced no completed model mapping"
+        );
+        let baseline_completions = llm.completed;
+        let lesson = ExperienceMatch { id:"00000000000000000000000000000001".into(), revision:1, same_platform:true, experience:Experience { version:1,reviewed:true,enabled:true,observed_at:1,platform:Some(Platform::Greenhouse),stage:Stage::EnterInformation,control:Control::Text,observation:Observation::AmbiguousLabel,response:Response::InspectContext,outcome:Outcome::Unknown,note:Some("On a prior form, a field explicitly asking for the applicant's phone was ordinary contact information; confirm whose phone this form asks for.".into()),use_note_in_model:true } };
+        let mut informed =
+            crate::experience_inference::ExperienceInference::new(&mut llm, &[lesson]);
+        let with_lesson = suggest_for_live_form(live.clone(), &mut informed, &profile).unwrap();
+        assert!(
+            informed.attempted_with_hints(),
+            "no lesson-assisted model request was attempted"
+        );
+        assert!(
+            llm.completed > baseline_completions,
+            "lesson-assisted run produced no completed model mapping"
+        );
+        for (name, preview) in [("baseline", baseline), ("with lesson", with_lesson)] {
+            let mapped = preview
+                .suggestions
+                .iter()
+                .any(|mapping| mapping.field_selector == phone[0]);
+            let flagged = preview.model_review_selectors.contains(&phone[0]);
+            let sensitive_mapped = preview.suggestions.iter().any(|mapping| {
+                preview.schema.fields.iter().any(|field| {
+                    field.selector == mapping.field_selector
+                        && (field.sensitive
+                            || preview.model_review_selectors.contains(&field.selector))
+                })
+            });
+            println!("{name}: phone_mapped={mapped}, phone_flagged={flagged}, sensitive_mapping={sensitive_mapped}, walls={:?}",preview.manual_review);
+            assert!(!sensitive_mapped);
+        }
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
             && !entry.contains("submitted")));

@@ -4,6 +4,12 @@ const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const helper = source.split('\n').find(line => line.startsWith('async function reopenVisibleFormReview('));
 assert.ok(helper);
+const priorFillLine = source.split('\n').find(line => line.startsWith('function formMayHavePriorFill('));
+assert.ok(priorFillLine);
+const priorFill = vm.runInNewContext(`(${priorFillLine})`);
+assert.equal(priorFill({fill_attempted:false}),false);
+assert.equal(priorFill({fill_attempted:true}),true);
+assert.equal(priorFill({}),true);
 
 async function exercise(failure) {
   const calls = [], storage = new Map();
@@ -49,9 +55,10 @@ async function exercise(failure) {
     result: {visible: false, fields: [], manual_review: ['overlay'], session_id: 'session'},
     job: {id: 'job'}, panel: fakePanel, root: {append: item => nodes.push(item)},
     element: (tag, text) => ({tag, text, setAttribute() {}, addEventListener: (_event, handler) => { if (tag === 'button') display.click = handler; }}),
-    formRequiresVisibleBrowser: () => true, fillInProgress: false, fillCompleted: false,
+    formRequiresVisibleBrowser: () => true, fillInProgress: false, fillCompleted: false, fillAttempted: false,
     visualButton: {disabled: false}, activeReviewSession: 'session', sessionTimer: 7,
     notify: text => actions.push(['notify', text]), renderReviewQueue: () => actions.push(['queue']),
+    window: {confirm: text => { actions.push(['confirm', text]); return false; }},
     clearInterval: timer => actions.push(['clear', timer]), recoverReviewSession: async () => {},
     reopenVisibleFormReview: async (job, session, onClosed) => { actions.push(['reopen', job, session]); onClosed(); },
   };
@@ -61,11 +68,20 @@ async function exercise(failure) {
   await display.click();
   assert.ok(!actions.some(item => item[0] === 'reopen'));
   display.fillInProgress = false;
+  await display.click();
+  assert.ok(actions.some(item => item[0] === 'confirm' && item[1].includes('unsent answers')));
+  assert.ok(!actions.some(item => item[0] === 'reopen'));
   display.fillCompleted = true;
   await display.click();
-  assert.ok(actions.some(item => item[0] === 'notify' && item[1].includes('Fields have been filled')));
+  assert.ok(actions.some(item => item[0] === 'confirm' && item[1].includes('unsaved site changes')));
   assert.ok(!actions.some(item => item[0] === 'reopen'));
   display.fillCompleted = false;
+  display.fillAttempted = true;
+  const confirmationsBefore = actions.filter(item => item[0] === 'confirm').length;
+  await display.click();
+  assert.equal(actions.filter(item => item[0] === 'confirm').length, confirmationsBefore + 1);
+  assert.ok(!actions.some(item => item[0] === 'reopen'));
+  display.window.confirm = () => true;
   await display.click();
   assert.ok(actions.some(item => item[0] === 'reopen' && item[1] === 'job' && item[2] === 'session'));
   assert.equal(display.activeReviewSession, null);
