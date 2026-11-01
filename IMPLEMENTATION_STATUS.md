@@ -1108,3 +1108,7 @@ A fit badge can now show both an unknown or conflicting required criterion and a
 ### DOCX tracked-revision edits (2026-11-01)
 
 The exact DOCX editor now excludes removed and moved-from tracked revisions from matching, consistent with document extraction. It keeps removed XML unchanged and does not join a replacement across a removed revision boundary. A fictional DOCX fixture covered removed-only text, duplicated current and removed text, and a cross-boundary match. Eight DOCX editor tests passed (four LibreOffice-dependent tests ignored); web Clippy and formatting passed. This does not establish fidelity for every tracked-change structure or template; rendered review remains necessary. No application was submitted.
+
+### Tracked-revision PDF conversion (2026-11-01)
+
+A fictional DOCX with a moved-from tracked revision was edited and converted through LibreOffice. The exported PDF text contained both the removed text and the replacement, despite the accepted-view DOCX extraction omitting the removed text. Conversion now refuses DOCX files with `w:del` or `w:moveFrom` markers in inspected body, header, footer, footnote or endnote parts and asks the user to resolve revisions in a document editor first. This is conservative and does not inspect every possible DOCX part or guarantee PDF fidelity. Fictional marker tests covered the inspected parts; a separate styled DOCX without removed revisions converted successfully. DOCX edit tests, web Clippy and formatting passed. No application was submitted.

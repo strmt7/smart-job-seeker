@@ -47,6 +47,47 @@ pub fn docx_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
     office_to_pdf(bytes, false)
 }
 
+fn reject_removed_revisions(bytes: &[u8]) -> Result<(), String> {
+    use quick_xml::{events::Event, name::ResolveResult, NsReader};
+    use std::io::Cursor;
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
+    let mut parts = crate::document_extract::docx_text_parts(&mut archive)?;
+    for name in ["word/footnotes.xml", "word/endnotes.xml"] {
+        let count = (0..archive.len())
+            .filter(|&index| {
+                archive
+                    .by_index_raw(index)
+                    .is_ok_and(|file| file.name() == name)
+            })
+            .count();
+        if count > 1 {
+            return Err("Duplicate DOCX note part".into());
+        }
+        if count == 1 {
+            parts.push(name.into());
+        }
+    }
+    let mut total = 0;
+    for name in parts {
+        let xml = crate::document_extract::read_docx_text_part(&mut archive, &name, &mut total)?;
+        let mut reader = NsReader::from_reader(xml.as_slice());
+        loop {
+            let (namespace, event) = reader
+                .read_resolved_event()
+                .map_err(|_| "Malformed DOCX XML")?;
+            let word = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main" || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+            match event {
+                Event::Start(ref e) | Event::Empty(ref e) if word && matches!(e.local_name().as_ref(), b"del" | b"moveFrom") => return Err("DOCX contains removed tracked revisions that may appear in the PDF. Resolve revisions in a document editor before conversion.".into()),
+                Event::DocType(_) => return Err("DOCX document type declarations are not supported".into()),
+                Event::Eof => break,
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Convert UTF-8 text as plain text, including Markdown source rather than
 /// interpreting markup. A BOM makes the import encoding explicit to the office
 /// converter; the saved original document is not modified.
@@ -74,6 +115,9 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
     let _document_lease = crate::pdf_extract::acquire()?;
     if bytes.is_empty() || bytes.len() > 10 * 1024 * 1024 {
         return Err("Document size is outside the permitted range".into());
+    }
+    if !text {
+        reject_removed_revisions(bytes)?;
     }
     let office = office_path().ok_or(
         "LibreOffice was not found. Install it or set WAYPOINT_SOFFICE to its executable.",
@@ -158,6 +202,48 @@ fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conversion_detects_removed_revisions_in_document_parts() {
+        use std::io::{Cursor, Write};
+        let make = |part: &str, marker: &str| {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let names = if part == "word/document.xml" {
+                vec![part]
+            } else {
+                vec!["word/document.xml", part]
+            };
+            for name in names {
+                writer
+                    .start_file(name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                let content = if name == part { marker } else { "<w:p/>" };
+                write!(writer, "<w:root xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{content}</w:root>").unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+        for part in [
+            "word/document.xml",
+            "word/header1.xml",
+            "word/footer1.xml",
+            "word/footnotes.xml",
+            "word/endnotes.xml",
+        ] {
+            for marker in ["<w:del/>", "<w:moveFrom><w:r/></w:moveFrom>"] {
+                assert!(
+                    super::reject_removed_revisions(&make(part, marker))
+                        .unwrap_err()
+                        .contains("Resolve revisions"),
+                    "{part} {marker}"
+                );
+            }
+        }
+        assert!(super::reject_removed_revisions(&make(
+            "word/document.xml",
+            "<w:ins><w:r/></w:ins>"
+        ))
+        .is_ok());
+    }
+
     #[test]
     fn text_conversion_rejects_invalid_or_empty_input_before_starting_office() {
         assert!(super::text_to_pdf(b"\xff").unwrap_err().contains("UTF-8"));

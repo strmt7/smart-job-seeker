@@ -547,7 +547,7 @@ mod tests {
             crate::document_extract::extract("x.docx", &edited).unwrap(),
             "Current qualification\nBeforeAfter"
         );
-        let mut archive = zip::ZipArchive::new(Cursor::new(edited)).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(&edited)).unwrap();
         let mut body = String::new();
         archive
             .by_name("word/document.xml")
@@ -555,6 +555,9 @@ mod tests {
             .read_to_string(&mut body)
             .unwrap();
         assert!(body.contains("<w:moveFrom><w:r><w:t>Old qualification</w:t></w:r></w:moveFrom>"));
+        assert!(crate::document_convert::docx_to_pdf(&edited)
+            .unwrap_err()
+            .contains("Resolve revisions"));
     }
 
     #[test]
