@@ -1023,6 +1023,37 @@ impl CdpDriver {
         Ok((visible, path.to_owned(), available, needs_review))
     }
 
+    /// Read only rendered heading text; DOM text can include hidden descendants.
+    fn rendered_section_heading(&mut self, node: u64) -> Result<Option<String>, DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Ok(None);
+        }
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Section heading disappeared".into()))?
+            .to_owned();
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { if (!this.isConnected) return null; const text = this.innerText; return typeof text === 'string' && text.length <= 2000 ? text : null; }","returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        let Some(text) = result
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .filter(|text| text.len() <= 2000)
+        else {
+            return Ok(None);
+        };
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        Ok((!text.is_empty() && text.len() <= 500).then_some(text))
+    }
+
     fn open_visible_shadow_host(&mut self, node: u64) -> Result<bool, DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Ok(false);
@@ -2045,7 +2076,7 @@ impl CdpDriver {
         }
 
         let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
-        let mut checked_section_headings: HashMap<u64, bool> = HashMap::new();
+        let mut checked_section_headings: HashMap<u64, Option<String>> = HashMap::new();
         for control in controls {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector)
@@ -2128,26 +2159,29 @@ impl CdpDriver {
                             );
                             continue;
                         }
-                        if let Some(node) = heading {
-                            let visible = if let Some(visible) = checked_section_headings.get(node)
-                            {
-                                *visible
+                        let verified_heading = if let Some(node) = heading {
+                            let text = if let Some(text) = checked_section_headings.get(node) {
+                                text.clone()
                             } else if checked_section_headings.len() < 32 {
-                                let visible = self
+                                let text = self
                                     .with_review_timeout(|driver| {
-                                        driver.control_visibility_and_path(*node)
+                                        driver.rendered_section_heading(*node)
                                     })
-                                    .is_ok_and(|value| value.0);
-                                checked_section_headings.insert(*node, visible);
-                                visible
+                                    .ok()
+                                    .flatten();
+                                checked_section_headings.insert(*node, text.clone());
+                                text
                             } else {
-                                false
+                                None
                             };
-                            if !visible {
+                            if text.is_none() {
                                 walls.push("a section heading could not be verified; review the form manually".into());
                                 continue;
                             }
-                        }
+                            text
+                        } else {
+                            None
+                        };
                         let group = if let Some(ids) = group_ref {
                             let parts: Vec<_> = ids.split_whitespace().collect();
                             if ids.len() <= 512 && !parts.is_empty() && parts.len() <= 16 {
@@ -2166,7 +2200,7 @@ impl CdpDriver {
                                 None
                             }
                         } else {
-                            Some(legend.clone())
+                            verified_heading.or_else(|| Some(legend.clone()))
                         };
                         match group.filter(|group| !group.trim().is_empty() && group.len() <= 500) {
                             Some(group)
