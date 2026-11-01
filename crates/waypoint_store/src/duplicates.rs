@@ -25,6 +25,30 @@ pub struct PreviousDuplicateDecision {
     pub recorded_at: String,
 }
 
+fn decision_needs_recovery(status: &str, preferred: Option<&str>, a: &str, b: &str) -> bool {
+    match status {
+        "pending" | "different" => false,
+        "same" => !matches!(preferred, Some(id) if id == a || id == b),
+        _ => true,
+    }
+}
+
+fn expose_recoverable_decision(pair: &mut PossibleDuplicate) {
+    if decision_needs_recovery(
+        &pair.status,
+        pair.preferred_job.as_deref(),
+        &pair.job_a,
+        &pair.job_b,
+    ) {
+        pair.status = "pending".into();
+        pair.preferred_job = None;
+        pair.reason = format!(
+            "The previous duplicate decision is incomplete or unrecognized; review it again. {}",
+            pair.reason
+        );
+    }
+}
+
 fn words(s: &str) -> BTreeSet<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|v| !v.is_empty())
@@ -493,7 +517,7 @@ impl Store {
             } else {
                 None
             };
-            result.push(PossibleDuplicate {
+            let mut pair = PossibleDuplicate {
                 job_a: job_a.into(),
                 job_b: job_b.into(),
                 score,
@@ -502,7 +526,9 @@ impl Store {
                 status,
                 preferred_job,
                 previous_decision,
-            });
+            };
+            expose_recoverable_decision(&mut pair);
+            result.push(pair);
         }
         self.conn.execute(
             "INSERT INTO job_duplicate_coverage(job_id,status,candidates) VALUES(?1,?2,?3)",
@@ -801,7 +827,7 @@ impl Store {
             } else {
                 None
             };
-            result.push(PossibleDuplicate {
+            let mut pair = PossibleDuplicate {
                 job_a,
                 job_b,
                 score,
@@ -810,7 +836,9 @@ impl Store {
                 status,
                 preferred_job,
                 previous_decision,
-            });
+            };
+            expose_recoverable_decision(&mut pair);
+            result.push(pair);
         }
         Ok(result)
     }
@@ -825,7 +853,7 @@ impl Store {
         } else {
             (second, first)
         };
-        self.conn.query_row("SELECT 1 FROM possible_duplicates WHERE job_a=?1 AND job_b=?2 AND status='pending'", params![a,b], |_| Ok(())).optional().map(|v|v.is_some())
+        self.conn.query_row("SELECT 1 FROM possible_duplicates WHERE job_a=?1 AND job_b=?2 AND (status='pending' OR (status='same' AND (preferred_job IS NULL OR preferred_job NOT IN (job_a,job_b))) OR status NOT IN ('pending','same','different'))", params![a,b], |_| Ok(())).optional().map(|v|v.is_some())
     }
 
     pub fn decide_duplicate_at_revision(
@@ -837,7 +865,7 @@ impl Store {
     ) -> rusqlite::Result<bool> {
         let preferred = a;
         let (a, b) = if a < b { (a, b) } else { (b, a) };
-        Ok(self.conn.execute("UPDATE possible_duplicates SET status=?3,preferred_job=?4 WHERE job_a=?1 AND job_b=?2 AND status='pending' AND revision=?5", params![a,b,if same {"same"} else {"different"},if same {Some(preferred)} else {None},revision])? == 1)
+        Ok(self.conn.execute("UPDATE possible_duplicates SET status=?3,preferred_job=?4 WHERE job_a=?1 AND job_b=?2 AND revision=?5 AND (status='pending' OR (status='same' AND (preferred_job IS NULL OR preferred_job NOT IN (job_a,job_b))) OR status NOT IN ('pending','same','different'))", params![a,b,if same {"same"} else {"different"},if same {Some(preferred)} else {None},revision])? == 1)
     }
 
     pub fn decide_duplicate(&self, a: &str, b: &str, same: bool) -> rusqlite::Result<bool> {
@@ -887,9 +915,29 @@ mod tests {
             store.upsert_job(item).unwrap();
             store.find_possible_duplicates(item).unwrap();
         }
-        for status in ["same", "unrecognized"] {
-            store.conn.execute("UPDATE possible_duplicates SET status=?1, preferred_job=NULL WHERE job_a='a' AND job_b='b'", [status]).unwrap();
+        for (status, preferred) in [
+            ("same", None),
+            ("same", Some("other")),
+            ("unrecognized", None),
+        ] {
+            store.conn.execute("UPDATE possible_duplicates SET status=?1, preferred_job=?2 WHERE job_a='a' AND job_b='b'", params![status, preferred]).unwrap();
             assert!(store.has_duplicate_hold("a").unwrap());
+            assert!(store.has_duplicate_hold("b").unwrap());
+            let pair = store.possible_duplicates().unwrap().remove(0);
+            assert_eq!(pair.status, "pending");
+            assert!(pair.preferred_job.is_none());
+            assert!(pair.reason.contains("review it again"));
+            assert!(store.pending_duplicate_pair("a", "b").unwrap());
+            assert!(!store
+                .decide_duplicate_at_revision("a", "b", true, pair.revision + 1)
+                .unwrap());
+            assert!(store
+                .decide_duplicate_at_revision("a", "b", true, pair.revision)
+                .unwrap());
+            assert!(!store
+                .decide_duplicate_at_revision("a", "b", true, pair.revision)
+                .unwrap());
+            assert!(!store.has_duplicate_hold("a").unwrap());
             assert!(store.has_duplicate_hold("b").unwrap());
         }
         store.conn.execute("UPDATE possible_duplicates SET status='same', preferred_job='a' WHERE job_a='a' AND job_b='b'", []).unwrap();
