@@ -14,7 +14,7 @@ const GIB: u64 = 1024 * 1024 * 1024;
 const MAX_MODEL_BYTES: u64 = 10 * GIB;
 
 #[cfg(any(windows, test))]
-fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Result<(), String> {
+pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Result<(), String> {
     if size == 0 || size > MAX_MODEL_BYTES {
         return Err("Model file size is unavailable or exceeds the 10 GiB startup limit".into());
     }
@@ -57,7 +57,7 @@ fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Result<(), St
 }
 
 #[cfg(any(windows, test))]
-fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
+pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
     let models = tags["models"]
         .as_array()
         .filter(|items| items.len() <= 1000)

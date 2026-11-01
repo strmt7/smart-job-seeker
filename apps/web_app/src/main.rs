@@ -1407,6 +1407,28 @@ fn installed_model_inventory(data: &Value) -> Result<Value, String> {
     )
 }
 
+#[cfg(any(windows, test))]
+fn model_inventory_memory_snapshot(
+    inventory: &mut Value,
+    tags: &Value,
+    system_available: u64,
+    gpu: &Value,
+) {
+    if let Some(models) = inventory["models"].as_array_mut() {
+        for model in models {
+            let Some(name) = model["name"].as_str() else {
+                continue;
+            };
+            let check = model_start::installed_size(tags, name)
+                .and_then(|size| model_start::resource_gate(size, system_available, gpu));
+            model["memory_check"] = match check {
+                Ok(()) => json!({"state":"fits_snapshot"}),
+                Err(reason) => json!({"state":"not_ready","reason":reason}),
+            };
+        }
+    }
+}
+
 fn model_diagnostics(data: &Value) -> Result<Value, String> {
     let eligible = eligible_resident_model(data)?;
     let models = data["models"]
@@ -1737,7 +1759,16 @@ fn serve(
             return Err(format!("Ollama returned HTTP {status}"));
         }
         let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid Ollama response")?;
-        json_reply(stream, "200 OK", installed_model_inventory(&data)?);
+        #[allow(unused_mut)]
+        let mut inventory = installed_model_inventory(&data)?;
+        #[cfg(windows)]
+        if let Ok(mut system) = sysinfo::System::new() {
+            system.refresh_memory();
+            let gpu = std::panic::catch_unwind(gpu_resources::sample)
+                .unwrap_or_else(|_| json!({"state":"unavailable"}));
+            model_inventory_memory_snapshot(&mut inventory, &data, system.available_memory(), &gpu);
+        }
+        json_reply(stream, "200 OK", inventory);
         return Ok(());
     }
     if method == "GET" && path == "/api/tool-status" {
@@ -6881,8 +6912,42 @@ mod tests {
         let result: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert!(result["reported_count"].as_u64().is_some());
-        assert!(result["models"].as_array().is_some());
+        let models = result["models"].as_array().unwrap();
+        #[cfg(windows)]
+        for model in models {
+            assert!(matches!(
+                model["memory_check"]["state"].as_str(),
+                Some("fits_snapshot" | "not_ready")
+            ));
+            if matches!(
+                model["name"].as_str(),
+                Some("gemma4:12b-it-qat" | "qwen3.5:9b")
+            ) {
+                println!("{}: {}", model["name"], model["memory_check"]);
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = models;
     }
+    #[test]
+    fn model_inventory_memory_checks_share_the_startup_gate() {
+        let gib = 1024_u64 * 1024 * 1024;
+        let tags = json!({"models":[{"name":"small","size":6*gib,"details":{"format":"gguf"}},{"name":"large","size":9*gib,"details":{"format":"gguf"}},{"name":"remote-cloud","size":6*gib,"details":{"format":"gguf"}}]});
+        let mut inventory = installed_model_inventory(&tags).unwrap();
+        let gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*gib,"used_bytes":6*gib}]});
+        model_inventory_memory_snapshot(&mut inventory, &tags, 24 * gib, &gpu);
+        assert_eq!(
+            inventory["models"][0]["memory_check"]["state"],
+            "fits_snapshot"
+        );
+        assert_eq!(inventory["models"][1]["memory_check"]["state"], "not_ready");
+        assert!(inventory["models"][1]["memory_check"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("GPU memory"));
+        assert_eq!(inventory["models"][2]["memory_check"]["state"], "not_ready");
+    }
+
     #[test]
     fn model_inventory_is_bounded_and_reports_invalid_entries() {
         let mut models: Vec<Value> = (0..101)
