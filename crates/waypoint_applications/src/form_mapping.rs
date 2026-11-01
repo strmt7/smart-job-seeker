@@ -21,6 +21,7 @@ pub enum FormFieldType {
     Date,
     Month,
     Time,
+    DateTimeLocal,
     Radio { options: Vec<String> },
 }
 
@@ -142,6 +143,21 @@ pub fn valid_iso_time(value: &str) -> bool {
         && value[3..5].parse::<u32>().is_ok_and(|minute| minute < 60)
 }
 
+/// A local date and time at minute precision, without a timezone.
+pub fn valid_iso_datetime_local(value: &str) -> bool {
+    let b = value.as_bytes();
+    b.len() == 16
+        && b[10] == b'T'
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| matches!(i, 4 | 7 | 10 | 13) || c.is_ascii_digit())
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[13] == b':'
+        && valid_iso_date(&value[..10])
+        && valid_iso_time(&value[11..])
+}
+
 /// Accept a complete Gregorian calendar date in the format used by native date inputs.
 pub fn valid_iso_date(value: &str) -> bool {
     let b = value.as_bytes();
@@ -247,6 +263,9 @@ pub fn validate_mapping(
             (FormFieldType::Date, PacketValue::Date(date)) => valid_iso_date(date),
             (FormFieldType::Month, PacketValue::Date(date)) => valid_iso_month(date),
             (FormFieldType::Time, PacketValue::Date(time)) => valid_iso_time(time),
+            (FormFieldType::DateTimeLocal, PacketValue::Date(value)) => {
+                valid_iso_datetime_local(value)
+            }
             (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::Select { options }, PacketValue::Text(t)) => options.contains(t),
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -390,6 +409,27 @@ mod tests {
         for value in ["24:00", "12:60", "9:05", "09:05:00", "é:05", ""] {
             assert!(!valid_iso_time(value));
         }
+    }
+
+    #[test]
+    fn local_datetime_requires_a_complete_date_and_minute_without_timezone() {
+        for value in ["2024-02-29T00:00", "2026-11-01T23:59"] {
+            assert!(valid_iso_datetime_local(value));
+        }
+        for value in [
+            "2026-02-29T12:00",
+            "2026-11-01T24:00",
+            "2026-11-01T12:00Z",
+            "2026-11-01 12:00",
+            "é026-11-01T12:00",
+            "",
+        ] {
+            assert!(!valid_iso_datetime_local(value));
+        }
+        assert_eq!(
+            serde_json::to_value(FormFieldType::DateTimeLocal).unwrap(),
+            "date_time_local"
+        );
     }
 
     #[test]

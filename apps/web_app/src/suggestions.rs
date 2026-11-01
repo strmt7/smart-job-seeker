@@ -290,6 +290,7 @@ pub fn suggest_with_review(
                 FormFieldType::Date => "date",
                 FormFieldType::Month => "month",
                 FormFieldType::Time => "time",
+                FormFieldType::DateTimeLocal => "date_time_local",
             };
             let index = schema.fields.iter().position(|candidate| candidate.selector == field.selector).expect("field belongs to schema");
             json!({"selector":model_field_selector(schema, index),"label":field.label,"type":kind,"autocomplete":field.autocomplete})

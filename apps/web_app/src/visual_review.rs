@@ -588,7 +588,10 @@ fn crosscheck_live_values_with_budget(
                     PacketValue::Text(value),
                 )) => driver.verify_text_value(&field.selector, value),
                 Some((
-                    FormFieldType::Date | FormFieldType::Month | FormFieldType::Time,
+                    FormFieldType::Date
+                    | FormFieldType::Month
+                    | FormFieldType::Time
+                    | FormFieldType::DateTimeLocal,
                     PacketValue::Date(value),
                 )) => driver.verify_text_value(&field.selector, value),
                 Some((FormFieldType::Checkbox, PacketValue::Bool(value))) => {

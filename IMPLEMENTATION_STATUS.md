@@ -1,3 +1,8 @@
+## Reviewed native local date and time — 2026-11-01
+
+- Native `datetime-local` fields can now be reviewed and filled at minute precision. The value has no timezone; invalid calendar dates, timezones and seconds are rejected. The browser respects native validity constraints, checks existing values before replacement and verifies the retained value. Other unsupported special controls still require manual handling.
+- A fictional browser fixture rejected invalid, wrong-type and out-of-range values and verified a valid fill. A separate reviewed-fill fixture exercised the one-use grant and refused replay. Date validation, answer-review and UI checks and web-app Clippy passed. No local vision model or employer site was tested for this field; localized visual representations can differ and require manual inspection. No application was submitted.
+
 ## Document extraction response recovery — 2026-11-01
 
 - Completed extraction status reads can now be repeated until the 60-second expiry or another extraction starts after collection. The document interfaces retry a transient polling error at most twice; server errors are surfaced immediately. A new extraction can replace a collected result, so recovery is not guaranteed if another request starts first. Results remain in memory only, and expiration is checked on later requests.

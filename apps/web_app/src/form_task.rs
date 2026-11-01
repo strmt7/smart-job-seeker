@@ -90,6 +90,7 @@ fn has_required_data_entry_form(fields: &[waypoint_applications::form_mapping::F
                         | FormFieldType::Date
                         | FormFieldType::Month
                         | FormFieldType::Time
+                        | FormFieldType::DateTimeLocal
                 )
         })
         .take(2)

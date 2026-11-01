@@ -125,7 +125,7 @@ fn native_special_controls_are_reported_for_manual_review() {
         .find(|field| field.label == "Name")
         .unwrap();
     assert!(!name.sensitive);
-    for label in ["Start week", "Appointment", "Preference", "Colour"] {
+    for label in ["Start week", "Preference", "Colour"] {
         let field = live
             .schema
             .fields
@@ -174,6 +174,41 @@ fn native_time_is_filled_and_verified_within_site_limits() {
     driver.ensure_text_replaceable("#time", "13:30").unwrap();
     driver.execute(&fill("13:30")).unwrap();
     driver.verify_text_value("#time", "13:30").unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn native_local_datetime_is_checked_and_retained() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_native_special_controls.html"))
+        .unwrap();
+    let field = live
+        .schema
+        .fields
+        .iter()
+        .find(|f| f.label == "Appointment")
+        .unwrap();
+    assert_eq!(field.field_type, FormFieldType::DateTimeLocal);
+    let fill = |value: &str| BrowserCommand::Fill {
+        selector: "#datetime".into(),
+        value: PacketValue::Date(value.into()),
+    };
+    assert!(driver.execute(&fill("2026-02-30T12:00")).is_err());
+    assert!(driver.execute(&fill("2026-10-30T12:00")).is_err());
+    assert!(driver.execute(&fill("2026-11-01T12:00Z")).is_err());
+    assert_eq!(driver.text_value_snapshot("#datetime").unwrap().value, "");
+    driver
+        .ensure_text_replaceable("#datetime", "2026-11-01T13:30")
+        .unwrap();
+    driver.execute(&fill("2026-11-01T13:30")).unwrap();
+    driver
+        .verify_text_value("#datetime", "2026-11-01T13:30")
+        .unwrap();
     assert!(driver
         .trace
         .iter()
