@@ -329,6 +329,19 @@ fn attach_provenance(capture: &mut ListingCapture, job: &Value) {
     }
 }
 
+fn attach_search_context(capture: &mut ListingCapture, context: Value) {
+    capture.metadata["search_context"] = context;
+    if serde_json::to_vec(&capture.metadata)
+        .ok()
+        .is_none_or(|bytes| bytes.len() > 512 * 1024)
+    {
+        if let Some(metadata) = capture.metadata.as_object_mut() {
+            metadata.remove("search_context");
+        }
+        capture.metadata["search_context_status"] = json!("omitted_size_limit");
+    }
+}
+
 pub fn extraction_provenance(capture: &Value, current: &Value) -> Option<Value> {
     let saved = capture["extraction_provenance"].as_object()?;
     let kind = saved
@@ -923,7 +936,11 @@ fn listing_embedded_warnings(walls: &[String]) -> Result<Vec<String>, String> {
     Ok(warnings)
 }
 
-pub fn start(id: String, url: String) -> Result<(), String> {
+pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(), String> {
+    let search_context = match search_context {
+        Some(context) => crate::candidate_selection::search_context(&context)?,
+        None => None,
+    };
     let mut tasks = TASK.lock().map_err(|_| "Listing inspection unavailable")?;
     if tasks.is_some() {
         return Err("A listing inspection is running or awaiting its result".into());
@@ -982,6 +999,9 @@ pub fn start(id: String, url: String) -> Result<(), String> {
             ensure_listing_address(&mut browser, &current)?;
             capture.metadata["email_links"] = email_links;
             attach_provenance(&mut capture, &job);
+            if let Some(context) = search_context {
+                attach_search_context(&mut capture, context);
+            }
             Ok(InspectedListing { job, capture })
         })
         .unwrap_or_else(|_| Err("Listing inspection stopped unexpectedly".into()));
@@ -1395,7 +1415,7 @@ mod tests {
             result: Some(Ok(Arc::new(InspectedListing {
                 job: json!({"url":"https://example.org/job","title":"Engineer","employer":""}),
                 capture: ListingCapture {
-                    metadata: json!({"source_url":"https://example.org/job","captured_at":1750000000,"segments":0,"structured_source_status":"captured","structured_source_scripts":[json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}}}).to_string()]}),
+                    metadata: json!({"source_url":"https://example.org/job","requested_url":"https://example.org/job","captured_at":1750000000,"segments":0,"structured_source_status":"captured","structured_source_scripts":[json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}}}).to_string()]}),
                     segments: vec![],
                 },
             }))),
@@ -1457,6 +1477,10 @@ mod tests {
             add_page_text_contacts(&mut contacts, &listing.capture.metadata);
             listing.capture.metadata["email_links"] = contacts;
             attach_provenance(&mut listing.capture, &listing.job);
+            attach_search_context(
+                &mut listing.capture,
+                json!({"engines":["fixture"],"published_date":"2026-10-01","alternative_published_dates":["2026-10-02"],"engines_limited":false,"dates_limited":false}),
+            );
         }
         let (_, response) = call(status, request());
         let first: Value =
@@ -1466,6 +1490,7 @@ mod tests {
         {
             assert_eq!(first["capture"]["saved"], false);
             assert_eq!(first["capture"]["source_saved"], true);
+            assert_eq!(first["search_context_saved"], true);
             let (_, salary_response) = call(
                 "/api/listing-salary-evidence",
                 json!({"id":first["saved"]["id"]}),
@@ -1474,6 +1499,12 @@ mod tests {
                 serde_json::from_str(salary_response.split_once("\r\n\r\n").unwrap().1).unwrap();
             assert_eq!(salary["salary_evidence"]["value"]["minValue"], 60000);
             assert_eq!(salary["captured_at"], 1750000000);
+            assert_eq!(salary["search_context"]["engines"], json!(["fixture"]));
+            assert_eq!(salary["search_context_matches_url"], true);
+            assert_eq!(
+                salary["search_context"]["alternative_published_dates"],
+                json!(["2026-10-02"])
+            );
             assert_eq!(salary["matches_current_url"], true);
             assert_eq!(salary["extraction_provenance"]["kind"], "local_model");
             assert_eq!(
@@ -1532,6 +1563,20 @@ mod tests {
             );
             assert_eq!(workspace.job_capture_metadata(&id).unwrap().unwrap(), later);
         }
+    }
+
+    #[test]
+    fn oversized_capture_marks_search_context_omitted() {
+        let mut capture = ListingCapture {
+            metadata: json!({"content":"x".repeat(512*1024)}),
+            segments: vec![],
+        };
+        attach_search_context(&mut capture, json!({"engines":["fixture"]}));
+        assert!(capture.metadata.get("search_context").is_none());
+        assert_eq!(
+            capture.metadata["search_context_status"],
+            "omitted_size_limit"
+        );
     }
 
     #[test]

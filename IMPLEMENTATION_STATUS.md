@@ -1,3 +1,8 @@
+## Retaining search attribution with listings — 2026-11-01
+
+- Selected search results now retain bounded provider-reported engine names and dates across selection recovery. New listing inspections carry that context into the first securely saved listing capture or source-only record, and the listing review displays it as unverified search attribution. The comparison uses the requested search-result URL rather than assuming a redirect is the same listing. Search queries and snippets are not included. Existing captures are not overwritten, so later search reports may not be retained; the inspection reports that outcome. A size-limit omission is reported when that capture is readable.
+- Fictional tests covered selection persistence and stale-write rejection, bounded metadata, a simulated inspection save/retry through the local API, and UI rendering. All UI checks passed. The save test used a Windows workspace and source-only capture; it did not exercise an external provider or employer. No application was submitted.
+
 ## Search-result attribution — 2026-11-01
 
 - When a provider repeats the exact same URL within one response, the search parser now retains distinct reported engine labels, fills a missing title or snippet from a later copy, and displays differing provider-reported dates separately. It keeps at most eight engine labels and four alternative dates and signals when those bounds may omit entries. The same treatment applies to bounded references to URLs seen on earlier pages. These are provider reports, not verified listing dates, and URL equality does not establish whether different URLs advertise the same position.

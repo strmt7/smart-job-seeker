@@ -3,6 +3,50 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use waypoint_workspace::Workspace;
 
+/// Provider-reported search metadata is advisory and never listing evidence.
+pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    if !value.is_object() {
+        return Err("Invalid search context".into());
+    }
+    let text = |value: &Value| -> Result<String, String> {
+        let value = value.as_str().ok_or("Invalid search context text")?;
+        if value.len() > 320 || value.chars().count() > 80 || value.chars().any(char::is_control) {
+            return Err("Invalid search context text".into());
+        }
+        Ok(value.to_owned())
+    };
+    let array = |value: &Value, limit: usize| -> Result<Vec<String>, String> {
+        let items = value
+            .as_array()
+            .filter(|items| items.len() <= limit)
+            .ok_or("Invalid search context list")?;
+        items.iter().map(&text).collect()
+    };
+    let engines = array(&value["engines"], 8)?;
+    let date = text(&value["published_date"])?;
+    let dates = array(&value["alternative_published_dates"], 4)?;
+    let engines_limited = value["engines_limited"]
+        .as_bool()
+        .ok_or("Invalid search context flag")?;
+    let dates_limited = value["dates_limited"]
+        .as_bool()
+        .ok_or("Invalid search context flag")?;
+    if engines.is_empty()
+        && date.is_empty()
+        && dates.is_empty()
+        && !engines_limited
+        && !dates_limited
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        json!({"engines":engines,"published_date":date,"alternative_published_dates":dates,"engines_limited":engines_limited,"dates_limited":dates_limited}),
+    ))
+}
+
 fn validate(value: &Value) -> Result<Vec<Value>, String> {
     let items = value
         .as_array()
@@ -32,7 +76,11 @@ fn validate(value: &Value) -> Result<Vec<Value>, String> {
                     && !title.chars().any(char::is_control)
             })
             .ok_or("Invalid selected listing title")?;
-        result.push(json!({"url":url.as_str(),"title":title}));
+        let mut entry = json!({"url":url.as_str(),"title":title});
+        if let Some(context) = search_context(&item["search_context"])? {
+            entry["search_context"] = context;
+        }
+        result.push(entry);
     }
     Ok(result)
 }
@@ -81,6 +129,25 @@ mod tests {
         ]))
         .is_err());
     }
+    #[test]
+    fn search_context_is_bounded_and_optional_for_existing_selections() {
+        let context = json!({"engines":["one","two"],"published_date":"2026-10-01","alternative_published_dates":["2026-10-02"],"engines_limited":false,"dates_limited":false,"untrusted_extra":"discarded"});
+        let item = json!({"url":"https://example.org/job","title":"Role","search_context":context});
+        let saved = validate(&json!([item])).unwrap();
+        assert_eq!(saved[0]["search_context"]["engines"], json!(["one", "two"]));
+        assert!(saved[0]["search_context"].get("untrusted_extra").is_none());
+        let mut bad = saved[0].clone();
+        bad["search_context"]["engines"] = json!(vec!["one"; 9]);
+        assert!(validate(&json!([bad])).is_err());
+        let mut bad = saved[0].clone();
+        bad["search_context"]["published_date"] = json!("bad\nvalue");
+        assert!(validate(&json!([bad])).is_err());
+        assert!(
+            validate(&json!([{"url":"https://example.org/old","title":"Old"}])).unwrap()[0]
+                .get("search_context")
+                .is_none()
+        );
+    }
     #[cfg(windows)]
     #[test]
     fn selection_survives_restart_and_stale_windows_cannot_overwrite_it() {
@@ -99,7 +166,7 @@ mod tests {
             .prefix("waypoint-selection-")
             .tempdir_in(parent)
             .unwrap();
-        let items = json!([{"url":"https://example.org/job","title":"Fictional role"}]);
+        let items = json!([{"url":"https://example.org/job","title":"Fictional role","search_context":{"engines":["fixture"],"published_date":"2026-10-01","alternative_published_dates":[],"engines_limited":false,"dates_limited":false}}]);
         {
             let ws = open(dir.path());
             assert_eq!(load(&ws).unwrap(), (0, vec![]));

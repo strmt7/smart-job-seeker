@@ -2412,7 +2412,8 @@ fn serve(
                 .check_public_route(source, waypoint_policy::Operation::Read)
                 .map_err(|e| e.to_string())?;
             let id = random_id()?;
-            candidate_task::start(id.clone(), parsed.to_string())?;
+            let context = candidate_selection::search_context(&body["search_context"])?;
+            candidate_task::start(id.clone(), parsed.to_string(), context)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/listing-inspect/pending" => {
@@ -2438,37 +2439,78 @@ fn serve(
                 Some(source) => Some(source),
                 None => ws.job_capture_metadata(&id).map_err(|e| e.to_string())?,
             };
-            let (evidence, captured_at, matches_current_url, provenance, email_links) =
-                if let Some(metadata) = metadata {
-                    let evidence = candidate_task::captured_posting_evidence(&metadata)?;
+            let (
+                evidence,
+                captured_at,
+                matches_current_url,
+                provenance,
+                email_links,
+                mut search_context,
+                mut search_context_status,
+                mut search_context_matches_url,
+            ) = if let Some(metadata) = metadata {
+                let evidence = candidate_task::captured_posting_evidence(&metadata)?;
+                let capture: Value = serde_json::from_slice(&metadata)
+                    .map_err(|_| "Saved listing metadata is invalid")?;
+                let captured_at = capture["captured_at"]
+                    .as_i64()
+                    .filter(|time| *time > 0 && *time <= 253_402_300_799);
+                let source_url = capture["source_url"].as_str().filter(|url| !url.is_empty());
+                let matches_current_url = source_url
+                    .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
+                    .map(|(source, current)| source == current);
+                let current = json!({"title":job.title,"employer":job.employer,"location":job.location,"description":description,"requisition_id":job.requisition_id,"remote":job.remote});
+                let provenance = candidate_task::extraction_provenance(&capture, &current);
+                let email_links = candidate_task::captured_email_links(&capture);
+                let search_context =
+                    candidate_selection::search_context(&capture["search_context"])?;
+                let search_context_matches_url = search_context.as_ref().and_then(|_| {
+                    capture["requested_url"]
+                        .as_str()
+                        .filter(|url| !url.is_empty())
+                        .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
+                        .map(|(source, current)| source == current)
+                });
+                let search_context_status = capture["search_context_status"]
+                    .as_str()
+                    .filter(|value| *value == "omitted_size_limit")
+                    .map(str::to_owned);
+                (
+                    evidence,
+                    captured_at,
+                    matches_current_url,
+                    provenance,
+                    email_links,
+                    search_context,
+                    search_context_status,
+                    search_context_matches_url,
+                )
+            } else {
+                (None, None, None, None, None, None, None, None)
+            };
+            if search_context.is_none() {
+                if let Some(metadata) = ws.job_capture_metadata(&id).map_err(|e| e.to_string())? {
                     let capture: Value = serde_json::from_slice(&metadata)
                         .map_err(|_| "Saved listing metadata is invalid")?;
-                    let captured_at = capture["captured_at"]
-                        .as_i64()
-                        .filter(|time| *time > 0 && *time <= 253_402_300_799);
-                    let source_url = capture["source_url"].as_str().filter(|url| !url.is_empty());
-                    let matches_current_url = source_url
-                        .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
-                        .map(|(source, current)| source == current);
-                    let current = json!({"title":job.title,"employer":job.employer,"location":job.location,"description":description,"requisition_id":job.requisition_id,"remote":job.remote});
-                    let provenance = candidate_task::extraction_provenance(&capture, &current);
-                    let email_links = candidate_task::captured_email_links(&capture);
-                    (
-                        evidence,
-                        captured_at,
-                        matches_current_url,
-                        provenance,
-                        email_links,
-                    )
-                } else {
-                    (None, None, None, None, None)
-                };
+                    if let Some(context) =
+                        candidate_selection::search_context(&capture["search_context"])?
+                    {
+                        search_context_matches_url = capture["requested_url"]
+                            .as_str()
+                            .filter(|url| !url.is_empty())
+                            .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
+                            .map(|(source, current)| source == current);
+                        search_context = Some(context);
+                        search_context_status = None;
+                    }
+                }
+            }
             let email_links =
                 candidate_task::listing_email_contacts(email_links, description.as_deref());
             json_reply(
                 stream,
                 "200 OK",
-                json!({"salary_evidence":evidence.as_ref().map(|v| &v["salary_evidence"]),"posting_date_evidence":evidence.as_ref().map(|v| &v["posting_date_evidence"]),"valid_through_evidence":evidence.as_ref().map(|v| &v["valid_through_evidence"]),"captured_at":captured_at,"matches_current_url":matches_current_url,"extraction_provenance":provenance,"email_links":email_links}),
+                json!({"salary_evidence":evidence.as_ref().map(|v| &v["salary_evidence"]),"posting_date_evidence":evidence.as_ref().map(|v| &v["posting_date_evidence"]),"valid_through_evidence":evidence.as_ref().map(|v| &v["valid_through_evidence"]),"captured_at":captured_at,"matches_current_url":matches_current_url,"extraction_provenance":provenance,"email_links":email_links,"search_context":search_context,"search_context_status":search_context_status,"search_context_matches_url":search_context_matches_url}),
             );
         }
         "/api/listing-contacts/pending" => {
@@ -2585,8 +2627,17 @@ fn serve(
                         )
                         .map_err(|e| e.to_string())?;
                     }
-                    let response =
-                        json!({"status":"complete","job":job,"saved":result,"capture":capture});
+                    let search_context_supplied =
+                        inspected.capture.metadata.get("search_context").is_some()
+                            || inspected.capture.metadata["search_context_status"]
+                                == "omitted_size_limit";
+                    let search_context_saved = search_context_supplied.then(|| {
+                        inspected.capture.metadata.get("search_context").is_some()
+                            && (capture["source_saved"] == true
+                                || (capture["saved"] == true
+                                    && capture["preserved_existing"] != true))
+                    });
+                    let response = json!({"status":"complete","job":job,"saved":result,"capture":capture,"search_context_saved":search_context_saved});
                     candidate_task::complete(id, response.clone())?;
                     json_reply(stream, "200 OK", response);
                 }
@@ -7971,7 +8022,7 @@ mod tests {
         let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"baseSalary":{"currency":"EUR","value":{"minValue":60000,"unitText":"YEAR"}},"datePosted":"2026-10-01","validThrough":"2026-11-30T23:59:00+01:00"}).to_string();
         let metadata = json!({"source_url":"https://example.test/older-job","captured_at":1750000000,"structured_source_status":"captured","structured_source_scripts":[posting]}).to_string();
         assert!(ws.save_job_source_only(&id, metadata.as_bytes()).unwrap());
-        let later = json!({"source_url":"https://example.test/job","captured_at":1750000100,"structured_source_status":"unavailable"}).to_string();
+        let later = json!({"source_url":"https://example.test/job","requested_url":"https://example.test/search-result","captured_at":1750000100,"structured_source_status":"unavailable","search_context":{"engines":["fixture"],"published_date":"2026-10-02","alternative_published_dates":[],"engines_limited":false,"dates_limited":false}}).to_string();
         ws.save_job_capture(
             &id,
             later.as_bytes(),
@@ -7999,6 +8050,8 @@ mod tests {
         );
         assert_eq!(result["captured_at"], 1750000000);
         assert_eq!(result["matches_current_url"], false);
+        assert_eq!(result["search_context"]["engines"], json!(["fixture"]));
+        assert_eq!(result["search_context_matches_url"], false);
     }
     #[test]
     #[ignore = "queries the existing local Ollama inventory without loading a model"]

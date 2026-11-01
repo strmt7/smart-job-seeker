@@ -1,0 +1,17 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line = source.split('\n').find(value => value.startsWith('function showSavedSearchContext('));
+assert.ok(line);
+const element=(_tag,text,cls)=>({text,cls});
+const show=vm.runInNewContext(`(${line})`,{element});
+const panel={items:[],append(item){this.items.push(item)}};
+show(panel,{search_context_matches_url:true,search_context:{engines:['one','two'],published_date:'2026-10-01',alternative_published_dates:['2026-10-02'],engines_limited:true,dates_limited:false}});
+assert.match(panel.items[0].text,/one, two.*2026-10-01.*2026-10-02.*unverified/);
+assert.match(panel.items[1].text,/bounded/);
+const missing={items:[],append(item){this.items.push(item)}};
+show(missing,{search_context_status:'omitted_size_limit'});
+assert.match(missing.items[0].text,/could not be retained/);
+assert.ok(source.includes('showSavedSearchContext(salary,result)'));
+console.log('Saved search context UI checks passed.');
