@@ -2,7 +2,7 @@
 
 ## Incomplete duplicate decisions — 2026-11-01
 
-- A duplicate pair marked as the same without a valid preferred listing, or with an unrecognized status, holds both jobs and is presented as pending with an explanation. A new explicit decision is accepted only at the current revision; stale and replayed decisions are refused. Store tests covered these cases and normal same/different decisions; workspace tests and existing mocked duplicate-review UI checks passed. The complete malformed-record recovery flow has not been exercised in a rendered interface, and this does not guarantee detection of every duplicate.
+- A duplicate pair marked as the same without a valid preferred listing, or with an unrecognized status, holds both jobs and is presented as pending with an explanation. A new explicit decision is accepted only at the current revision; stale and replayed decisions are refused. Store tests covered these cases and normal same/different decisions; workspace tests and existing mocked duplicate-review UI checks passed. A rendered fictional UI fixture showed the explanation, a simulated stale-decision error, and a refreshed decision using the new revision at desktop size; the mobile view had no horizontal overflow. Its API was mocked, so it is not an end-to-end database test. This does not guarantee detection of every duplicate.
 
 ## Changing form during read-only inspection — 2026-11-01
 
