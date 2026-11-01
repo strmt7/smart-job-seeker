@@ -1,0 +1,26 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start = source.indexOf('function qualificationParts(');
+const end = source.indexOf('function selectedFactsDetails(',start);
+assert.ok(start >= 0 && end > start);
+function el(tag,text=''){ return {tag,text,children:[],append(...items){this.children.push(...items)},addEventListener(_event,fn){this.action=fn}}; }
+const calls=[];
+const context={TextEncoder, element:el, document:{createElement:el,createTextNode:text=>({text})}, api:async(_path,data)=>calls.push(data), refresh:async()=>{},notify:()=>{}};
+vm.createContext(context);
+vm.runInContext(source.slice(start,end),context);
+const result=context.qualificationParts('One complete sentence.\n' + 'é'.repeat(600) + '\nAnother complete sentence.');
+assert.deepEqual(Array.from(result.parts),['One complete sentence.','Another complete sentence.']);
+assert.equal(result.skipped,1);
+const truncated=context.qualificationParts('Complete.\n'+'x'.repeat(31000));
+assert.equal(truncated.truncated,true);
+assert.deepEqual(Array.from(truncated.parts),['Complete.']);
+assert.equal(context.qualificationSplitControl({text:'Short qualification'}),null);
+const panel=context.qualificationSplitControl({text:'First accurate sentence.\nSecond sentence.\n'+'x'.repeat(1001)});
+const labels=panel.children.filter(item=>item.tag==='label');
+assert.equal(labels.length,2);
+assert.equal(calls.length,0);
+labels[1].children[0].checked=true;
+const button=panel.children.find(item=>item.tag==='button');
+button.action().then(()=>{assert.equal(calls.length,1);assert.equal(calls[0].text,'Second sentence.');console.log('Qualification split UI checks passed.');}).catch(error=>{console.error(error);process.exitCode=1});
