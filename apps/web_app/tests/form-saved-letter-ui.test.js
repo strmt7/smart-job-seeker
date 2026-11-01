@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('function savedCoverLetterControl('),end=source.indexOf('function showFormPreview(',start);
+assert.ok(start>=0 && end>start);
+function node(tag,text){return {tag,text,children:[],options:[],value:'',open:false,handlers:{},append(...items){this.children.push(...items);if(tag==='select')this.options.push(...items);},setAttribute(){},addEventListener(type,fn){this.handlers[type]=fn;},dispatchEvent(){},focus(){}};}
+let current=true, waitRead=null;const calls=[];
+const api=async(path,body)=>{calls.push({path,body});if(path.endsWith('/list'))return {drafts:[{id:'letter',kind:'cover_letter',created_at:1}]};if(waitRead)await waitRead;return {current,result:{draft:{kind:'cover_letter',framing:{opening:'Dear team,'},paragraphs:[{text:'Fictional experience.'}]}}};};
+const context={element:node,document:{createElement:node},Option:function(text,value){return {text,value}},Event:function(type){this.type=type},api,Date};
+const create=vm.runInNewContext(`(${source.slice(start,end).trim()})`,context);
+(async()=>{const input=node('textarea'),details=create({id:'job'},input);details.open=true;await details.handlers.toggle();const select=details.children[2],load=details.children[3],preview=details.children[4],use=details.children[6];assert.equal(select.options[1].value,'letter');select.value='letter';await load.handlers.click();assert.equal(preview.value,'Dear team,\n\nFictional experience.');current=false;await use.handlers.click();assert.equal(input.value,'');current=true;await use.handlers.click();assert.equal(input.value,preview.value);assert.equal(calls.filter(c=>c.path.endsWith('/read')).length,3);let resume;waitRead=new Promise(resolve=>{resume=resolve});const pending=use.handlers.click();input.value='Newer user edit';resume();await pending;assert.equal(input.value,'Newer user edit');console.log('Saved cover-letter form UI checks passed.');})().catch(e=>{console.error(e);process.exitCode=1;});
