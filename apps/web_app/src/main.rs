@@ -2575,6 +2575,8 @@ fn serve(
                 } else if result["saved"].is_null() {
                     result["assessment"]["source_coverage"] =
                         fit_source_coverage(ws, &job_id, &listing, &instructions)?;
+                    result["assessment"]["preference_coverage"] =
+                        json!(fit_task::preference_coverage(&result["assessment"]));
                     result["assessment"]["requirement_coverage"] =
                         json!(fit_task::requirement_coverage(&result["assessment"]));
                     if let Some(previous) = ws.fit_assessment(&job_id).map_err(|e| e.to_string())? {

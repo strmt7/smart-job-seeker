@@ -841,6 +841,14 @@ pub(crate) fn reviewed_rubric(assessment: &Value, decisions: &Value) -> Result<V
     )
 }
 
+fn complete_listing_coverage(assessment: &Value) -> bool {
+    assessment["source_coverage"]["description_present"] == true
+        && matches!(
+            (assessment["source_coverage"]["listing_used_chars"].as_u64(), assessment["source_coverage"]["listing_total_chars"].as_u64()),
+            (Some(used), Some(total)) if used > 0 && used == total
+        )
+}
+
 /// Summarize the model's required job criteria, not the completeness of the listing.
 pub(crate) fn requirement_coverage(assessment: &Value) -> &'static str {
     let Some(rubric) = assessment["rubric"]
@@ -887,11 +895,7 @@ pub(crate) fn requirement_coverage(assessment: &Value) -> &'static str {
         || assessment["requirement_audit"]["listing_truncated"] != false
         || assessment["requirement_audit"]["criterion_limit_reached"] != false
         || assessment["requirement_audit"]["audit_limit_reached"] != false
-        || assessment["source_coverage"]["description_present"] != true
-        || !matches!(
-            (assessment["source_coverage"]["listing_used_chars"].as_u64(), assessment["source_coverage"]["listing_total_chars"].as_u64()),
-            (Some(used), Some(total)) if used > 0 && used == total
-        )
+        || !complete_listing_coverage(assessment)
     {
         "incomplete"
     } else if required == 0 {
@@ -930,6 +934,7 @@ pub(crate) fn preference_coverage(assessment: &Value) -> &'static str {
     let comparison = &assessment["preference_comparison"];
     let total = preferences.len() as u64;
     if clean_audit
+        && complete_listing_coverage(assessment)
         && total > 0
         && preferences.iter().all(|item| item["status"] == "supported")
         && comparison["status"] == "completed"
@@ -2377,8 +2382,14 @@ mod tests {
 
     #[test]
     fn preference_coverage_marks_missing_unknown_and_conflicting_conditions() {
-        let mut assessment = json!({"preference_audit":{"status":"completed","instructions_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"preference_comparison":{"status":"completed","selected":1,"total":1,"listing_truncated":false},"rubric":[{"source":"preference","status":"supported"}]});
+        let mut assessment = json!({"source_coverage":{"description_present":true,"listing_used_chars":100,"listing_total_chars":100},"preference_audit":{"status":"completed","instructions_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"preference_comparison":{"status":"completed","selected":1,"total":1,"listing_truncated":false},"rubric":[{"source":"preference","status":"supported"}]});
         assert_eq!(preference_coverage(&assessment), "included");
+        assessment["source_coverage"]["description_present"] = json!(false);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["source_coverage"]["description_present"] = json!(true);
+        assessment["source_coverage"]["listing_used_chars"] = json!(99);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["source_coverage"]["listing_used_chars"] = json!(100);
         assessment["rubric"][0]["status"] = json!("unknown");
         assert_eq!(preference_coverage(&assessment), "needs_review");
         assessment["rubric"][0]["status"] = json!("contradicted");
@@ -2433,10 +2444,12 @@ mod tests {
             }
         }
         let listing = "Requires Python. Fully remote worldwide.";
-        let result =
+        let mut result =
             assess_with_source(&mut Fixture, &[], "Remote only", listing, Some(listing)).unwrap();
         assert_eq!(result["preference_audit"]["added"], 1);
-        assert_eq!(result["preference_coverage"], "included");
+        assert_eq!(result["preference_coverage"], "needs_review");
+        result["source_coverage"] = json!({"description_present":true,"listing_used_chars":listing.chars().count(),"listing_total_chars":listing.chars().count()});
+        assert_eq!(preference_coverage(&result), "included");
         assert_eq!(result["rubric"][1]["source"], "preference");
         assert_eq!(result["rubric"][1]["status"], "supported");
         assert_eq!(
