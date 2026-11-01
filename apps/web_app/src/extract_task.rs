@@ -6,6 +6,7 @@ struct Task {
     id: String,
     outcome: Option<Result<(String, Option<Value>), String>>,
     completed: Option<Instant>,
+    collected: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 const RETENTION: Duration = Duration::from_secs(60);
@@ -25,13 +26,14 @@ pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
         .lock()
         .map_err(|_| "Extraction task state unavailable")?;
     expire_completed(&mut task);
-    if task.is_some() {
+    if task.as_ref().is_some_and(|t| !t.collected) {
         return Err("A document extraction is running or its result is awaiting collection; uncollected results expire after 60 seconds".into());
     }
     *task = Some(Task {
         id: id.clone(),
         outcome: None,
         completed: None,
+        collected: false,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -58,14 +60,14 @@ pub fn poll(id: &str) -> Result<Value, String> {
         .as_mut()
         .filter(|task| task.id == id)
         .ok_or("Extraction task not found")?;
-    match task.outcome.take() {
+    match &task.outcome {
         None => Ok(json!({"status":"running"})),
         Some(Ok((text, coverage))) => {
-            *tasks = None;
+            task.collected = true;
             Ok(json!({"status":"complete","text":text,"coverage":coverage}))
         }
         Some(Err(error)) => {
-            *tasks = None;
+            task.collected = true;
             Ok(json!({"status":"failed","error":error}))
         }
     }
@@ -129,7 +131,12 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        assert_eq!(
+            super::poll("fixture").unwrap()["text"],
+            "Fictional qualifications"
+        );
         super::start("second".into(), "other.txt".into(), b"Other".to_vec()).unwrap();
+        assert!(super::poll("fixture").is_err());
         loop {
             let result = super::poll("second").unwrap();
             if result["status"] == "complete" {
@@ -147,6 +154,7 @@ mod tests {
             id: "first".into(),
             outcome: Some(Ok(("Fictional CV".into(), None))),
             completed: Some(std::time::Instant::now()),
+            collected: false,
         });
         super::expire_completed(&mut task);
         assert_eq!(task.as_ref().unwrap().id, "first");

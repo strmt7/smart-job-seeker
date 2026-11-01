@@ -1,3 +1,8 @@
+## Document extraction response recovery — 2026-11-01
+
+- Completed extraction status reads can now be repeated until the 60-second expiry or another extraction starts after collection. The document interfaces retry a transient polling error at most twice; server errors are surfaced immediately. A new extraction can replace a collected result, so recovery is not guaranteed if another request starts first. Results remain in memory only, and expiration is checked on later requests.
+- Focused worker tests covered repeated status reads and replacement; simulated interface checks covered transient failure, retry exhaustion and server refusal. The concurrent-review UI check and web-app Clippy passed. No live model, employer page or application submission was involved.
+
 ## Document extraction handoff — 2026-11-01
 
 - A completed document extraction can no longer be overwritten by a new request before collection. One result is retained until it is collected or becomes eligible for expiry after 60 seconds; expiry is checked on the next extraction request or poll, not by a background timer. A conflicting request receives an explicit message. A rejected request also no longer invalidates a prior document review in the same interface.
