@@ -1190,6 +1190,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             })
             .collect();
@@ -1326,6 +1327,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             })
             .collect();
@@ -1391,6 +1393,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         };
         let preview = FormPreview {
@@ -1450,6 +1453,9 @@ mod tests {
             waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
         ));
         assert!(is_custom_review(waypoint_browser::NATIVE_DATALIST_REVIEW));
+        assert!(!is_custom_review(
+            "A field format pattern exceeds the inspection limit; review it manually"
+        ));
         assert!(!is_custom_review("captcha present"));
     }
 
@@ -1790,6 +1796,17 @@ mod tests {
             first.manual_review
         );
         assert!(first.schema.multi_step);
+        assert_eq!(
+            first
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == "#given")
+                .unwrap()
+                .pattern
+                .as_deref(),
+            Some("[A-Za-z]+")
+        );
         assert!(first
             .manual_review
             .iter()
@@ -2158,6 +2175,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         })
         .collect();
@@ -2225,6 +2243,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             })
             .collect();
@@ -2286,6 +2305,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         })
         .collect();
@@ -2339,6 +2359,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         })
         .collect();
@@ -2528,6 +2549,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: Some("given-name".into()),
                 }],
                 multi_step: false,
@@ -2591,6 +2613,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: Some("email".into()),
             }],
             multi_step: false,
@@ -2643,6 +2666,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: Some("email".into()),
             }],
             multi_step: false,
@@ -2719,6 +2743,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: Some("given-name".into()),
                 }],
                 multi_step: false,
@@ -3410,6 +3435,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: limit,
+                pattern: None,
                 autocomplete: Some(hint.into()),
             }
         };
@@ -3463,6 +3489,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: Some("given-name".into()),
         };
         let live = LiveForm {
@@ -3511,6 +3538,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: Some("given-name".into()),
                 }],
                 multi_step: false,
@@ -3545,6 +3573,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             })
             .collect();

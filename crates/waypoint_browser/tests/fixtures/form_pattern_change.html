@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><body onload="document.getElementById('long').setAttribute('pattern','x'.repeat(513))"><form>
+<label for="code">Fictional reference</label><input id="code" pattern="[A-Z]{2}-[0-9]{3}">
+<label for="other">Other field</label><input id="other" oninput="document.getElementById('code').setAttribute('pattern','[A-Z]{2}-[0-9]{4}')">
+<label for="long">Long format</label><input id="long">
+</form></body></html>

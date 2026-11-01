@@ -641,6 +641,7 @@ mod tests {
             sensitive,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         };
         let mut fields = vec![field("Private question".into(), true)];
@@ -673,6 +674,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             }],
             multi_step: true,

@@ -631,6 +631,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: None,
                 }]
             } else if url.ends_with("/apply") || url.ends_with("/form") {
@@ -647,6 +648,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: None,
                 }]
             } else {
@@ -864,6 +866,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         };
         assert!(has_required_data_entry_form(&[

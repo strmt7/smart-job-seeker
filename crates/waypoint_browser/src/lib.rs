@@ -3755,6 +3755,7 @@ impl CdpDriver {
                             sensitive: sensitive || is_sensitive_label(&group_label),
                             editing_mode: None,
                             max_length_utf16: None,
+                            pattern: None,
                             autocomplete: None,
                         });
                     }
@@ -3800,6 +3801,7 @@ impl CdpDriver {
                             sensitive: true,
                             editing_mode: None,
                             max_length_utf16: None,
+                            pattern: None,
                             autocomplete: None,
                         });
                     }
@@ -3837,6 +3839,22 @@ impl CdpDriver {
                 }
                 _ => FormFieldType::Text,
             };
+            let pattern = if control.tag == "input"
+                && matches!(
+                    input_type.as_str(),
+                    "text" | "email" | "search" | "tel" | "url"
+                ) {
+                match control.attrs.get("pattern") {
+                    Some(value) if value.len() <= 512 => Some(value.clone()),
+                    Some(_) => {
+                        walls.push("A field format pattern exceeds the inspection limit; review it manually".into());
+                        None
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
             fields.push(FormField {
                 selector,
                 label,
@@ -3871,6 +3889,7 @@ impl CdpDriver {
                 } else {
                     None
                 },
+                pattern,
                 autocomplete: control
                     .attrs
                     .get("autocomplete")

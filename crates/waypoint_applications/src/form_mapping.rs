@@ -45,6 +45,9 @@ pub struct FormField {
     /// HTML maxlength for native text controls, measured in UTF-16 code units.
     #[serde(default)]
     pub max_length_utf16: Option<u32>,
+    /// Bounded HTML pattern supplied by the page, not executable model instructions.
+    #[serde(default)]
+    pub pattern: Option<String>,
     #[serde(default)]
     pub autocomplete: Option<String>,
 }
@@ -77,6 +80,9 @@ impl FormSchema {
                 f.max_length_utf16,
                 f.editing_mode
             ));
+            if let Some(pattern) = &f.pattern {
+                parts.push(format!("pattern|{pattern:?}"));
+            }
         }
         parts.join("\n")
     }
@@ -353,6 +359,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: None,
                 },
                 FormField {
@@ -363,6 +370,7 @@ mod tests {
                     sensitive: true,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: None,
                 },
                 FormField {
@@ -375,6 +383,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: None,
+                    pattern: None,
                     autocomplete: None,
                 },
             ],

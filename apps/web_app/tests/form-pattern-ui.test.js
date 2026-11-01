@@ -1,0 +1,12 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function formPatternNotice('));
+assert.ok(line);
+const notice = vm.runInNewContext(`(${line})`);
+assert.match(notice({label:'Reference', pattern:'[A-Z]{2}-[0-9]{3}'}), /Reference: site-declared format pattern/);
+assert.match(notice({label:'Reference', pattern:''}), /\(empty\)/);
+assert.equal(notice({label:'Reference', pattern:null}), null);
+assert.ok(source.includes('const patternNotice=formPatternNotice(field)'));
+console.log('Form pattern UI checks passed.');

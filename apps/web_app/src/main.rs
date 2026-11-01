@@ -8523,6 +8523,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8535,6 +8536,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8545,6 +8547,7 @@ mod tests {
                         sensitive: true,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8555,6 +8558,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8565,6 +8569,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8575,6 +8580,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8585,6 +8591,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                     FormField {
@@ -8597,6 +8604,7 @@ mod tests {
                         sensitive: false,
                         editing_mode: None,
                         max_length_utf16: None,
+                        pattern: None,
                         autocomplete: None,
                     },
                 ],
@@ -8703,6 +8711,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             })
             .collect();
@@ -8742,6 +8751,7 @@ mod tests {
                     sensitive: false,
                     editing_mode: None,
                     max_length_utf16: Some(3),
+                    pattern: None,
                     autocomplete: None,
                 }],
                 multi_step: false,

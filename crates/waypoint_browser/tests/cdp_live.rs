@@ -162,6 +162,62 @@ fn native_validation_reports_failure_without_exposing_input() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn changing_native_pattern_changes_reviewed_form_identity() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let initial = driver.open(&file_url("form_pattern_change.html")).unwrap();
+    assert_eq!(
+        initial
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == "#code")
+            .unwrap()
+            .pattern
+            .as_deref(),
+        Some("[A-Z]{2}-[0-9]{3}")
+    );
+    let original_hash = initial.schema.schema_hash_input();
+    assert_eq!(
+        initial
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == "#long")
+            .unwrap()
+            .pattern,
+        None
+    );
+    assert!(initial
+        .walls
+        .iter()
+        .any(|warning| warning.contains("format pattern exceeds the inspection limit")));
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#other".into(),
+            value: PacketValue::Text("fictional".into()),
+        })
+        .unwrap();
+    let updated = driver.inspect_current().unwrap();
+    assert_eq!(
+        updated
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == "#code")
+            .unwrap()
+            .pattern
+            .as_deref(),
+        Some("[A-Z]{2}-[0-9]{4}")
+    );
+    assert_ne!(updated.schema.schema_hash_input(), original_hash);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn radio_group_required_is_inherited_by_its_options() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

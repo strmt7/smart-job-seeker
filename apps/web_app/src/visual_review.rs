@@ -1150,6 +1150,7 @@ mod tests {
                 sensitive: false,
                 editing_mode: None,
                 max_length_utf16: None,
+                pattern: None,
                 autocomplete: None,
             })
             .collect();
@@ -2299,6 +2300,7 @@ mod tests {
             sensitive: false,
             editing_mode: None,
             max_length_utf16: None,
+            pattern: None,
             autocomplete: None,
         })
         .collect();

@@ -1,3 +1,8 @@
+## Form format patterns — 2026-11-01
+
+- Text-like input fields now carry bounded site-declared HTML patterns into the form review and local mapping context. A changed pattern changes the reviewed schema identity. Patterns over 512 bytes block automatic prefill for manual review; absent patterns preserve the previous schema hash. The interface shows the raw pattern as site-provided data, and Chromium still determines whether a value is valid. The app does not yet automatically reformat answers to satisfy a pattern, and invalid browser patterns may be ignored by Chromium.
+- The workspace suite passed after correcting an initially wrong local linker path, before the final oversized-pattern handling and fixture adjustment. A fictional browser check then verified pattern changes alter the schema identity and an oversized pattern is reported. With `qwen3.5:9b`, a fictional two-section wizard with a patterned first field passed mapping, reviewed filling and visual checks; navigation was a simulated user gesture. This does not prove the model interprets arbitrary patterns. Minimum sampled available RAM in that run was 18.89 GiB; the model was unloaded. No employer was contacted or application submitted.
+
 ## Earlier-field validation details — 2026-11-01
 
 - When a completed field later fails a native browser constraint, bounded rechecks now carry its label and fixed constraint category into control-focus and visual-focus review, and into the application record when capture succeeds. The custom-choice precheck also reports that category. Unrecognized errors remain generic; entered values and site-provided custom error text are not copied into these diagnostics. Rechecks still stop at the first failure and may leave other fields unchecked.
