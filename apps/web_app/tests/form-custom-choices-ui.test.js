@@ -89,9 +89,11 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   const verify=actions.children.find(item=>item.text==='Check selected value with local vision');await verify.listeners.click();
   assert.ok(actions.children.some(item=>/selected value was visually checked/.test(item.text)));
   assert.equal(stored.size,0);
-  const recoveryApi=async(path,body)=>path==='/api/form/custom-choices'?{choices:[],snapshot_digest:'d'.repeat(64),pending_selected:{selector:'#location',option:'Berlin'}}:selectApi(path,body);
+  let oldDrained=false;
+  const recoveryApi=async(path,body)=>{if(path==='/api/form/custom-choices')return {choices:[],snapshot_digest:'d'.repeat(64),pending_selected:{selector:'#location',option:'Berlin'}};if(path==='/api/form/control-vision-status' && body.task_id==='old-task'){oldDrained=true;return {status:'failed'};}return selectApi(path,body);};
+  stored.set('waypoint-choice-selected-vision',JSON.stringify({task:'old-task',session:'old-session',selector:'#location'}));
   const recovery=run(new Node('panel'),{session_id:'session'},element,recoveryApi);await recovery.choicesButton.listeners.click();
   const recovered=recovery.choicesPanel.children[0];assert.match(recovered.children[0].text,/Berlin/);
-  await recovered.children[1].listeners.click();assert.ok(recovered.children.some(item=>/selected value was visually checked/.test(item.text)));
+  await recovered.children[1].listeners.click();assert.ok(recovered.children.some(item=>/selected value was visually checked/.test(item.text)));assert.equal(stored.size,0);assert.equal(oldDrained,true);
   console.log('Custom choice review UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

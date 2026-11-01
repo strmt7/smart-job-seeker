@@ -201,3 +201,14 @@ fictional form, changing a confirmed value from `Berlin` to `Lisbon` caused
 the next fill request to be refused. Navigation to another section warns that
 previous selections can no longer be rechecked there; the tracking does not
 survive closing the browser session or prove that an employer retained values.
+
+## Resuming a pending choice review
+
+Rescanning an open form now carries any pending choice visual-review gate into
+the new inspection. The choice inventory retains the selected value awaiting
+review, and previously filled fields are flagged for fresh review because their
+old verification is no longer associated with the new inspection. The web
+interface can recover an earlier selected-value vision task or report it as
+unavailable before starting a new check. A fictional browser and workspace
+fixture exercised selection, rescan, the retained gate and subsequent review;
+the vision result in that test was simulated. No employer site was used.

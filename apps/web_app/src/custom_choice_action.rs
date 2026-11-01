@@ -528,6 +528,71 @@ mod tests {
         )
         .is_err());
         assert!(session.as_ref().unwrap().pending_choice_visual.is_some());
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                selector: "#name".into(),
+                value: waypoint_applications::form_mapping::PacketValue::Text(
+                    "Fictional applicant".into(),
+                ),
+            })
+            .unwrap();
+        session
+            .as_mut()
+            .unwrap()
+            .completed_selectors
+            .push("#name".into());
+        let rescan = request(
+            &mut ws,
+            &mut session,
+            "/api/form/rescan-start",
+            json!({"session_id":"choice-session"}),
+        )
+        .unwrap();
+        let rescan_id = rescan["task_id"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let rescanned = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/open-link-status",
+                json!({"task_id":rescan_id}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(rescanned["status"], "complete");
+        let resumed_session = rescanned["session_id"].as_str().unwrap().to_owned();
+        assert_ne!(resumed_session, "choice-session");
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == form_preview::POST_CHOICE_VISUAL_REQUIRED));
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Fields filled before this inspection")));
+        let inventory = request(
+            &mut ws,
+            &mut session,
+            "/api/form/custom-choices",
+            json!({"session_id":resumed_session}),
+        )
+        .unwrap();
+        assert_eq!(inventory["can_open"], false);
+        assert_eq!(inventory["pending_selected"]["option"], "Berlin");
         let (_, digest) =
             crate::custom_choice_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
         let field_image = session
@@ -548,7 +613,7 @@ mod tests {
             crate::control_vision::begin_pending(&ws, &job, "wrong-visual", now()).unwrap();
         crate::control_vision::set_choice_fixture(
             "wrong-visual",
-            "choice-session",
+            &resumed_session,
             job.as_str(),
             revision,
             (&selector, &digest, &field_image, "Location"),
@@ -582,7 +647,7 @@ mod tests {
                 &mut ws,
                 &mut session,
                 "/api/form/custom-choice-selected-vision-start",
-                json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest}),
+                json!({"session_id":resumed_session,"selector":selector,"snapshot_digest":digest}),
             )
             .unwrap()["task_id"]
                 .as_str()
@@ -593,7 +658,7 @@ mod tests {
                 crate::control_vision::begin_pending(&ws, &job, "selected-visual", now()).unwrap();
             crate::control_vision::set_selected_fixture(
                 "selected-visual",
-                "choice-session",
+                &resumed_session,
                 job.as_str(),
                 revision,
                 (&selector, &digest, &image, "Berlin"),
@@ -633,7 +698,7 @@ mod tests {
             &mut ws,
             &mut session,
             "/api/form/custom-choices",
-            json!({"session_id":"choice-session"}),
+            json!({"session_id":resumed_session}),
         )
         .unwrap();
         assert_eq!(inventory["can_open"], false);
@@ -641,7 +706,7 @@ mod tests {
             &mut ws,
             &mut session,
             "/api/form/fill",
-            json!({"session_id":"choice-session","reviewed":true}),
+            json!({"session_id":resumed_session,"reviewed":true}),
         )
         .unwrap_err();
         assert!(error.contains("previously selected choice"), "{error}");

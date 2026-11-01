@@ -422,6 +422,14 @@ pub fn start(
                 pending_revision,
             })
             .map(|new_id| {
+                if session.pending_choice_visual.is_some()
+                    && !preview.manual_review.iter().any(|reason| reason == form_preview::POST_CHOICE_VISUAL_REQUIRED)
+                {
+                    preview.manual_review.push(form_preview::POST_CHOICE_VISUAL_REQUIRED.into());
+                }
+                if !navigating && !session.completed_selectors.is_empty() {
+                    preview.manual_review.push("Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection".into());
+                }
                 if !session.attachments.is_empty() {
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
                 }
