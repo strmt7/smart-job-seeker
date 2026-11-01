@@ -1044,6 +1044,76 @@ mod tests {
         );
         assert_eq!(drafted.unwrap()["facts"], json!([1]));
     }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_model_repairs_a_fictional_invalid_first_draft() {
+        struct InvalidFirst<I> {
+            inner: I,
+            draft_calls: usize,
+        }
+        impl<I: Inference> Inference for InvalidFirst<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                if schema == "application_answer" {
+                    self.draft_calls += 1;
+                    if self.draft_calls == 1 {
+                        return Ok((
+                            json!({"text":"I used Python to clean data.","facts":[99]}),
+                            UsageReport {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                wall_time_ms: 0,
+                            },
+                        ));
+                    }
+                }
+                self.inner.generate_structured(schema, prompt, max)
+            }
+        }
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = InvalidFirst {
+            inner: crate::resident_inference::ResidentInference::new(
+                model,
+                "qwen3.5:9b".into(),
+                crate::resident_model,
+            ),
+            draft_calls: 0,
+        };
+        let input = Inputs {
+            session_id: "fictional".into(),
+            selector: "#skills".into(),
+            digest: "fixture".into(),
+            question: "What relevant data skills do you bring?".into(),
+            listing: "A laboratory data role asks for SQL expertise and six years of experience."
+                .into(),
+            facts: vec!["Used Python to clean laboratory data".into()],
+            available_facts: 1,
+            instructions: "Write concisely.".into(),
+            max_length_utf16: None,
+        };
+        let answer =
+            generate(&mut model, &input).expect("local model should repair the invalid citation");
+        let text = answer["text"].as_str().unwrap().to_ascii_lowercase();
+        assert_eq!(model.draft_calls, 2);
+        assert_eq!(answer["facts"], json!([1]));
+        assert!(text.contains("python"), "{text}");
+        assert!(
+            !text.contains("sql") && !text.contains("six years") && !text.contains("6 years"),
+            "{text}"
+        );
+        println!("Fictional repaired application answer: {answer}");
+    }
     struct Fake {
         calls: usize,
     }
