@@ -628,6 +628,46 @@ impl CdpDriver {
         selector: &str,
         path: &std::path::Path,
     ) -> Result<(), DriverError> {
+        self.attach_local_files(selector, &[path.to_owned()])
+    }
+
+    /// Read whether a current file input permits more than one file.
+    pub fn file_input_allows_multiple(&mut self, selector: &str) -> Result<bool, DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("File field not found".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') ? this.multiple : null; }","returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some() {
+            return Err(DriverError("Cannot inspect file field".into()));
+        }
+        result
+            .pointer("/result/value")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| DriverError("File field is unavailable; review it manually".into()))
+    }
+
+    /// Attach a bounded, explicitly reviewed set of files to one input.
+    pub fn attach_local_files(
+        &mut self,
+        selector: &str,
+        paths: &[std::path::PathBuf],
+    ) -> Result<(), DriverError> {
+        if paths.is_empty() || paths.len() > 5 {
+            return Err(DriverError("Choose one to five files".into()));
+        }
+        if paths.len() > 1 && !self.file_input_allows_multiple(selector)? {
+            return Err(DriverError(
+                "This file field does not allow multiple files".into(),
+            ));
+        }
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
@@ -654,18 +694,31 @@ impl CdpDriver {
             .ok_or_else(|| {
                 DriverError("Cannot inspect the file field's declared formats".into())
             })?;
-        let filename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
-        check_file_accept(accept, filename)?;
+        let mut names = std::collections::HashSet::new();
+        for path in paths {
+            let metadata = std::fs::metadata(path)
+                .map_err(|_| DriverError("Cannot read an attachment".into()))?;
+            if !metadata.is_file() {
+                return Err(DriverError("Attachment is not a regular file".into()));
+            }
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
+            if !names.insert(filename.to_lowercase()) {
+                return Err(DriverError(
+                    "Choose files with distinct attachment names".into(),
+                ));
+            }
+            check_file_accept(accept, filename)?;
+        }
         self.cdp
             .call(
                 "DOM.setFileInputFiles",
-                json!({ "files": [path.to_string_lossy()], "nodeId": node }),
+                json!({ "files": paths.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>(), "nodeId": node }),
             )
             .map_err(derr)?;
-        self.verify_local_file(selector, path)
+        self.verify_local_files(selector, paths)
     }
 
     /// Check whether the selected input still holds the staged local file.
@@ -674,13 +727,30 @@ impl CdpDriver {
         selector: &str,
         path: &std::path::Path,
     ) -> Result<(), DriverError> {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| DriverError("File name cannot be represented in the browser".into()))?;
-        let size = std::fs::metadata(path)
-            .map_err(|e| DriverError(format!("Cannot read attachment: {e}")))?
-            .len();
+        self.verify_local_files(selector, &[path.to_owned()])
+    }
+
+    pub fn verify_local_files(
+        &mut self,
+        selector: &str,
+        paths: &[std::path::PathBuf],
+    ) -> Result<(), DriverError> {
+        if paths.is_empty() || paths.len() > 5 {
+            return Err(DriverError("Invalid attachment set".into()));
+        }
+        let mut expected = Vec::with_capacity(paths.len());
+        for path in paths {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    DriverError("File name cannot be represented in the browser".into())
+                })?;
+            let size = std::fs::metadata(path)
+                .map_err(|e| DriverError(format!("Cannot read attachment: {e}")))?
+                .len();
+            expected.push(json!({"name":name,"size":size}));
+        }
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
@@ -692,7 +762,7 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
-        let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(name, size) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.files && this.files.length === 1 && this.files[0].name === name && this.files[0].size === size; }","arguments":[{"value":name},{"value":size}],"returnByValue":true})).map_err(derr)?;
+        let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(expected) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && (expected.length === 1 || this.multiple) && this.files && this.files.length === expected.length && expected.every((file, i) => this.files[i].name === file.name && this.files[i].size === file.size); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if retained.get("exceptionDetails").is_some()
             || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
@@ -707,7 +777,13 @@ impl CdpDriver {
             .ok_or_else(|| {
                 DriverError("Cannot inspect the file field's declared formats".into())
             })?;
-        check_file_accept(accept, name)?;
+        for path in paths {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
+            check_file_accept(accept, name)?;
+        }
         Ok(())
     }
 

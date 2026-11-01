@@ -531,6 +531,44 @@ fn file_accept_is_checked_before_the_attachment_changes() {
 }
 
 #[test]
+#[ignore = "launches one browser with fictional local files and never submits"]
+fn multiple_pdf_files_are_attached_and_verified_as_a_set() {
+    let root = std::env::temp_dir().join(format!("waypoint-multiple-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let first = root.join("resume.pdf");
+    let second = root.join("certificate.pdf");
+    let bad = root.join("notes.txt");
+    std::fs::write(&first, b"fictional resume").unwrap();
+    std::fs::write(&second, b"fictional certificate").unwrap();
+    std::fs::write(&bad, b"fictional text").unwrap();
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_multiple_files.html")).unwrap();
+    assert!(driver.file_input_allows_multiple("#multiple").unwrap());
+    assert!(!driver.file_input_allows_multiple("#single").unwrap());
+    let files = vec![first.clone(), second.clone()];
+    driver.attach_local_files("#multiple", &files).unwrap();
+    driver.verify_local_files("#multiple", &files).unwrap();
+    assert!(driver.attach_local_files("#single", &files).is_err());
+    assert!(driver
+        .attach_local_files("#multiple", &[first.clone(), bad.clone()])
+        .is_err());
+    assert!(driver
+        .attach_local_files("#multiple", &[first.clone(), first.clone()])
+        .is_err());
+    assert!(driver
+        .attach_local_files("#multiple", &[first.clone(), root.join("missing.pdf")])
+        .is_err());
+    driver.verify_local_files("#multiple", &files).unwrap();
+    assert!(driver.verify_local_file("#multiple", &first).is_err());
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    drop(driver);
+    for path in [first, second, bad] {
+        std::fs::remove_file(path).unwrap();
+    }
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional form without submitting"]
 fn multilingual_sensitive_labels_are_marked_for_review() {
     let mut driver = CdpDriver::launch(vec![]).expect("launch browser");

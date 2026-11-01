@@ -117,6 +117,21 @@ struct ReviewSession {
     record: Option<attempt_record::AttemptRecord>,
 }
 
+fn current_attachment_groups(
+    attachments: &[(String, std::path::PathBuf, String)],
+    inspection: &str,
+) -> Vec<(String, Vec<std::path::PathBuf>)> {
+    let mut groups: Vec<(String, Vec<std::path::PathBuf>)> = Vec::new();
+    for (selector, path, _) in attachments.iter().filter(|(_, _, id)| id == inspection) {
+        if let Some((_, paths)) = groups.iter_mut().find(|(key, _)| key == selector) {
+            paths.push(path.clone());
+        } else {
+            groups.push((selector.clone(), vec![path.clone()]));
+        }
+    }
+    groups
+}
+
 struct SavedFormAnswer {
     selector: String,
     digest: String,
@@ -3933,24 +3948,21 @@ fn serve(
                     )
                 })
             });
-            let relevant = current
-                .attachments
-                .iter()
-                .filter(|(_, _, inspection)| inspection == &current.id);
-            let total_attachments = relevant.clone().count();
+            let relevant = current_attachment_groups(&current.attachments, &current.id);
+            let total_attachments: usize = relevant.iter().map(|(_, paths)| paths.len()).sum();
             let (mut checked_attachments, mut failed_attachments) = (0usize, 0usize);
             let started = Instant::now();
-            for (selector, path, _) in relevant.take(8) {
+            for (selector, paths) in relevant.iter().take(8) {
                 if started.elapsed() >= Duration::from_secs(4) {
                     break;
                 }
-                checked_attachments += 1;
+                checked_attachments += paths.len();
                 if current
                     .driver
-                    .with_review_timeout(|driver| driver.verify_local_file(selector, path))
+                    .with_review_timeout(|driver| driver.verify_local_files(selector, paths))
                     .is_err()
                 {
-                    failed_attachments += 1;
+                    failed_attachments += paths.len();
                 }
             }
             let unverified_attachments = total_attachments.saturating_sub(checked_attachments);
@@ -5327,12 +5339,12 @@ fn serve(
                 .filter_map(|item| item["selector"].as_str().map(str::to_owned))
                 .collect();
             let mut attachment_changed = false;
-            for (selector, path, _) in current
-                .attachments
-                .iter()
-                .filter(|(_, _, inspection)| inspection == &current.id)
-            {
-                if current.driver.verify_local_file(selector, path).is_err() {
+            for (selector, paths) in current_attachment_groups(&current.attachments, &current.id) {
+                if current
+                    .driver
+                    .verify_local_files(&selector, &paths)
+                    .is_err()
+                {
                     attachment_changed = true;
                     current.preview.manual_review.push(format!(
                         "Attachment at {selector} could not be verified after filling; inspect it manually"
@@ -5558,6 +5570,32 @@ fn serve(
             {
                 return Err("Attachment filename changed; review it before attaching".into());
             }
+            let multiple = current
+                .driver
+                .file_input_allows_multiple(selector)
+                .map_err(|e| e.to_string())?;
+            let mut files = if multiple {
+                current_attachment_groups(&current.attachments, &current.id)
+                    .into_iter()
+                    .find(|(field, _)| field == selector)
+                    .map(|(_, paths)| paths)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            if !files.is_empty() {
+                current
+                    .driver
+                    .verify_local_files(selector, &files)
+                    .map_err(|_| "Previously attached files changed; review the field manually")?;
+            }
+            if files.iter().any(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case(&name))
+            }) {
+                return Err("Choose PDFs with distinct attachment names for this field".into());
+            }
             let visual_review = match body["visual_review_attempt"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -5678,6 +5716,7 @@ fn serve(
                 .map_err(|e| e.to_string())?;
             let path = dir.path().join(&name);
             std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+            files.push(path.clone());
             let grant_id = random_id()?;
             let payload = json!({"selector":selector,"document_id":document_id,"document_sha256":waypoint_domain::sha256_hex(&bytes)}).to_string();
             ws.record_consumed_prefill_grant(&waypoint_store::prefill_grants::PrefillGrantRecord {
@@ -5694,7 +5733,7 @@ fn serve(
             })
             .map_err(|e| e.to_string())?;
             current.staged_files.push(dir);
-            if let Err(error) = current.driver.attach_local_file(selector, &path) {
+            if let Err(error) = current.driver.attach_local_files(selector, &files) {
                 if let Some(record) = &mut current.record {
                     let _ = record.event(json!({"type":"attachment_incomplete","time":now(),"selector":selector,"error":error.to_string()}));
                 }
@@ -5704,9 +5743,11 @@ fn serve(
                     "Document attachment may be incomplete; review the form: {error}"
                 ));
             }
-            current.attachments.retain(|(previous, _, inspection)| {
-                previous != selector || inspection != &current.id
-            });
+            if !multiple {
+                current.attachments.retain(|(previous, _, inspection)| {
+                    previous != selector || inspection != &current.id
+                });
+            }
             current
                 .attachments
                 .push((selector.to_owned(), path, current.id.clone()));
@@ -5751,7 +5792,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"ok":true,"name":doc.name,"attachment_name":name,"draft_provenance":draft_provenance_status,"provenance_lookup_incomplete":provenance_incomplete,"manual_review":current.preview.manual_review}),
+                json!({"ok":true,"name":doc.name,"attachment_name":name,"attachment_count":files.len(),"draft_provenance":draft_provenance_status,"provenance_lookup_incomplete":provenance_incomplete,"manual_review":current.preview.manual_review}),
             );
         }
         "/api/form/session-status" => {
@@ -6383,6 +6424,30 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn attachment_groups_preserve_order_and_exclude_old_inspections() {
+        use std::path::PathBuf;
+        let attachments = vec![
+            ("#files".into(), PathBuf::from("one.pdf"), "current".into()),
+            ("#files".into(), PathBuf::from("old.pdf"), "old".into()),
+            (
+                "#other".into(),
+                PathBuf::from("other.pdf"),
+                "current".into(),
+            ),
+            ("#files".into(), PathBuf::from("two.pdf"), "current".into()),
+        ];
+        assert_eq!(
+            super::current_attachment_groups(&attachments, "current"),
+            vec![
+                (
+                    "#files".into(),
+                    vec![PathBuf::from("one.pdf"), PathBuf::from("two.pdf")]
+                ),
+                ("#other".into(), vec![PathBuf::from("other.pdf")]),
+            ]
+        );
+    }
     #[test]
     #[ignore = "starts one browser on a fictional local form"]
     fn closing_review_session_clears_only_its_pending_marker() {
