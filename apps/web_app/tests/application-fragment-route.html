@@ -1,0 +1,5 @@
+<!doctype html><html><body>
+<a href="#/apply">Apply for this job</a>
+<div id="application" hidden><form><label for="email">Email</label><input id="email" type="email" autocomplete="email"></form></div>
+<script>function route(){document.getElementById('application').hidden=location.hash!=='#/apply'};addEventListener('hashchange',route);route();</script>
+</body></html>

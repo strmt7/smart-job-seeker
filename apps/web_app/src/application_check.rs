@@ -217,6 +217,7 @@ fn suggest_page_links(browser: &mut waypoint_browser::CdpDriver) -> Result<Strin
 
 // Follow only one unambiguous same-origin link. In particular, never navigate
 // a URL that looks like a final submit action or contains query parameters.
+// A simple fragment route may identify an in-page application section.
 pub(crate) fn application_destination(current: &str, links: &[String]) -> Option<String> {
     application_destination_with_external(current, links, false)
 }
@@ -243,14 +244,25 @@ fn application_destination_with_external(
         if candidate.scheme() != "https"
             || (candidate.origin() != base.origin() && !allow_external)
             || candidate.query().is_some()
-            || candidate.fragment().is_some()
+            || candidate.fragment().is_some_and(|fragment| {
+                fragment.is_empty()
+                    || fragment.len() > 200
+                    || !fragment.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_')
+                    })
+            })
             || !candidate.username().is_empty()
             || candidate.password().is_some()
             || candidate == base
             || !waypoint_connectors::is_public_host_url(candidate.as_str())
             || ["submit", "complete", "confirm", "finish", "send"]
                 .iter()
-                .any(|term| candidate.path().to_ascii_lowercase().contains(term))
+                .any(|term| {
+                    candidate.path().to_ascii_lowercase().contains(term)
+                        || candidate
+                            .fragment()
+                            .is_some_and(|fragment| fragment.to_ascii_lowercase().contains(term))
+                })
         {
             rejected = true;
             continue;
@@ -1467,17 +1479,62 @@ mod tests {
         assert!(review && summary.contains("No form fields detected"));
     }
     #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn fragment_application_route_opens_a_fictional_form() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/application-fragment-route.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let first = browser.open(url.as_str()).unwrap();
+        assert!(first.schema.fields.is_empty());
+        assert!(browser
+            .application_links()
+            .unwrap()
+            .iter()
+            .any(|link| link == "#/apply"));
+        let mut destination = url;
+        destination.set_fragment(Some("/apply"));
+        let page = browser.open(destination.as_str()).unwrap();
+        assert!(page
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#email"));
+        assert!(browser.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
     fn follows_only_a_single_safe_same_origin_application_link() {
         let base = "https://jobs.example.org/role";
         assert_eq!(
             application_destination(base, &["/role/apply".into()]).as_deref(),
             Some("https://jobs.example.org/role/apply")
         );
+        assert_eq!(
+            application_destination(base, &["#/apply".into()]).as_deref(),
+            Some("https://jobs.example.org/role#/apply")
+        );
+        assert_eq!(
+            super::vetted_application_destination(
+                base,
+                &["#/apply".into()],
+                &["https://jobs.example.org/role#/apply".into()],
+                false
+            )
+            .as_deref(),
+            Some("https://jobs.example.org/role#/apply")
+        );
+        assert!(
+            super::vetted_application_destination(base, &["#/apply".into()], &[], false).is_none()
+        );
         for href in [
             "https://other.example.org/apply",
             "/submit",
             "/apply?submit=true",
-            "#apply",
+            "#submit",
+            "#/apply/confirm",
+            "#apply?token=abc",
+            "#%73ubmit",
             "javascript:submit()",
         ] {
             assert!(
