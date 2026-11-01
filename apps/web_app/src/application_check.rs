@@ -709,9 +709,13 @@ mod tests {
                 .contains("at least 8 email contacts")
         );
         let text_only =
-            super::email_contact_note(None, Some(("Apply to jobs@example.org", true))).unwrap();
+            super::email_contact_note(None, Some(("Apply to jobs@example.org ", true))).unwrap();
         assert!(text_only.contains("at least 1 email contact"));
         assert!(text_only.contains("jobs@example.org"));
+        assert!(
+            super::email_contact_note(Some(&[]), Some(("Contact careers@example.com", true)))
+                .is_none()
+        );
     }
 
     #[test]

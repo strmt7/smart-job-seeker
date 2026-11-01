@@ -106,10 +106,10 @@ pub(crate) fn add_page_text_contacts(email: &mut Value, metadata: &Value) {
         return;
     };
     email["status"] = json!("captured");
-    add_contacts_from_text(email, text, "page_text");
+    add_contacts_from_text(email, text, "page_text", text_status == "truncated");
 }
 
-fn add_contacts_from_text(email: &mut Value, text: &str, source: &str) {
+fn add_contacts_from_text(email: &mut Value, text: &str, source: &str, truncated: bool) {
     let mut omitted = email["omitted"].as_u64().unwrap_or(0);
     let Some(contacts) = email["contacts"].as_array_mut() else {
         return;
@@ -125,6 +125,11 @@ fn add_contacts_from_text(email: &mut Value, text: &str, source: &str) {
         let mut end = index + 1;
         while end < bytes.len() && domain_byte(bytes[end]) {
             end += 1;
+        }
+        // A domain reaching a cut boundary may continue in the omitted text.
+        // Do not turn a partial address into a plausible recipient.
+        if truncated && end == bytes.len() {
+            continue;
         }
         while end > index + 1 && bytes[end - 1] == b'.' {
             end -= 1;
@@ -258,7 +263,7 @@ pub fn listing_email_contacts(captured: Option<Value>, description: Option<&str>
             "captured"
         });
         email["status"] = json!("captured");
-        add_contacts_from_text(&mut email, &text[..end], "saved_listing");
+        add_contacts_from_text(&mut email, &text[..end], "saved_listing", end < text.len());
     } else {
         email["listing_text_status"] = json!("unavailable");
     }
@@ -1037,6 +1042,37 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn truncated_address_at_text_boundary_is_not_reported() {
+        let mut email = email_link_candidates(&[]);
+        add_page_text_contacts(
+            &mut email,
+            &json!({"page_text_status":"truncated","page_text":"Earlier jobs@example.org; cutoff careers@example.com"}),
+        );
+        assert_eq!(email["contacts"].as_array().unwrap().len(), 1);
+        assert_eq!(email["contacts"][0]["address"], "jobs@example.org");
+        let mut dotted = email_link_candidates(&[]);
+        add_page_text_contacts(
+            &mut dotted,
+            &json!({"page_text_status":"truncated","page_text":"careers@example.com."}),
+        );
+        assert!(dotted["contacts"].as_array().unwrap().is_empty());
+        let mut complete = email_link_candidates(&[]);
+        add_page_text_contacts(
+            &mut complete,
+            &json!({"page_text_status":"captured","page_text":"careers@example.com"}),
+        );
+        assert_eq!(complete["contacts"][0]["address"], "careers@example.com");
+        let prefix = " ".repeat(32_000 - "careers@example.com".len());
+        let description = format!("{prefix}careers@example.com.evil.invalid");
+        assert!(
+            listing_email_contacts(None, Some(&description)).unwrap()["contacts"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn email_link_candidates_are_bounded_and_do_not_use_mail_parameters() {
