@@ -599,6 +599,35 @@ pub struct AttemptRecord {
     sequence: u32,
 }
 
+// Checks presence only, not image contents or provenance.
+fn listing_capture_files(dir: &std::path::Path, value: &Value) -> &'static str {
+    if value["page_capture_available"] != true {
+        return "unknown";
+    }
+    let Some(count) = value["page_capture_segment_count"]
+        .as_u64()
+        .filter(|n| (1..=5).contains(n))
+    else {
+        return "unknown";
+    };
+    let capture = dir.join("original-job-page");
+    if !fs::symlink_metadata(&capture).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
+        return "missing_or_inaccessible";
+    }
+    let present = |name: &str| {
+        fs::symlink_metadata(capture.join(name))
+            .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink() && m.len() > 0)
+    };
+    if present("capture.json")
+        && present("view.html")
+        && (1..=count).all(|i| present(&format!("{i:04}.png")))
+    {
+        "present"
+    } else {
+        "missing_or_inaccessible"
+    }
+}
+
 /// List a bounded number of locally saved attempts without reading their materials.
 pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     let root = ws
@@ -675,7 +704,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"page_capture_files":listing_capture_files(&entry.path(), &value),"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -1008,7 +1037,7 @@ impl AttemptRecord {
         fs::create_dir(&dir).map_err(|e| format!("Could not create a new attempt folder: {e}"))?;
         // Establish a discoverable incomplete record before writing the rest of
         // the archive. A later failure must not look like a completed snapshot.
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"page_capture_coverage":page_capture_coverage,"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"page_capture_coverage":page_capture_coverage,"page_capture_segment_count":captured.as_ref().map(|(_, segments)| segments.len()),"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
         let mut initial = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(&mut initial, &meta).map_err(|e| e.to_string())?;
         initial.flush().map_err(|e| e.to_string())?;
@@ -2345,6 +2374,29 @@ mod tests {
     }
 
     #[test]
+    fn capture_inventory_reports_unknown_for_legacy_and_invalid_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            listing_capture_files(dir.path(), &json!({"page_capture_available": true})),
+            "unknown"
+        );
+        assert_eq!(
+            listing_capture_files(
+                dir.path(),
+                &json!({"page_capture_available": true, "page_capture_segment_count": 6})
+            ),
+            "unknown"
+        );
+        assert_eq!(
+            listing_capture_files(
+                dir.path(),
+                &json!({"page_capture_available": true, "page_capture_segment_count": 1})
+            ),
+            "missing_or_inaccessible"
+        );
+    }
+
+    #[test]
     fn capture_coverage_requires_valid_complete_nonoverlapping_geometry() {
         let mut capture = json!({"page_width": 2000, "page_height": 1000,
         "full_dimensions_captured": true, "segment_rectangles": [
@@ -2588,6 +2640,15 @@ mod tests {
             records["attempts"][0]["page_capture_matches_current_url"],
             true
         );
+        #[cfg(windows)]
+        {
+            assert_eq!(records["attempts"][0]["page_capture_files"], "present");
+            fs::remove_file(record.dir.join("original-job-page/0001.png")).unwrap();
+            assert_eq!(
+                list(&ws, &id).unwrap()["attempts"][0]["page_capture_files"],
+                "missing_or_inaccessible"
+            );
+        }
         assert_eq!(records["unreadable"], 0);
         let other = JobIdentityId::new("other-fictional-job").unwrap();
         assert!(list(&ws, &other).unwrap()["attempts"]
