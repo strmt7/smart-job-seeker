@@ -63,11 +63,13 @@ pub fn build(
         return Err("Invalid MIME boundary".into());
     }
     let mut message = format!("To: {email}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{boundary}\"\r\n\r\n--{boundary}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", subject_words(subject), lines(body.as_bytes()));
+    let mut used_names = std::collections::HashSet::new();
     for (name, bytes) in attachments {
         if !is_pdf_attachment(name, bytes) {
             return Err("Attachments must be PDF files".into());
         }
-        let safe: String = name
+        let stem = &name[..name.len() - 4];
+        let safe_stem: String = stem
             .chars()
             .map(|c| {
                 if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
@@ -76,8 +78,14 @@ pub fn build(
                     '_'
                 }
             })
-            .take(100)
+            .take(96)
             .collect();
+        let safe = format!("{safe_stem}.pdf");
+        if !used_names.insert(safe.to_ascii_lowercase()) {
+            return Err(
+                "PDF attachment names conflict after sanitizing; rename one and try again".into(),
+            );
+        }
         message.push_str(&format!("--{boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"{safe}\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", lines(bytes)));
     }
     message.push_str(&format!("--{boundary}--\r\n"));
@@ -120,6 +128,38 @@ mod tests {
                 String::from_utf8(build(valid, "Subject", "Body", &[], "boundary").unwrap())
                     .unwrap();
             assert!(draft.starts_with(&format!("To: {valid}\r\n")));
+        }
+    }
+
+    #[test]
+    fn attachment_names_keep_pdf_extension_and_reject_collisions() {
+        let long = format!("{}.PDF", "a".repeat(150));
+        let draft = String::from_utf8(
+            build(
+                "hiring@example.org",
+                "Subject",
+                "Body",
+                &[(long, b"%PDF-fictional".to_vec())],
+                "boundary",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(draft.contains(&format!("filename=\"{}.pdf\"", "a".repeat(96))));
+        for names in [("résumé.pdf", "r_sum_.pdf"), ("CV.PDF", "cv.pdf")] {
+            let attachments = [
+                (names.0.to_owned(), b"%PDF-one".to_vec()),
+                (names.1.to_owned(), b"%PDF-two".to_vec()),
+            ];
+            assert!(build(
+                "hiring@example.org",
+                "Subject",
+                "Body",
+                &attachments,
+                "boundary"
+            )
+            .unwrap_err()
+            .contains("names conflict"));
         }
     }
 
