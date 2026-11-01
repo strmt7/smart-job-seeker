@@ -5097,6 +5097,31 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a resource-gated qwen3.5:9b model"]
+    fn live_remote_metadata_does_not_establish_geographic_eligibility() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let listing = format!(
+            "Title: Engineer\nRemote status: {}\nDescription: Builds software.",
+            crate::fit_remote_status_text(Some(true))
+        );
+        let preference = "Must be eligible to work remotely from Germany";
+        let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let baseline = validate(raw.clone(), &[], preference, &listing).unwrap();
+        let result = compare_preferences(&mut model, raw, baseline, &[], preference, &listing);
+        println!("Fictional remote metadata result: {result}");
+        assert_eq!(result["preference_comparison"]["status"], "completed");
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+    }
+
+    #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_preference_comparison_checks_fictional_listing() {
         let addr = "127.0.0.1:11434".parse().unwrap();

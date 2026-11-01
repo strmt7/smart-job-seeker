@@ -809,6 +809,14 @@ impl Store {
         Ok(())
     }
 
+    /// Source-provided remote value only when it belongs to the current revision.
+    pub fn job_remote_evidence(&self, id: &JobIdentityId) -> Result<Option<bool>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT e.remote FROM jobs j JOIN job_remote_evidence e ON e.job_id=j.id AND e.content_hash=j.content_hash WHERE j.id=?1",
+            params![id.as_str()], |row| row.get::<_, i64>(0),
+        ).optional().map(|value| value.map(|value| value != 0))
+    }
+
     pub fn visit_jobs_with_descriptions_and_remote(
         &self,
         mut visit: impl FnMut(StoredJob, Option<String>, Option<bool>),

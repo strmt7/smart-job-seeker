@@ -276,8 +276,16 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile["instructions"].as_str().unwrap_or("");
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v44","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v45","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
+}
+
+fn fit_remote_status_text(status: Option<bool>) -> &'static str {
+    match status {
+        Some(true) => "Source indicates remote work; eligible locations are not established by this flag",
+        Some(false) => "Source does not mark the role remote; hybrid or on-site details are not established by this flag",
+        None => "Remote status is not established by structured source data",
+    }
 }
 
 fn fit_source_coverage(
@@ -294,9 +302,10 @@ fn fit_source_coverage(
         .job_description(job_id)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
+    let remote = fit_remote_status_text(ws.job_remote_status(job_id).map_err(|e| e.to_string())?);
     let full_listing = format!(
-        "Title: {}\nEmployer: {}\nLocation: {}\nDescription: {}",
-        job.title, job.employer, job.location, description
+        "Title: {}\nEmployer: {}\nLocation: {}\nRemote status: {}\nDescription: {}",
+        job.title, job.employer, job.location, remote, description
     );
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
@@ -392,9 +401,10 @@ fn fit_listing_digest(
         .job_description(job_id)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
+    let remote = fit_remote_status_text(ws.job_remote_status(job_id).map_err(|e| e.to_string())?);
     let listing: String = format!(
-        "Title: {}\nEmployer: {}\nLocation: {}\nDescription: {}",
-        job.title, job.employer, job.location, description
+        "Title: {}\nEmployer: {}\nLocation: {}\nRemote status: {}\nDescription: {}",
+        job.title, job.employer, job.location, remote, description
     )
     .chars()
     .take(8000)
@@ -7088,6 +7098,24 @@ mod tests {
             assert!(facts.len() <= if kind == "cv" { 18 } else { 20 });
         }
     }
+    #[test]
+    fn fit_listing_reports_remote_evidence_and_invalidates_changed_assessment() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (_, _, before_listing, before) = fit_inputs(&ws, &id).unwrap();
+        assert!(before_listing.contains("Remote status is not established"));
+        let mut job = ws.job(&id).unwrap().unwrap();
+        job.remote = true;
+        ws.import_job(job).unwrap();
+        let (_, _, after_listing, after) = fit_inputs(&ws, &id).unwrap();
+        assert!(after_listing.contains("Source indicates remote work"));
+        assert!(after_listing.contains("eligible locations are not established"));
+        assert_ne!(before, after);
+        assert!(fit_remote_status_text(Some(false))
+            .contains("hybrid or on-site details are not established"));
+    }
+
     #[test]
     fn fit_input_digest_changes_when_preferences_change() {
         let mut ws = Workspace::in_memory().unwrap();

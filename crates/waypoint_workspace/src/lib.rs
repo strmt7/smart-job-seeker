@@ -632,6 +632,18 @@ impl Workspace {
         Ok(self.store.reserve_jobicy_fetch(timestamp)?)
     }
 
+    /// Return current source evidence, retaining legacy confirmed-remote values.
+    pub fn job_remote_status(&self, id: &JobIdentityId) -> Result<Option<bool>, WorkspaceError> {
+        let evidence = self.store.job_remote_evidence(id)?;
+        if evidence.is_some() {
+            return Ok(evidence);
+        }
+        Ok(self
+            .store
+            .get_job(id)?
+            .and_then(|job| job.remote.then_some(true)))
+    }
+
     pub fn job_count(&self) -> Result<u64, WorkspaceError> {
         Ok(self.store.job_count()?)
     }
