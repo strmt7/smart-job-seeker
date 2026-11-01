@@ -1120,3 +1120,7 @@ For narrowly supported inline removed or moved-from revisions, PDF conversion no
 ### Revision-view export notice (2026-11-01)
 
 Document conversion and template-edit results now carry and display whether the PDF was generated from a temporary accepted revision view. The notice explains that the original or saved DOCX retains its revision history. A fictional tracked-revision LibreOffice/PDF extraction test confirmed the flag, and a conversion recovery test confirmed it remains in the completed response. All UI checks, web Clippy and formatting passed. The notice has not been checked in a rendered browser, and the text comparison still does not prove layout fidelity. No application was submitted.
+
+### Public CV extraction and edit check (2026-11-01)
+
+A publicly hosted university CV was retained outside the repository for a local test (PDF SHA-256 `86a4dd5303bf096e143457eebd3b3b6d3130de2cd081b8fc0c98089bf8c9e66f`; source-page crawl receipt SHA-256 `dc5932b9b752becae4acb3989f57b0612f84a93a8f4aab8d8c5299f1624e05e5`). The 21-page, 328,121-byte PDF yielded 53,817 UTF-8 bytes, with no pages lacking selectable text in this run; its first page rendered. A local title edit was refused because the rendered page changed outside the selected text area. The original remained byte-identical, and no edited file was saved. This is one long academic CV, not a representative benchmark, and direct editing of this file remains unsupported. Fixture checks, web Clippy and formatting passed; no CV content was committed and no application was submitted.

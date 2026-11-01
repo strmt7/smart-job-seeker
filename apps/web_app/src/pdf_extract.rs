@@ -406,6 +406,58 @@ mod tests {
         assert!(super::acquire().is_ok());
     }
     #[test]
+    #[ignore = "inspects an explicitly supplied public CV; retains no text in the repository"]
+    fn public_cv_extracts_and_renders_without_recording_content() {
+        let path = std::env::var_os("WAYPOINT_PUBLIC_CV_FIXTURE").expect("public CV fixture path");
+        let bytes = std::fs::read(path).unwrap();
+        let (text, coverage) = super::extract_with_coverage(&bytes).unwrap();
+        let page = super::render_page_for_review(&bytes, 0).unwrap();
+        assert!(!text.trim().is_empty());
+        assert_eq!(page["page"], 0);
+        assert_eq!(page["pages"], coverage["pages"]);
+        assert!(page["image"]
+            .as_str()
+            .is_some_and(|image| image.starts_with("iVBOR")));
+        println!("Public CV: {} bytes, {} pages, {} extracted UTF-8 bytes, {} pages without selectable text, {} image/text pages", bytes.len(), coverage["pages"], text.len(), coverage["pages_without_selectable_text"].as_array().unwrap().len(), coverage["pages_with_images_and_text"].as_array().unwrap().len());
+    }
+
+    #[test]
+    #[ignore = "edits an explicitly supplied public CV into a separate local file"]
+    fn public_cv_edit_either_succeeds_or_reports_manual_review() {
+        let path = std::env::var_os("WAYPOINT_PUBLIC_CV_FIXTURE").expect("public CV fixture path");
+        let before = std::fs::read(&path).unwrap();
+        let outcome = super::edit(&before, "Curriculum Vitae", "Career Profile");
+        match outcome {
+            Ok(pdf) => {
+                let text = super::extract(&pdf).unwrap();
+                assert!(text.contains("Career Profile"));
+                if let Some(output) = std::env::var_os("WAYPOINT_PUBLIC_CV_OUTPUT") {
+                    use std::io::Write;
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(output)
+                        .unwrap()
+                        .write_all(&pdf)
+                        .unwrap();
+                }
+                println!(
+                    "Public CV edit: successful; {} output bytes; review layout manually",
+                    pdf.len()
+                );
+            }
+            Err(error) => {
+                assert!(
+                    error.contains("review manually"),
+                    "unexpected PDF editing failure: {error}"
+                );
+                println!("Public CV edit: manual review required: {error}");
+            }
+        }
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
     #[ignore = "requires pypdfium2, Pillow, pypdf and a fictional PDF"]
     fn renders_a_fixture_and_rejects_invalid_pages() {
         use base64::Engine;
