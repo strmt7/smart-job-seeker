@@ -21,6 +21,7 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+const MISSING_STRUCTURED_IDENTITY: &str = "Job title or employer is missing; review manually";
 
 pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
@@ -110,7 +111,7 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
         200,
     );
     if title.is_empty() || employer.is_empty() {
-        return Err("Job title or employer is missing; review manually".into());
+        return Err(MISSING_STRUCTURED_IDENTITY.into());
     }
     let raw = job["description"].as_str().unwrap_or("");
     if raw.len() > 150_000 {
@@ -207,6 +208,22 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
     ))
 }
 
+/// Only a single structured posting missing its identity may use the text
+/// fallback. Multiple postings and other structural errors remain ambiguous.
+fn structured_or_fallback(scripts: &[String], url: &str) -> Result<(Option<Value>, bool), String> {
+    match parse(scripts, url) {
+        Ok(posting) => Ok((posting, false)),
+        Err(error) if error == MISSING_STRUCTURED_IDENTITY => Ok((None, true)),
+        Err(error) => Err(error),
+    }
+}
+
+fn warn_incomplete_structured(job: &mut Value, incomplete: bool) {
+    if incomplete {
+        job["extraction_warnings"].as_array_mut().expect("fallback warnings").push(json!("The page's structured job data omitted its title or employer; the identity was recovered from page text and requires review."));
+    }
+}
+
 /// Read employer-provided structured salary evidence from a retained capture.
 /// This is source data only; it does not establish gross/net basis or suitability.
 pub fn captured_posting_evidence(metadata: &[u8]) -> Result<Option<Value>, String> {
@@ -234,7 +251,7 @@ pub fn captured_posting_evidence(metadata: &[u8]) -> Result<Option<Value>, Strin
         values.push(value.to_owned());
     }
     let url = capture["source_url"].as_str().unwrap_or("");
-    Ok(parse(&values, url)?.map(|posting| json!({"salary_evidence":posting["salary_evidence"],"posting_date_evidence":posting["posting_date_evidence"],"valid_through_evidence":posting["valid_through_evidence"]})))
+    Ok(structured_or_fallback(&values, url)?.0.map(|posting| json!({"salary_evidence":posting["salary_evidence"],"posting_date_evidence":posting["posting_date_evidence"],"valid_through_evidence":posting["valid_through_evidence"]})))
 }
 
 /// Only exact excerpts are accepted. Exact text is evidence, not proof that
@@ -450,7 +467,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 return Err("The listing redirected to another site; review it manually".into());
             }
             let scripts = browser.structured_data_scripts().map_err(|e| e.to_string())?;
-            let structured = parse(&scripts, &current)?;
+            let (structured, incomplete_structured) = structured_or_fallback(&scripts, &current)?;
             let mut job = if let Some(job) = structured { job } else {
                 let model = crate::resident_model().ok().flatten().ok_or("No structured job found and no eligible local model is loaded; review manually")?;
                 let _lease = crate::doc_suggest::lease()?;
@@ -459,6 +476,7 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
                 let mut job=extract_page_text(&mut inference,&page_text,&current)?;
                 job["page_text_truncated"]=json!(truncated);
+                warn_incomplete_structured(&mut job, incomplete_structured);
                 job
             };
             if !frame_warnings.is_empty() {
@@ -962,6 +980,69 @@ mod tests {
                 },
             ))
         }
+    }
+    #[test]
+    fn incomplete_structured_posting_uses_reviewable_text_fallback_only() {
+        let partial = json!({"@type":"JobPosting","title":"Research Engineer"}).to_string();
+        let (job, incomplete) =
+            structured_or_fallback(std::slice::from_ref(&partial), "https://example.org/job")
+                .unwrap();
+        assert!(job.is_none() && incomplete);
+        let capture = json!({"source_url":"https://example.org/job","structured_source_status":"captured","structured_source_scripts":[partial.clone()]}).to_string();
+        assert!(captured_posting_evidence(capture.as_bytes())
+            .unwrap()
+            .is_none());
+        assert!(
+            structured_or_fallback(&[partial.clone(), partial], "https://example.org/job").is_err()
+        );
+        let source = "Example Lab seeks Research Engineer in Berlin. Build materials systems in a cross-functional team.";
+        let mut model = Fake(
+            json!({"title":"Research Engineer","employer":"Example Lab","location":"Berlin","description":"Build materials systems in a cross-functional team."}),
+        );
+        let mut job = extract_page_text(&mut model, source, "https://example.org/job").unwrap();
+        warn_incomplete_structured(&mut job, incomplete);
+        assert!(job["extraction_warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("structured")));
+        assert_eq!(job["extraction"], "local_model");
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and requires a resource-gated resident model"]
+    fn live_partial_structured_listing_uses_local_model() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/partial-structured-listing.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(url.as_str()).unwrap();
+        let scripts = browser.structured_data_scripts().unwrap();
+        let (job, incomplete) =
+            structured_or_fallback(&scripts, "https://example.org/job").unwrap();
+        assert!(job.is_none() && incomplete);
+        let (text, truncated) = browser.page_text_bounded(16_000).unwrap();
+        assert!(!truncated);
+        let name = crate::resident_model().unwrap().unwrap();
+        let model = OllamaInference::new("http://127.0.0.1:11434", &name)
+            .unwrap()
+            .with_resident_context();
+        let mut model =
+            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let mut job = extract_page_text(&mut model, &text, "https://example.org/job").unwrap();
+        warn_incomplete_structured(&mut job, incomplete);
+        println!("Partial listing model result: {job}");
+        assert_eq!(job["title"], "Research Engineer");
+        assert_eq!(job["employer"], "Example Lab");
+        assert!(job["extraction_warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("structured")));
+        assert!(browser
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted") && !event.contains("click")));
     }
     #[test]
     fn text_fallback_accepts_only_page_excerpts() {
