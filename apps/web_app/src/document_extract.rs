@@ -159,16 +159,22 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
                     quick_xml::escape::unescape(&entity).map_err(|_| "Unsupported DOCX entity")?;
                 output.push_str(&decoded);
             }
-            Event::Empty(e) if word && e.local_name().as_ref() == b"tab" => output.push('\t'),
+            Event::Empty(e) | Event::Start(e) if word && e.local_name().as_ref() == b"tab" => {
+                output.push('\t')
+            }
             // These are characters in a Word text run, not formatting-only
             // tags; dropping them joins words and changes qualifications.
-            Event::Empty(e) if word && e.local_name().as_ref() == b"noBreakHyphen" => {
+            Event::Empty(e) | Event::Start(e)
+                if word && e.local_name().as_ref() == b"noBreakHyphen" =>
+            {
                 output.push('\u{2011}')
             }
-            Event::Empty(e) if word && e.local_name().as_ref() == b"softHyphen" => {
+            Event::Empty(e) | Event::Start(e)
+                if word && e.local_name().as_ref() == b"softHyphen" =>
+            {
                 output.push('\u{00ad}')
             }
-            Event::Empty(e)
+            Event::Empty(e) | Event::Start(e)
                 if word
                     && (e.local_name().as_ref() == b"br" || e.local_name().as_ref() == b"cr") =>
             {
@@ -242,6 +248,15 @@ mod tests {
         assert_eq!(
             extract("cv.docx", &archive(xml)).unwrap(),
             "state\u{2011}of\u{00ad}the art"
+        );
+    }
+
+    #[test]
+    fn extracts_paired_and_empty_word_break_elements_equivalently() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:other="urn:other"><w:body><w:p><w:r><w:t>Rust</w:t><w:tab></w:tab><w:t>SQL</w:t><w:br></w:br><w:t>full</w:t><w:noBreakHyphen></w:noBreakHyphen><w:t>stack</w:t><w:softHyphen></w:softHyphen><w:t>work</w:t><w:cr></w:cr><w:t>Done</w:t><other:tab/></w:r></w:p></w:body></w:document>"#;
+        assert_eq!(
+            extract("cv.docx", &archive(xml)).unwrap(),
+            "Rust\tSQL\nfull\u{2011}stack\u{00ad}work\nDone"
         );
     }
 
