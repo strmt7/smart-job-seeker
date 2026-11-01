@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Salary currency comparison — 2026-11-01
+
+- Salary constraints compare three-letter currency codes without case or surrounding-space differences. Missing or malformed codes remain unknown; basis, period and compensation category still have to match. The search suite and 46 workspace tests passed; network tests were not run.
+
 ## Listing freshness — 2026-11-01
 
 - Future observations, an invalid current time, and negative freshness windows now report unknown instead of fresh or stale. Boundary and clock-skew cases passed in the search tests; the workspace suite also passed (46 tests, with two network tests ignored across its targets).

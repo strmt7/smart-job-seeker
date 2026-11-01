@@ -119,10 +119,15 @@ pub fn check_constraints_with_remote(
                 },
             )),
             Some(a) => {
-                if c.salary_currency
-                    .as_ref()
-                    .is_none_or(|currency| currency != &a.currency)
-                    || c.salary_basis != Some(a.basis)
+                if c.salary_currency.as_deref().is_none_or(|currency| {
+                    let requested = currency.trim();
+                    let stated = a.currency.trim();
+                    requested.len() != 3
+                        || stated.len() != 3
+                        || !requested.bytes().all(|byte| byte.is_ascii_alphabetic())
+                        || !stated.bytes().all(|byte| byte.is_ascii_alphabetic())
+                        || !requested.eq_ignore_ascii_case(stated)
+                }) || c.salary_basis != Some(a.basis)
                     || c.salary_period != Some(a.period)
                     || c.salary_category != Some(a.category)
                 {
@@ -758,6 +763,18 @@ mod tests {
         let ok = job_salary_chf(9_500_000, 11_000_000);
         let r = check_constraints(&c, &[], Some(&ok), None, true, "Remote");
         assert!(r.iter().any(|(_, o)| matches!(o, ConstraintOutcome::Pass)));
+        let mut equivalent = ok.clone();
+        equivalent.currency = " chf ".into();
+        assert!(matches!(
+            check_constraints(&c, &[], Some(&equivalent), None, false, "")[0].1,
+            ConstraintOutcome::Pass
+        ));
+        let mut invalid = c.clone();
+        invalid.salary_currency = Some("  ".into());
+        assert!(matches!(
+            check_constraints(&invalid, &[], Some(&ok), None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
         let low = job_salary_chf(7_000_000, 8_000_000);
         let r = check_constraints(&c, &[], Some(&low), None, true, "Remote");
         assert!(r
