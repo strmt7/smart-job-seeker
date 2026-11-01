@@ -747,6 +747,40 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
+fn custom_choice_inventory_reads_rendered_options_without_interaction() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_custom_choices.html")).unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    let location = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Job location")
+        .unwrap();
+    assert!(location.expanded);
+    assert_eq!(location.options, ["Berlin", "Lisbon"]);
+    assert!(location.options_incomplete);
+    let department = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Department")
+        .unwrap();
+    assert!(!department.expanded && department.options.is_empty() && department.options_incomplete);
+    let ambiguous = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Ambiguous")
+        .unwrap();
+    assert!(ambiguous.expanded && ambiguous.options.is_empty() && ambiguous.options_incomplete);
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("NOT SUBMITTED"), "{text}");
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a browser against a fictional hidden-control fixture"]
 fn required_hidden_proxy_is_not_exposed_as_a_text_answer() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

@@ -104,6 +104,20 @@ filled by this change; hidden controls nested under an `aria-hidden` ancestor
 are excluded, but only a required control directly marked `aria-hidden` gets
 the specific hidden-required warning.
 
+## Custom choice inventory
+
+The form review panel can request a read-only inventory of visible ARIA
+comboboxes and currently rendered options. It does not open the control or
+select an answer. Lists may be virtualized, clipped or incomplete, and embedded
+scopes are reported as incomplete. A fictional browser and local API fixture
+covered an open list, a closed list, hidden and disabled options, and duplicate
+list identifiers. A rendered panel check used fictional data.
+
+A read-only revisit of the GoGlobal page found its Job location control
+collapsed; no options were available to inspect without interaction. No
+control was clicked and no field was filled. Automatic opening, option choice,
+and verified retention are not implemented by this inventory.
+
 ## Staged rendering follow-up
 
 If the first inspection is empty, the bounded retry now checks for one unchanged

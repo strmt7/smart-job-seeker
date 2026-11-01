@@ -2550,6 +2550,86 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one local browser and inspects fictional custom choices"]
+    fn custom_choice_endpoint_reports_options_without_interaction() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_custom_choices.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        let job = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.invalid/fictional","title":"Role","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let mut session = Some(crate::ReviewSession {
+            id: "fixture-session".into(),
+            job_id: JobIdentityId::new(job["id"].as_str().unwrap()).unwrap(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url: url.to_string(),
+            profile_digest: Sha256Digest::of("fixture"),
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(120),
+            filled: false,
+            completed_selectors: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"session_id":"fixture-session"}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/form/custom-choices HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["choices"][0]["label"], "Job location");
+        assert_eq!(result["choices"][0]["options"], json!(["Berlin", "Lisbon"]));
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "read-only inspection of a public application page"]
+    fn live_workable_custom_choice_inventory_is_read_only() {
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver
+            .open("https://apply.workable.com/goglobal/j/4905C591AD/apply/")
+            .unwrap();
+        let inventory = driver.page_custom_choices().unwrap();
+        let location = inventory
+            .choices
+            .iter()
+            .find(|choice| choice.label == "Job location")
+            .expect("visible location choice");
+        assert!(!location.expanded && location.options.is_empty() && location.options_incomplete);
+        assert!(driver.trace.iter().all(|entry| !entry.contains("clicked")
+            && !entry.contains("typed")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "read-only public page and resource-gated resident local vision-capable model"]
     fn live_workable_captcha_preview_is_advisory_only() {
         let model =

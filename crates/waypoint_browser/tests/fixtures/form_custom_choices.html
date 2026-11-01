@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><body>
+<form onsubmit="document.querySelector('#status').textContent='SUBMITTED';return false">
+  <label for="name">Name</label><input id="name">
+  <span id="location-label">Job location</span>
+  <input id="location" role="combobox" aria-labelledby="location-label" aria-expanded="true" aria-controls="location-list" readonly>
+  <div id="location-list" role="listbox">
+    <div role="option">Berlin</div><div role="option">Lisbon</div>
+    <div role="option" aria-disabled="true">Unavailable</div>
+    <div style="display:none"><div role="option">Hidden</div></div>
+    <div role="option" style="position:absolute;left:-1000px">Offscreen</div>
+  </div>
+  <div role="combobox" aria-label="Department" aria-expanded="false" tabindex="0">Choose</div>
+  <input role="combobox" aria-label="Ambiguous" aria-expanded="true" aria-controls="duplicate-list" readonly>
+  <div id="duplicate-list" role="listbox"><div role="option">Wrong</div></div>
+  <div id="duplicate-list" role="listbox"><div role="option">Also wrong</div></div>
+  <output id="status">NOT SUBMITTED</output><button type="submit">Submit</button>
+</form>
+</body></html>

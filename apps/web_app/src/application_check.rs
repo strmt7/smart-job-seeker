@@ -981,7 +981,7 @@ mod tests {
         assert!(review);
         assert!(result.contains("form fields detected"), "{result}");
         assert!(
-            result.contains("autocomplete choices need manual review"),
+            result.contains("custom controls or embedded content need manual review"),
             "{result}"
         );
         assert!(!result.contains("Sign-in, CAPTCHA"), "{result}");

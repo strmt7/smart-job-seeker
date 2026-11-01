@@ -3912,6 +3912,18 @@ fn serve(
                 record,
             });
         }
+        "/api/form/custom-choices" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let choices = current
+                .driver
+                .page_custom_choices()
+                .map_err(|error| error.to_string())?;
+            json_reply(stream, "200 OK", json!(choices));
+        }
         "/api/form/control-rank-pending" => {
             json_reply(stream, "200 OK", control_rank::pending()?);
         }

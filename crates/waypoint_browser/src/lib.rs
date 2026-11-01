@@ -74,6 +74,21 @@ pub struct PageControls {
     pub incomplete: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CustomChoice {
+    pub label: String,
+    pub selector: String,
+    pub expanded: bool,
+    pub options: Vec<String>,
+    pub options_incomplete: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CustomChoices {
+    pub choices: Vec<CustomChoice>,
+    pub incomplete: bool,
+}
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -462,6 +477,157 @@ impl CdpDriver {
         }
         Ok(PageControls {
             controls,
+            incomplete,
+        })
+    }
+
+    /// Read rendered ARIA comboboxes and their currently rendered options.
+    /// This never opens a control or selects an option. Embedded scopes and
+    /// virtualized or collapsed lists are explicitly incomplete.
+    pub fn page_custom_choices(&mut self) -> Result<CustomChoices, DriverError> {
+        self.with_review_timeout(|driver| driver.page_custom_choices_inner())
+    }
+
+    fn page_custom_choices_inner(&mut self) -> Result<CustomChoices, DriverError> {
+        let root = self.document()?;
+        let references = button_references(&root);
+        let mut candidates = Vec::new();
+        let mut incomplete = false;
+        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            let attrs = attributes(node);
+            if !hidden
+                && (tag.eq_ignore_ascii_case("iframe")
+                    || node
+                        .get("shadowRoots")
+                        .and_then(Value::as_array)
+                        .is_some_and(|roots| !roots.is_empty()))
+            {
+                incomplete = true;
+            }
+            if !hidden
+                && attrs
+                    .get("role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("combobox"))
+                && !tag.eq_ignore_ascii_case("select")
+            {
+                if candidates.len() >= 15 {
+                    incomplete = true;
+                    return true;
+                }
+                let Some(id) = node.get("nodeId").and_then(Value::as_u64) else {
+                    incomplete = true;
+                    return true;
+                };
+                let label = anchor_label(node, &attrs, &references)
+                    .filter(|label| !label.is_empty() && label.len() <= 200)
+                    .unwrap_or_else(|| {
+                        incomplete = true;
+                        "Unlabelled choice".into()
+                    });
+                candidates.push((id, label));
+            }
+            true
+        });
+        let started = Instant::now();
+        let mut choices = Vec::new();
+        for (node, label) in candidates {
+            if started.elapsed() > Duration::from_secs(4) {
+                incomplete = true;
+                break;
+            }
+            let (visible, selector, _, _) =
+                match self.with_review_timeout(|driver| driver.control_visibility_and_path(node)) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        incomplete = true;
+                        continue;
+                    }
+                };
+            if !visible {
+                continue;
+            }
+            let resolved = self
+                .cdp
+                .call("DOM.resolveNode", json!({"nodeId":node}))
+                .map_err(derr)?;
+            let object = resolved
+                .pointer("/object/objectId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DriverError("Choice disappeared during inspection".into()))?;
+            let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+                const expanded = (this.getAttribute('aria-expanded') || '').toLowerCase() === 'true';
+                if (!this.isConnected || !expanded) return {expanded:false,options:[],incomplete:true};
+                const id = this.getAttribute('aria-controls') || this.getAttribute('aria-owns') || '';
+                if (!id || id.length > 256 || /\s/.test(id)) return {expanded:true,options:[],incomplete:true};
+                const root = this.getRootNode();
+                const lists = root.querySelectorAll('#' + CSS.escape(id));
+                if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return {expanded:true,options:[],incomplete:true};
+                const nodes = lists[0].querySelectorAll('[role="option"]');
+                // A virtualized list can omit options even when every rendered
+                // item fits inside our cap, so completeness is never assumed.
+                const options = []; let incomplete = true;
+                for (let i = 0; i < Math.min(nodes.length, 30); i++) {
+                    const node = nodes[i];
+                    let visible = node.getClientRects().length > 0;
+                    const box = node.getBoundingClientRect();
+                    let left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
+                    let top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
+                    for (let parent = node, depth = 0; parent; parent = parent.parentElement) {
+                        if (++depth > 64) { visible = false; break; }
+                        const style = getComputedStyle(parent);
+                        if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || (parent.getAttribute('aria-hidden') || '').toLowerCase() === 'true') { visible = false; break; }
+                        if (parent !== node) {
+                            const bounds = parent.getBoundingClientRect();
+                            if (['hidden','clip','auto','scroll'].includes(style.overflowX)) { left = Math.max(left, bounds.left + parent.clientLeft); right = Math.min(right, bounds.left + parent.clientLeft + parent.clientWidth); }
+                            if (['hidden','clip','auto','scroll'].includes(style.overflowY)) { top = Math.max(top, bounds.top + parent.clientTop); bottom = Math.min(bottom, bounds.top + parent.clientTop + parent.clientHeight); }
+                        }
+                    }
+                    visible &&= right > left && bottom > top;
+                    const text = (node.getAttribute('aria-label') || node.innerText || '').trim().replace(/\s+/g,' ');
+                    if (!visible || (node.getAttribute('aria-disabled') || '').toLowerCase() === 'true' || !text || text.length > 200) continue;
+                    options.push(text);
+                }
+                return {expanded:true,options,incomplete};
+            }"#, "returnByValue":true}));
+            let released = self
+                .cdp
+                .call("Runtime.releaseObject", json!({"objectId":object}));
+            let result = result.map_err(derr)?;
+            released.map_err(derr)?;
+            let Some(value) = result.pointer("/result/value") else {
+                incomplete = true;
+                continue;
+            };
+            let expanded = value
+                .get("expanded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let options = value
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let options_incomplete = value
+                .get("incomplete")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            choices.push(CustomChoice {
+                label,
+                selector,
+                expanded,
+                options,
+                options_incomplete,
+            });
+        }
+        Ok(CustomChoices {
+            choices,
             incomplete,
         })
     }
@@ -3844,9 +4010,9 @@ fn control_references(root: &Value, buttons: bool) -> HashMap<String, Option<Str
         let attrs = attributes(node);
         let wanted_control = if buttons {
             tag.eq_ignore_ascii_case("button")
-                || attrs
-                    .get("role")
-                    .is_some_and(|role| role.eq_ignore_ascii_case("button"))
+                || attrs.get("role").is_some_and(|role| {
+                    role.eq_ignore_ascii_case("button") || role.eq_ignore_ascii_case("combobox")
+                })
                 || tag.eq_ignore_ascii_case("input")
         } else {
             tag.eq_ignore_ascii_case("a")
