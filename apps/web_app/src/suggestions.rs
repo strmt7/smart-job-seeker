@@ -1315,7 +1315,7 @@ mod tests {
             .with_resident_context();
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
-            model_name,
+            model_name.clone(),
             crate::resident_model,
         );
         let mut model = Recording {
@@ -1352,6 +1352,46 @@ mod tests {
             .all(|f| !model.prompts[0].contains(&f.selector)
                 && !mappings.iter().any(|m| m.field_selector == f.selector)));
         assert!(!model.prompts[0].contains("avery@example.test"));
+        let mut expected = Vec::new();
+        for field in [first, email] {
+            let mapping = mappings
+                .iter()
+                .find(|m| m.field_selector == field.selector)
+                .unwrap();
+            driver
+                .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                    selector: mapping.field_selector.clone(),
+                    value: mapping.value.clone(),
+                })
+                .unwrap();
+            let waypoint_applications::form_mapping::PacketValue::Text(value) = &mapping.value
+            else {
+                panic!("fixture expected a text mapping");
+            };
+            driver.verify_text_value(&field.selector, value).unwrap();
+            expected.push((field.label.clone(), value.clone()));
+        }
+        let visual = crate::visual_review::analyze(
+            addr,
+            &model_name,
+            &driver.screenshot_base64().unwrap(),
+            &expected,
+        )
+        .unwrap();
+        println!("Fictional multilingual visual result: {visual}");
+        let comparisons = visual["comparisons"].as_array().unwrap();
+        assert_eq!(comparisons.len(), expected.len(), "{visual}");
+        for (label, _) in &expected {
+            assert!(
+                comparisons.iter().any(
+                    |item| item["label"] == *label && item["status"] == "matches_transcription"
+                ),
+                "{visual}"
+            );
+        }
+        for selector in ["#permit", "#gender", "#salary", "#sponsor", "#birth"] {
+            driver.verify_text_value(selector, "").unwrap();
+        }
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 
