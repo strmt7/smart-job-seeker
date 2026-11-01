@@ -2619,6 +2619,58 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn field_hidden_before_write_is_not_modified() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-hidden-before-write.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let fill = |selector: &str, value: &str| BrowserCommand::Fill {
+            selector: selector.into(),
+            value: PacketValue::Text(value.into()),
+        };
+        driver.execute(&fill("#first", "Avery")).unwrap();
+        let error = driver.execute(&fill("#last", "Example")).unwrap_err();
+        assert!(error.to_string().contains("no longer visibly rendered"));
+        assert_eq!(driver.text_value_snapshot("#last").unwrap().value, "");
+        let commands = [
+            BrowserCommand::SelectOption {
+                selector: "#country".into(),
+                label: "Germany".into(),
+            },
+            BrowserCommand::Fill {
+                selector: "#consent".into(),
+                value: PacketValue::Bool(true),
+            },
+            BrowserCommand::Fill {
+                selector: "#start".into(),
+                value: PacketValue::Date("2026-12-01".into()),
+            },
+        ];
+        for command in &commands {
+            assert!(driver
+                .execute(command)
+                .unwrap_err()
+                .to_string()
+                .contains("no longer visibly rendered"));
+        }
+        assert_eq!(
+            driver.selected_option_snapshot("#country").unwrap().value,
+            ""
+        );
+        assert_eq!(
+            driver
+                .choice_snapshot("#consent", "checkbox")
+                .unwrap()
+                .checked,
+            Some(false)
+        );
+        assert_eq!(driver.text_value_snapshot("#start").unwrap().value, "");
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts a local browser against a fictional form without submitting"]
     fn hidden_filled_field_stops_later_writes_in_browser() {
         use waypoint_domain::GrantId;

@@ -2220,6 +2220,15 @@ impl CdpDriver {
         let Some(node) = self.node_id(selector)? else {
             return Err(DriverError(format!("field {selector} not found")));
         };
+        if matches!(
+            value,
+            PacketValue::Text(_) | PacketValue::Bool(_) | PacketValue::Date(_)
+        ) && !self.control_visibility_and_path(node)?.0
+        {
+            return Err(DriverError(
+                "Field is no longer visibly rendered; review it manually".into(),
+            ));
+        }
         match value {
             PacketValue::FileRef { name } => {
                 let path = self.resolve_upload(name)?;
@@ -2372,6 +2381,11 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Select field not found".into()))?;
+        if apply && !self.control_visibility_and_path(node)?.0 {
+            return Err(DriverError(
+                "Field is no longer visibly rendered; review it manually".into(),
+            ));
+        }
         let result = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -2408,6 +2422,11 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Select field not found".into()))?;
+        if apply && !self.control_visibility_and_path(node)?.0 {
+            return Err(DriverError(
+                "Field is no longer visibly rendered; review it manually".into(),
+            ));
+        }
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
