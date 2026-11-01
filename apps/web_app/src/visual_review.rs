@@ -123,20 +123,32 @@ pub fn expected_from_preview(
     preview: &crate::form_preview::FormPreview,
     completed: &[String],
 ) -> (ExpectedFields, bool) {
-    let (values, truncated) = bounded_expected(
-        preview
-            .suggestions
+    let completed_set: std::collections::HashSet<_> =
+        completed.iter().map(String::as_str).collect();
+    let mut accounted = std::collections::HashSet::new();
+    let mut omitted = false;
+    let mut eligible = Vec::new();
+    for mapping in preview
+        .suggestions
+        .iter()
+        .filter(|mapping| completed_set.contains(mapping.field_selector.as_str()))
+    {
+        accounted.insert(mapping.field_selector.as_str());
+        let field = preview
+            .schema
+            .fields
             .iter()
-            .filter(|mapping| completed.contains(&mapping.field_selector))
-            .filter_map(|mapping| {
-                let field = preview
-                    .schema
-                    .fields
-                    .iter()
-                    .find(|field| field.selector == mapping.field_selector)?;
-                expected_value(&mapping.value).map(|value| (field.label.clone(), value))
-            }),
-    );
+            .find(|field| field.selector == mapping.field_selector);
+        match (field, expected_value(&mapping.value)) {
+            (Some(field), Some(value)) => eligible.push((field.label.clone(), value)),
+            _ => omitted = true,
+        }
+    }
+    omitted |= completed_set
+        .iter()
+        .any(|selector| !accounted.contains(selector));
+    let (values, truncated) = bounded_expected(eligible);
+    let truncated = truncated || omitted;
     let repeated: std::collections::HashSet<_> =
         preview.repeated_label_selectors().into_iter().collect();
     let ambiguous_labels = preview
@@ -1614,6 +1626,12 @@ mod tests {
         let (expected, truncated) = expected_from_preview(&preview, &["#one".into()]);
         assert!(!truncated);
         assert_eq!(expected.values.len(), 1);
+        let mut oversized = preview.clone();
+        oversized.suggestions[0].value = PacketValue::Text("x".repeat(1001));
+        let (limited, omitted) = expected_from_preview(&oversized, &["#one".into()]);
+        assert!(omitted);
+        assert!(limited.values.is_empty());
+        assert!(expected_from_preview(&preview, &["#unknown".into()]).1);
         let observed = validate(
             &json!({"observations":[{"label":"PRÉNOM\u{a0}COMPLET","visible_value":"Élodie"}]}),
         )
