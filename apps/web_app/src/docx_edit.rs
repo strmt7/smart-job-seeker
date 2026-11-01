@@ -555,9 +555,6 @@ mod tests {
             .read_to_string(&mut body)
             .unwrap();
         assert!(body.contains("<w:moveFrom><w:r><w:t>Old qualification</w:t></w:r></w:moveFrom>"));
-        assert!(crate::document_convert::docx_to_pdf(&edited)
-            .unwrap_err()
-            .contains("Resolve revisions"));
     }
 
     #[test]
@@ -605,6 +602,35 @@ mod tests {
             crate::document_extract::extract("cv.docx", &edited).unwrap(),
             "Research analyst"
         );
+    }
+
+    #[test]
+    #[ignore = "converts a fictional DOCX with tracked revisions using local LibreOffice"]
+    fn tracked_revision_edit_converts_to_verified_pdf() {
+        let input = std::env::var("WAYPOINT_TRACKED_FIXTURE").expect("fixture path");
+        let original = std::fs::read(input).unwrap();
+        let old = "Fictional experience and qualifications for local rendering checks.";
+        let replacement = "Fictional engineering experience.";
+        let edited = replace(&original, old, replacement).unwrap();
+        let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let check = crate::convert_task::compare_docx_to_pdf(&edited, &pdf);
+        assert_eq!(check["status"], "matches");
+        let text = crate::pdf_extract::extract(&pdf).unwrap();
+        assert!(!text.contains(old));
+        assert!(text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains(replacement));
+        if let Some(output) = std::env::var_os("WAYPOINT_TRACKED_PDF") {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output)
+                .unwrap()
+                .write_all(&pdf)
+                .unwrap();
+        }
     }
 
     #[test]

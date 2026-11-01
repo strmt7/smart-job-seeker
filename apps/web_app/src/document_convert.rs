@@ -116,8 +116,14 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
     if bytes.is_empty() || bytes.len() > 10 * 1024 * 1024 {
         return Err("Document size is outside the permitted range".into());
     }
+    let prepared = if text {
+        None
+    } else {
+        crate::docx_revision::accepted_view(bytes)?
+    };
+    let conversion_bytes = prepared.as_deref().unwrap_or(bytes);
     if !text {
-        reject_removed_revisions(bytes)?;
+        reject_removed_revisions(conversion_bytes)?;
     }
     let office = office_path().ok_or(
         "LibreOffice was not found. Install it or set WAYPOINT_SOFFICE to its executable.",
@@ -129,13 +135,14 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
     let source = temp
         .path()
         .join(if text { "source.txt" } else { "source.docx" });
-    if text && !bytes.starts_with(b"\xef\xbb\xbf") {
+    if text && !conversion_bytes.starts_with(b"\xef\xbb\xbf") {
         use std::io::Write;
         let mut file = std::fs::File::create(&source).map_err(|e| e.to_string())?;
         file.write_all(b"\xef\xbb\xbf").map_err(|e| e.to_string())?;
-        file.write_all(bytes).map_err(|e| e.to_string())?;
+        file.write_all(conversion_bytes)
+            .map_err(|e| e.to_string())?;
     } else {
-        std::fs::write(&source, bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&source, conversion_bytes).map_err(|e| e.to_string())?;
     }
     let output = temp.path().join("output");
     std::fs::create_dir(&output).map_err(|e| e.to_string())?;
@@ -186,7 +193,15 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    read_pdf(&output.join("source.pdf"))
+    let pdf = read_pdf(&output.join("source.pdf"))?;
+    drop(_document_lease);
+    if prepared.is_some() {
+        let check = crate::convert_task::compare_docx_to_pdf(bytes, &pdf);
+        if check["status"] != "matches" {
+            return Err("The converted PDF could not be verified against the current DOCX text. Resolve revisions and review the document manually.".into());
+        }
+    }
+    Ok(pdf)
 }
 fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
     let metadata = std::fs::metadata(path).map_err(|_| "LibreOffice did not produce a PDF")?;

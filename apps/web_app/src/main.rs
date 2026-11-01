@@ -20,6 +20,7 @@ mod document_extract;
 mod document_visual;
 mod docx_edit;
 mod docx_edit_task;
+mod docx_revision;
 mod draft_task;
 mod duplicate_compare;
 mod duplicate_search;
