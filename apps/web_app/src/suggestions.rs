@@ -716,12 +716,10 @@ fn validate_suggestions(
             }
             let direct = AUTOFILL_PROFILE_FIELDS.iter().copied().find(|candidate| {
                 normalize_field_name(candidate) == normalize_field_name(&field.label)
+                    || hint_matches_applicant_label(&field.label, candidate)
             });
             let hint = autocomplete_profile_key(field);
             if direct.is_some_and(|direct| direct != key || hint.is_some_and(|hint| hint != direct))
-                || hint.is_some_and(|hint| {
-                    hint != key && hint_matches_applicant_label(&field.label, hint)
-                })
             {
                 return None;
             }
@@ -1639,7 +1637,10 @@ mod tests {
             json!({"mappings":[{"selector":"#candidate","profile_key":"last_name"}]});
         for (label, hint) in [
             ("First name", None),
+            ("Your given name", None),
+            ("Applicant's given name", None),
             ("Your given name", Some("given-name")),
+            ("Your given name", Some("family-name")),
             ("First name", Some("family-name")),
         ] {
             schema.fields[0].label = label.into();
@@ -1649,6 +1650,17 @@ mod tests {
             assert!(mapped.is_empty(), "{label}");
             assert!(invalid.contains("#candidate"), "{label}");
         }
+        schema.fields[0].label = "Your given name".into();
+        schema.fields[0].autocomplete = None;
+        let profile = json!({"first_name":"Avery"});
+        let (mapped, invalid, _) = validate_suggestions(
+            &schema,
+            profile.as_object().unwrap(),
+            &json!({"mappings":[{"selector":"#candidate","profile_key":"first_name"}]}),
+        )
+        .unwrap();
+        assert_eq!(mapped.len(), 1);
+        assert!(invalid.is_empty());
     }
     #[test]
     fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
