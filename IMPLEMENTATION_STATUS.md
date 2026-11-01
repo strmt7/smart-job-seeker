@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Search-constraint review cues — 2026-11-01
+
+- Jobs with unresolved search constraints show a review cue on the job card and selected-job panel, with details retained under the match explanation. Mocked JavaScript checks covered presence and absence of the card cue; the rendered layout and keyboard flow were not tested in this change.
+
 ## Local model capability identity — 2026-11-01
 
 - The displayed vision-capability result now requires the same valid resident-model digest before and after the capability lookup, in addition to the existing name and resource checks. Missing or changed digests leave capability unknown. Fictional local-service tests passed for stable, changed and missing digests; this remains a snapshot and does not reserve the model or prove a capability lookup describes the resident weights.
