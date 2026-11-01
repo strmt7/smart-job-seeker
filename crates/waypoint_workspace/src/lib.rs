@@ -638,6 +638,18 @@ impl Workspace {
         Ok(self.store.job_description(id)?)
     }
 
+    pub fn replace_reviewed_description(
+        &self,
+        id: &JobIdentityId,
+        expected: Option<&str>,
+        replacement: &str,
+        at: &str,
+    ) -> Result<waypoint_store::ReviewedDescriptionResult, WorkspaceError> {
+        Ok(self
+            .store
+            .replace_reviewed_description(id, expected, replacement, at)?)
+    }
+
     pub fn save_job_capture(
         &self,
         id: &JobIdentityId,

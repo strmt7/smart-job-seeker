@@ -1,0 +1,60 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const test = require('node:test');
+const helper = fs.readFileSync('apps/web_app/web/app.js', 'utf8').split('\n').find(line => line.startsWith('function showReinspectionPreview('));
+function node(tag, text = '', className = '') { return {tag, textContent:text, className, children:[], append(...items){this.children.push(...items);}, addEventListener(name, fn){this[name]=fn;}, remove(){this.removed=true;}}; }
+test('reviewed replacement requires confirmation and uses the inspection task', async () => {
+  let confirmed=false, calls=[], refreshed=0;
+  const ctx={element:node,window:{confirm:()=>confirmed},api:async (...args)=>calls.push(args),refresh:async()=>{refreshed++},notify:()=>{}};
+  vm.runInNewContext(helper,ctx);
+  const panel=node('div');
+  ctx.showReinspectionPreview(panel,{inspection_task_id:'fixture-task',saved:{existing:true},previous_description:{text:'Old',truncated:false},job:{description:'New'}});
+  const button=panel.children[0].children.at(-1);
+  await button.click(); assert.equal(calls.length,0);
+  confirmed=true; await button.click();
+  assert.equal(calls.length,1); assert.equal(calls[0][0],'/api/listing-inspect/apply-description');
+  assert.equal(calls[0][1].task_id,'fixture-task'); assert.equal(calls[0][1].reviewed,true); assert.equal(refreshed,1);
+  const truncated=node('div');
+  ctx.showReinspectionPreview(truncated,{inspection_task_id:'fixture-task',saved:{existing:true},previous_description:{text:'Old',truncated:true},job:{description:'New'}});
+  assert.ok(!truncated.children[0].children.some(item=>item.tag==='button'));
+});
+test('a refresh failure reports the saved update without offering a retry', async () => {
+  const messages=[];
+  const ctx={element:node,window:{confirm:()=>true},api:async()=>({updated:true}),refresh:async()=>{throw new Error('offline')},notify:message=>messages.push(message)};
+  vm.runInNewContext(helper,ctx);
+  const panel=node('div');
+  ctx.showReinspectionPreview(panel,{inspection_task_id:'fixture-task',saved:{existing:true},previous_description:{text:'Old',truncated:false},job:{description:'New'}});
+  const details=panel.children[0], button=details.children.at(-1);
+  await button.click();
+  assert.equal(details.removed,true);
+  assert.equal(button.disabled,true);
+  assert.match(messages.at(-1),/was replaced.*could not refresh/i);
+});
+test('a much shorter extraction and its source warnings are visible before confirmation', async () => {
+  let prompt='';
+  const ctx={element:node,window:{confirm:message=>{prompt=message;return false}},api:async()=>{},refresh:async()=>{},notify:()=>{}};
+  vm.runInNewContext(helper,ctx);
+  const panel=node('div');
+  ctx.showReinspectionPreview(panel,{inspection_task_id:'fixture-task',saved:{existing:true},previous_description:{text:'A long fictional description with many requirements.',truncated:false},job:{description:'Short',extraction_warnings:['Description is a partial excerpt; review the full listing.']}});
+  const details=panel.children[0];
+  assert.ok(details.children.some(item=>/less than half/.test(item.textContent)));
+  assert.ok(details.children.some(item=>/partial excerpt/.test(item.textContent)));
+  await details.children.at(-1).click();
+  assert.match(prompt,/much shorter/);
+});
+test('observed section is reviewable and truncated sections cannot replace the saved text', async () => {
+  const calls=[];
+  const ctx={element:node,window:{confirm:()=>true},api:async(...args)=>calls.push(args),refresh:async()=>{},notify:()=>{}};
+  vm.runInNewContext(helper,ctx);
+  const result={inspection_task_id:'fixture-task',saved:{existing:true},previous_description:{text:'Old description',truncated:false},job:{description:'Short',observed_section:{text:'Full fictional section',truncated:false}}};
+  const panel=node('div');ctx.showReinspectionPreview(panel,result);
+  const section=panel.children[0].children.find(item=>item.tag==='details');
+  assert.match(section.children[1].textContent,/unrelated/);
+  await section.children.at(-1).click();
+  assert.equal(calls[0][1].source,'observed_section');
+  result.job.observed_section.truncated=true;
+  const incomplete=node('div');ctx.showReinspectionPreview(incomplete,result);
+  const truncated=incomplete.children[0].children.find(item=>item.tag==='details');
+  assert.ok(!truncated.children.some(item=>item.tag==='button'));
+});

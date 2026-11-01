@@ -345,6 +345,24 @@ pub struct CdpDriver {
 }
 
 impl CdpDriver {
+    /// Read a unique semantic section whose DOM id is the requested fragment.
+    /// An absent, duplicated, or non-section id is left unclassified.
+    pub fn page_section_text_bounded(
+        &mut self,
+        id: &str,
+        limit: usize,
+    ) -> Result<Option<(String, bool)>, DriverError> {
+        if id.is_empty()
+            || id.len() > 200
+            || id.chars().any(char::is_control)
+            || limit == 0
+            || limit > 32_000
+        {
+            return Err(DriverError("Invalid section-text request".into()));
+        }
+        Ok(unique_section_text(&self.document()?, id, limit))
+    }
+
     /// Extract a bounded text sample from the current DOM for local review.
     /// Scripts, styles, templates and text inside form controls are excluded.
     pub fn page_text_bounded(&mut self, limit: usize) -> Result<(String, bool), DriverError> {
@@ -5540,6 +5558,50 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
     }
 }
 
+fn unique_section_text(root: &Value, id: &str, limit: usize) -> Option<(String, bool)> {
+    let mut matches = 0usize;
+    let mut result = None;
+    walk(root, false, &mut |node, _| {
+        if attributes(node).get("id").is_some_and(|value| value == id) {
+            matches += 1;
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            if matches == 1
+                && (tag.eq_ignore_ascii_case("section") || tag.eq_ignore_ascii_case("article"))
+            {
+                let mut text = String::new();
+                let mut truncated = false;
+                walk(node, false, &mut |child, in_control| {
+                    let tag = child.get("nodeName").and_then(Value::as_str).unwrap_or("");
+                    if ["script", "style", "noscript", "template"]
+                        .iter()
+                        .any(|skip| tag.eq_ignore_ascii_case(skip))
+                    {
+                        return false;
+                    }
+                    if tag == "#text" && !in_control {
+                        if let Some(value) = child.get("nodeValue").and_then(Value::as_str) {
+                            for c in value.chars() {
+                                if text.len() + c.len_utf8() + 1 > limit {
+                                    truncated = true;
+                                    break;
+                                }
+                                text.push(c);
+                            }
+                            if text.len() < limit {
+                                text.push(' ');
+                            }
+                        }
+                    }
+                    true
+                });
+                result = Some((text, truncated));
+            }
+        }
+        true
+    });
+    (matches == 1).then_some(result).flatten()
+}
+
 /// Collect only unambiguous static datalists in this document or shadow root.
 fn static_datalists(root: &Value) -> HashMap<String, Vec<String>> {
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -5792,6 +5854,21 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn section_text_requires_one_semantic_id_and_skips_controls() {
+        let section = serde_json::json!({"nodeName":"SECTION","attributes":["id","role-a"],"children":[{"nodeName":"#text","nodeValue":"Selected role"},{"nodeName":"SCRIPT","children":[{"nodeName":"#text","nodeValue":"ignore script"}]},{"nodeName":"INPUT","children":[{"nodeName":"#text","nodeValue":"ignore value"}]}]});
+        let root = serde_json::json!({"nodeName":"BODY","children":[section.clone(),{"nodeName":"SECTION","attributes":["id","role-b"],"children":[{"nodeName":"#text","nodeValue":"Other role"}]}]});
+        let (text, truncated) = unique_section_text(&root, "role-a", 100).unwrap();
+        assert_eq!(text.trim(), "Selected role");
+        assert!(!truncated);
+        assert!(unique_section_text(&root, "missing", 100).is_none());
+        let duplicate = serde_json::json!({"nodeName":"BODY","children":[section.clone(),section]});
+        assert!(unique_section_text(&duplicate, "role-a", 100).is_none());
+        let wrong_tag = serde_json::json!({"nodeName":"DIV","attributes":["id","role-a"]});
+        assert!(unique_section_text(&wrong_tag, "role-a", 100).is_none());
+        assert!(unique_section_text(&root, "role-a", 5).unwrap().1);
+    }
 
     #[test]
     fn context_capture_keeps_target_and_uses_available_left_space() {

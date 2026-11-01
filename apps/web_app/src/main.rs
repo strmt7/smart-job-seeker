@@ -2540,6 +2540,101 @@ fn serve(
             candidate_task::discard(id)?;
             json_reply(stream, "200 OK", json!({"discarded":true}));
         }
+        "/api/listing-inspect/apply-description" => {
+            if session.is_some()
+                || form_task::busy()
+                || application_check::busy()
+                || candidate_task::busy()
+                || form_links::busy()
+                || custom_choice_action::busy()
+                || email_worker::busy()
+            {
+                return Err(
+                    "Finish the active application or inspection before updating this listing"
+                        .into(),
+                );
+            }
+            if body["reviewed"] != true {
+                return Err("Review both descriptions before applying this update".into());
+            }
+            let task_id = body["task_id"].as_str().ok_or("missing task id")?;
+            let result = candidate_task::completed(task_id)?
+                .ok_or("Inspection is no longer available; inspect the listing again")?;
+            if result["status"] != "complete"
+                || result["saved"]["existing"] != true
+                || result["previous_description"]["truncated"] != false
+            {
+                return Err("This inspection cannot be applied; review the listing again".into());
+            }
+            let id = JobIdentityId::new(result["saved"]["id"].as_str().ok_or("missing saved id")?)
+                .map_err(|e| e.to_string())?;
+            let job = ws
+                .job(&id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Listing no longer exists")?;
+            let job_digest =
+                waypoint_domain::sha256_hex(&serde_json::to_vec(&job).map_err(|e| e.to_string())?);
+            if result["previous_description"]["job_digest"].as_str() != Some(job_digest.as_str()) {
+                return Err("The saved listing changed since inspection; inspect it again".into());
+            }
+            let current = ws.job_description(&id).map_err(|e| e.to_string())?;
+            let description_digest = waypoint_domain::sha256_hex(
+                &serde_json::to_vec(&current).map_err(|e| e.to_string())?,
+            );
+            if result["previous_description"]["digest"].as_str()
+                != Some(description_digest.as_str())
+            {
+                return Err(
+                    "The saved description changed since inspection; inspect it again".into(),
+                );
+            }
+            let replacement = match body["source"].as_str().unwrap_or("extracted") {
+                "extracted" => result["job"]["description"].as_str(),
+                "observed_section" if result["job"]["observed_section"]["truncated"] == false => {
+                    result["job"]["observed_section"]["text"].as_str()
+                }
+                _ => return Err("The selected source text is unavailable or incomplete".into()),
+            }
+            .map(str::trim)
+            .filter(|s| {
+                !s.is_empty()
+                    && s.len() <= 30_000
+                    && !s
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            })
+            .ok_or("No usable inspected description is available")?;
+            match ws
+                .replace_reviewed_description(
+                    &id,
+                    current.as_deref(),
+                    replacement,
+                    &now().to_string(),
+                )
+                .map_err(|e| e.to_string())?
+            {
+                waypoint_store::ReviewedDescriptionResult::Updated => {
+                    json_reply(stream, "200 OK", json!({"updated":true}))
+                }
+                waypoint_store::ReviewedDescriptionResult::Unchanged => {
+                    return Err("Description has not changed".into())
+                }
+                waypoint_store::ReviewedDescriptionResult::Stale => {
+                    return Err(
+                        "The saved description changed since inspection; inspect it again".into(),
+                    )
+                }
+                waypoint_store::ReviewedDescriptionResult::NotFound => {
+                    return Err("Listing no longer exists".into())
+                }
+                waypoint_store::ReviewedDescriptionResult::ApplicationInProgressOrComplete => {
+                    return Err(
+                        "Descriptions cannot be replaced after application submission begins"
+                            .into(),
+                    )
+                }
+            }
+        }
         "/api/listing-inspect/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             if let Some(result) = candidate_task::completed(id)? {
@@ -2559,6 +2654,26 @@ fn serve(
                     let job_id =
                         JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)
                             .map_err(|e| e.to_string())?;
+                    let previous_description = if result["existing"] == true {
+                        let existing = ws.job_description(&job_id).map_err(|e| e.to_string())?;
+                        let stored_job = ws
+                            .job(&job_id)
+                            .map_err(|e| e.to_string())?
+                            .ok_or("Listing no longer exists")?;
+                        let digest = waypoint_domain::sha256_hex(
+                            &serde_json::to_vec(&existing).map_err(|e| e.to_string())?,
+                        );
+                        let job_digest = waypoint_domain::sha256_hex(
+                            &serde_json::to_vec(&stored_job).map_err(|e| e.to_string())?,
+                        );
+                        let text = existing.as_deref().unwrap_or_default();
+                        let end = text.floor_char_boundary(text.len().min(30_000));
+                        Some(
+                            json!({"text":&text[..end],"truncated":end < text.len(),"digest":digest,"job_digest":job_digest}),
+                        )
+                    } else {
+                        None
+                    };
                     let capture = if inspected.capture.segments.is_empty() {
                         let has_source = inspected.capture.metadata["structured_source_status"]
                             == "captured"
@@ -2649,7 +2764,7 @@ fn serve(
                                     && capture["preserved_existing"] != true
                                     && matches!(ws.job_source_only(&job_id), Ok(None))))
                     });
-                    let response = json!({"status":"complete","job":job,"saved":result,"capture":capture,"search_context_saved":search_context_saved,"role_suggestions_saved":role_suggestions_saved});
+                    let response = json!({"status":"complete","job":job,"saved":result,"capture":capture,"search_context_saved":search_context_saved,"role_suggestions_saved":role_suggestions_saved,"previous_description":previous_description});
                     candidate_task::complete(id, response.clone())?;
                     json_reply(stream, "200 OK", response);
                 }

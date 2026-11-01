@@ -417,7 +417,69 @@ pub struct JournalRow {
     pub reason: String,
 }
 
+/// Result of a compare-and-replace of a reviewed listing description.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewedDescriptionResult {
+    Updated,
+    Unchanged,
+    Stale,
+    NotFound,
+    ApplicationInProgressOrComplete,
+}
+
 impl Store {
+    /// Replace only the description the reviewer saw. Packet invalidation,
+    /// grant expiry, state rollback and duplicate re-evaluation commit together.
+    pub fn replace_reviewed_description(
+        &self,
+        id: &JobIdentityId,
+        expected: Option<&str>,
+        replacement: &str,
+        at: &str,
+    ) -> Result<ReviewedDescriptionResult, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some(job) = self.get_job(id)? else {
+            return Ok(ReviewedDescriptionResult::NotFound);
+        };
+        if !matches!(
+            job.state,
+            ApplicationState::Discovered
+                | ApplicationState::Shortlisted
+                | ApplicationState::Prepared
+                | ApplicationState::Approved
+        ) {
+            return Ok(ReviewedDescriptionResult::ApplicationInProgressOrComplete);
+        }
+        let current = self.job_description(id)?;
+        if current.as_deref() != expected {
+            return Ok(ReviewedDescriptionResult::Stale);
+        }
+        if current.as_deref() == Some(replacement) {
+            return Ok(ReviewedDescriptionResult::Unchanged);
+        }
+        self.set_job_description(id, Some(replacement))?;
+        tx.execute(
+            "UPDATE packets SET invalidated_at=?2 WHERE job_id=?1 AND invalidated_at IS NULL",
+            params![id.as_str(), at],
+        )?;
+        tx.execute(
+            "UPDATE grants SET expired=1 WHERE job_id=?1 AND expired=0",
+            [id.as_str()],
+        )?;
+        if job.state == ApplicationState::Approved {
+            tx.execute(
+                "UPDATE jobs SET state=?2 WHERE id=?1",
+                params![
+                    id.as_str(),
+                    serde_json::to_string(&ApplicationState::Prepared).unwrap()
+                ],
+            )?;
+        }
+        self.find_possible_duplicates(&job)?;
+        tx.commit()?;
+        Ok(ReviewedDescriptionResult::Updated)
+    }
+
     pub fn set_job_description(
         &self,
         id: &JobIdentityId,
@@ -1089,6 +1151,107 @@ mod tests {
             requisition_id: Some(id.to_string()),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn reviewed_description_change_is_atomic_and_refuses_stale_or_submitted_jobs() {
+        let mut store = Store::in_memory().unwrap();
+        let mut listing = job("reviewed");
+        listing.state = ApplicationState::Approved;
+        store.upsert_job(&listing).unwrap();
+        store
+            .set_job_description(&listing.id, Some("old duties"))
+            .unwrap();
+        store
+            .upsert_packet(&StoredPacket {
+                job_id: listing.id.as_str().into(),
+                packet_sha256: "packet".into(),
+                doc_json: "{}".into(),
+                body: "draft".into(),
+                cited_claim_ids: vec![],
+                profile_revision: 0,
+                created_at: "1".into(),
+                invalidated_at: None,
+            })
+            .unwrap();
+        store
+            .insert_grant(&StoredGrant {
+                id: "grant".into(),
+                job_id: listing.id.as_str().into(),
+                intent_id: "intent".into(),
+                bound_payload_sha256: "payload".into(),
+                packet_sha256: "packet".into(),
+                form_schema_sha256: "form".into(),
+                destination_origin: "https://example.com".into(),
+                profile_revision: 0,
+                nonce: "nonce".into(),
+                explicit_user_gesture: true,
+                consumed: false,
+                expired: false,
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .replace_reviewed_description(&listing.id, Some("outdated"), "new duties", "2")
+                .unwrap(),
+            ReviewedDescriptionResult::Stale
+        );
+        assert!(!store.grant_for_job(&listing.id).unwrap().unwrap().expired);
+        store.conn.execute_batch("CREATE TRIGGER fail_description_reindex BEFORE UPDATE ON grants BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+        assert!(store
+            .replace_reviewed_description(&listing.id, Some("old duties"), "new duties", "2")
+            .is_err());
+        assert_eq!(
+            store.job_description(&listing.id).unwrap().as_deref(),
+            Some("old duties")
+        );
+        assert_eq!(
+            store.get_job(&listing.id).unwrap().unwrap().state,
+            ApplicationState::Approved
+        );
+        assert!(!store.grant_for_job(&listing.id).unwrap().unwrap().expired);
+        assert!(store
+            .packet_for_job(&listing.id)
+            .unwrap()
+            .unwrap()
+            .invalidated_at
+            .is_none());
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_description_reindex")
+            .unwrap();
+        assert_eq!(
+            store
+                .replace_reviewed_description(&listing.id, Some("old duties"), "new duties", "2")
+                .unwrap(),
+            ReviewedDescriptionResult::Updated
+        );
+        assert_eq!(
+            store.get_job(&listing.id).unwrap().unwrap().state,
+            ApplicationState::Prepared
+        );
+        assert!(store.grant_for_job(&listing.id).unwrap().unwrap().expired);
+        assert_eq!(
+            store
+                .packet_for_job(&listing.id)
+                .unwrap()
+                .unwrap()
+                .invalidated_at
+                .as_deref(),
+            Some("2")
+        );
+        listing.state = ApplicationState::Submitting;
+        store.upsert_job(&listing).unwrap();
+        assert_eq!(
+            store
+                .replace_reviewed_description(&listing.id, Some("new duties"), "other duties", "3")
+                .unwrap(),
+            ReviewedDescriptionResult::ApplicationInProgressOrComplete
+        );
+        assert_eq!(
+            store.job_description(&listing.id).unwrap().as_deref(),
+            Some("new duties")
+        );
     }
 
     #[test]
