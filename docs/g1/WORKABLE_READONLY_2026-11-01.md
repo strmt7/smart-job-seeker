@@ -175,6 +175,18 @@ Option checks alone do not select or authorize an option. A changed snapshot,
 unreadable option, duplicate label or unavailable evidence requires review.
 The model was unloaded after the probe.
 
+Option review now captures the uniquely identified rendered option itself,
+instead of the whole viewport used in that earlier probe. This avoids the
+model's eight-item transcription limit and reduces unrelated page content in
+the image. The browser refuses missing or duplicate options and captures only
+within bounded visible viewport dimensions; clipped or unreadable options
+still need review. In a fictional 14-option list, `gemma4:12b-it-qat` read
+the tenth option, `Sydney`, from its capture. This single result does not
+establish accuracy across layouts or sites. A separate fictional end-to-end
+API run used the same local model for both option observation and the later
+selected-value check; the earlier field-label observation was simulated. No
+application was submitted, and the model was unloaded after the checks.
+
 ## Reviewed option selection
 
 The web flow can select a uniquely rendered option after a saved, current

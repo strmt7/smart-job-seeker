@@ -748,6 +748,37 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn option_capture_targets_later_unique_choice_without_clicking() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_many.html"))
+        .unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    let choice = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Preferred city")
+        .unwrap();
+    assert_eq!(choice.options[9], "Sydney");
+    let selector = choice.selector.clone();
+    let capture = driver
+        .screenshot_custom_choice_option(&selector, "Sydney")
+        .unwrap();
+    assert!(!capture.is_empty());
+    assert!(driver
+        .screenshot_custom_choice_option(&selector, "Duplicate")
+        .is_err());
+    assert!(driver
+        .screenshot_custom_choice_option(&selector, "Missing")
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn opening_custom_choice_rejects_submit_controls_and_reports_options() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver

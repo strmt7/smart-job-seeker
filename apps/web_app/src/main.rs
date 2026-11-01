@@ -4073,7 +4073,7 @@ fn serve(
                     if selected_review {
                         driver.screenshot_control(selector)
                     } else if option_review {
-                        driver.screenshot_base64()
+                        driver.screenshot_custom_choice_option(selector, &label)
                     } else {
                         driver.screenshot_field_context(selector)
                     }
@@ -4261,7 +4261,10 @@ fn serve(
                 .driver
                 .with_review_timeout(|driver| {
                     if selecting {
-                        driver.screenshot_base64()
+                        driver.screenshot_custom_choice_option(
+                            &selector,
+                            option.as_deref().unwrap_or(""),
+                        )
                     } else {
                         driver.screenshot_field_context(&selector)
                     }
@@ -4706,7 +4709,10 @@ fn serve(
                                     if result["rank_task_id"] == "custom-choice-selected" {
                                         driver.screenshot_control(selector)
                                     } else if result["rank_task_id"] == "custom-choice-option" {
-                                        driver.screenshot_base64()
+                                        driver.screenshot_custom_choice_option(
+                                            selector,
+                                            result["label"].as_str().unwrap_or(""),
+                                        )
                                     } else if choice {
                                         driver.screenshot_field_context(selector)
                                     } else {

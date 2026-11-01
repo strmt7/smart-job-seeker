@@ -404,7 +404,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .driver
-            .screenshot_base64()
+            .screenshot_custom_choice_option(&selector, "Berlin")
             .unwrap();
         session
             .as_mut()
@@ -468,7 +468,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .driver
-            .screenshot_base64()
+            .screenshot_custom_choice_option(&selector, "Berlin")
             .unwrap();
         session
             .as_mut()
@@ -478,23 +478,37 @@ mod tests {
             .unwrap()
             .screenshot_with_name(&image)
             .unwrap();
-        let revision =
-            crate::control_vision::begin_pending(&ws, &job, "option-select", now()).unwrap();
-        crate::control_vision::set_option_fixture(
-            "option-select",
-            "choice-session",
-            job.as_str(),
-            revision,
-            (&selector, &digest, &image, "Berlin"),
-        );
-        request(
-            &mut ws,
-            &mut session,
-            "/api/form/control-vision-status",
-            json!({"task_id":"option-select"}),
-        )
-        .unwrap();
-        let approved = json!({"session_id":"choice-session","visual_task_id":"option-select","reviewed":true,"source_reviewed":true});
+        let option_task = if std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref() == Ok("1") {
+            request(&mut ws, &mut session, "/api/form/custom-choice-option-vision-start", json!({"session_id":"choice-session","selector":selector,"option":"Berlin","snapshot_digest":digest})).unwrap()["task_id"].as_str().unwrap().to_owned()
+        } else {
+            let revision =
+                crate::control_vision::begin_pending(&ws, &job, "option-select", now()).unwrap();
+            crate::control_vision::set_option_fixture(
+                "option-select",
+                "choice-session",
+                job.as_str(),
+                revision,
+                (&selector, &digest, &image, "Berlin"),
+            );
+            "option-select".to_owned()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let option_result = loop {
+            let value = request(
+                &mut ws,
+                &mut session,
+                "/api/form/control-vision-status",
+                json!({"task_id":option_task}),
+            )
+            .unwrap();
+            if value["status"] != "running" {
+                break value;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(option_result["comparison"], "label_observed");
+        let approved = json!({"session_id":"choice-session","visual_task_id":option_task,"reviewed":true,"source_reviewed":true});
         let started = request(
             &mut ws,
             &mut session,

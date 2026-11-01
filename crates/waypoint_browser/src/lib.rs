@@ -685,6 +685,33 @@ impl CdpDriver {
         selector: &str,
         label: &str,
     ) -> Result<(), DriverError> {
+        let (option_node, list_id) = self.custom_choice_option_node(selector, label)?;
+        self.click_node_guarded(
+            option_node,
+            "reviewed custom option",
+            ClickGuard::ChoiceOption {
+                label,
+                list_id: &list_id,
+                owner_selector: selector,
+            },
+        )?;
+        for _ in 0..4 {
+            self.cdp.pump(Duration::from_millis(200));
+            if self.verify_custom_choice_value(selector, label).is_ok() {
+                return Ok(());
+            }
+        }
+        Err(DriverError(
+            "Choice may have changed but its displayed value was not verified; review it manually"
+                .into(),
+        ))
+    }
+
+    fn custom_choice_option_node(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<(u64, String), DriverError> {
         if label.trim().is_empty() || label.len() > 200 || label != label.trim() {
             return Err(DriverError("Invalid choice label".into()));
         }
@@ -766,25 +793,7 @@ impl CdpDriver {
             .and_then(Value::as_u64)
             .filter(|id| *id != 0)
             .ok_or_else(|| DriverError("Choice option disappeared; review it manually".into()))?;
-        self.click_node_guarded(
-            option_node,
-            "reviewed custom option",
-            ClickGuard::ChoiceOption {
-                label,
-                list_id: &list_id,
-                owner_selector: selector,
-            },
-        )?;
-        for _ in 0..4 {
-            self.cdp.pump(Duration::from_millis(200));
-            if self.verify_custom_choice_value(selector, label).is_ok() {
-                return Ok(());
-            }
-        }
-        Err(DriverError(
-            "Choice may have changed but its displayed value was not verified; review it manually"
-                .into(),
-        ))
+        Ok((option_node, list_id))
     }
 
     /// Verify a previously selected custom choice without modifying the page.
@@ -947,10 +956,29 @@ impl CdpDriver {
         self.screenshot_element(selector, false)
     }
 
+    /// Capture one uniquely identified rendered option without scrolling or clicking.
+    pub fn screenshot_custom_choice_option(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<String, DriverError> {
+        let (node, _) = self.custom_choice_option_node(selector, label)?;
+        self.screenshot_node(node, false, true)
+    }
+
     fn screenshot_element(&mut self, selector: &str, context: bool) -> Result<String, DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for visual capture".into()))?;
+        self.screenshot_node(node, context, false)
+    }
+
+    fn screenshot_node(
+        &mut self,
+        node: u64,
+        context: bool,
+        allow_wide: bool,
+    ) -> Result<String, DriverError> {
         let model = self
             .cdp
             .call("DOM.getBoxModel", json!({"nodeId":node}))
@@ -1051,9 +1079,13 @@ impl CdpDriver {
             (
                 left,
                 top,
-                (right - left).min(720.0),
+                (right - left).min(if allow_wide { 1600.0 } else { 720.0 }),
                 (bottom - top).min(400.0),
-                2,
+                if allow_wide && right - left > 720.0 {
+                    1
+                } else {
+                    2
+                },
             )
         };
         if right > left + width || bottom > top + height {

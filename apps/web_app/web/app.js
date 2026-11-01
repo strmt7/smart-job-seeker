@@ -442,7 +442,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
        if(outcome.status!=='complete' || outcome.rank_task_id!=='custom-choice-option' || outcome.session_id!==result.session_id || outcome.label!==option)throw new Error(outcome.error || 'The visual result does not match this option');
        feedback.textContent=outcome.comparison==='label_observed'?'The local model observed this option. No option was selected.':'The option could not be reliably verified; review it manually.';
        if(outcome.capture_saved!==true || outcome.result_saved!==true)feedback.textContent+=' Visual evidence was not saved.';
-       if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured open choice';image.src=`data:image/png;base64,${outcome.screenshot}`;feedback.append(image);}
+       if(outcome.screenshot){const image=document.createElement('img');image.alt='Captured choice option';image.src=`data:image/png;base64,${outcome.screenshot}`;feedback.append(image);}
        actions.replaceChildren();
        if(outcome.comparison==='label_observed' && outcome.capture_saved===true && outcome.result_saved===true && outcome.pending_finished===true && inventory.can_open===true){
         const review=element('label',''),confirm=document.createElement('input'),select=element('button','Select reviewed option');confirm.type='checkbox';select.type='button';review.append(confirm,document.createTextNode(' I reviewed this option and destination. The site may transmit data.'));actions.append(review,select);
