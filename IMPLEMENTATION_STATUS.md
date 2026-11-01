@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Two-step fictional application with Gemma — 2026-11-01
+
+- The local-model wizard test now supports an explicitly isolated CPU benchmark runtime and verifies that both model-assisted mapping requests complete without the error fallback. On a fictional two-step form (fixture SHA-256 `6add62b14f2b6694ca3bf83c9567658421ebe85ed7d8597118f0e99e3eb4091b`), `gemma4:12b-it-q4_K_M` and the existing mapping pipeline prepared reviewed values, the browser filled and verified name and email, the work-authorization field remained empty, and vision checks read the filled values. Exact deterministic suggestions can supplement the model output. A test-only click simulated the user's next-step gesture; no submission occurred.
+- The first run exposed an outdated test assertion for the multi-step warning; it was corrected before the successful run. The stricter test took 71.68 seconds after preload with at least 16.47 GiB available RAM and 26.8 GiB after cleanup. Lint passed. The isolated CPU path bypasses production GPU-residency qualification for testing only; this fixture does not establish autonomous navigation or behavior on real employers. Native output is under `target/model-eval/isolated-gemma-wizard-model-required-20261101`.
+
 ## Focused native-choice visual review — 2026-11-01
 
 - On a fictional browser datalist (fixture SHA-256 `349daa309d0eb70c02f376b9b5dbe20c09a0206e88330d259222ae29138c9c65`), `gemma4:12b-it-q4_K_M` first read the selected value but appended an empty section separator to its label, leaving the match unobserved. The focused prompt now instructs the model to use a separator only between visible headings and field labels. On rerun, the selected value was visually matched and checked against the live control; the blank changing field was not confirmed.

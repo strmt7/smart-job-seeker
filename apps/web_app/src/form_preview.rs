@@ -1576,34 +1576,43 @@ mod tests {
     #[ignore = "starts a local browser and requires a preloaded local model and resource preflight"]
     fn live_local_model_reinspects_and_prefills_a_fictional_wizard() {
         use waypoint_domain::GrantId;
-        let addr = "127.0.0.1:11434".parse().unwrap();
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".into());
-        assert_eq!(
-            waypoint_inference::ollama::resident_context(addr, &model).unwrap(),
-            4096
-        );
+        let (addr, context) = crate::visual_review::benchmark_target(&model).unwrap();
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/form-local-model-wizard.html")
             .canonicalize()
             .unwrap();
         let url = url::Url::from_file_path(fixture).unwrap().to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
-            .unwrap()
-            .with_resident_context();
-        let mut llm = crate::resident_inference::ResidentInference::new(
-            llm,
-            model.clone(),
-            crate::resident_model,
-        );
+        let llm =
+            waypoint_inference::OllamaInference::new(&format!("http://{addr}"), &model).unwrap();
+        let llm = if let Some(context) = context {
+            llm.with_context_window(context).unwrap()
+        } else {
+            llm.with_resident_context()
+        };
+        let checked_model = model.clone();
+        let mut llm =
+            crate::resident_inference::ResidentInference::new(llm, model.clone(), move || {
+                crate::visual_review::benchmark_target(&checked_model)
+                    .map(|_| Some(checked_model.clone()))
+            });
         let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
         let first = inspect_and_suggest(&mut driver, &mut llm, &url, &profile).unwrap();
+        assert!(
+            !first
+                .manual_review
+                .iter()
+                .any(|reason| reason.contains("only exact labels")),
+            "first step fell back without model mapping: {:?}",
+            first.manual_review
+        );
         assert!(first.schema.multi_step);
         assert!(first
             .manual_review
             .iter()
-            .any(|reason| reason.contains("next-step")));
+            .any(|reason| reason.contains("multi-step")));
         assert_eq!(first.suggestions.len(), 1);
         assert_eq!(first.suggestions[0].field_selector, "#given");
         let mut ws = Workspace::in_memory().unwrap();
@@ -1663,8 +1672,7 @@ mod tests {
             };
         assert_eq!(fill(&mut driver, &first, "wizard-first").unwrap(), 1);
         driver.verify_text_value("#given", "Avery").unwrap();
-        let visual_first = crate::visual_review::analyze(
-            addr,
+        let visual_first = crate::visual_review::benchmark_analyze(
             &model,
             &driver.screenshot_base64().unwrap(),
             &[("Your given name".into(), "Avery".into())],
@@ -1684,6 +1692,14 @@ mod tests {
         let live = driver.inspect_current().unwrap();
         assert_ne!(first.schema, live.schema);
         let second = suggest_for_live_form(live, &mut llm, &profile).unwrap();
+        assert!(
+            !second
+                .manual_review
+                .iter()
+                .any(|reason| reason.contains("only exact labels")),
+            "second step fell back without model mapping: {:?}",
+            second.manual_review
+        );
         println!(
             "Fictional second-step fields: {:?}; suggestions: {:?}; review: {:?}",
             second.schema.fields, second.suggestions, second.manual_review
@@ -1700,8 +1716,7 @@ mod tests {
             .verify_text_value("#email", "avery@example.invalid")
             .unwrap();
         driver.verify_text_value("#permit", "").unwrap();
-        let visual_second = crate::visual_review::analyze(
-            addr,
+        let visual_second = crate::visual_review::benchmark_analyze(
             &model,
             &driver.screenshot_base64().unwrap(),
             &[("Email address".into(), "avery@example.invalid".into())],

@@ -700,7 +700,7 @@ pub(crate) fn generate_vision(
 }
 
 #[cfg(test)]
-fn benchmark_target(model: &str) -> Result<(std::net::SocketAddr, Option<u32>), String> {
+pub(crate) fn benchmark_target(model: &str) -> Result<(std::net::SocketAddr, Option<u32>), String> {
     let Some(address) = std::env::var("WAYPOINT_VISION_BENCHMARK_ADDR").ok() else {
         if crate::resident_model()?.as_deref() != Some(model) {
             return Err("Expected a preloaded eligible model".into());
@@ -732,6 +732,16 @@ fn benchmark_target(model: &str) -> Result<(std::net::SocketAddr, Option<u32>), 
 pub(crate) fn benchmark_vision(model: &str, image: &str, prompt: &str) -> Result<Value, String> {
     let (addr, context) = benchmark_target(model)?;
     generate_vision_with_context(addr, model, image, prompt, context)
+}
+
+#[cfg(test)]
+pub(crate) fn benchmark_analyze(
+    model: &str,
+    image: &str,
+    expected: &[(String, String)],
+) -> Result<Value, String> {
+    let (addr, context) = benchmark_target(model)?;
+    analyze_with_context(addr, model, image, expected, context)
 }
 
 fn generate_vision_with_context(
