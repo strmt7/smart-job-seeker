@@ -4,4 +4,11 @@
 <div style="opacity:0"><label for="transparent">Transparent</label><input id="transparent" value="Example"></div>
 <div style="visibility:hidden"><label for="invisible">Invisible</label><input id="invisible" value="Example"></div>
 <label for="offscreen">Offscreen</label><input id="offscreen" value="Example" style="position:absolute;top:4000px">
+<label><input id="check-visible" type="checkbox" checked>Visible checkbox</label>
+<div style="opacity:0"><label><input id="check-hidden" type="checkbox" checked>Hidden checkbox</label></div>
+<select id="select-visible"><option selected>Alpha</option></select>
+<select id="select-hidden" style="display:none"><option selected>Alpha</option></select>
+<select id="multi-hidden" multiple style="display:none"><option selected>Alpha</option></select>
+<fieldset><legend>Workplace</legend><label><input id="radio-visible" type="radio" name="work" checked>Remote</label></fieldset>
+<fieldset style="display:none"><legend>Hidden workplace</legend><label><input id="radio-hidden" type="radio" name="hiddenwork" checked>Remote</label></fieldset>
 </form></body></html>

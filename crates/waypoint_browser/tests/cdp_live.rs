@@ -74,6 +74,48 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
 }
 
 #[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn verification_rejects_hidden_choices() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_hidden_verification.html"))
+        .unwrap();
+    let checkbox = |selector: &str| BrowserCommand::Fill {
+        selector: selector.into(),
+        value: PacketValue::Bool(true),
+    };
+    let select = |selector: &str| BrowserCommand::SelectOption {
+        selector: selector.into(),
+        label: "Alpha".into(),
+    };
+    let radio = |selector: &str| BrowserCommand::SelectRadio {
+        selector: selector.into(),
+        label: "Remote".into(),
+    };
+    for command in [
+        checkbox("#check-visible"),
+        select("#select-visible"),
+        radio("#radio-visible"),
+    ] {
+        driver.verify_choice(&command).unwrap();
+    }
+    for command in [
+        checkbox("#check-hidden"),
+        select("#select-hidden"),
+        radio("#radio-hidden"),
+        BrowserCommand::SelectOptions {
+            selector: "#multi-hidden".into(),
+            labels: vec!["Alpha".into()],
+        },
+    ] {
+        assert!(
+            driver.verify_choice(&command).is_err(),
+            "accepted {command:?}"
+        );
+    }
+}
+
+#[test]
 #[ignore = "launches one local browser and a fictional local HTTP server"]
 fn http_error_page_is_not_treated_as_an_application_form() {
     use std::io::{Read, Write};
