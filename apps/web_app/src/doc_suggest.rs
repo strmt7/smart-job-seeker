@@ -23,6 +23,7 @@ struct ReviewProgress {
 }
 struct ReviewResult {
     excerpts: Vec<String>,
+    coverage: Option<Value>,
     progress: ReviewProgress,
     limited_sections: usize,
     omitted_excerpts: usize,
@@ -58,7 +59,7 @@ pub fn start(id: String, model: String, name: String, bytes: Vec<u8>) -> Result<
     std::thread::spawn(move || {
         let _guard = guard;
         let result = std::panic::catch_unwind(|| {
-            let text = crate::document_extract::extract(&name, &bytes)?;
+            let (text, coverage) = crate::document_extract::extract_for_model(&name, &bytes)?;
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                 .map_err(|e| e.to_string())?
                 .with_resident_context();
@@ -67,13 +68,15 @@ pub fn start(id: String, model: String, name: String, bytes: Vec<u8>) -> Result<
                 model,
                 crate::resident_model,
             );
-            suggest(&mut llm, &text, |progress| {
+            let mut review = suggest(&mut llm, &text, |progress| {
                 if let Ok(mut tasks) = TASK.lock() {
                     if let Some(task) = tasks.as_mut().filter(|task| task.id == id) {
                         task.progress = progress.clone();
                     }
                 }
-            })
+            })?;
+            review.coverage = coverage;
+            Ok(review)
         })
         .unwrap_or_else(|_| Err("Document review stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
@@ -106,7 +109,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
         Some(outcome) => {
             let value = match outcome {
                 Ok(review) => {
-                    json!({"status":"complete","excerpts":review.excerpts,"truncated":review.progress.presented_bytes < review.progress.total_bytes,"total_bytes":review.progress.total_bytes,"presented_bytes":review.progress.presented_bytes,"attempted_sections":review.progress.attempted_sections,"failed_sections":review.progress.failed_sections,"limited_sections":review.limited_sections,"omitted_excerpts":review.omitted_excerpts,"stopped":review.stopped})
+                    json!({"status":"complete","excerpts":review.excerpts,"coverage":review.coverage,"truncated":review.progress.presented_bytes < review.progress.total_bytes,"total_bytes":review.progress.total_bytes,"presented_bytes":review.progress.presented_bytes,"attempted_sections":review.progress.attempted_sections,"failed_sections":review.progress.failed_sections,"limited_sections":review.limited_sections,"omitted_excerpts":review.omitted_excerpts,"stopped":review.stopped})
                 }
                 Err(error) => json!({"status":"failed","error":error}),
             };
@@ -205,6 +208,7 @@ fn suggest(
     }
     Ok(ReviewResult {
         excerpts,
+        coverage: None,
         progress,
         limited_sections,
         omitted_excerpts,
@@ -247,6 +251,7 @@ mod tests {
             id: "first".into(),
             outcome: Some(Ok(ReviewResult {
                 excerpts: vec!["Fictional qualification".into()],
+                coverage: Some(json!({"pages_with_images_and_text":[1]})),
                 progress: ReviewProgress {
                     total_bytes: 23,
                     presented_bytes: 23,
@@ -267,6 +272,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("awaiting its result"));
+        assert_eq!(
+            poll("first").unwrap()["coverage"]["pages_with_images_and_text"][0],
+            1
+        );
         assert_eq!(
             poll("first").unwrap()["excerpts"][0],
             "Fictional qualification"

@@ -240,7 +240,7 @@ pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value)
 }
 
 /// Consumers without coverage handling must not silently use an incomplete PDF.
-pub fn extract(bytes: &[u8]) -> Result<String, String> {
+pub fn extract_checked_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
     let (text, coverage) = extract_with_coverage(bytes)?;
     if coverage["pages_without_selectable_text"]
         .as_array()
@@ -251,7 +251,10 @@ pub fn extract(bytes: &[u8]) -> Result<String, String> {
     {
         return Err("Some PDF pages have no selectable text; review the extracted pages and use OCR or a text-based document".into());
     }
-    Ok(text)
+    Ok((text, coverage))
+}
+pub fn extract(bytes: &[u8]) -> Result<String, String> {
+    extract_checked_with_coverage(bytes).map(|(text, _)| text)
 }
 pub fn render_page(bytes: &[u8], page: usize) -> Result<serde_json::Value, String> {
     render_page_inner(bytes, page, "full")
@@ -438,6 +441,12 @@ mod tests {
         let bytes = include_bytes!("../tests/fictional-mixed-image-text.pdf");
         let (text, coverage) = super::extract_with_coverage(bytes).unwrap();
         assert!(!text.trim().is_empty());
+        let (_, model_coverage) =
+            crate::document_extract::extract_for_model("cv.pdf", bytes).unwrap();
+        assert_eq!(
+            model_coverage.unwrap()["pages_with_images_and_text"],
+            serde_json::json!([1])
+        );
         assert_eq!(
             coverage["pages_with_images_and_text"],
             serde_json::json!([1])
