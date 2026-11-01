@@ -369,6 +369,11 @@ mod tests {
     #[test]
     #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
     fn resource_gated_experience_comparison() {
+        with_resource_gated_model(live_experience_comparison_on_fictional_contacts);
+    }
+
+    #[cfg(windows)]
+    fn with_resource_gated_model(action: impl FnOnce()) {
         let id = "fictional-experience-evaluation";
         crate::model_start::start(id.into(), "qwen3.5:9b".into()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
@@ -400,7 +405,58 @@ mod tests {
             }
         }
         let _unload = Unload(result["model"]["already_running"] != true);
-        live_experience_comparison_on_fictional_contacts();
+        action();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
+    fn resource_gated_repeated_contact_fields() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::PacketValue;
+        with_resource_gated_model(|| {
+            let model = crate::resident_model()
+                .unwrap()
+                .expect("eligible resident model");
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/waypoint_browser/tests/fixtures/form_repeated_text_selectors.html").canonicalize().unwrap();
+            let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let schema = browser
+                .open(url::Url::from_file_path(path).unwrap().as_str())
+                .unwrap()
+                .schema;
+            let profile = serde_json::json!({"email":"avery@example.invalid","phone":"2025550101"});
+            let (mappings, _, _) =
+                crate::suggestions::suggest_with_review(&mut llm, &schema, &profile).unwrap();
+            let mut matched = Vec::new();
+            for mapping in mappings {
+                let field = schema
+                    .fields
+                    .iter()
+                    .find(|field| field.selector == mapping.field_selector)
+                    .expect("known field");
+                let expected = match field.label.as_str() {
+                    "Applicant email" => "avery@example.invalid",
+                    "Applicant phone" => "2025550101",
+                    _ => panic!("incorrect third-party or unknown field: {:?}", field.label),
+                };
+                assert_eq!(mapping.value, PacketValue::Text(expected.into()));
+                matched.push(field.label.as_str());
+            }
+            assert!(matched.contains(&"Applicant email"));
+            assert!(matched.contains(&"Applicant phone"));
+            println!("suggested fields: {matched:?}");
+            assert!(browser.trace.iter().all(|event| !event.contains("typed")
+                && !event.contains("clicked")
+                && !event.contains("submitted")));
+        });
     }
 
     #[test]
