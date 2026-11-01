@@ -1,0 +1,25 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function showListingEmailLinks(');
+const end = source.indexOf('\nfunction ', start);
+assert.ok(start >= 0 && end > start);
+function element(tag, text = '') { return {tag,text,children:[],append(...items){this.children.push(...items)},addEventListener(_type,handler){this.handler=handler}}; }
+const calls=[];
+const context={element,showEmailDraft:(...args)=>calls.push(args)};
+vm.runInNewContext(source.slice(start,end),context);
+const panel=element('div'),job={id:'fixture'};
+context.showListingEmailLinks(panel,{matches_current_url:false,extraction_provenance:{matches_current_listing:false},email_links:{status:'captured',contacts:[{address:'jobs@example.org',label:'Recruitment'}],omitted:1}},job);
+const text=panel.children.flatMap(item=>[item.text,...item.children.map(child=>child.text)]).join('\n');
+assert.match(text,/unverified contacts/);
+assert.match(text,/may not match/);
+assert.match(text,/Some page links/);
+assert.equal(calls.length,0);
+const button=panel.children.flatMap(item=>item.children).find(item=>item.tag==='button');
+button.handler();
+assert.equal(calls.length,1);
+assert.equal(calls[0][0],job);
+assert.equal(calls[0][1],null);
+assert.equal(calls[0][2],'jobs@example.org');
+console.log('Listing email link UI checks passed.');

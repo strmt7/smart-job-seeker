@@ -14,6 +14,106 @@ pub struct InspectedListing {
     pub capture: ListingCapture,
 }
 
+/// Treat mail links as unverified contacts. Never use subject/body parameters
+/// or multiple recipients, and never open a mail client from the page.
+fn mailto_address(href: &str) -> Option<String> {
+    if !href.get(..7)?.eq_ignore_ascii_case("mailto:") {
+        return None;
+    }
+    let encoded = href[7..]
+        .split_once('?')
+        .map_or(&href[7..], |(address, _)| address);
+    if encoded.len() > 762 || encoded.contains('#') {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(encoded.len());
+    let mut input = encoded.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let hex = |value: u8| char::from(value).to_digit(16).map(|digit| digit as u8);
+            decoded.push(hex(input.next()?)? * 16 + hex(input.next()?)?);
+        } else {
+            decoded.push(byte);
+        }
+    }
+    let address = std::str::from_utf8(&decoded).ok()?;
+    if address.len() > 254 || !address.is_ascii() {
+        return None;
+    }
+    let (local, domain) = address.split_once('@')?;
+    if local.is_empty()
+        || local.len() > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+        || !local
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
+        || !domain.contains('.')
+        || domain.len() > 253
+        || !domain.split('.').all(|part| {
+            !part.is_empty()
+                && part.len() <= 63
+                && !part.starts_with('-')
+                && !part.ends_with('-')
+                && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+    {
+        return None;
+    }
+    Some(address.to_owned())
+}
+
+fn email_link_candidates(links: &[waypoint_applications::driver::PageLink]) -> Value {
+    let mut contacts: Vec<Value> = Vec::new();
+    let mut omitted = 0usize;
+    for link in links {
+        let Some(address) = mailto_address(&link.url) else {
+            continue;
+        };
+        if contacts
+            .iter()
+            .any(|item| item["address"].as_str() == Some(address.as_str()))
+        {
+            continue;
+        }
+        if contacts.len() == 8 {
+            omitted += 1;
+            continue;
+        }
+        contacts.push(json!({"address":address,"label":bounded(&link.label, 200)}));
+    }
+    json!({"status":"captured","contacts":contacts,"omitted":omitted,"link_limit_reached":links.len() >= waypoint_applications::driver::PAGE_LINK_LIMIT})
+}
+
+pub fn captured_email_links(capture: &Value) -> Option<Value> {
+    let source = capture["email_links"].as_object()?;
+    if source.get("status").and_then(Value::as_str) != Some("captured") {
+        return Some(json!({"status":"unavailable","contacts":[]}));
+    }
+    let mut contacts: Vec<Value> = Vec::new();
+    for item in source
+        .get("contacts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(8)
+    {
+        let Some(address) = item["address"]
+            .as_str()
+            .and_then(|value| mailto_address(&format!("mailto:{value}")))
+        else {
+            continue;
+        };
+        contacts.push(
+            json!({"address":address,"label":bounded(item["label"].as_str().unwrap_or(""),200)}),
+        );
+    }
+    Some(
+        json!({"status":"captured","contacts":contacts,"omitted":source.get("omitted").and_then(Value::as_u64).unwrap_or(0),"link_limit_reached":source.get("link_limit_reached").and_then(Value::as_bool).unwrap_or(true)}),
+    )
+}
+
 /// Bind source provenance to the values that can be saved for this listing.
 pub fn listing_digest(job: &Value) -> Option<String> {
     let text = |key: &str| job[key].as_str().unwrap_or("").trim();
@@ -635,6 +735,10 @@ pub fn start(id: String, url: String) -> Result<(), String> {
                 job["extraction_warnings"].as_array_mut().expect("warnings array").extend(frame_warnings.into_iter().map(Value::String));
             }
             let mut capture=capture_listing(&mut browser,&url,&current,&scripts);
+            capture.metadata["email_links"] = match browser.with_review_timeout(|browser| browser.page_links()) {
+                Ok(links) if browser.current_url().ok().as_deref() == Some(current.as_str()) => email_link_candidates(&links),
+                _ => json!({"status":"unavailable","contacts":[]}),
+            };
             attach_provenance(&mut capture, &job);
             Ok(InspectedListing { job, capture })
         })
@@ -760,6 +864,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn email_link_candidates_are_bounded_and_do_not_use_mail_parameters() {
+        use waypoint_applications::driver::{PageLink, PAGE_LINK_LIMIT};
+        assert_eq!(
+            mailto_address("MAILTO:Jobs%40example.org?subject=Ignore"),
+            Some("Jobs@example.org".into())
+        );
+        for invalid in [
+            "mailto:one@example.org,two@example.org",
+            "mailto:one%0d%0aBcc@example.org",
+            "mailto:no-at-sign",
+            "mailto:x@localhost",
+            "https://example.org",
+        ] {
+            assert!(mailto_address(invalid).is_none());
+        }
+        let mut links = vec![PageLink {
+            url: "mailto:jobs@example.org?subject=ignore".into(),
+            label: "Recruiting".into(),
+        }];
+        for index in 0..PAGE_LINK_LIMIT {
+            links.push(PageLink {
+                url: format!("mailto:user{index}@example.org"),
+                label: "Contact".into(),
+            });
+        }
+        let captured = email_link_candidates(&links);
+        assert_eq!(captured["contacts"].as_array().unwrap().len(), 8);
+        assert_eq!(captured["link_limit_reached"], true);
+        assert!(captured["omitted"].as_u64().unwrap() > 0);
+        assert_eq!(captured["contacts"][0]["address"], "jobs@example.org");
+        assert_eq!(
+            captured_email_links(&json!({"email_links":captured})).unwrap()["contacts"][0]
+                ["address"],
+            "jobs@example.org"
+        );
+        assert!(captured_email_links(&json!({})).is_none());
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional listing"]
+    fn listing_email_links_are_read_without_opening_them() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/partial-structured-listing.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(url.as_str()).unwrap();
+        let contacts = email_link_candidates(&browser.page_links().unwrap());
+        assert_eq!(contacts["contacts"].as_array().unwrap().len(), 1);
+        assert_eq!(contacts["contacts"][0]["address"], "jobs@example.org");
+        assert!(browser
+            .trace
+            .iter()
+            .all(|event| !event.contains("click") && !event.contains("submitted")));
+    }
+
+    #[test]
     fn provenance_is_bounded_and_detects_changed_listing() {
         let job = json!({"title":"Engineer","employer":"Example","location":"Berlin","description":"Fictional work","requisition_id":"REQ-1","remote":false,"extraction":"local_model","partial_structured_fields":["description","requisition_id"],"extraction_warnings":["Review the source"]});
         let mut capture = ListingCapture {
@@ -852,6 +1012,7 @@ mod tests {
             listing.job["extraction"] = json!("local_model");
             listing.job["partial_structured_fields"] = json!(["requisition_id"]);
             listing.job["extraction_warnings"] = json!(["Verify the recovered identity"]);
+            listing.capture.metadata["email_links"] = json!({"status":"captured","contacts":[{"address":"jobs@example.org","label":"Recruiting"}],"omitted":0,"link_limit_reached":false});
             attach_provenance(&mut listing.capture, &listing.job);
         }
         let (_, response) = call(status, request());
@@ -879,6 +1040,10 @@ mod tests {
             assert_eq!(
                 salary["extraction_provenance"]["partial_structured_fields"],
                 json!(["requisition_id"])
+            );
+            assert_eq!(
+                salary["email_links"]["contacts"][0]["address"],
+                "jobs@example.org"
             );
         }
         let (_, response) = call(status, request());
