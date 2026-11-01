@@ -195,7 +195,15 @@ pub fn validate_mapping(
             prop.map(|p| &p.value).unwrap_or(&PacketValue::None)
         };
 
-        if f.required && matches!(value, PacketValue::None) {
+        let missing_required = match (&f.field_type, value) {
+            (_, PacketValue::None) => true,
+            (_, PacketValue::Text(text) | PacketValue::Date(text)) => text.trim().is_empty(),
+            (FormFieldType::Checkbox, PacketValue::Bool(checked)) => !checked,
+            (_, PacketValue::TextList(values)) => values.is_empty(),
+            (_, PacketValue::FileRef { name }) => name.trim().is_empty(),
+            _ => false,
+        };
+        if f.required && missing_required {
             issues.push(MappingError::MissingRequired {
                 selector: f.selector.clone(),
             });
@@ -210,8 +218,8 @@ pub fn validate_mapping(
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                 PacketValue::Text(text),
             ) => text_fits_field(f, text),
-            (FormFieldType::Date, PacketValue::Date(_))
-            | (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
+            (FormFieldType::Date, PacketValue::Date(date)) => valid_iso_date(date),
+            (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::Select { options }, PacketValue::Text(t)) => options.contains(t),
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
                 valid_multi_select(options, values)
@@ -397,6 +405,63 @@ mod tests {
         }];
         let err = validate_mapping(&schema(), &proposals, &user).unwrap_err();
         assert!(matches!(err[0], MappingError::MissingRequired { .. }));
+    }
+
+    #[test]
+    fn required_values_and_dates_are_checked_before_form_commands() {
+        let mut form = schema();
+        form.fields.truncate(1);
+        let proposal = |value| {
+            vec![ProposedMapping {
+                field_selector: "#name".into(),
+                value,
+            }]
+        };
+        assert!(matches!(
+            validate_mapping(&form, &proposal(PacketValue::Text("  ".into())), &[]).unwrap_err()[0],
+            MappingError::MissingRequired { .. }
+        ));
+        form.fields[0].field_type = FormFieldType::Checkbox;
+        assert!(matches!(
+            validate_mapping(&form, &proposal(PacketValue::Bool(false)), &[]).unwrap_err()[0],
+            MappingError::MissingRequired { .. }
+        ));
+        form.fields[0].field_type = FormFieldType::File;
+        assert!(matches!(
+            validate_mapping(
+                &form,
+                &proposal(PacketValue::FileRef { name: " ".into() }),
+                &[]
+            )
+            .unwrap_err()[0],
+            MappingError::MissingRequired { .. }
+        ));
+        form.fields[0].field_type = FormFieldType::MultiSelect {
+            options: vec!["A".into()],
+        };
+        assert!(matches!(
+            validate_mapping(&form, &proposal(PacketValue::TextList(vec![])), &[]).unwrap_err()[0],
+            MappingError::MissingRequired { .. }
+        ));
+        form.fields[0].field_type = FormFieldType::Checkbox;
+        form.fields[0].required = false;
+        assert!(validate_mapping(&form, &proposal(PacketValue::Bool(false)), &[]).is_ok());
+        form.fields[0].field_type = FormFieldType::Date;
+        assert!(validate_mapping(
+            &form,
+            &proposal(PacketValue::Date("2024-02-29".into())),
+            &[]
+        )
+        .is_ok());
+        assert!(matches!(
+            validate_mapping(
+                &form,
+                &proposal(PacketValue::Date("2025-02-29".into())),
+                &[]
+            )
+            .unwrap_err()[0],
+            MappingError::TypeMismatch { .. }
+        ));
     }
 
     #[test]
