@@ -992,6 +992,38 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
         // Later events may record that a previously captured page changed.
         contexts.insert(name.to_owned(), context);
     }
+    // Follow-up checks refer to the original task, and often have no screenshot.
+    // Retain the latest recorded outcome without treating it as a current result.
+    for line in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .take(5000)
+    {
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        let Some(task_id) = value["task_id"].as_str() else {
+            continue;
+        };
+        let outcome = match value["type"].as_str() {
+            Some("visual_page_changed") => json!({"status":"page_changed"}),
+            Some("visual_freshness_checked") => {
+                let Some(status) = value["status"]
+                    .as_str()
+                    .filter(|s| matches!(*s, "same" | "changed" | "unavailable"))
+                else {
+                    continue;
+                };
+                json!({"status":status,"live_values_verified":value["live_values_verified"].as_u64().filter(|n| *n <= 200),"live_values_unconfirmed":value["live_values_unconfirmed"].as_u64().filter(|n| *n <= 200)})
+            }
+            _ => continue,
+        };
+        for context in contexts.values_mut() {
+            if context["visual_task_id"].as_str() == Some(task_id) {
+                context["visual_followup"] = outcome.clone();
+            }
+        }
+    }
     (
         Value::Object(contexts),
         if partial { "partial" } else { "available" },
@@ -2065,6 +2097,10 @@ mod tests {
         let visual_id = "0123456789abcdef0123456789abcdef";
         let omitted_labels: Vec<_> = (0..22).map(|n| format!("Field {n}")).collect();
         record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png","coverage_complete":false,"comparisons_truncated":true,"omitted_labels":omitted_labels})).unwrap();
+        record.event(json!({"type":"visual_freshness_checked","task_id":visual_id,"status":"same","live_values_verified":1,"live_values_unconfirmed":0,"screenshot":null})).unwrap();
+        record
+            .event(json!({"type":"visual_page_changed","task_id":"different-task"}))
+            .unwrap();
         write_visual_result(
             &record.visual_result_path(visual_id).unwrap(),
             visual_id,
@@ -2076,6 +2112,18 @@ mod tests {
         assert_eq!(first["contexts"]["0003.png"]["visual_task_id"], visual_id);
         assert_eq!(first["contexts"]["0003.png"]["coverage_complete"], false);
         assert_eq!(first["contexts"]["0003.png"]["comparisons_truncated"], true);
+        assert_eq!(
+            first["contexts"]["0003.png"]["visual_followup"],
+            json!({"status":"same","live_values_verified":1,"live_values_unconfirmed":0})
+        );
+        record
+            .event(json!({"type":"visual_page_changed","task_id":visual_id}))
+            .unwrap();
+        assert_eq!(
+            screenshot_index(&ws, &job, "screens-fixture", 0).unwrap()["contexts"]["0003.png"]
+                ["visual_followup"]["status"],
+            "page_changed"
+        );
         assert_eq!(
             first["contexts"]["0003.png"]["omitted_labels"]
                 .as_array()
