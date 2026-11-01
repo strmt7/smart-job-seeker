@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Sponsorship constraint — 2026-11-01
+
+- A candidate who does not require sponsorship no longer excludes employers that offer it. When sponsorship is required, an offer passes, a stated absence fails, and missing information remains unknown. The search crate's 18 tests passed, including all combinations of the candidate setting and employer status.
+
 ## Bounded visual cross-check — 2026-11-01
 
 - The live-value checks following a visual review stop starting new checks after four seconds and use the browser's one-second per-command review timeout. Remaining visual matches are reported as unconfirmed. A fictional driver test covered an exhausted budget and an earlier verification failure. Individual browser operations can contain multiple commands, so four seconds is not a hard wall-clock deadline. No local model or employer site was used.

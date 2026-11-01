@@ -32,6 +32,8 @@ pub struct CampaignConstraints {
     #[serde(default)]
     pub salary_category: Option<CompensationCategory>,
     pub allow_unknown_salary: bool,
+    /// Whether the candidate needs employer sponsorship. False means no
+    /// sponsorship constraint; it does not exclude employers that offer it.
     pub sponsorship_required: Option<bool>,
     pub remote_only: bool,
     pub locations: Vec<String>,
@@ -149,7 +151,7 @@ pub fn check_constraints_with_remote(
         }
     }
 
-    if let Some(req) = c.sponsorship_required {
+    if c.sponsorship_required == Some(true) {
         match sponsorship_stated {
             None => out.push((
                 "sponsorship".into(),
@@ -157,8 +159,8 @@ pub fn check_constraints_with_remote(
                     "sponsorship not stated; history is not a promise".into(),
                 ),
             )),
-            Some(s) if s == req => out.push(("sponsorship".into(), ConstraintOutcome::Pass)),
-            Some(_) => out.push((
+            Some(true) => out.push(("sponsorship".into(), ConstraintOutcome::Pass)),
+            Some(false) => out.push((
                 "sponsorship".into(),
                 ConstraintOutcome::Fail("sponsorship stated as not offered".into()),
             )),
@@ -410,6 +412,35 @@ mod tests {
             max_minor_units: Some(max),
             source: "employer_published".into(),
         }
+    }
+
+    #[test]
+    fn sponsorship_constraint_applies_only_when_the_candidate_needs_it() {
+        for stated in [Some(true), Some(false), None] {
+            for required in [None, Some(false)] {
+                let constraints = CampaignConstraints {
+                    sponsorship_required: required,
+                    ..Default::default()
+                };
+                assert!(check_constraints(&constraints, &[], None, stated, false, "").is_empty());
+            }
+        }
+        let constraints = CampaignConstraints {
+            sponsorship_required: Some(true),
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints(&constraints, &[], None, Some(true), false, "")[0].1,
+            ConstraintOutcome::Pass
+        ));
+        assert!(matches!(
+            check_constraints(&constraints, &[], None, Some(false), false, "")[0].1,
+            ConstraintOutcome::Fail(_)
+        ));
+        assert!(matches!(
+            check_constraints(&constraints, &[], None, None, false, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
     }
 
     #[test]
