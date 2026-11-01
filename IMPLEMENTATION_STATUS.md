@@ -1172,3 +1172,7 @@ Rendered label and inferred-heading extraction now retain visible text inside `d
 ### Boxless label and heading roots (2026-11-01)
 
 Labels and inferred headings that themselves use `display: contents` can now provide context after bounded ancestor visibility checks; clipping in the checked path leaves the label unverified for manual review. Fictional browser tests covered a boxless label, a boxless multiline heading and a clipped label. A resource-gated `qwen3.5:9b` run on the updated heading fixture mapped the fictional applicant contact and flagged reference and manager fields for review; it also proposed the generic email question. Minimum available system memory sampled every two seconds was 17,716 MiB, and the model was unloaded. This is not a complete visibility or real-site accuracy guarantee. Clippy and formatting passed; no application was submitted.
+
+### Larger selected match batches (2026-11-01)
+
+The selected-job AI assessment limit is now 100, matching one visible page, and the existing worker still starts one assessment at a time. Session recovery accepts the same limit and the interface states it. A mocked test exercised a 100-job batch, one-at-a-time scheduling, recovery at job 42 and rejection of 101 selections; related batch-failure and JavaScript syntax checks passed. The page must remain open to advance the batch, and no large live-model run or resource peak was measured.
