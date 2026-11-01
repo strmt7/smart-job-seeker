@@ -7,10 +7,14 @@ const end = source.indexOf('\n visualButton.addEventListener', start);
 assert.ok(start >= 0 && end > start);
 assert.ok(source.includes('catch(e){await reviewAfterFillFailure(e,fill);}'), 'the form fill handler must route failures to visual review');
 
-async function exercise(message, visionFails=false){
+async function exercise(message, visionFails=false, status={active:true,session_id:'fixture',completed_selectors:['#a','#foreign']}){
   const events = [], fill = {disabled:true};
   const context = {
     fillCompleted:false, fillInProgress:true, visualButton:{disabled:true},
+    result:{session_id:'fixture',fields:[{selector:'#a',label:'Name'},{selector:'#b',label:'Email'}]},
+    fieldFocus:{hidden:true},fieldFocusSelect:{options:[],replaceChildren(){this.options=[];},append(option){this.options.push(option);}},
+    Option:function(label,value){this.label=label;this.value=value;},
+    api:async()=>status,
     notify:message=>events.push(['notify',message]),
     panel:{append:item=>events.push(['warning',item.text])},
     visualPanel:{replaceChildren:item=>events.push(['message',item.text]),append:item=>events.push(['visual-error',item.text])},
@@ -27,6 +31,9 @@ async function exercise(message, visionFails=false){
   assert.ok(partial.events.some(event=>event[0]==='warning'));
   assert.ok(partial.events.some(event=>event[0]==='inspect' && event[1]===false && event[2]===false));
   assert.equal(partial.context.fillCompleted,true);
+  assert.equal(partial.context.fieldFocus.hidden,false);
+  assert.deepEqual(partial.context.fieldFocusSelect.options.map(option=>option.value),['#a']);
+  assert.ok(partial.events.some(event=>event[0]==='warning'&&event[1].includes('1 completed field is absent')));
   assert.equal(partial.fill.disabled,true);
   const recordFailure = await exercise('No fields were filled because the attempt record could not be written: fixture');
   assert.ok(recordFailure.events.every(event=>event[0]!=='inspect'));
@@ -39,6 +46,9 @@ async function exercise(message, visionFails=false){
   assert.equal(existingValue.context.fillCompleted,false);
   const uncertain = await exercise('Connection interrupted');
   assert.ok(uncertain.events.some(event=>event[0]==='inspect'));
+  const changedSession = await exercise('Connection interrupted',false,{active:true,session_id:'different',completed_selectors:['#a']});
+  assert.equal(changedSession.context.fieldFocus.hidden,true);
+  assert.ok(changedSession.events.some(event=>event[0]==='warning'&&event[1].includes('could not be recovered')));
   const failedVision = await exercise('Connection interrupted',true);
   assert.ok(failedVision.events.some(event=>event[0]==='visual-error' && event[1].includes('Inspect the live form manually')));
   assert.equal(failedVision.fill.disabled,true);

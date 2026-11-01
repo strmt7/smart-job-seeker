@@ -239,6 +239,22 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
 
 /// Lessons describe classes of controls, not selectors or field values.
 /// Only pass a class when a non-sensitive field of that class is present.
+fn observed_platform(origin: &str) -> Option<waypoint_workspace::form_experience::Platform> {
+    use waypoint_workspace::form_experience::Platform;
+    let parsed = url::Url::parse(origin).ok()?;
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    let host = parsed.host_str()?;
+    match host {
+        "boards.greenhouse.io" | "job-boards.greenhouse.io" => Some(Platform::Greenhouse),
+        "jobs.lever.co" => Some(Platform::Lever),
+        "jobs.ashbyhq.com" => Some(Platform::Ashby),
+        _ if host.ends_with(".myworkdayjobs.com") => Some(Platform::Workday),
+        _ => None,
+    }
+}
+
 pub(crate) fn relevant_experiences(
     schema: &waypoint_applications::form_mapping::FormSchema,
     experiences: &[ExperienceMatch],
@@ -268,17 +284,67 @@ pub(crate) fn relevant_experiences(
                     | Field::Radio { .. }
             )
     });
+    let platform = observed_platform(&schema.origin);
+    let mut selected = Vec::new();
+    for (control, present) in [(Control::Text, has_text), (Control::Choice, has_choice)] {
+        if !present {
+            continue;
+        }
+        let mut candidates: Vec<_> = experiences
+            .iter()
+            .filter(|item| {
+                item.experience.enabled
+                    && item.experience.reviewed
+                    && item.experience.stage == Stage::EnterInformation
+                    && item.experience.control == control
+            })
+            .cloned()
+            .collect();
+        for item in &mut candidates {
+            item.same_platform = platform.is_some() && item.experience.platform == platform;
+        }
+        candidates.sort_by(|a, b| {
+            b.same_platform
+                .cmp(&a.same_platform)
+                .then_with(|| b.experience.observed_at.cmp(&a.experience.observed_at))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let mut group: Vec<ExperienceMatch> = Vec::new();
+        for item in &candidates {
+            if !group.iter().any(|prior| {
+                prior.experience.observation == item.experience.observation
+                    && prior.experience.response == item.experience.response
+                    && prior.experience.outcome == item.experience.outcome
+            }) {
+                group.push(item.clone());
+                if group.len() == 5 {
+                    break;
+                }
+            }
+        }
+        for item in candidates {
+            if group.len() == 5 {
+                break;
+            }
+            if !group.iter().any(|prior| prior.id == item.id) {
+                group.push(item);
+            }
+        }
+        selected.extend(group);
+    }
+    selected
+}
+
+pub(crate) fn used_experience_revisions(
+    experiences: &[ExperienceMatch],
+    attempted: bool,
+) -> Vec<(String, u64)> {
+    if !attempted {
+        return Vec::new();
+    }
     experiences
         .iter()
-        .filter(|item| {
-            item.experience.stage == Stage::EnterInformation
-                && match item.experience.control {
-                    Control::Text => has_text,
-                    Control::Choice => has_choice,
-                    Control::Upload | Control::Navigation => false,
-                }
-        })
-        .cloned()
+        .map(|item| (item.id.clone(), item.revision))
         .collect()
 }
 
@@ -388,7 +454,8 @@ pub fn start(
     drop(task);
     std::thread::spawn(move || {
         let _lease = lease;
-        let result = std::panic::catch_unwind(|| -> Result<_, String> {
+        let mut used_revisions = Vec::new();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_, String> {
             let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
                 .map_err(|e| e.to_string())?;
             let (mut live, navigation_warning) = open_application_page(&mut driver, &url)?;
@@ -442,6 +509,7 @@ pub fn start(
                 );
                 let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);
                 let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
+                used_revisions = used_experience_revisions(&relevant, informed.attempted_with_hints());
                 if informed.attempted_with_hints() {
                     preview.manual_review.push("A model mapping request included reviewed lessons as fallible context; verify every suggestion against this form.".into());
                     let (included, omitted) = informed.note_attempts();
@@ -457,7 +525,7 @@ pub fn start(
                 preview.manual_review.push(warning);
             }
             Ok((driver, preview))
-        })
+        }))
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
         let _ = sender.send(Finished {
             job_id,
@@ -465,7 +533,7 @@ pub fn start(
             url,
             profile_digest,
             visible,
-            experience_revisions,
+            experience_revisions: used_revisions,
             result,
         });
     });
@@ -779,6 +847,106 @@ mod tests {
         schema.fields.clear();
         schema.fields.push(field(Field::File, false));
         assert!(relevant_experiences(&schema, &experiences).is_empty());
+    }
+
+    #[test]
+    fn lesson_ranking_uses_observed_host_and_preserves_control_budgets() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType as Field, FormSchema};
+        use waypoint_workspace::form_experience::{
+            Control, Experience, Observation, Outcome, Platform, Response, Stage,
+        };
+        assert_eq!(
+            observed_platform("https://jobs.lever.co"),
+            Some(Platform::Lever)
+        );
+        assert_eq!(
+            observed_platform("https://jobs.lever.co.attacker.invalid"),
+            None
+        );
+        assert_eq!(observed_platform("http://jobs.lever.co"), None);
+        let field = |field_type| FormField {
+            selector: "#fixture".into(),
+            label: "Fixture".into(),
+            field_type,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        let schema = FormSchema {
+            origin: "https://jobs.lever.co".into(),
+            fields: vec![field(Field::Text), field(Field::Checkbox)],
+            multi_step: false,
+            steps: 1,
+        };
+        let item = |id: usize, control, platform, observed_at| ExperienceMatch {
+            id: format!("{id:032x}"),
+            revision: 1,
+            same_platform: false,
+            experience: Experience {
+                version: 1,
+                reviewed: true,
+                enabled: true,
+                observed_at,
+                platform: Some(platform),
+                stage: Stage::EnterInformation,
+                control,
+                observation: Observation::AmbiguousLabel,
+                response: Response::InspectContext,
+                outcome: Outcome::Unknown,
+                note: None,
+                use_note_in_model: false,
+            },
+        };
+        let mut items: Vec<_> = (0..6)
+            .map(|i| item(i, Control::Text, Platform::Greenhouse, 100 + i as i64))
+            .collect();
+        items.push(item(6, Control::Text, Platform::Lever, 1));
+        items.push(item(7, Control::Choice, Platform::Lever, 1));
+        let selected = relevant_experiences(&schema, &items);
+        assert_eq!(selected.len(), 6);
+        assert_eq!(selected[0].experience.platform, Some(Platform::Lever));
+        assert_eq!(
+            selected
+                .iter()
+                .filter(|value| value.experience.control == Control::Text)
+                .count(),
+            5
+        );
+        assert_eq!(
+            selected
+                .iter()
+                .filter(|value| value.experience.control == Control::Choice)
+                .count(),
+            1
+        );
+        let mut unrelated = schema.clone();
+        unrelated.origin = "https://example.invalid".into();
+        assert!(relevant_experiences(&unrelated, &items)
+            .iter()
+            .all(|value| !value.same_platform));
+        let mut full: Vec<_> = (0..500)
+            .map(|i| {
+                item(
+                    i,
+                    if i < 250 {
+                        Control::Text
+                    } else {
+                        Control::Choice
+                    },
+                    Platform::Greenhouse,
+                    i as i64,
+                )
+            })
+            .collect();
+        full[0].experience.platform = Some(Platform::Lever);
+        full[250].experience.platform = Some(Platform::Lever);
+        let selected = relevant_experiences(&schema, &full);
+        assert_eq!(selected.len(), 10);
+        assert!(selected[0].same_platform && selected[5].same_platform);
     }
 
     #[cfg(all(windows, feature = "sqlcipher"))]
@@ -1147,10 +1315,32 @@ mod tests {
     #[test]
     #[ignore = "starts a local browser while holding the model lease"]
     fn busy_model_does_not_block_form_inspection() {
+        use waypoint_workspace::form_experience::{
+            Control, Experience, Observation, Outcome, Response, Stage,
+        };
         let _guard = TEST_LOCK.lock().unwrap();
         let _lease = crate::doc_suggest::lease().unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
         let url = url::Url::from_file_path(path).unwrap().to_string();
+        let lesson = ExperienceMatch {
+            id: "fictional-lesson".into(),
+            revision: 1,
+            same_platform: false,
+            experience: Experience {
+                version: 1,
+                reviewed: true,
+                enabled: true,
+                observed_at: 1,
+                platform: None,
+                stage: Stage::EnterInformation,
+                control: Control::Text,
+                observation: Observation::AmbiguousLabel,
+                response: Response::InspectContext,
+                outcome: Outcome::Unknown,
+                note: None,
+                use_note_in_model: false,
+            },
+        };
         start(
             "busy-fixture".into(),
             JobIdentityId::new("fixture-job").unwrap(),
@@ -1158,12 +1348,13 @@ mod tests {
             serde_json::json!({"country":"Germany"}),
             Ok(Some("fictional-model".into())),
             false,
-            (0, vec![]),
+            (0, vec![lesson]),
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
             if let Some(done) = poll("busy-fixture").unwrap() {
+                assert!(done.experience_revisions.is_empty());
                 let (_, preview) = done.result.unwrap();
                 assert!(preview
                     .suggestions

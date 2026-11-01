@@ -6,13 +6,14 @@ use waypoint_domain::Sha256Digest;
 use waypoint_inference::OllamaInference;
 use waypoint_policy::Operation;
 
+type NavigationResult = Result<(ReviewSession, Vec<(String, u64)>), NavigationFailure>;
+
 struct Task {
     id: String,
     job_id: waypoint_domain::JobIdentityId,
     inspection_task_id: String,
     pending_revision: i64,
-    experience_revisions: Vec<(String, u64)>,
-    rx: mpsc::Receiver<Result<ReviewSession, NavigationFailure>>,
+    rx: mpsc::Receiver<NavigationResult>,
     failure: Option<NavigationFailure>,
 }
 #[derive(Clone)]
@@ -359,10 +360,6 @@ pub fn start(
         job_id,
         inspection_task_id: session.inspection_task_id.clone(),
         pending_revision,
-        experience_revisions: experiences
-            .iter()
-            .map(|item| (item.id.clone(), item.revision))
-            .collect(),
         rx,
         failure: None,
     });
@@ -370,6 +367,7 @@ pub fn start(
     std::thread::spawn(move || {
         let navigating = target.is_some();
         let mut navigation_capture_warning = None;
+        let mut used_revisions = Vec::new();
         let navigation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<form_preview::FormPreview, String> {
                 if navigating {
@@ -437,6 +435,7 @@ pub fn start(
                             let relevant = crate::form_task::relevant_experiences(&live.schema, &experiences);
                             let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);
                             let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
+                            used_revisions = crate::form_task::used_experience_revisions(&relevant, informed.attempted_with_hints());
                             if informed.attempted_with_hints() {
                                 preview.manual_review.push("A model mapping request included reviewed lessons as fallible context; verify every suggestion against this form.".into());
                                 let (included, omitted) = informed.note_attempts();
@@ -500,7 +499,7 @@ pub fn start(
                 session.filled = false;
                 session.completed_selectors.clear();
                 session.created = std::time::Instant::now();
-                session
+                (session, used_revisions)
             });
         let _ = tx.send(result);
     });
@@ -525,9 +524,8 @@ pub fn poll(id: &str) -> Result<Option<NavigationOutcome>, String> {
         return Ok(Some(Err(failure.clone())));
     }
     match task.rx.try_recv() {
-        Ok(Ok(result)) => {
+        Ok(Ok((result, experience_revisions))) => {
             let revision = task.pending_revision;
-            let experience_revisions = task.experience_revisions.clone();
             *tasks = None;
             Ok(Some(Ok((result, revision, experience_revisions))))
         }
@@ -670,7 +668,6 @@ mod tests {
             job_id: job_id.clone(),
             inspection_task_id: "fictional-inspection".into(),
             pending_revision: revision,
-            experience_revisions: vec![],
             rx,
             failure: None,
         });

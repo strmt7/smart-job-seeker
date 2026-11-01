@@ -272,36 +272,26 @@ fn protect_navigation_experience_snapshot(
     }
 }
 
-/// A listing source is only a retrieval hint; the application may be hosted elsewhere.
+/// Read the bounded reviewed inventory before navigation. The page's observed
+/// origin, not the listing source, is used later to rank these fallible hints.
 fn navigation_experiences(
     ws: &Workspace,
     id: &JobIdentityId,
 ) -> Result<Vec<waypoint_workspace::form_experience::ExperienceMatch>, String> {
     use waypoint_workspace::form_experience::{Control, Stage};
-    let job = ws
-        .job(id)
+    ws.job(id)
         .map_err(|e| e.to_string())?
         .ok_or("Job not found")?;
-    let platform = experience_platform_hint(&job.source);
-    let mut result = ws
-        .related_form_experiences(Stage::EnterInformation, Control::Text, platform)
-        .map_err(|e| e.to_string())?;
-    result.extend(
-        ws.related_form_experiences(Stage::EnterInformation, Control::Choice, platform)
-            .map_err(|e| e.to_string())?,
-    );
-    Ok(result)
-}
-
-fn experience_platform_hint(source: &str) -> Option<waypoint_workspace::form_experience::Platform> {
-    use waypoint_workspace::form_experience::Platform;
-    match source {
-        "greenhouse" => Some(Platform::Greenhouse),
-        "lever" => Some(Platform::Lever),
-        "ashby" => Some(Platform::Ashby),
-        "workday" => Some(Platform::Workday),
-        _ => None,
-    }
+    Ok(ws
+        .form_experiences()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|item| {
+            item.experience.enabled
+                && item.experience.stage == Stage::EnterInformation
+                && matches!(item.experience.control, Control::Text | Control::Choice)
+        })
+        .collect())
 }
 
 fn draft_request_id(value: &Value) -> Result<Option<String>, String> {
@@ -4289,20 +4279,7 @@ fn serve(
             let visible = body["visible"].as_bool().unwrap_or(false);
             let model = form_resident_model();
             let experiences = if matches!(&model, Ok(Some(_))) {
-                use waypoint_workspace::form_experience::{Control, Stage};
-                let platform_hint = experience_platform_hint(&job.source);
-                let mut items = ws
-                    .related_form_experiences(Stage::EnterInformation, Control::Text, platform_hint)
-                    .map_err(|e| e.to_string())?;
-                items.extend(
-                    ws.related_form_experiences(
-                        Stage::EnterInformation,
-                        Control::Choice,
-                        platform_hint,
-                    )
-                    .map_err(|e| e.to_string())?,
-                );
-                items
+                navigation_experiences(ws, &id)?
             } else {
                 Vec::new()
             };
@@ -7194,7 +7171,9 @@ fn serve(
                 "200 OK",
                 match current {
                     Some(current) => {
-                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible,"fill_attempted":current.fill_attempted})
+                        let completed = (body["session_id"].as_str() == Some(current.id.as_str()))
+                            .then_some(&current.completed_selectors);
+                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible,"fill_attempted":current.fill_attempted,"completed_selectors":completed})
                     }
                     None => {
                         json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job})),"navigation":pending_navigation.map(|(task,job)| json!({"task":task,"job":job}))})
@@ -8720,6 +8699,17 @@ mod tests {
             .unwrap()
             .contains("GPU memory"));
         assert_eq!(inventory["models"][2]["memory_check"]["state"], "not_ready");
+        model_inventory_memory_snapshot(&mut inventory, &tags, 16 * gib - 1, &gpu);
+        assert_eq!(inventory["models"][0]["memory_check"]["state"], "not_ready");
+        assert!(inventory["models"][0]["memory_check"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("16384 MiB required"));
+        model_inventory_memory_snapshot(&mut inventory, &tags, 16 * gib, &gpu);
+        assert_eq!(
+            inventory["models"][0]["memory_check"]["state"],
+            "fits_snapshot"
+        );
     }
 
     #[test]
@@ -10740,6 +10730,17 @@ mod tests {
             std::slice::from_ref(&disabled)
         ));
         assert!(!experience_snapshot_current(&snapshot, &[]));
+        let selected = form_task::used_experience_revisions(std::slice::from_ref(&item), true);
+        assert!(
+            form_task::used_experience_revisions(std::slice::from_ref(&item), false).is_empty()
+        );
+        let mut unrelated = item.clone();
+        unrelated.id = "unrelated".into();
+        unrelated.revision = 2;
+        assert!(experience_snapshot_current(
+            &selected,
+            &[item.clone(), unrelated]
+        ));
         let preview = || form_preview::FormPreview {
             schema: waypoint_applications::form_mapping::FormSchema {
                 origin: "https://example.org".into(),
@@ -10797,21 +10798,6 @@ mod tests {
             );
         }
         assert!(form_model_from_status(&json!({"state":"ready"})).is_err());
-    }
-
-    #[test]
-    fn experience_platform_hint_uses_exact_source_categories_only() {
-        use waypoint_workspace::form_experience::Platform;
-        assert_eq!(experience_platform_hint("lever"), Some(Platform::Lever));
-        assert_eq!(
-            experience_platform_hint("greenhouse"),
-            Some(Platform::Greenhouse)
-        );
-        assert_eq!(experience_platform_hint("ashby"), Some(Platform::Ashby));
-        assert_eq!(experience_platform_hint("workday"), Some(Platform::Workday));
-        assert_eq!(experience_platform_hint("not-lever"), None);
-        assert_eq!(experience_platform_hint("web_search"), None);
-        assert_eq!(experience_platform_hint("Lever"), None);
     }
 
     #[test]
@@ -12506,6 +12492,25 @@ mod tests {
             assert_eq!(session.as_ref().unwrap().completed_selectors.len(), 2);
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
+            for (requested, expected_count) in [("test-session", Some(2)), ("other-session", None)]
+            {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let body = json!({"session_id":requested}).to_string();
+                write!(client, "POST /api/form/session-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+                let (mut server, _) = listener.accept().unwrap();
+                serve(&mut server, &mut ws, &mut session, "test-token", port).unwrap();
+                drop(server);
+                let mut response = String::new();
+                client.read_to_string(&mut response).unwrap();
+                let status: Value =
+                    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+                assert_eq!(
+                    status["completed_selectors"].as_array().map(Vec::len),
+                    expected_count
+                );
+            }
             session
                 .as_mut()
                 .unwrap()

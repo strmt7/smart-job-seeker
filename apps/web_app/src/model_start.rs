@@ -18,7 +18,9 @@ pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Re
     if size == 0 || size > MAX_MODEL_BYTES {
         return Err("Model file size is unavailable or exceeds the 12 GiB startup limit".into());
     }
-    let needed_system = size.checked_add(8 * GIB).ok_or("Invalid model size")?;
+    // Leave additional headroom for other applications after allowing a full
+    // model-sized host allocation. This remains a snapshot, not a reservation.
+    let needed_system = size.checked_add(10 * GIB).ok_or("Invalid model size")?;
     if system_available < needed_system {
         return Err(format!(
             "Not enough available system memory for the conservative startup estimate: {} MiB observed, at least {} MiB required. This is a snapshot, not a reservation.",
@@ -251,17 +253,19 @@ mod tests {
         let spacious = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":GIB}]});
         assert!(resource_gate(9 * GIB, 20 * GIB, &spacious).is_ok());
         assert!(resource_gate(10 * GIB, 20 * GIB, &spacious).is_ok());
-        assert!(resource_gate(10 * GIB + GIB / 2, 20 * GIB, &spacious).is_ok());
+        assert!(resource_gate(10 * GIB + GIB / 2, 21 * GIB, &spacious).is_ok());
         assert!(resource_gate(11 * GIB, 20 * GIB, &spacious).is_err());
         let larger_gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":24*GIB,"used_bytes":GIB}]});
-        assert!(resource_gate(12 * GIB, 20 * GIB, &larger_gpu).is_ok());
+        assert!(resource_gate(12 * GIB, 22 * GIB, &larger_gpu).is_ok());
         assert!(resource_gate(12 * GIB + 1, 21 * GIB, &larger_gpu).is_err());
         assert!(resource_gate(9 * GIB, 16 * GIB, &spacious).is_err());
         let system_error = resource_gate(6 * GIB, 13 * GIB, &gpu).unwrap_err();
         assert!(
             system_error.contains("13312 MiB observed")
-                && system_error.contains("14336 MiB required")
+                && system_error.contains("16384 MiB required")
         );
+        assert!(resource_gate(6 * GIB, 16 * GIB - 1, &gpu).is_err());
+        assert!(resource_gate(6 * GIB, 16 * GIB, &gpu).is_ok());
         let gpu_error = resource_gate(8 * GIB, 20 * GIB, &gpu).unwrap_err();
         assert!(gpu_error.contains("11264 MiB free") && gpu_error.contains("11879 MiB required"));
         assert!(resource_gate(6 * GIB, 20 * GIB, &json!({"state":"unavailable"})).is_err());
