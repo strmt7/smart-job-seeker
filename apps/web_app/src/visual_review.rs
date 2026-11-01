@@ -720,12 +720,17 @@ pub(crate) fn benchmark_target(model: &str) -> Result<(std::net::SocketAddr, Opt
     if status != 200
         || models.len() != 1
         || models[0]["name"] != model
-        || models[0]["context_length"] != 2048
+        || !matches!(models[0]["context_length"].as_u64(), Some(2048 | 4096))
         || models[0]["size_vram"] != 0
     {
-        return Err("Expected one CPU-resident benchmark model with 2048 context".into());
+        return Err("Expected one CPU-resident benchmark model with 2048 or 4096 context".into());
     }
-    Ok((addr, Some(2048)))
+    Ok((
+        addr,
+        models[0]["context_length"]
+            .as_u64()
+            .map(|value| value as u32),
+    ))
 }
 
 #[cfg(test)]

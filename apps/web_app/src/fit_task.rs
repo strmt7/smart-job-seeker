@@ -4257,25 +4257,19 @@ mod tests {
         }
         let model_name = std::env::var("WAYPOINT_FIT_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
-        let addr = "127.0.0.1:11434".parse().unwrap();
-        let (status, bytes) =
-            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
-        let ps: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(status, 200);
-        assert_eq!(
-            crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some(model_name.as_str())
-        );
-        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
-        let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
-            .unwrap()
-            .with_context_window(4096)
-            .unwrap();
-        let model = crate::resident_inference::ResidentInference::new(
-            model,
-            model_name,
-            crate::resident_model,
-        );
+        let (addr, context) = crate::visual_review::benchmark_target(&model_name).unwrap();
+        let model = OllamaInference::new(&format!("http://{addr}"), &model_name).unwrap();
+        let model = if let Some(context) = context {
+            model.with_context_window(context).unwrap()
+        } else {
+            model.with_resident_context()
+        };
+        let checked_model = model_name.clone();
+        let model =
+            crate::resident_inference::ResidentInference::new(model, model_name, move || {
+                crate::visual_review::benchmark_target(&checked_model)
+                    .map(|_| Some(checked_model.clone()))
+            });
         let mut model = Recording(model);
         let facts = vec![
             "Built accessible web interfaces for screen-reader users".into(),

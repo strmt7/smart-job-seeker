@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Local match repeatability — 2026-11-01
+
+- With an isolated CPU-only `gemma4:12b-it-q4_K_M` runtime and a 4096-token context, three assessments of the same fictional candidate, listing and preferences all validated and produced identical scores and sorted criteria/evidence. The qualification test took 221.66 seconds after preload; available RAM stayed at or above 13.8 GiB during the test. This measures repeatability on one case, not accuracy, calibration, general reliability or production GPU behavior. The test harness permits the isolated CPU runtime only when explicitly configured; production model eligibility is unchanged. Native output is under `target/model-eval/isolated-gemma-fit-repeatability-20261101`. Lint passed.
+
 ## Two-step fictional application with Gemma — 2026-11-01
 
 - The local-model wizard test now supports an explicitly isolated CPU benchmark runtime and verifies that both model-assisted mapping requests complete without the error fallback. On a fictional two-step form (fixture SHA-256 `6add62b14f2b6694ca3bf83c9567658421ebe85ed7d8597118f0e99e3eb4091b`), `gemma4:12b-it-q4_K_M` and the existing mapping pipeline prepared reviewed values, the browser filled and verified name and email, the work-authorization field remained empty, and vision checks read the filled values. Exact deterministic suggestions can supplement the model output. A test-only click simulated the user's next-step gesture; no submission occurred.
