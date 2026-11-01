@@ -205,18 +205,33 @@ pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value)
             .ok_or("PDF extractor returned invalid page coverage")?;
         previous = page;
     }
+    let blank = result["structurally_blank_pages"]
+        .as_array()
+        .filter(|blank| blank.len() <= empty.len())
+        .ok_or("PDF extractor returned invalid blank-page coverage")?;
+    let mut last = 0;
+    for page in blank {
+        let number = page
+            .as_u64()
+            .filter(|number| *number > last && empty.contains(page))
+            .ok_or("PDF extractor returned invalid blank-page coverage")?;
+        last = number;
+    }
     Ok((
         text.to_owned(),
-        serde_json::json!({"pages":pages,"pages_without_selectable_text":empty}),
+        serde_json::json!({"pages":pages,"pages_without_selectable_text":empty,"structurally_blank_pages":blank}),
     ))
 }
 
 /// Consumers without coverage handling must not silently use an incomplete PDF.
 pub fn extract(bytes: &[u8]) -> Result<String, String> {
     let (text, coverage) = extract_with_coverage(bytes)?;
-    if !coverage["pages_without_selectable_text"]
+    if coverage["pages_without_selectable_text"]
         .as_array()
-        .is_some_and(Vec::is_empty)
+        .map(Vec::len)
+        != coverage["structurally_blank_pages"]
+            .as_array()
+            .map(Vec::len)
     {
         return Err("Some PDF pages have no selectable text; review the extracted pages and use OCR or a text-based document".into());
     }
@@ -346,10 +361,29 @@ mod tests {
     #[test]
     #[ignore = "requires an explicitly configured local pypdf runtime"]
     fn reports_pages_without_selectable_text() {
-        let partial = include_bytes!("../tests/fictional-partial-text.pdf");
+        let blank = include_bytes!("../tests/fictional-partial-text.pdf");
+        let (_, blank_coverage) = super::extract_with_coverage(blank).unwrap();
+        assert_eq!(
+            blank_coverage["structurally_blank_pages"],
+            serde_json::json!([2])
+        );
+        assert!(super::extract(blank).is_ok());
+        let annotation = include_bytes!("../tests/fictional-annotation-page.pdf");
+        let (_, annotation_coverage) = super::extract_with_coverage(annotation).unwrap();
+        assert_eq!(
+            annotation_coverage["pages_without_selectable_text"],
+            serde_json::json!([2])
+        );
+        assert_eq!(
+            annotation_coverage["structurally_blank_pages"],
+            serde_json::json!([])
+        );
+        assert!(super::extract(annotation).is_err());
+        let partial = include_bytes!("../tests/fictional-image-page.pdf");
         let (text, coverage) = super::extract_with_coverage(partial).unwrap();
         assert!(!text.is_empty());
         assert_eq!(coverage["pages"], 2);
+        assert_eq!(coverage["structurally_blank_pages"], serde_json::json!([]));
         assert_eq!(
             coverage["pages_without_selectable_text"],
             serde_json::json!([2])

@@ -61,7 +61,7 @@ mod tests {
         super::start(
             "partial-fixture".into(),
             "cv.pdf".into(),
-            include_bytes!("../tests/fictional-partial-text.pdf").to_vec(),
+            include_bytes!("../tests/fictional-image-page.pdf").to_vec(),
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);

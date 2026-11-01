@@ -19,10 +19,13 @@ try:
     parts = []
     size = 0
     empty_pages = []
+    structurally_blank_pages = []
     for index, page in enumerate(reader.pages, 1):
         text = page.extract_text() or ""
         if not text.strip():
             empty_pages.append(index)
+            if "/Contents" not in page and "/Annots" not in page:
+                structurally_blank_pages.append(index)
         size += len(text.encode("utf-8"))
         if size > 200000:
             raise ValueError("PDF text exceeds 200 KB")
@@ -30,7 +33,7 @@ try:
     result = "\n".join(parts).strip()
     if not result:
         raise ValueError("No selectable text was found; scanned PDFs need OCR")
-    response = {"text": result, "page_count": len(reader.pages), "empty_text_pages": empty_pages}
+    response = {"text": result, "page_count": len(reader.pages), "empty_text_pages": empty_pages, "structurally_blank_pages": structurally_blank_pages}
     sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
 except ImportError:
     print("PDF extraction requires pypdf in the configured local Python runtime")
