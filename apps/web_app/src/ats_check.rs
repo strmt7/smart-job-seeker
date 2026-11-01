@@ -57,6 +57,7 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     let mut uncertain_columns = false;
     let mut hidden_markers = 0;
     let mut uncertain_hidden = false;
+    let mut revision_markers = 0;
     loop {
         let (namespace, event) = reader
             .read_resolved_event()
@@ -66,6 +67,23 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
             || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         match event {
             quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
+                if word
+                    && matches!(
+                        e.local_name().as_ref(),
+                        b"ins"
+                            | b"del"
+                            | b"moveFrom"
+                            | b"moveTo"
+                            | b"pPrChange"
+                            | b"rPrChange"
+                            | b"sectPrChange"
+                            | b"tblPrChange"
+                            | b"tcPrChange"
+                            | b"trPrChange"
+                    )
+                {
+                    revision_markers += 1;
+                }
                 if word && e.local_name().as_ref() == b"tbl" {
                     tables += 1;
                 }
@@ -141,6 +159,9 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
             "A DOCX column count could not be interpreted; inspect the reading order manually."
                 .into(),
         );
+    }
+    if revision_markers > 0 {
+        notes.push(format!("DOCX contains {revision_markers} tracked-change marker(s); extracted text may not match the reviewed or final document. Inspect and resolve revisions before using it."));
     }
     if hidden_markers > 0 {
         notes.push(format!("DOCX contains {hidden_markers} enabled hidden-text formatting marker(s); extracted text may include content not visible in the document. Inspect the PDF and extracted text."));
@@ -425,6 +446,31 @@ mod tests {
             .to_string()
             .contains("Rust experience"));
     }
+    #[test]
+    fn warns_when_document_body_contains_tracked_revisions() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:ins><w:r><w:t>Added</w:t></w:r></w:ins><w:del><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p></w:body></w:document>"#).unwrap();
+        let result = report(
+            "fixture.docx",
+            &zip.finish().unwrap().into_inner(),
+            "Role",
+            &[],
+        )
+        .unwrap();
+        assert!(result["structure_notes"]
+            .to_string()
+            .contains("2 tracked-change marker"));
+        assert!(result["reading_order_preview"]
+            .to_string()
+            .contains("Added"));
+    }
+
     #[test]
     fn detects_enabled_and_unknown_hidden_text_markers() {
         use std::io::Write;

@@ -141,6 +141,14 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
                 output.push_str(&decoded);
             }
             Event::Empty(e) if word && e.local_name().as_ref() == b"tab" => output.push('\t'),
+            // These are characters in a Word text run, not formatting-only
+            // tags; dropping them joins words and changes qualifications.
+            Event::Empty(e) if word && e.local_name().as_ref() == b"noBreakHyphen" => {
+                output.push('\u{2011}')
+            }
+            Event::Empty(e) if word && e.local_name().as_ref() == b"softHyphen" => {
+                output.push('\u{00ad}')
+            }
             Event::Empty(e)
                 if word
                     && (e.local_name().as_ref() == b"br" || e.local_name().as_ref() == b"cr") =>
@@ -195,6 +203,15 @@ mod tests {
         assert_eq!(
             extract("cv.docx", &archive(xml)).unwrap(),
             "Skills\tRust\nEngineer"
+        );
+    }
+
+    #[test]
+    fn preserves_word_run_hyphens_in_extracted_qualifications() {
+        let xml = r#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:p><d:r><d:t>state</d:t><d:noBreakHyphen/><d:t>of</d:t><d:softHyphen/><d:t>the art</d:t></d:r></d:p></d:body></d:document>"#;
+        assert_eq!(
+            extract("cv.docx", &archive(xml)).unwrap(),
+            "state\u{2011}of\u{00ad}the art"
         );
     }
 
