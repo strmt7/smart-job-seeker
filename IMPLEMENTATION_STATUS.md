@@ -2,7 +2,7 @@
 
 ## Document visual-review completeness — 2026-11-01
 
-- Attachment follow-up now treats a visual report as incomplete when its overall completion flag, inspected-page count, or error state conflicts with the page findings. Seven focused document-visual tests passed; three tests requiring the PDF worker or a resident model were ignored. This does not establish visual quality or model accuracy.
+- Attachment follow-up now treats a visual report as incomplete when its overall completion flag, inspected-page count, or error state conflicts with the page findings. Seven focused document-visual tests passed. On Windows, the PDF worker (pypdf 6.10.0, pypdfium2 5.14.0, Pillow 12.3.0) rendered a fictional two-page PDF and flagged its intentionally overlapping text for follow-up, including when a simulated model pass failed. The vision-model test was not run; these fixtures do not establish general visual quality or model accuracy.
 
 ## Incomplete duplicate decisions — 2026-11-01
 

@@ -306,6 +306,13 @@ mod tests {
                 .unwrap()
                 > 0
         );
+        assert!(needs_followup(&json!({"report":partial})));
+        let completed = inspect(bytes, crate::pdf_extract::render_page_for_review, |_| {
+            Ok(json!({"issues":[]}))
+        })
+        .unwrap();
+        assert_eq!(completed["complete"], true);
+        assert!(needs_followup(&json!({"report":completed})));
     }
     #[test]
     fn followup_distinguishes_completed_review_from_clean_observations() {
