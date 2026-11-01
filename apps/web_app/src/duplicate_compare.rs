@@ -147,8 +147,12 @@ fn validate(value: Value, first: &str, second: &str) -> Result<Value, String> {
         }
         Ok(s.to_owned())
     };
+    let first_excerpt = excerpt("first_excerpt", first)?;
+    let second_excerpt = excerpt("second_excerpt", second)?;
+    let evidence_incomplete = verdict != "uncertain"
+        && (first_excerpt.trim().is_empty() || second_excerpt.trim().is_empty());
     Ok(
-        json!({"verdict":verdict,"reason":reason,"first_excerpt":excerpt("first_excerpt",first)?,"second_excerpt":excerpt("second_excerpt",second)?}),
+        json!({"verdict":if evidence_incomplete { "uncertain" } else { verdict },"reason":reason,"first_excerpt":first_excerpt,"second_excerpt":second_excerpt,"evidence_incomplete":evidence_incomplete}),
     )
 }
 #[cfg(test)]
@@ -294,6 +298,22 @@ mod tests {
                 "unexpected verdict for {name}"
             );
         }
+        let long_first = format!(
+            "Example Lab; REQ-4821; Berlin; Polymer Scientist. {}",
+            "Fictional polymer duties. ".repeat(400)
+        );
+        let long_second = format!(
+            "Example Lab; REQ-4821; Berlin; Polymer Researcher. {}",
+            "Fictional polymer duties. ".repeat(400)
+        );
+        let first_sample = crate::answer_task::json_prefix(&long_first, 2600);
+        let second_sample = crate::answer_task::json_prefix(&long_second, 2600);
+        assert!(first_sample.len() < long_first.len() && second_sample.len() < long_second.len());
+        let result = compare(&mut model, first_sample, second_sample).unwrap();
+        assert!(matches!(
+            result["verdict"].as_str(),
+            Some("possibly_same" | "possibly_different" | "uncertain")
+        ));
     }
     #[test]
     fn rejects_invented_quotes_and_verdicts() {
@@ -304,6 +324,12 @@ mod tests {
             "Data research position"
         )
         .is_ok());
+        let mut no_evidence = result.clone();
+        no_evidence["second_excerpt"] = json!("");
+        let uncertain =
+            validate(no_evidence, "Research data role", "Data research position").unwrap();
+        assert_eq!(uncertain["verdict"], "uncertain");
+        assert_eq!(uncertain["evidence_incomplete"], true);
         let mut bad = result.clone();
         bad["second_excerpt"] = json!("Not present");
         assert!(validate(bad, "Research data role", "Data research position").is_err());

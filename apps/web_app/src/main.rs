@@ -937,10 +937,15 @@ fn duplicate_inputs(
             job.posted_at.unwrap_or_default(),
             description
         );
-        let full_digest = Sha256Digest::of(&full).as_str().to_owned();
-        let mut chars = full.chars();
-        let sample: String = chars.by_ref().take(8000).collect();
-        let truncated = chars.next().is_some();
+        let full_digest = Sha256Digest::of(
+            &json!({"text":full,"url":job.canonical_url,"remote":job.remote}).to_string(),
+        )
+        .as_str()
+        .to_owned();
+        // Keep both descriptions and the response within the local model's
+        // bounded context; count JSON escaping and preserve UTF-8 boundaries.
+        let sample = answer_task::json_prefix(&full, 2600).to_owned();
+        let truncated = sample.len() < full.len();
         Ok((sample, full_digest, truncated))
     };
     let (first_text, first_digest, first_truncated) = listing(first)?;
