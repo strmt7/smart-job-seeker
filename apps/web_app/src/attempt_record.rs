@@ -974,6 +974,20 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
             if let Some(truncated) = value["comparisons_truncated"].as_bool() {
                 context["comparisons_truncated"] = json!(truncated);
             }
+            if let Some(labels) = value["omitted_labels"].as_array() {
+                let accepted: Vec<_> = labels
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|label| {
+                        !label.trim().is_empty()
+                            && label.len() <= 500
+                            && !label.chars().any(char::is_control)
+                    })
+                    .take(20)
+                    .collect();
+                context["omitted_labels_limited"] = json!(accepted.len() != labels.len());
+                context["omitted_labels"] = json!(accepted);
+            }
         }
         // Later events may record that a previously captured page changed.
         contexts.insert(name.to_owned(), context);
@@ -2049,7 +2063,8 @@ mod tests {
         record.event(json!({"type":"page_capture_changed","time":125,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"attachment_viewport","time":126,"field_label":"Resume","screenshot":"screenshots/0025.png"})).unwrap();
         let visual_id = "0123456789abcdef0123456789abcdef";
-        record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png","coverage_complete":false,"comparisons_truncated":true})).unwrap();
+        let omitted_labels: Vec<_> = (0..22).map(|n| format!("Field {n}")).collect();
+        record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png","coverage_complete":false,"comparisons_truncated":true,"omitted_labels":omitted_labels})).unwrap();
         write_visual_result(
             &record.visual_result_path(visual_id).unwrap(),
             visual_id,
@@ -2061,6 +2076,21 @@ mod tests {
         assert_eq!(first["contexts"]["0003.png"]["visual_task_id"], visual_id);
         assert_eq!(first["contexts"]["0003.png"]["coverage_complete"], false);
         assert_eq!(first["contexts"]["0003.png"]["comparisons_truncated"], true);
+        assert_eq!(
+            first["contexts"]["0003.png"]["omitted_labels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            20
+        );
+        assert_eq!(
+            first["contexts"]["0003.png"]["omitted_labels"][0],
+            "Field 0"
+        );
+        assert_eq!(
+            first["contexts"]["0003.png"]["omitted_labels_limited"],
+            true
+        );
         assert_eq!(
             saved_visual_result(&ws, &job, "screens-fixture", visual_id).unwrap()["status"],
             "complete"
