@@ -445,7 +445,7 @@ impl Store {
                     }
                 });
             let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" });
-            self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=excluded.reason", params![job_a,job_b,score,reason])?;
+            self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=CASE WHEN possible_duplicates.status='pending' AND possible_duplicates.reason LIKE 'Listing changed after duplicate review; review again.%' THEN 'Listing changed after duplicate review; review again. ' || excluded.reason ELSE excluded.reason END", params![job_a,job_b,score,reason])?;
             let (status, preferred_job) = self.conn.query_row(
                 "SELECT status,preferred_job FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
                 params![job_a, job_b],
@@ -707,6 +707,72 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn changed_listing_reopens_different_decision_atomically() {
+        let mut store = Store::in_memory().unwrap();
+        let mut first = job("a", "Engineer", "Example", None);
+        let second = job("b", "Engineer", "Example", None);
+        for item in [&first, &second] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        assert!(store.decide_duplicate("a", "b", false).unwrap());
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        first.last_seen = Some("2".into());
+        store.upsert_job(&first).unwrap();
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        first.title = "Senior Engineer".into();
+        store.upsert_job(&first).unwrap();
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.pending_duplicate_pair("a", "b").unwrap());
+        assert!(store.possible_duplicates().unwrap()[0]
+            .reason
+            .contains("after duplicate review"));
+        store.find_possible_duplicates(&first).unwrap();
+        assert!(store.possible_duplicates().unwrap()[0]
+            .reason
+            .contains("after duplicate review"));
+        let count: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM duplicate_reopen_log", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        assert!(store.decide_duplicate("a", "b", false).unwrap());
+        store
+            .set_job_description(&first.id, Some("New duties"))
+            .unwrap();
+        assert!(store.pending_duplicate_pair("a", "b").unwrap());
+        assert!(store.decide_duplicate("a", "b", false).unwrap());
+        store
+            .set_job_description(&first.id, Some("New duties"))
+            .unwrap();
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        store.conn.execute_batch("CREATE TRIGGER fail_reopen BEFORE INSERT ON duplicate_reopen_log BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+        first.title = "Changed again".into();
+        assert!(store.upsert_job(&first).is_err());
+        assert_eq!(
+            store.get_job(&first.id).unwrap().unwrap().title,
+            "Senior Engineer"
+        );
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_reopen;")
+            .unwrap();
+        assert!(store.decide_duplicate("a", "b", true).unwrap());
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
+        first.title = "Senior Engineer".into();
+        first.remote = true;
+        store.upsert_job(&first).unwrap();
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
+        let prior: (String, Option<String>) = store.conn.query_row("SELECT previous_status,previous_preferred FROM duplicate_reopen_log ORDER BY id DESC LIMIT 1", [], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(prior, ("same".into(), Some("a".into())));
     }
 
     fn check_background_indexer_yields(writer: &mut Store, indexer: &Store) {

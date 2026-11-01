@@ -304,6 +304,42 @@ const MIGRATIONS: &[&str] = &[
        remote INTEGER NOT NULL CHECK(remote IN (0, 1))
      );
      UPDATE meta SET value='32' WHERE key='schema_version';",
+    // v33 — extend duplicate-decision invalidation and retain prior decisions.
+    "CREATE TABLE duplicate_reopen_log (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       job_a TEXT NOT NULL, job_b TEXT NOT NULL, changed_job TEXT NOT NULL,
+       change_kind TEXT NOT NULL, previous_status TEXT NOT NULL,
+       previous_preferred TEXT, recorded_at TEXT NOT NULL
+     );
+     DROP TRIGGER duplicate_recheck_after_job_change;
+     CREATE TRIGGER duplicate_reopen_job AFTER UPDATE ON jobs WHEN OLD.title IS NOT NEW.title OR OLD.employer IS NOT NEW.employer OR OLD.location IS NOT NEW.location OR OLD.canonical_url IS NOT NEW.canonical_url OR OLD.content_hash IS NOT NEW.content_hash OR OLD.remote IS NOT NEW.remote OR OLD.source IS NOT NEW.source OR OLD.requisition_id IS NOT NEW.requisition_id
+     BEGIN
+       INSERT INTO duplicate_reopen_log(job_a,job_b,changed_job,change_kind,previous_status,previous_preferred,recorded_at)
+         SELECT job_a,job_b,NEW.id,'job',status,preferred_job,CURRENT_TIMESTAMP FROM possible_duplicates
+         WHERE (job_a=NEW.id OR job_b=NEW.id) AND status IN ('different','same');
+       UPDATE possible_duplicates SET status='pending',preferred_job=NULL,
+         reason='Listing changed after duplicate review; review again. ' || reason
+         WHERE (job_a=NEW.id OR job_b=NEW.id) AND status IN ('different','same');
+     END;
+     CREATE TRIGGER duplicate_reopen_description_update AFTER UPDATE ON job_descriptions WHEN OLD.content IS NOT NEW.content
+     BEGIN
+       INSERT INTO duplicate_reopen_log(job_a,job_b,changed_job,change_kind,previous_status,previous_preferred,recorded_at)
+         SELECT job_a,job_b,NEW.job_id,'description',status,preferred_job,CURRENT_TIMESTAMP FROM possible_duplicates
+         WHERE (job_a=NEW.job_id OR job_b=NEW.job_id) AND status IN ('different','same');
+       UPDATE possible_duplicates SET status='pending',preferred_job=NULL,
+         reason='Listing changed after duplicate review; review again. ' || reason
+         WHERE (job_a=NEW.job_id OR job_b=NEW.job_id) AND status IN ('different','same');
+     END;
+     CREATE TRIGGER duplicate_reopen_description_insert AFTER INSERT ON job_descriptions WHEN NEW.content IS NOT NULL
+     BEGIN
+       INSERT INTO duplicate_reopen_log(job_a,job_b,changed_job,change_kind,previous_status,previous_preferred,recorded_at)
+         SELECT job_a,job_b,NEW.job_id,'description',status,preferred_job,CURRENT_TIMESTAMP FROM possible_duplicates
+         WHERE (job_a=NEW.job_id OR job_b=NEW.job_id) AND status IN ('different','same');
+       UPDATE possible_duplicates SET status='pending',preferred_job=NULL,
+         reason='Listing changed after duplicate review; review again. ' || reason
+         WHERE (job_a=NEW.job_id OR job_b=NEW.job_id) AND status IN ('different','same');
+     END;
+     UPDATE meta SET value='33' WHERE key='schema_version';",
 
 ];
 
@@ -1271,7 +1307,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "32");
+        assert_eq!(version, "33");
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))
