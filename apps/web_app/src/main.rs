@@ -263,17 +263,31 @@ fn search_plan_context(
         Some(text) => serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?,
         None => json!({}),
     };
-    let instructions: String = profile["instructions"]
-        .as_str()
-        .unwrap_or("")
-        .chars()
-        .take(2000)
-        .collect();
+    let full_instructions = profile_fit_instructions(&profile)?;
+    let instructions: String = full_instructions.chars().take(2000).collect();
     let protected = search_planner::protected_identifiers(&profile);
     let digest = Sha256Digest::of(
-        &json!({"facts":facts,"instructions":instructions,"protected":protected}).to_string(),
+        &json!({"facts":facts,"instructions":instructions,"full_instructions":full_instructions,"protected":protected}).to_string(),
     );
     Ok((facts, instructions, digest.as_str().to_owned(), protected))
+}
+
+fn search_plan_coverage(
+    ws: &Workspace,
+    facts: &[String],
+    instructions: &str,
+) -> Result<Value, String> {
+    let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        Some(content) => serde_json::from_str(&content).map_err(|_| "stored profile is invalid")?,
+        None => json!({}),
+    };
+    let full = profile_fit_instructions(&profile)?;
+    let (total, oversized) = ws.reviewed_fact_coverage(1000).map_err(|e| e.to_string())?;
+    Ok(
+        json!({"reviewed_total":total,"included":facts.len(),"oversized":oversized,
+        "over_limit":total.saturating_sub(oversized).saturating_sub(facts.len()),
+        "instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full.chars().count()}),
+    )
 }
 
 fn check_search_plan_binding(ws: &Workspace, body: &Value) -> Result<(), String> {
@@ -2457,18 +2471,20 @@ fn serve(
         }
         "/api/search-plan/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
-            let result = search_planner::poll(id)?;
-            if result["status"] == "complete"
-                && result["input_digest"].as_str() != Some(search_plan_context(ws)?.2.as_str())
-            {
-                json_reply(
-                    stream,
-                    "200 OK",
-                    json!({"status":"stale","error":"Profile, qualifications or search instructions changed; generate new phrases."}),
-                );
-            } else {
-                json_reply(stream, "200 OK", result);
+            let mut result = search_planner::poll(id)?;
+            if result["status"] == "complete" {
+                let (facts, instructions, digest, _) = search_plan_context(ws)?;
+                if result["input_digest"].as_str() != Some(digest.as_str()) {
+                    json_reply(
+                        stream,
+                        "200 OK",
+                        json!({"status":"stale","error":"Profile, qualifications or search instructions changed; generate new phrases."}),
+                    );
+                    return Ok(());
+                }
+                result["source_coverage"] = search_plan_coverage(ws, &facts, &instructions)?;
             }
+            json_reply(stream, "200 OK", result);
         }
         "/api/search-plan/current" => {
             let digest = body["input_digest"]
@@ -6480,6 +6496,28 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+    }
+
+    #[test]
+    fn search_plan_uses_saved_filters_and_binds_unseen_instruction_tail() {
+        let ws = Workspace::in_memory().unwrap();
+        let initial = format!("{}A", "x".repeat(2100));
+        let changed = format!("{}B", "x".repeat(2100));
+        ws.save_candidate_profile(&json!({"instructions":initial,"search_remote_only":"on","search_locations":"Berlin\nParis"}).to_string()).unwrap();
+        let (_, prompt, digest, _) = search_plan_context(&ws).unwrap();
+        assert!(prompt.contains("Remote work is required"));
+        assert!(prompt.contains("Berlin; Paris"));
+        assert_eq!(prompt.chars().count(), 2000);
+        let coverage = search_plan_coverage(&ws, &[], &prompt).unwrap();
+        assert!(
+            coverage["instructions_total_chars"].as_u64().unwrap()
+                > coverage["instructions_used_chars"].as_u64().unwrap()
+        );
+        ws.save_candidate_profile(&json!({"instructions":changed,"search_remote_only":"on","search_locations":"Berlin\nParis"}).to_string()).unwrap();
+        let (_, next_prompt, next_digest, _) = search_plan_context(&ws).unwrap();
+        assert_eq!(prompt, next_prompt);
+        assert_ne!(digest, next_digest);
+        assert!(check_search_plan_binding(&ws, &json!({"plan_digest":digest})).is_err());
     }
 
     #[test]

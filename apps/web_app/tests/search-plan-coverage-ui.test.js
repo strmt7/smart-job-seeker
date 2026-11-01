@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(line=>line.startsWith('function renderSearchPlan('));assert.ok(line);
+const box={children:[],replaceChildren(...items){this.children=items},append(...items){this.children.push(...items)}};
+const element=(tag,text,cls)=>({tag,text,cls,append(){},addEventListener(){}});
+const render=vm.runInNewContext(`(${line})`,{element,document:{querySelector:()=>box}});
+render([], 'digest',0,0,{reviewed_total:25,included:20,oversized:2,over_limit:3,instructions_used_chars:2000,instructions_total_chars:2100});
+const text=box.children.map(item=>item.text).join('\n');
+assert.match(text,/used 20 of 25/);assert.match(text,/2 were too long and 3 exceeded/);assert.match(text,/preferences were not included/);
+console.log('Search-plan coverage UI checks passed.');

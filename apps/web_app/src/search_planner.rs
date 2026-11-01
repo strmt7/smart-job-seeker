@@ -257,6 +257,40 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires a resource-gated local qwen3.5:9b model"]
+    fn live_planner_uses_saved_remote_and_location_preferences() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let preferences = crate::profile_fit_instructions(
+            &json!({"search_remote_only":"on","search_locations":"Berlin\nParis"}),
+        )
+        .unwrap();
+        let plan = generate(
+            &mut model,
+            &["Rust software engineer".into()],
+            &preferences,
+            &[],
+        )
+        .unwrap();
+        println!("Fictional search phrases: {:?}", plan.queries);
+        assert!(plan
+            .queries
+            .iter()
+            .any(|query| query.to_lowercase().contains("remote")));
+        assert!(plan.queries.iter().any(|query| {
+            let query = query.to_lowercase();
+            query.contains("berlin") || query.contains("paris")
+        }));
+    }
+
+    #[test]
     fn validates_and_deduplicates_proposed_searches() {
         let facts = vec!["Built Rust services".to_owned()];
         assert_eq!(
