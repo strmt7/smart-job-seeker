@@ -9504,6 +9504,34 @@ mod tests {
         );
     }
 
+    // A TCP read is not an HTTP message boundary. Drain the request body
+    // before responding so a split POST cannot be reset on socket close.
+    fn read_capability_fixture_request(stream: &mut TcpStream) -> (String, Vec<u8>) {
+        use std::io::BufRead;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let mut reader = std::io::BufReader::new(stream);
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut length = None;
+        loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+            }
+        }
+        let mut body = vec![0; length.expect("content length")];
+        reader.read_exact(&mut body).unwrap();
+        (request, body)
+    }
+
     #[test]
     fn model_capability_is_discarded_when_resident_model_changes() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -9514,10 +9542,14 @@ mod tests {
                 json!({"capabilities":["vision"]}),
                 json!({"models":[{"name":"second","size":10,"size_vram":10,"context_length":4096}]}),
             ];
-            for body in replies {
+            for (index, body) in replies.into_iter().enumerate() {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut request = [0; 4096];
-                let _ = stream.read(&mut request).unwrap();
+                let (request, _) = read_capability_fixture_request(&mut stream);
+                assert!(request.starts_with(if index == 1 {
+                    "POST /api/show "
+                } else {
+                    "GET /api/ps "
+                }));
                 let body = body.to_string();
                 write!(
                     stream,
@@ -9545,14 +9577,27 @@ mod tests {
             let addr = listener.local_addr().unwrap();
             let worker = std::thread::spawn(move || {
                 let report = |digest: Option<String>| json!({"models":[{"name":"local","size":10,"size_vram":10,"context_length":4096,"digest":digest}]});
-                for body in [
+                for (index, body) in [
                     report(before),
                     json!({"capabilities":["vision"]}),
                     report(after),
-                ] {
+                ]
+                .into_iter()
+                .enumerate()
+                {
                     let (mut stream, _) = listener.accept().unwrap();
-                    let mut request = [0; 4096];
-                    let _ = stream.read(&mut request).unwrap();
+                    let (request, body_bytes) = read_capability_fixture_request(&mut stream);
+                    assert!(request.starts_with(if index == 1 {
+                        "POST /api/show "
+                    } else {
+                        "GET /api/ps "
+                    }));
+                    if index == 1 {
+                        assert_eq!(
+                            serde_json::from_slice::<Value>(&body_bytes).unwrap(),
+                            json!({"model":"local"})
+                        );
+                    }
                     let body = body.to_string();
                     write!(
                         stream,

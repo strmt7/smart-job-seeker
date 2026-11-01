@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Web test suite and model-status fixture — 2026-11-01
+
+- After the shared-URL migration, a full web test run reported 429 passed, 216 ignored and one intermittent model-capability failure; the failed test passed alone. Its mock server could close a connection after reading only part of a split HTTP request. The fixture now consumes the declared body and checks the request path; a subsequent full run passed 430 tests with 216 ignored, and Clippy passed. This fixes a plausible fixture race but does not prove it caused the observed failure or establish live-model reliability.
+
 ## Shared application URL duplicate review — 2026-11-01
 
 - Duplicate discovery now considers exact nonempty saved application URLs even when employers or titles differ or an employer is missing. A match creates a review pair, never an automatic merge; generic URLs can refer to different roles. Migration 40 queues existing shared-URL records for bounded rechecking, and a URL change invalidates the changed record's duplicate index. Searches remain capped at 200 candidates and report bounded coverage when the cap is reached. Store tests and the SQLCipher migration fixture passed; this is not a guarantee that all duplicates will be found.
