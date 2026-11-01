@@ -1072,3 +1072,7 @@ Initial and rescanned form responses now identify selectors needing model review
 ### Rendered manual-review panel (2026-11-01)
 
 A mocked local-backend Edge check rendered the form panel at 1,200 and 390 pixels. It confirmed separate AI-review and sensitive-field explanations without horizontal overflow or page errors. The fixture used a placeholder screenshot, not an employer page. It exposed duplicate display of an identical model warning; the panel now omits that duplicate only when the corresponding field explanation is shown, retaining other warnings. All UI checks passed. The mock server's missing favicon produced a 404 and was excluded from the console check. No application was submitted.
+
+### Local vision on a public empty field (2026-11-01)
+
+A resource-gated qwen3.5:9b run inspected a read-only crop around the empty Phone field on the public Vercel Greenhouse page. The field's live value was empty before and after capture, and the model observed Phone with an empty value rather than the supplied fictional comparison value. The crop clipped parts of neighboring labels, so their reported labels are not established by this check; one successful observation does not qualify visual filling or general accuracy. The test used a bounded scroll and no clicks, typing, uploads or submission. The model was unloaded. The visual-review unit group (23 passed, 15 ignored), web Clippy and formatting passed; the additional exact-empty assertion was added after observing the recorded model output.

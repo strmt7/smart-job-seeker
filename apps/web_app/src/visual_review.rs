@@ -1017,6 +1017,68 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "read-only public application and resource-gated local vision model"]
+    fn live_public_empty_field_visual_review_is_read_only() {
+        use waypoint_applications::driver::BrowserDriver;
+        let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").expect("public application URL");
+        let label = std::env::var("WAYPOINT_PUBLIC_FIELD_LABEL").expect("public field label");
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").expect("local model");
+        let parsed = url::Url::parse(&url).unwrap();
+        crate::form_links::check_job_and_destination(
+            crate::manual_job::source(parsed.host_str().unwrap()),
+            parsed.origin().ascii_serialization().as_str(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let (addr, context) = benchmark_target(&model).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let matches: Vec<_> = live
+            .schema
+            .fields
+            .iter()
+            .filter(|field| field.label == label)
+            .collect();
+        assert_eq!(matches.len(), 1, "field must be unique");
+        let selector = &matches[0].selector;
+        assert_eq!(driver.text_value_snapshot(selector).unwrap().value, "");
+        driver.scroll_field_into_view(selector).unwrap();
+        let image = driver.screenshot_field_context(selector).unwrap();
+        if let Some(path) = std::env::var_os("WAYPOINT_PUBLIC_APPLICATION_SCREENSHOT") {
+            use base64::Engine;
+            std::fs::write(
+                path,
+                base64::engine::general_purpose::STANDARD
+                    .decode(&image)
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+        let expected = vec![(label.clone(), "fictional-value-not-entered".to_string())];
+        let result =
+            analyze_targeted_with_context(addr, &model, &image, &label, &expected, context)
+                .unwrap();
+        println!("Public empty-field visual result: {result}");
+        let observations: Vec<_> = result["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["label"] == label)
+            .collect();
+        assert_eq!(
+            observations.len(),
+            1,
+            "target label was not uniquely observed"
+        );
+        assert_eq!(observations[0]["visible_value"], "");
+        assert_ne!(result["comparisons"][0]["status"], "matches_transcription");
+        assert_eq!(driver.text_value_snapshot(selector).unwrap().value, "");
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts a local browser and requires a resource-gated vision model"]
     fn live_visual_distinguishes_identically_labelled_sections() {
         use waypoint_applications::driver::BrowserDriver;
