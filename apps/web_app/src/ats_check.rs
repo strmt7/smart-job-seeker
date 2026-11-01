@@ -55,6 +55,8 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     let mut text_boxes = 0;
     let mut multi_column_sections = 0;
     let mut uncertain_columns = false;
+    let mut hidden_markers = 0;
+    let mut uncertain_hidden = false;
     loop {
         let (namespace, event) = reader
             .read_resolved_event()
@@ -69,6 +71,30 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                 }
                 if word && e.local_name().as_ref() == b"txbxContent" {
                     text_boxes += 1;
+                }
+                if word && matches!(e.local_name().as_ref(), b"vanish" | b"webHidden") {
+                    let mut state = Some(true);
+                    for attribute in e.attributes() {
+                        let attribute =
+                            attribute.map_err(|_| "Malformed DOCX hidden-text attributes")?;
+                        let (namespace, local) =
+                            reader.resolver_mut().resolve_attribute(attribute.key);
+                        let is_word_attribute = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if
+                            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+                        if is_word_attribute && local.as_ref() == b"val" {
+                            state = match attribute.value.as_ref() {
+                                b"1" | b"true" | b"on" => Some(true),
+                                b"0" | b"false" | b"off" => Some(false),
+                                _ => None,
+                            };
+                        }
+                    }
+                    match state {
+                        Some(true) => hidden_markers += 1,
+                        Some(false) => {}
+                        None => uncertain_hidden = true,
+                    }
                 }
                 if word && e.local_name().as_ref() == b"cols" {
                     for attribute in e.attributes() {
@@ -116,10 +142,16 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                 .into(),
         );
     }
+    if hidden_markers > 0 {
+        notes.push(format!("DOCX contains {hidden_markers} enabled hidden-text formatting marker(s); extracted text may include content not visible in the document. Inspect the PDF and extracted text."));
+    }
+    if uncertain_hidden {
+        notes.push("A hidden-text formatting value could not be interpreted; inspect the document and extracted text.".into());
+    }
     if headers {
         notes.push("DOCX has header files; some parsers may miss header content, so check that contact details are also present in the body.".into());
     }
-    notes.push("DOCX visual layout and column order are not fully assessed.".into());
+    notes.push("DOCX visual layout, column order and hidden formatting inherited from styles or other parts are not fully assessed.".into());
     Ok(notes)
 }
 
@@ -377,17 +409,52 @@ mod tests {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
         zip.start_file("word/document.xml", options).unwrap();
-        zip.write_all(br#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:tbl><d:tr><d:tc><d:p><d:r><d:t>Rust experience</d:t></d:r></d:p></d:tc></d:tr></d:tbl><d:txbxContent><d:p><d:r><d:t>Example</d:t></d:r></d:p></d:txbxContent></d:body></d:document>"#).unwrap();
+        zip.write_all(br#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:tbl><d:tr><d:tc><d:p><d:r><d:t>Rust experience</d:t></d:r></d:p></d:tc></d:tr></d:tbl><d:txbxContent><d:p><d:r><d:rPr><d:vanish/></d:rPr><d:t>Example</d:t></d:r></d:p></d:txbxContent></d:body></d:document>"#).unwrap();
         zip.start_file("word/header1.xml", options).unwrap();
         zip.write_all(b"<header/>").unwrap();
         let bytes = zip.finish().unwrap().into_inner();
         let result = report("fixture.docx", &bytes, "Rust role", &[]).unwrap();
         let notes = result["structure_notes"].to_string();
-        assert!(notes.contains("table") && notes.contains("text box") && notes.contains("header"));
+        assert!(
+            notes.contains("table")
+                && notes.contains("text box")
+                && notes.contains("header")
+                && notes.contains("hidden-text")
+        );
         assert!(result["reading_order_preview"]
             .to_string()
             .contains("Rust experience"));
     }
+    #[test]
+    fn detects_enabled_and_unknown_hidden_text_markers() {
+        use std::io::Write;
+        fn notes(body: &str) -> Vec<String> {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            write!(zip, "<d:document xmlns:d=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><d:body>{body}</d:body></d:document>").unwrap();
+            structure_notes("cv.docx", &zip.finish().unwrap().into_inner()).unwrap()
+        }
+        assert!(
+            notes("<d:p><d:r><d:rPr><d:vanish/></d:rPr><d:t>Invisible</d:t></d:r></d:p>")
+                .iter()
+                .any(|n| n.contains("enabled hidden-text"))
+        );
+        assert!(
+            !notes("<d:p><d:r><d:rPr><d:vanish d:val=\"false\"/></d:rPr></d:r></d:p>")
+                .iter()
+                .any(|n| n.contains("enabled hidden-text"))
+        );
+        assert!(
+            notes("<d:p><d:r><d:rPr><d:webHidden d:val=\"unexpected\"/></d:rPr></d:r></d:p>")
+                .iter()
+                .any(|n| n.contains("could not be interpreted"))
+        );
+    }
+
     #[test]
     fn detects_column_declarations_without_relying_on_prefix() {
         use std::io::Write;
