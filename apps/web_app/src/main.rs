@@ -3101,6 +3101,19 @@ fn serve(
             listing["email_handoffs_truncated"] = json!(truncated);
             json_reply(stream, "200 OK", listing);
         }
+        "/api/attempts/answers" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::answer_history(ws, &job, attempt)?,
+            );
+        }
         "/api/gmail/reconcile-handoff" => {
             if body["reviewed"].as_bool() != Some(true) {
                 return Err("Confirm that you checked the mailbox first".into());
@@ -9093,6 +9106,36 @@ mod tests {
                 serde_json::from_slice(&std::fs::read(record.join(answer_path)).unwrap()).unwrap();
             assert_eq!(snapshot["fields"], requested["fields"]);
             assert_eq!(snapshot["note"], requested["note"]);
+            let attempt_meta: Value =
+                serde_json::from_slice(&std::fs::read(record.join("attempt.json")).unwrap())
+                    .unwrap();
+            let answers_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let answers_port = answers_listener.local_addr().unwrap().port();
+            let body =
+                json!({"id":id.as_str(),"attempt_id":attempt_meta["attempt_id"]}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", answers_port)).unwrap();
+            write!(client,"POST /api/attempts/answers HTTP/1.1\r\nHost: 127.0.0.1:{answers_port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = answers_listener.accept().unwrap();
+            let mut empty_session = None;
+            serve(
+                &mut server,
+                &mut ws,
+                &mut empty_session,
+                "test-token",
+                answers_port,
+            )
+            .unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let history: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert!(history["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["file"] == answer_path
+                    && item["data"]["fields"] == requested["fields"]));
             let incomplete = event_values
                 .iter()
                 .position(|event| event["type"] == "fill_incomplete")

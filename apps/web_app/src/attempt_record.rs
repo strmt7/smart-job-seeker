@@ -684,6 +684,123 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     }
     Ok(json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable}))
 }
+
+/// Read a bounded set of answer snapshots from the selected job's own attempt.
+/// Older records may not contain the answers directory.
+pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {
+    if attempt.is_empty()
+        || attempt.len() > 64
+        || !attempt
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("Invalid attempt identity".into());
+    }
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Attempt records require a disk-backed workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let dir = root
+        .join("application-records")
+        .join(format!("{}-{attempt}", &hash.as_str()[..16]));
+    let metadata = fs::symlink_metadata(&dir).map_err(|_| "Application record not found")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Invalid application record".into());
+    }
+    let info = dir.join("attempt.json");
+    let info_meta =
+        fs::symlink_metadata(&info).map_err(|_| "Application record metadata not found")?;
+    if !info_meta.is_file() || info_meta.file_type().is_symlink() || info_meta.len() > 65536 {
+        return Err("Invalid application record metadata".into());
+    }
+    let info: Value =
+        serde_json::from_slice(&fs::read(info).map_err(|_| "Cannot read application record")?)
+            .map_err(|_| "Invalid application record metadata")?;
+    if info["job_id"].as_str() != Some(job.as_str()) || info["attempt_id"].as_str() != Some(attempt)
+    {
+        return Err("Application record does not match the selected job".into());
+    }
+    let directory = dir.join("answers");
+    let meta = match fs::symlink_metadata(&directory) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(json!({"available":false,"items":[],"truncated":false,"unreadable":0}))
+        }
+        Err(_) => return Err("Cannot inspect answer records".into()),
+    };
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err("Invalid answer record directory".into());
+    }
+    let mut files = Vec::new();
+    let mut truncated = false;
+    let mut unreadable = 0;
+    for (index, entry) in fs::read_dir(directory)
+        .map_err(|_| "Cannot inspect answer records")?
+        .enumerate()
+    {
+        if index >= 256 {
+            truncated = true;
+            break;
+        }
+        let Ok(entry) = entry else {
+            unreadable += 1;
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(number) = name
+            .strip_suffix(".json")
+            .filter(|s| !s.is_empty() && s.len() <= 10 && s.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            unreadable += 1;
+            continue;
+        };
+        files.push((number, name, entry.path()));
+    }
+    files.sort_by_key(|(number, _, _)| *number);
+    if files.len() > 64 {
+        files.truncate(64);
+        truncated = true;
+    }
+    let mut items = Vec::new();
+    let mut bytes_read = 0u64;
+    for (_, name, path) in files {
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            unreadable += 1;
+            continue;
+        };
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 256 * 1024 {
+            unreadable += 1;
+            continue;
+        }
+        if bytes_read.saturating_add(meta.len()) > 2 * 1024 * 1024 {
+            truncated = true;
+            break;
+        }
+        bytes_read += meta.len();
+        let value: Value = match fs::read(path)
+            .ok()
+            .and_then(|data| serde_json::from_slice(&data).ok())
+        {
+            Some(value) => value,
+            None => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        if !matches!(
+            value["type"].as_str(),
+            Some("fields_requested" | "fill_commands_verified" | "fill_incomplete")
+        ) {
+            unreadable += 1;
+            continue;
+        }
+        items.push(json!({"file":format!("answers/{name}"),"data":value}));
+    }
+    Ok(json!({"available":true,"items":items,"truncated":truncated,"unreadable":unreadable}))
+}
 /// Make a self-contained index for locally saved PNGs. Metadata supplies only
 /// validated numbers; captured page text and URLs never become HTML markup.
 fn listing_capture_view(metadata: &[u8], count: usize) -> String {
@@ -1308,6 +1425,46 @@ pub fn capture_before_navigation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn answer_history_is_bound_to_attempt_and_reports_incomplete_files() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.invalid/fictional-answer-history","title":"Role","employer":"Fixture"}), 1).unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut record = AttemptRecord::start(&ws, &job, "answer-fixture", 2)
+            .unwrap()
+            .unwrap();
+        let requested = json!({"type":"fields_requested","fields":[{"question":"Name","value":{"text":"Fictional Candidate"}}]});
+        let path = record.requested_answers(&requested).unwrap();
+        record
+            .answer_outcome(
+                json!({"type":"fill_incomplete","answer_file":path,"completed_commands":[]}),
+            )
+            .unwrap();
+        fs::write(record.dir.join("answers").join("9999.json"), b"invalid").unwrap();
+        let history = answer_history(&ws, &job, "answer-fixture").unwrap();
+        assert_eq!(history["available"], true);
+        assert_eq!(history["items"].as_array().unwrap().len(), 2);
+        assert_eq!(history["items"][0]["data"], requested);
+        assert_eq!(
+            history["items"][1]["data"]["answer_file"],
+            history["items"][0]["file"]
+        );
+        assert_eq!(history["unreadable"], 1);
+        assert!(answer_history(&ws, &job, "../invalid").is_err());
+        assert!(answer_history(
+            &ws,
+            &JobIdentityId::new("different-job").unwrap(),
+            "answer-fixture"
+        )
+        .is_err());
+        fs::rename(record.dir.join("answers"), record.dir.join("old-answers")).unwrap();
+        assert_eq!(
+            answer_history(&ws, &job, "answer-fixture").unwrap()["available"],
+            false
+        );
+    }
     #[test]
     fn reviewed_answer_snapshots_preserve_each_request_without_overwriting() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
