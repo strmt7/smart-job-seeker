@@ -2,9 +2,16 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
 const line=source.split('\n').find(line=>line.startsWith('function renderSearchPlan('));assert.ok(line);
 const box={children:[],replaceChildren(...items){this.children=items},append(...items){this.children.push(...items)}};
-const element=(tag,text,cls)=>({tag,text,cls,append(){},addEventListener(){}});
+const element=(tag,text,cls)=>({tag,text,cls,children:[],append(...items){this.children.push(...items)},addEventListener(){}});
 const render=vm.runInNewContext(`(${line})`,{element,document:{querySelector:()=>box}});
 render([], 'digest',0,0,{reviewed_total:25,included:20,oversized:2,over_limit:3,instructions_used_chars:2000,instructions_total_chars:2100});
 const text=box.children.map(item=>item.text).join('\n');
 assert.match(text,/used 20 of 25/);assert.match(text,/2 were too long and 3 exceeded/);assert.match(text,/preferences were not included/);
+render(['Rust engineer remote','remote Rust engineer','C++ developer','C# developer'], 'digest',0,0,null);
+const rows=box.children.filter(item=>item.cls==='search-phrase');
+assert.equal(rows.length,4);
+assert.ok(rows[1].children.some(item=>item.text?.includes('Same terms')));
+assert.ok(!rows[0].children.some(item=>item.text?.includes('Same terms')));
+assert.ok(!rows[2].children.some(item=>item.text?.includes('Same terms')));
+assert.ok(!rows[3].children.some(item=>item.text?.includes('Same terms')));
 console.log('Search-plan coverage UI checks passed.');
