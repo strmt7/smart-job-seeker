@@ -148,18 +148,24 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         return Err("Enter 1 to 10 search phrases and 1 to 5 pages per phrase".into());
     }
     let mut seen = HashSet::new();
-    let mut requests = Vec::new();
+    let mut phrases = Vec::new();
     for query in queries {
         let query = query.trim().to_owned();
         if !seen.insert(query.to_lowercase()) {
             return Err("Search phrases must be distinct".into());
         }
         let url = crate::web_search::request_url(&provider, &query)?;
-        for page in 1..=pages {
+        phrases.push((query, url));
+    }
+    // Cover every phrase's first page before spending the shared candidate
+    // budget on deeper pages of any one phrase.
+    let mut requests = Vec::new();
+    for page in 1..=pages {
+        for (query, url) in &phrases {
             let mut page_url = url.clone();
             page_url
                 .query_pairs_mut()
-                .append_pair(crate::web_search::page_parameter(&url), &page.to_string());
+                .append_pair(crate::web_search::page_parameter(url), &page.to_string());
             requests.push((query.clone(), page, page_url));
         }
     }
@@ -1079,6 +1085,63 @@ mod tests {
         );
         assert_eq!(batches[1]["data"]["repeated_references_omitted"], 90);
         assert_eq!(batches[1]["data"]["results_examined"], 101);
+        provider.join().unwrap();
+    }
+
+    #[test]
+    fn batch_visits_each_phrase_before_deeper_pages() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let provider = std::thread::spawn(move || {
+            for (query, page) in [("first", 1), ("second", 1), ("first", 2), ("second", 2)] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096];
+                let n = stream.read(&mut request).unwrap();
+                let request = std::str::from_utf8(&request[..n]).unwrap();
+                assert!(request.contains(&format!("q={query}")), "{request}");
+                assert!(request.contains(&format!("pageno={page}")), "{request}");
+                let body = r#"{"results":[]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        start(
+            "fair-pages".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec!["first".into(), "second".into()],
+            2,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let mut pages = Vec::new();
+        loop {
+            let result = poll("fair-pages", pages.len()).unwrap();
+            if result["status"] == "complete" {
+                break;
+            }
+            if result.get("data").is_some() {
+                pages.push((
+                    result["query"].as_str().unwrap().to_owned(),
+                    result["page"].as_u64().unwrap(),
+                ));
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            pages,
+            vec![
+                ("first".into(), 1),
+                ("second".into(), 1),
+                ("first".into(), 2),
+                ("second".into(), 2)
+            ]
+        );
         provider.join().unwrap();
     }
 
