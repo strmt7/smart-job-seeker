@@ -84,6 +84,8 @@ try {
     [IO.File]::WriteAllText((Join-Path $fakeOpenSsl 'bin/libcrypto-fixture.dll'), 'fixture')
     function cargo {
         if ($env:WAYPOINT_TEST_FLAG_MODE -eq 'build') {
+            if ($env:WAYPOINT_TEST_EXPECT_CRT -eq 'static' -and $env:CARGO_ENCODED_RUSTFLAGS -cne ('-Copt-level=1' + ([char]0x1f).ToString() + '-Ctarget-feature=+crt-static')) { throw 'Default static CRT flag was not passed to Cargo.' }
+            if ($env:WAYPOINT_TEST_EXPECT_CRT -eq 'caller' -and $env:CARGO_ENCODED_RUSTFLAGS -cne '-Copt-level=1') { throw 'Opt-out did not preserve the caller CRT flags.' }
             @{ reason='compiler-artifact'; target=@{ name='waypoint_web'; kind=@('bin') }; executable=$env:WAYPOINT_TEST_ARTIFACT } | ConvertTo-Json -Depth 5 -Compress
             $global:LASTEXITCODE = 0
             return
@@ -107,8 +109,10 @@ try {
     $env:WAYPOINT_TEST_FLAG_MODE = 'plain'
     $env:RUSTFLAGS = ''
     $env:CARGO_ENCODED_RUSTFLAGS = ''
+    $plainWasPresent = Test-Path Env:RUSTFLAGS
+    $encodedWasPresent = Test-Path Env:CARGO_ENCODED_RUSTFLAGS
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Test -TestFilter fixture
-    if (-not (Test-Path Env:RUSTFLAGS) -or $env:RUSTFLAGS -ne '' -or -not (Test-Path Env:CARGO_ENCODED_RUSTFLAGS) -or $env:CARGO_ENCODED_RUSTFLAGS -ne '') { throw 'Empty flag variables were not restored.' }
+    if ((Test-Path Env:RUSTFLAGS) -ne $plainWasPresent -or (Test-Path Env:CARGO_ENCODED_RUSTFLAGS) -ne $encodedWasPresent -or ($plainWasPresent -and $env:RUSTFLAGS -ne '') -or ($encodedWasPresent -and $env:CARGO_ENCODED_RUSTFLAGS -ne '')) { throw 'Empty or absent flag variables were not restored.' }
     $env:WAYPOINT_TEST_FLAG_MODE = 'encoded'
     $env:RUSTFLAGS = '-C debuginfo=1'
     $env:CARGO_ENCODED_RUSTFLAGS = '-Copt-level=1'
@@ -126,11 +130,27 @@ try {
     $env:WAYPOINT_TEST_ARTIFACT = Join-Path $customBuild 'waypoint_web.exe'
     [IO.File]::WriteAllText($env:WAYPOINT_TEST_ARTIFACT, 'fictional executable')
     $env:WAYPOINT_TEST_FLAG_MODE = 'build'
+    $env:WAYPOINT_TEST_EXPECT_CRT = 'caller'
     & $script -OpenSslRoot $fakeOpenSsl
     $customReceipt = Join-Path $customBuild 'waypoint-build.json'
     $record = Get-Content -LiteralPath $customReceipt -Raw | ConvertFrom-Json
+    if ($record.static_crt_requested -ne $false) { throw 'Default debug receipt incorrectly recorded static CRT.' }
     if ($record.executable_sha256 -ne (Get-FileHash -LiteralPath $env:WAYPOINT_TEST_ARTIFACT -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Receipt does not identify Cargo executable.' }
     if (-not (Test-Path -LiteralPath (Join-Path $customBuild 'libcrypto-fixture.dll') -PathType Leaf)) { throw 'Runtime was not copied beside Cargo executable.' }
+    $releaseBuild = Join-Path $fixture 'custom-target/release'
+    New-Item -ItemType Directory -Path $releaseBuild -Force | Out-Null
+    $env:WAYPOINT_TEST_ARTIFACT = Join-Path $releaseBuild 'waypoint_web.exe'
+    [IO.File]::WriteAllText($env:WAYPOINT_TEST_ARTIFACT, 'fictional release executable')
+    $customReceipt = Join-Path $releaseBuild 'waypoint-build.json'
+    $env:WAYPOINT_TEST_EXPECT_CRT = 'static'
+    & $script -OpenSslRoot $fakeOpenSsl -Release
+    $record = Get-Content -LiteralPath $customReceipt -Raw | ConvertFrom-Json
+    if ($record.static_crt_requested -ne $true) { throw 'Default release receipt did not record static CRT.' }
+    if ($env:RUSTFLAGS -cne '-C debuginfo=1' -or $env:CARGO_ENCODED_RUSTFLAGS -cne '-Copt-level=1') { throw 'Release build did not restore caller flags.' }
+    $env:WAYPOINT_TEST_EXPECT_CRT = 'caller'
+    & $script -OpenSslRoot $fakeOpenSsl -Release -StaticCrt:$false
+    $record = Get-Content -LiteralPath $customReceipt -Raw | ConvertFrom-Json
+    if ($record.static_crt_requested -ne $false) { throw 'Opt-out build receipt incorrectly recorded static CRT.' }
     $env:WAYPOINT_TEST_FLAG_MODE = 'no-artifact'
     $refused = $false
     try { & $script -OpenSslRoot $fakeOpenSsl } catch {

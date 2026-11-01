@@ -14,6 +14,7 @@ if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
 if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
 if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires -Test and a specific -TestFilter.' }
 if ($OpenSslInstaller -and $PSBoundParameters.ContainsKey('OpenSslRoot') -and $OpenSslRoot) { throw 'Choose either -OpenSslRoot or -OpenSslInstaller.' }
+if (-not $PSBoundParameters.ContainsKey('StaticCrt')) { $StaticCrt = [bool]$Release }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
 if ($OpenSslInstaller) {
     New-Item -ItemType Directory -Path (Join-Path $repo 'target') -Force | Out-Null
