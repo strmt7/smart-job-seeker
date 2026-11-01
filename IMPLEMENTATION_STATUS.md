@@ -1,3 +1,8 @@
+## Prior fields across application navigation — 2026-11-01
+
+- When a reviewed application link opens a new inspection, completed fields from the previous inspection now produce the same explicit review warning already used for rescans. The next page cannot itself establish that earlier fields remain correct. The status endpoint records a manual-review reason when it collects the result.
+- A focused unit test covered the presence and absence of prior filled fields, and ten navigation tests and web-app Clippy passed. The reviewed-link path was not tested end to end against an employer page in this change; no application was submitted.
+
 ## Placeholder and repeated-label model checks — 2026-11-01
 
 - In a fictional form, the production-admitted `qwen3.5:9b` transcribed a placeholder email as an entered value, failing the raw-vision test. The separate live-value check correctly left it unconfirmed. A proposed prompt instruction about lighter placeholder text did not improve that example and was discarded. The UI now explicitly explains this limitation and the live-value check.

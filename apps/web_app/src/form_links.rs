@@ -286,6 +286,12 @@ fn reviewed_link_matches(
     link.url == target && link.label == label
 }
 
+fn mark_prior_fills_for_review(preview: &mut form_preview::FormPreview, completed: &[String]) {
+    if !completed.is_empty() {
+        preview.manual_review.push("Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection".into());
+    }
+}
+
 pub fn start(
     id: String,
     mut session: ReviewSession,
@@ -427,9 +433,7 @@ pub fn start(
                 {
                     preview.manual_review.push(form_preview::POST_CHOICE_VISUAL_REQUIRED.into());
                 }
-                if !navigating && !session.completed_selectors.is_empty() {
-                    preview.manual_review.push("Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection".into());
-                }
+                mark_prior_fills_for_review(&mut preview, &session.completed_selectors);
                 if !session.attachments.is_empty() {
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
                 }
@@ -520,6 +524,29 @@ mod tests {
     use super::*;
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
+
+    #[test]
+    fn prior_fills_remain_a_review_obligation_after_navigation_or_rescan() {
+        let mut preview = form_preview::FormPreview {
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: true,
+                steps: 2,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        mark_prior_fills_for_review(&mut preview, &[]);
+        assert!(preview.manual_review.is_empty());
+        mark_prior_fills_for_review(&mut preview, &["#earlier-answer".into()]);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason
+                .contains("Fields filled before this inspection must be reviewed again")));
+    }
 
     #[test]
     fn disconnected_navigation_retains_the_job_for_review() {
