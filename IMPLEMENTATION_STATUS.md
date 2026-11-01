@@ -1142,3 +1142,7 @@ The first hosted CI run for this change was rejected before jobs started because
 ### PDF passage selection feedback (2026-11-01)
 
 PDF edits now distinguish a passage that is absent, repeated, or split across text objects, and suggest the appropriate next step. Fictional PDFs exercised all three refusals through the real PDF editing process and PDFium; the Unicode-map stream check also passed. The Windows CI PDF job now includes the selection check and the pinned PDF rendering dependencies; its new hosted run remains pending. This improves guidance only: editing across text objects is still unsupported.
+
+### Hosted PDF checks and second CV visual review (2026-11-01)
+
+The Windows PDF regression job for commit `bbcb169` passed, including the fictional passage-selection cases. The earlier `fe1084b` build-and-test and browser jobs passed, while its supply-chain audit failed with dependency advisories and a yanked dependency; its license-policy step did not run. A local crop of the second public CV's edited line was visually compared with the original: the shortened text appeared in the same position, with the surrounding line intact. This is one localized visual check and does not establish whole-document layout quality or generic PDF editing support. The CV and rendered crop remain outside the repository.
