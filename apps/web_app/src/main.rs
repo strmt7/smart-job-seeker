@@ -12262,6 +12262,19 @@ mod tests {
                 last_visual_freshness_key: None,
                 record: None,
             });
+            {
+                let current = session.as_mut().unwrap();
+                current
+                    .preview
+                    .manual_review
+                    .push(form_preview::CHANGED_INFORMATIONAL_PREVIEW.to_string());
+                assert!(check_answer_page(current).is_err());
+                current
+                    .preview
+                    .manual_review
+                    .retain(|reason| reason != form_preview::CHANGED_INFORMATIONAL_PREVIEW);
+                assert!(check_answer_page(current).is_ok());
+            }
             let input = answer_inputs(&ws, session.as_ref().unwrap(), "#candidate").unwrap();
             answer_task::set_completed_fixture(
                 "fixture-draft",
