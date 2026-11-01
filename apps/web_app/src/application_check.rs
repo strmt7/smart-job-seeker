@@ -298,6 +298,18 @@ fn eligible_external_redirect(original: &str, current: &str, allow_external: boo
             == Some(current)
 }
 
+/// A mail link is only a contact signal, not proof it accepts applications.
+fn email_contact_note(links: &[waypoint_applications::driver::PageLink]) -> Option<String> {
+    let inventory = crate::candidate_task::email_link_candidates(links);
+    let count = inventory["contacts"].as_array()?.len();
+    if count == 0 {
+        return None;
+    }
+    let limited =
+        inventory["omitted"].as_u64().unwrap_or(0) > 0 || inventory["link_limit_reached"] == true;
+    Some(format!("The listing has {}{count} email contact{}; verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, if count == 1 { "it" } else { "any" }))
+}
+
 fn classify_fields(
     fields: &[waypoint_applications::form_mapping::FormField],
     followed: bool,
@@ -375,6 +387,14 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             let mut page = browser
                 .open(&url)
                 .map_err(|error| navigation_failure("listing page", &error))?;
+            let contact_note = if page.walls.is_empty() {
+                browser
+                    .page_links()
+                    .ok()
+                    .and_then(|links| email_contact_note(&links))
+            } else {
+                None
+            };
             let mut followed = false;
             let mut link_warning = None;
             let mut redirect_warning = None;
@@ -508,6 +528,10 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
+            if let Some(note) = contact_note {
+                message.push(' ');
+                message.push_str(&note);
+            }
             if let Some(warning) = link_warning {
                 message.push(' ');
                 message.push_str(warning);
@@ -628,6 +652,31 @@ mod tests {
         TASK,
     };
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[test]
+    fn mail_links_are_advisory_contacts_not_confirmed_application_routes() {
+        use waypoint_applications::driver::PageLink;
+        let link = |url: &str| PageLink {
+            url: url.into(),
+            label: "Contact".into(),
+        };
+        assert!(super::email_contact_note(&[link("https://example.org/job")]).is_none());
+        let note = super::email_contact_note(&[
+            link("mailto:jobs@example.org?subject=ignored"),
+            link("mailto:jobs@example.org"),
+            link("mailto:a@example.org,b@example.org"),
+        ])
+        .unwrap();
+        assert!(note.contains("1 email contact"));
+        assert!(note.contains("verify whether it accepts applications"));
+        assert!(!note.contains("jobs@example.org"));
+        let many: Vec<_> = (0..9)
+            .map(|i| link(&format!("mailto:job{i}@example.org")))
+            .collect();
+        assert!(super::email_contact_note(&many)
+            .unwrap()
+            .contains("at least 8 email contacts"));
+    }
+
     #[test]
     fn navigation_errors_expose_only_validated_http_status() {
         use waypoint_applications::driver::DriverError;
@@ -1409,6 +1458,27 @@ mod tests {
                 "{reached}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "starts one browser using a fictional local listing"]
+    fn checks_email_contact_without_opening_or_sending_mail() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/application-check-email.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(url.as_str()).unwrap();
+        let message = super::email_contact_note(&browser.page_links().unwrap()).unwrap();
+        assert!(message.contains("1 email contact"));
+        assert!(message.contains("verify whether it accepts applications"));
+        assert!(!message.contains("careers@example.invalid"));
+        assert!(browser
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("click") && !entry.contains("submitted")));
     }
 
     #[test]

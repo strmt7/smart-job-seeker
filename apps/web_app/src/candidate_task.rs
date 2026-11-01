@@ -64,7 +64,7 @@ fn mailto_address(href: &str) -> Option<String> {
     Some(address.to_owned())
 }
 
-fn email_link_candidates(links: &[waypoint_applications::driver::PageLink]) -> Value {
+pub(crate) fn email_link_candidates(links: &[waypoint_applications::driver::PageLink]) -> Value {
     let mut contacts: Vec<Value> = Vec::new();
     let mut omitted = 0usize;
     for link in links {
