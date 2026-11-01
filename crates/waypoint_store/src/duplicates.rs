@@ -255,8 +255,10 @@ impl Store {
             )?;
             return Ok(Vec::new());
         }
-        let description = self.job_description(&job.id)?.unwrap_or_default();
-        let description_words = words(&description.chars().take(30000).collect::<String>());
+        // Load and tokenize descriptions only when the title alone does not
+        // already make the pair a review candidate. This keeps routine index
+        // work bounded without losing the different-title comparison path.
+        let mut description_words: Option<BTreeSet<String>> = None;
         let mut candidates = Vec::new();
         let mut seen = BTreeSet::new();
         // An exact requisition is a stronger review signal than arbitrary ID
@@ -396,21 +398,33 @@ impl Store {
                 continue;
             }
             let score = title_score(&job.title, &other.title);
-            let other_description = self.job_description(&other.id)?.unwrap_or_default();
-            let other_words = words(&other_description.chars().take(30000).collect::<String>());
-            let description_score = if description_words.len() >= 20 && other_words.len() >= 20 {
-                overlap(&description_words, &other_words)
+            let description_score = if score < 65 {
+                if description_words.is_none() {
+                    let description = self.job_description(&job.id)?.unwrap_or_default();
+                    description_words =
+                        Some(words(&description.chars().take(30000).collect::<String>()));
+                }
+                let source_words = description_words.as_ref().expect("description was loaded");
+                if source_words.len() >= 20 {
+                    let other_description = self.job_description(&other.id)?.unwrap_or_default();
+                    let other_words =
+                        words(&other_description.chars().take(30000).collect::<String>());
+                    (other_words.len() >= 20).then(|| overlap(source_words, &other_words))
+                } else {
+                    None
+                }
             } else {
-                0
+                None
             };
+            let description_overlap = description_score.unwrap_or(0);
             // Requisition identifiers can be reused across unrelated employers;
             // missing employer data requires independent textual corroboration.
-            if missing_employer_pair && same_requisition && score < 65 && description_score < 85 {
+            if missing_employer_pair && same_requisition && score < 65 && description_overlap < 85 {
                 continue;
             }
             if score < 65
-                && !(score >= 30 && description_score >= 75)
-                && description_score < 85
+                && !(score >= 30 && description_overlap >= 75)
+                && description_overlap < 85
                 && !same_requisition
             {
                 continue;
@@ -420,7 +434,16 @@ impl Store {
             } else {
                 (other.id.as_str(), job.id.as_str())
             };
-            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, description overlap {description_score}%. {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" });
+            let description_evidence = description_score
+                .map(|value| format!("description overlap {value}%"))
+                .unwrap_or_else(|| {
+                    if score >= 65 {
+                        "description not compared".into()
+                    } else {
+                        "description unavailable or too short".into()
+                    }
+                });
+            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} Compare location, duties and requisition numbers.", if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=excluded.reason", params![job_a,job_b,score,reason])?;
             let (status, preferred_job) = self.conn.query_row(
                 "SELECT status,preferred_job FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
@@ -748,6 +771,32 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert!(matches[0].reason.contains("description overlap 100%"));
         assert_eq!(matches[0].status, "pending");
+    }
+
+    #[test]
+    fn strong_title_candidate_does_not_load_descriptions_but_different_titles_do() {
+        let mut store = Store::in_memory().unwrap();
+        let first = job("first", "Software Engineer", "Example Labs", None);
+        let mut second = job("second", "Software Engineer", "Example Labs", None);
+        store.upsert_job(&first).unwrap();
+        store.find_possible_duplicates(&first).unwrap();
+        store.upsert_job(&second).unwrap();
+        store
+            .set_job_description(&second.id, Some("temporary"))
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE job_descriptions SET content=X'ff' WHERE job_id='second'",
+                [],
+            )
+            .unwrap();
+        let candidates = store.find_possible_duplicates(&second).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].reason.contains("description not compared"));
+        second.title = "Different position".into();
+        store.upsert_job(&second).unwrap();
+        assert!(store.find_possible_duplicates(&second).is_err());
     }
 
     #[test]
