@@ -2842,6 +2842,10 @@ mod tests {
         .unwrap();
         assert_eq!(preview.suggestions.len(), 1);
         assert_eq!(preview.suggestions[0].field_selector, "#candidate");
+        assert!(!preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#ambiguous"));
         assert!(preview
             .manual_review
             .iter()
