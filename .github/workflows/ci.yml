@@ -29,7 +29,8 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install the pinned PDF parser
-        run: python -m pip install --only-binary=:all: pypdf==6.10.0
+        run: |
+          python -m pip install --only-binary=:all: pypdf==6.10.0
       - name: Check fictional PDF Unicode mapping
         run: python -B apps/web_app/tests/pdf-stream-charmap.test.py
 

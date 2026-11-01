@@ -1132,3 +1132,5 @@ The PDF stream editor now supports single-byte `charmap` fonts only when each ch
 ### PDF stream regression in CI (2026-11-01)
 
 The fictional Unicode-map PDF stream check now runs in a separate Windows CI job using Python 3.13 and the app's pinned pypdf 6.10.0 version. The same check passed locally with pypdf 6.10.0. It covers the stream editor's mapped and unmapped character cases, not the complete PDF rendering pipeline or arbitrary font encodings. Hosted execution is pending the pushed commit. No application was submitted.
+
+The first hosted CI run for this change was rejected before jobs started because a colon in the inline pip command made the workflow invalid YAML. The command now uses a YAML block; local YAML parsing passed. Hosted validation of the correction remains pending.
