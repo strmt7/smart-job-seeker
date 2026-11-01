@@ -637,6 +637,12 @@ fn visible_unambiguous_headings_give_context_and_others_require_review() {
         .iter()
         .any(|field| field.selector == "#reference"
             && field.label == "Emergency contact — Contact details — Email"));
+    let blocks = driver.open(&file_url("form_block_heading.html")).unwrap();
+    assert!(blocks
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#emergency" && field.label == "Emergency contact — Email"));
     let unclear = driver
         .open(&file_url("form_ambiguous_headings.html"))
         .unwrap();

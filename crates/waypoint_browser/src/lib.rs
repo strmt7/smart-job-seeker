@@ -1966,18 +1966,26 @@ impl CdpDriver {
             .to_owned();
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
             if (!this.isConnected) return null;
-            const walker = document.createTreeWalker(this, NodeFilter.SHOW_TEXT), parts = [];
-            let text = walker.nextNode(), count = 0, size = 0;
+            const walker = document.createTreeWalker(this, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT), parts = [];
+            let text = walker.nextNode(), count = 0, size = 0, previousBlock = null, haveText = false;
             while (text) {
                 if (++count > 512) return null;
-                let parent = text.parentElement, visible = !!parent;
+                const isBreak = text.nodeType === Node.ELEMENT_NODE && text.tagName === 'BR';
+                if (text.nodeType !== Node.TEXT_NODE && !isBreak) { text = walker.nextNode(); continue; }
+                let parent = isBreak ? text : text.parentElement, visible = !!parent, block = null;
                 for (let depth = 0; visible && parent; depth++, parent = parent.parentElement) {
                     if (depth > 64 || ['SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(parent.tagName)) { visible = false; break; }
                     const style = getComputedStyle(parent);
                     if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || !parent.getClientRects().length) { visible = false; break; }
                     if (parent === this) break;
+                    if (!block && ['block','flow-root','flex','grid','list-item','table','table-row','table-cell'].includes(style.display)) block = parent;
                 }
-                if (visible) { const value = text.nodeValue || ''; size += value.length; if (size > 2000) return null; parts.push(value); }
+                if (visible) {
+                    const value = isBreak ? ' ' : (text.nodeValue || '');
+                    if (haveText && block !== previousBlock && (block || previousBlock)) { parts.push(' '); size++; }
+                    size += value.length; if (size > 2000) return null;
+                    parts.push(value); previousBlock = block; haveText = true;
+                }
                 text = walker.nextNode();
             }
             return parts.join('');
