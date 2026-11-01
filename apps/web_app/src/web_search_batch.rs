@@ -998,6 +998,11 @@ mod tests {
         let status = "/api/web-search/batch-status";
         let first = request(status, json!({"task_id":"http-recovery","acknowledged":0}));
         let second = request(status, json!({"task_id":"http-recovery","acknowledged":1}));
+        // A reloaded client now retains only the task ID. Its zero cursor
+        // must recover all already-received pages before acknowledging them.
+        let reloaded = request(status, json!({"task_id":"http-recovery","acknowledged":0}));
+        assert_eq!(reloaded["status"], "running");
+        assert_eq!(reloaded["history"], json!([first.clone(), second.clone()]));
         let done = request(status, json!({"task_id":"http-recovery","acknowledged":2}));
         assert_eq!(done["history"], json!([first, second]));
         assert_eq!(
