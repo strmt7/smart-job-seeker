@@ -90,8 +90,10 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, kind: ConversionKind) -> 
                     json!({"status":"not_checked"}),
                 ),
                 ConversionKind::Docx => {
-                    let pdf = crate::document_convert::docx_to_pdf(&bytes)?;
-                    let check = compare_docx_to_pdf(&bytes, &pdf);
+                    let (pdf, accepted_view) =
+                        crate::document_convert::docx_to_pdf_with_revision_info(&bytes)?;
+                    let mut check = compare_docx_to_pdf(&bytes, &pdf);
+                    check["accepted_revision_view"] = json!(accepted_view);
                     (pdf, check)
                 }
                 ConversionKind::PlainText => {
@@ -223,6 +225,23 @@ mod tests {
         let retry = poll("fictional-pdf-task", &ws).unwrap();
         assert_eq!(first, retry);
         assert_eq!(ws.documents().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn conversion_retry_retains_revision_view_notice() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let ws = Workspace::in_memory().unwrap();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-revision-task".into(),
+            name: "fictional.pdf".into(),
+            result: Some(Ok(ConversionOutput {
+                pdf: b"%PDF-fixture".to_vec(),
+                text_check: json!({"status":"matches","scope":"docx_extract","accepted_revision_view":true}),
+            })),
+        });
+        let first = poll("fictional-revision-task", &ws).unwrap();
+        assert_eq!(first["text_check"]["accepted_revision_view"], true);
+        assert_eq!(poll("fictional-revision-task", &ws).unwrap(), first);
     }
 
     #[test]

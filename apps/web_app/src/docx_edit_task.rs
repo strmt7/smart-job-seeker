@@ -111,19 +111,22 @@ pub fn start_batch(
                 }
                 .map_err(|error| format!("Change {}: {error}", index + 1))?;
             }
-            let (edited, pdf) = if is_pdf {
-                (None, edited)
+            let (edited, pdf, accepted_view) = if is_pdf {
+                (None, edited, false)
             } else {
-                let pdf = crate::document_convert::docx_to_pdf(&edited)?;
-                (Some(edited), pdf)
+                let (pdf, accepted_view) = crate::document_convert::docx_to_pdf_with_revision_info(&edited)?;
+                (Some(edited), pdf, accepted_view)
             };
             if pdf.len() > 10 * 1024 * 1024 {
                 return Err("Exported PDF exceeds 10 MiB".into());
             }
-            let text_check = edited.as_ref().map_or_else(
+            let mut text_check = edited.as_ref().map_or_else(
                 || json!({"status":"not_checked","reason":"Direct PDF edits do not have a converted DOCX to compare"}),
                 |docx| crate::convert_task::compare_docx_to_pdf(docx, &pdf),
             );
+            if edited.is_some() {
+                text_check["accepted_revision_view"] = json!(accepted_view);
+            }
             Ok((edited, pdf, text_check))
         })
         .unwrap_or_else(|_| Err("Template editing stopped unexpectedly".into()));

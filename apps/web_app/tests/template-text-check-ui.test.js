@@ -8,6 +8,7 @@ assert.ok(start >= 0 && end > start);
 const context = {};
 vm.runInNewContext(source.slice(start, end), context);
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'matches'}}), /does not verify layout/);
+assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'matches',accepted_revision_view:true}}), /temporary accepted view.*saved DOCX keeps its revision history/);
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'differs'}}), /differs/);
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'unavailable'}}), /could not be compared/);
 assert.equal(context.templateTextCheck({docx_name:null,text_check:{status:'not_checked'}}), '');

@@ -44,6 +44,10 @@ impl Drop for ConvertLease {
     }
 }
 pub fn docx_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    docx_to_pdf_with_revision_info(bytes).map(|(pdf, _)| pdf)
+}
+
+pub fn docx_to_pdf_with_revision_info(bytes: &[u8]) -> Result<(Vec<u8>, bool), String> {
     office_to_pdf(bytes, false)
 }
 
@@ -99,10 +103,10 @@ pub fn text_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if text.contains('\0') || text.trim_start_matches('\u{feff}').trim().is_empty() {
         return Err("Text is empty or contains binary data".into());
     }
-    office_to_pdf(bytes, true)
+    office_to_pdf(bytes, true).map(|(pdf, _)| pdf)
 }
 
-fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
+fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
     CONVERT_BUSY
         .compare_exchange(
             false,
@@ -201,7 +205,7 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<Vec<u8>, String> {
             return Err("The converted PDF could not be verified against the current DOCX text. Resolve revisions and review the document manually.".into());
         }
     }
-    Ok(pdf)
+    Ok((pdf, prepared.is_some()))
 }
 fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
     let metadata = std::fs::metadata(path).map_err(|_| "LibreOffice did not produce a PDF")?;

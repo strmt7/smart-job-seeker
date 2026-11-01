@@ -612,7 +612,9 @@ mod tests {
         let old = "Fictional experience and qualifications for local rendering checks.";
         let replacement = "Fictional engineering experience.";
         let edited = replace(&original, old, replacement).unwrap();
-        let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let (pdf, accepted_view) =
+            crate::document_convert::docx_to_pdf_with_revision_info(&edited).unwrap();
+        assert!(accepted_view);
         let check = crate::convert_task::compare_docx_to_pdf(&edited, &pdf);
         assert_eq!(check["status"], "matches");
         let text = crate::pdf_extract::extract(&pdf).unwrap();
