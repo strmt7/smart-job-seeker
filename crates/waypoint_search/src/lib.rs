@@ -151,14 +151,23 @@ pub fn check_constraints(
             "remote".into(),
             ConstraintOutcome::Fail("not remote".into()),
         ));
-    } else if !c.locations.is_empty()
-        && !c.locations.iter().any(|l| location.eq_ignore_ascii_case(l))
-        && !remote
-    {
-        out.push((
-            "location".into(),
-            ConstraintOutcome::Fail(format!("location '{location}' not in allowed set")),
-        ));
+    } else if !c.locations.is_empty() && !remote {
+        let observed = location.trim();
+        if observed.is_empty() {
+            out.push((
+                "location".into(),
+                ConstraintOutcome::Unknown("job does not state a location".into()),
+            ));
+        } else if !c
+            .locations
+            .iter()
+            .any(|allowed| observed.eq_ignore_ascii_case(allowed.trim()))
+        {
+            out.push((
+                "location".into(),
+                ConstraintOutcome::Fail(format!("location '{location}' not in allowed set")),
+            ));
+        }
     }
 
     out
@@ -365,6 +374,24 @@ mod tests {
             .iter()
             .any(|(_, o)| matches!(o, ConstraintOutcome::Unknown(_))));
         assert!(!r.iter().any(|(_, o)| matches!(o, ConstraintOutcome::Pass)));
+    }
+
+    #[test]
+    fn missing_location_remains_unknown_and_known_mismatch_fails() {
+        let constraints = CampaignConstraints {
+            locations: vec![" Zurich ".into()],
+            ..Default::default()
+        };
+        for location in ["", "  "] {
+            let result = check_constraints(&constraints, &[], None, None, false, location);
+            assert!(
+                matches!(&result[..], [(name, ConstraintOutcome::Unknown(_))] if name == "location")
+            );
+        }
+        let result = check_constraints(&constraints, &[], None, None, false, " Geneva ");
+        assert!(matches!(&result[..], [(name, ConstraintOutcome::Fail(_))] if name == "location"));
+        assert!(check_constraints(&constraints, &[], None, None, false, " zurich ").is_empty());
+        assert!(check_constraints(&constraints, &[], None, None, true, "").is_empty());
     }
 
     #[test]
