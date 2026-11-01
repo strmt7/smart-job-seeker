@@ -1157,8 +1157,8 @@ fn duplicate_inputs(
         .to_owned();
         // Keep both descriptions and the response within the local model's
         // bounded context; count JSON escaping and preserve UTF-8 boundaries.
-        let sample = answer_task::json_prefix(&full, 2600).to_owned();
-        let truncated = sample.len() < full.len();
+        let truncated = answer_task::json_prefix(&full, 2600).len() < full.len();
+        let sample = duplicate_search::bounded_listing_sample(&full, 2600, [1100, 600, 700]);
         Ok((sample, full_digest, truncated))
     };
     let (first_text, first_digest, first_truncated) = listing(first)?;

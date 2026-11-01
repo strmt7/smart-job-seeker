@@ -30,7 +30,7 @@ const create = vm.runInNewContext(`(function(job,otherId){${fragment};return {co
   assert.equal(polls,2);
   assert.equal(resumed.compare.textContent,'Compare with local AI');
   assert.match(resumed.comparison.children[0].textContent,/Insufficient evidence/);
-  assert.ok(resumed.comparison.children.some(node=>node.textContent.includes('only the beginning')));
+  assert.ok(resumed.comparison.children.some(node=>node.textContent.includes('only part')));
   assert.ok(resumed.comparison.children.some(node=>node.textContent.includes('did not cite both')));
   assert.equal(storage.size,0);
   console.log('Duplicate comparison retry UI checks passed.');

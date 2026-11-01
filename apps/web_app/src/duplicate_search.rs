@@ -29,7 +29,7 @@ struct SearchResult {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
-const OMITTED: &str = "\n[... omitted ...]\n";
+pub(crate) const OMITTED: &str = "\n[... omitted ...]\n";
 
 /// Keep the listing header and samples from later sections within a fixed
 /// character budget. The separator is not evidence from the original ad.
@@ -214,7 +214,7 @@ fn batch_prompt(target: &str, candidates: &[(String, String)]) -> String {
 
 /// Preserve beginning, middle and end when JSON escaping exceeds the prompt
 /// budget. Separators ensure the model cannot quote across omitted text.
-fn bounded_listing_sample(text: &str, budget: usize, portions: [usize; 3]) -> String {
+pub(crate) fn bounded_listing_sample(text: &str, budget: usize, portions: [usize; 3]) -> String {
     if crate::answer_task::json_prefix(text, budget).len() == text.len() {
         return text.to_owned();
     }
