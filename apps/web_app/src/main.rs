@@ -1525,7 +1525,7 @@ fn serve(
             .map_err(|e| e.to_string())?;
         let jobs: Vec<Value> = ranked.strict.iter().map(|row| {
             let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
-            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"unknown_constraints":row.unknown_constraints})
+            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"unknown_constraints":row.unknown_constraints})
         }).collect();
         let facts: Vec<Value> = facts
             .iter()

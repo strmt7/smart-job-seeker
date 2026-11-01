@@ -172,6 +172,8 @@ pub struct RankedResults {
 pub struct RankedJob {
     pub job: StoredJob,
     pub description_available: bool,
+    /// Source-supported remote status; legacy false values are unknown.
+    pub remote_status: Option<bool>,
     /// Hard constraints that could not be verified from the posting.
     pub unknown_constraints: Vec<String>,
     /// Fraction of the candidate's skills evidenced in the posting text.
@@ -1020,12 +1022,13 @@ impl Workspace {
         let matcher = EvidenceMatcher::new(profile_skills);
         self.store.visit_jobs_with_descriptions_and_remote(
             |job, description, remote_evidence| {
+                let remote_status = remote_evidence.or_else(|| job.remote.then_some(true));
                 let outcomes = check_constraints_with_remote(
                     constraints,
                     &[],  // adapters do not claim languages the payload never states
                     None, // nor salaries it never states
                     None, // nor sponsorship promises
-                    remote_evidence.or_else(|| job.remote.then_some(true)),
+                    remote_status,
                     &job.location,
                 );
                 let reasons: Vec<String> = outcomes
@@ -1057,6 +1060,7 @@ impl Workspace {
                 let ranked = RankedJob {
                     job: job.clone(),
                     description_available: !description.trim().is_empty(),
+                    remote_status,
                     unknown_constraints,
                     score,
                     matched_skills,

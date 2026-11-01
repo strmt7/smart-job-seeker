@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(item=>item.startsWith('function remoteStatusText('));
+assert.ok(line);
+const status=vm.runInNewContext(`(${line})`);
+assert.equal(status(true),'Remote work stated');
+assert.equal(status(false),'Source does not mark this role remote');
+assert.equal(status(null),'Remote status unconfirmed');
+assert.equal(status(undefined),'Remote status unconfirmed');
+console.log('Remote status UI checks passed.');

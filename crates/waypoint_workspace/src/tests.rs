@@ -64,6 +64,10 @@ fn discovery_preserves_explicit_remote_evidence_across_updates() {
         match expected {
             "excluded" => {
                 assert_eq!(ranked.excluded.len(), 1);
+                let all = ws
+                    .ranked(&CampaignConstraints::default(), &[], 100)
+                    .unwrap();
+                assert_eq!(all.strict[0].remote_status, Some(false));
                 let mut changed = ws.jobs().unwrap().remove(0);
                 changed.content_hash = Some("different-revision".into());
                 ws.store.upsert_job(&changed).unwrap();
@@ -74,11 +78,17 @@ fn discovery_preserves_explicit_remote_evidence_across_updates() {
                     .iter()
                     .any(|reason| reason.contains("remote status not established")));
             }
-            "unknown" => assert!(ranked.strict[0]
-                .unknown_constraints
-                .iter()
-                .any(|reason| reason.contains("remote status not established"))),
-            "remote" => assert!(ranked.strict[0].unknown_constraints.is_empty()),
+            "unknown" => {
+                assert_eq!(ranked.strict[0].remote_status, None);
+                assert!(ranked.strict[0]
+                    .unknown_constraints
+                    .iter()
+                    .any(|reason| reason.contains("remote status not established")));
+            }
+            "remote" => {
+                assert_eq!(ranked.strict[0].remote_status, Some(true));
+                assert!(ranked.strict[0].unknown_constraints.is_empty());
+            }
             _ => unreachable!(),
         }
     }
