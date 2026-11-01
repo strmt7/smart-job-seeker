@@ -40,6 +40,27 @@ fn fetcher_all() -> StaticFetcher {
 }
 
 #[test]
+fn lever_requirement_lists_contribute_to_ranked_evidence() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let payload = r#"[{"id":"fixture-list","text":"Engineer","hostedUrl":"https://jobs.lever.co/spotify/fixture-list","descriptionPlain":"Join our team.","lists":[{"text":"Requirements","content":"<ul><li>Rust systems development</li></ul>"}]}]"#;
+    let fetcher = StaticFetcher::default().route(LEVER_URL, payload);
+    assert_eq!(
+        ws.discover(&[DiscoveryTarget::new("lever", "spotify")], &fetcher, 100)
+            .inserted,
+        1
+    );
+    let ranked = ws
+        .ranked(&CampaignConstraints::default(), &["Rust".into()], 100)
+        .unwrap();
+    assert_eq!(ranked.strict[0].score, 1.0);
+    assert!(ws
+        .job_description(&ranked.strict[0].job.id)
+        .unwrap()
+        .unwrap()
+        .contains("Rust systems development"));
+}
+
+#[test]
 fn discovery_preserves_explicit_remote_evidence_across_updates() {
     let mut ws = Workspace::in_memory().unwrap();
     let targets = [DiscoveryTarget::new("ashby", "ashby")];

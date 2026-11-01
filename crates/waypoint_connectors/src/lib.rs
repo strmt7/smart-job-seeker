@@ -84,6 +84,22 @@ struct LeverPosting {
     created_at: Option<i64>,
     #[serde(default, rename = "descriptionPlain")]
     description_plain: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    lists: Option<Vec<LeverList>>,
+    #[serde(default, rename = "additionalPlain")]
+    additional_plain: Option<String>,
+    #[serde(default)]
+    additional: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct LeverList {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -249,6 +265,54 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
         .collect())
 }
 
+/// Combine the board's introduction, titled requirement lists and additional
+/// text. Prefer plaintext representations where provided; cap stored text.
+fn lever_description(job: &LeverPosting) -> Option<String> {
+    const LIMIT: usize = 100_000;
+    let mut text = String::new();
+    let mut used = 0;
+    let mut append = |part: Option<&str>| {
+        if used >= LIMIT {
+            return;
+        }
+        let Some(part) = part.filter(|part| !part.trim().is_empty()) else {
+            return;
+        };
+        let clean = description_text(part);
+        if clean.is_empty() {
+            return;
+        }
+        if !text.is_empty() && used < LIMIT {
+            text.push('\n');
+            used += 1;
+        }
+        let excerpt: String = clean.chars().take(LIMIT - used).collect();
+        used += excerpt.chars().count();
+        text.push_str(&excerpt);
+    };
+    append(
+        job.description_plain
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .or(job.description.as_deref()),
+    );
+    for list in job.lists.as_deref().unwrap_or(&[]).iter().take(100) {
+        append(list.text.as_deref());
+        append(list.content.as_deref());
+    }
+    append(
+        job.additional_plain
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .or(job.additional.as_deref()),
+    );
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// Parse a Lever postings payload.
 pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
     let jobs: Vec<LeverPosting> = serde_json::from_str(payload)
@@ -272,6 +336,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
                 "on-site" | "onsite" => Some(false),
                 _ => None,
             });
+            let description = lever_description(&j);
             RawPosting {
                 identity: identity_key("lever", Some(&j.id), &j.hosted_url),
                 source: "lever".into(),
@@ -284,7 +349,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
                 remote: evidence == Some(true),
                 remote_evidence: evidence,
                 posted_at: j.created_at.map(|ms| format!("unix:{ms}")),
-                description: j.description_plain.as_deref().map(description_text),
+                description,
                 content_hash_source: format!("lv://{company}/{}", j.id),
             }
         })
@@ -558,6 +623,17 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].remote);
         assert_eq!(out[0].identity, "lever::req::abc-123");
+    }
+
+    #[test]
+    fn lever_description_includes_requirements_and_additional_sections() {
+        let data = r#"[{"id":"a","text":"Engineer","hostedUrl":"https://jobs.lever.co/example/a","descriptionPlain":"Build tools.","description":"<p>duplicate intro</p>","lists":[{"text":"Requirements","content":"<ul><li>Rust experience</li><li>SQL knowledge</li></ul>"}],"additionalPlain":"Apply in English.","additional":"<p>duplicate footer</p>"},{"id":"b","text":"Engineer","description":"<p>HTML fallback</p>","lists":null}]"#;
+        let rows = parse_lever("example", data).unwrap();
+        assert_eq!(
+            rows[0].description.as_deref(),
+            Some("Build tools.\nRequirements\nRust experience SQL knowledge\nApply in English.")
+        );
+        assert_eq!(rows[1].description.as_deref(), Some("HTML fallback"));
     }
 
     #[test]

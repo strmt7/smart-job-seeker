@@ -84,3 +84,30 @@ fn captured_lever_workplace_metadata_matches_payload() {
     assert!(checked > 0);
     println!("Compared {checked} captured public postings");
 }
+
+#[test]
+#[ignore = "requires a separately captured public Lever API response"]
+fn captured_lever_descriptions_include_requirement_sections() {
+    let body =
+        std::fs::read_to_string(std::env::var("WAYPOINT_LEVER_CAPTURE").expect("capture path"))
+            .unwrap();
+    let raw: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    let parsed = parse_lever("spotify", &body).unwrap();
+    let mut checked = 0;
+    for (row, source) in parsed.iter().zip(raw.iter()) {
+        let Some(first) = source["lists"].as_array().and_then(|lists| lists.first()) else {
+            continue;
+        };
+        let Some(content) = first["content"].as_str() else {
+            continue;
+        };
+        let expected = waypoint_connectors::description_text(content);
+        if expected.is_empty() {
+            continue;
+        }
+        assert!(row.description.as_deref().unwrap_or("").contains(&expected));
+        checked += 1;
+    }
+    assert!(checked > 0);
+    println!("Checked requirement sections in {checked} captured public postings");
+}
