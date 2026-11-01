@@ -1,3 +1,8 @@
+## Partial navigation advice — 2026-11-01
+
+- If the supplementary navigation pass fails, the app retains validated first-pass suggestions and explicitly warns that navigation advice is incomplete. A failed first pass still fails the request. Results are still checked against the live page state before use; advice does not click controls.
+- A scripted second-pass failure and the UI warning were tested; a browser fixture also verified the partial-result flag and rejection after a page change. Web-app Clippy passed. Before this change, qwen3.5:9b passed two fictional overlay and multilingual submission-label checks on the preceding commit, with minimum sampled available RAM of 18.9 GiB. The new failure path was not induced with a live model. No application was sent.
+
 ## Navigation advice behind overlays — 2026-11-01
 
 - When an inspected page reports an obscured field, control advice now always performs the separate navigation pass, even if the first pass returned five choices. Each pass remains limited to five model-selected controls; duplicates are removed, yielding at most ten suggestions. Advice remains read-only and must be reviewed. The second model call adds latency and its failure still surfaces as an error rather than partial advice.
