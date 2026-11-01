@@ -91,5 +91,28 @@ async function exercise(failure) {
   display.activeReviewSession = 'session';
   await display.click();
   assert.ok(nodes.some(item => item.textContent?.includes('Visible inspection did not complete')));
+  const closeLine = source.split('\n').find(line => line.startsWith(" const close=element('button','Close review session')"));
+  assert.ok(closeLine);
+  const closeCalls = [];
+  const closeContext = {
+    element: (tag, text) => ({tag, text, setAttribute() {}, addEventListener: (_event, handler) => { if (tag === 'button') closeContext.click = handler; }}),
+    panel: {isConnected: true, append() {}}, root: {append() {}}, result: {session_id: 'session'},
+    fillInProgress: true, visualButton: {disabled: false}, activeReviewSession: 'session', sessionTimer: 7,
+    notify: text => closeCalls.push(['notice', text]), renderReviewQueue() {}, clearInterval() {},
+    window: {confirm: text => { closeCalls.push(['confirm', text]); return false; }},
+    api: async (...args) => { closeCalls.push(['api', ...args]); },
+  };
+  vm.createContext(closeContext);
+  vm.runInContext(closeLine, closeContext);
+  await closeContext.click();
+  assert.ok(!closeCalls.some(call => call[0] === 'confirm' || call[0] === 'api'));
+  closeContext.fillInProgress = false;
+  await closeContext.click();
+  assert.ok(closeCalls.some(call => call[0] === 'confirm' && call[1].includes('unsent answers')));
+  assert.ok(!closeCalls.some(call => call[0] === 'api'));
+  closeContext.window.confirm = () => true;
+  await closeContext.click();
+  assert.ok(closeCalls.some(call => call[0] === 'api' && call[1] === '/api/form/close'));
+  assert.equal(closeContext.activeReviewSession, null);
   console.log('Visible form handoff checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

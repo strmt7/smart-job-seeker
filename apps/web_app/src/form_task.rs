@@ -191,6 +191,8 @@ struct Task {
     failure: Option<String>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 static COMPLETED_FAILURE: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 pub(crate) fn pending_reason(task_id: &str) -> String {
@@ -237,7 +239,7 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
 
 /// Lessons describe classes of controls, not selectors or field values.
 /// Only pass a class when a non-sensitive field of that class is present.
-fn relevant_experiences(
+pub(crate) fn relevant_experiences(
     schema: &waypoint_applications::form_mapping::FormSchema,
     experiences: &[ExperienceMatch],
 ) -> Vec<ExperienceMatch> {
@@ -443,7 +445,6 @@ mod tests {
     use waypoint_applications::form_mapping::{
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn lesson_selection_uses_live_non_sensitive_control_types() {
@@ -1411,6 +1412,7 @@ mod tests {
     #[test]
     #[ignore = "starts one headless browser against a fictional local fixture"]
     fn background_inspection_returns_the_live_form_without_filling() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
         let url = url::Url::from_file_path(path).unwrap().to_string();
         start(

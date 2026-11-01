@@ -11,6 +11,7 @@ struct Task {
     job_id: waypoint_domain::JobIdentityId,
     inspection_task_id: String,
     pending_revision: i64,
+    experience_revisions: Vec<(String, u64)>,
     rx: mpsc::Receiver<Result<ReviewSession, NavigationFailure>>,
     failure: Option<NavigationFailure>,
 }
@@ -313,8 +314,12 @@ pub fn start(
     allow_other: bool,
     reviewed_label: Option<String>,
     profile: serde_json::Value,
-    pending_revision: i64,
+    review: (
+        i64,
+        Vec<waypoint_workspace::form_experience::ExperienceMatch>,
+    ),
 ) -> Result<(), (Box<ReviewSession>, String)> {
+    let (pending_revision, experiences) = review;
     let mut tasks = match TASK.lock() {
         Ok(tasks) => tasks,
         Err(_) => return Err((Box::new(session), "Navigation unavailable".into())),
@@ -332,6 +337,10 @@ pub fn start(
         job_id,
         inspection_task_id: session.inspection_task_id.clone(),
         pending_revision,
+        experience_revisions: experiences
+            .iter()
+            .map(|item| (item.id.clone(), item.revision))
+            .collect(),
         rx,
         failure: None,
     });
@@ -403,7 +412,17 @@ pub fn start(
                                 model,
                                 crate::resident_model,
                             );
-                            form_preview::suggest_for_live_form(live, &mut llm, &profile)
+                            let relevant = crate::form_task::relevant_experiences(&live.schema, &experiences);
+                            let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);
+                            let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
+                            if informed.attempted_with_hints() {
+                                preview.manual_review.push("A model mapping request included reviewed lessons as fallible context; verify every suggestion against this form.".into());
+                                let (included, omitted) = informed.note_attempts();
+                                if included + omitted > 0 {
+                                    preview.manual_review.push(format!("Across attempted mapping requests, opted-in note inclusions prepared: {included}; omitted by the context budget: {omitted}. A note can be counted more than once. This does not prove model receipt or use."));
+                                }
+                            }
+                            Ok(preview)
                         }
                         Err(error) => form_preview::suggest_without_model(live, &profile, &error),
                     }
@@ -469,7 +488,7 @@ pub fn start(
     Ok(())
 }
 
-pub type NavigationOutcome = Result<(ReviewSession, i64), NavigationFailure>;
+pub type NavigationOutcome = Result<(ReviewSession, i64, Vec<(String, u64)>), NavigationFailure>;
 
 pub fn poll(id: &str) -> Result<Option<NavigationOutcome>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Navigation unavailable")?;
@@ -489,8 +508,9 @@ pub fn poll(id: &str) -> Result<Option<NavigationOutcome>, String> {
     match task.rx.try_recv() {
         Ok(Ok(result)) => {
             let revision = task.pending_revision;
+            let experience_revisions = task.experience_revisions.clone();
             *tasks = None;
-            Ok(Some(Ok((result, revision))))
+            Ok(Some(Ok((result, revision, experience_revisions))))
         }
         Ok(Err(failure)) => {
             task.failure = Some(failure.clone());
@@ -596,6 +616,7 @@ mod tests {
             job_id: job_id.clone(),
             inspection_task_id: "fictional-inspection".into(),
             pending_revision: revision,
+            experience_revisions: vec![],
             rx,
             failure: None,
         });

@@ -259,7 +259,40 @@ fn experience_snapshot_current(
     })
 }
 
+fn protect_navigation_experience_snapshot(
+    preview: &mut form_preview::FormPreview,
+    revisions: &[(String, u64)],
+    current: Option<&[waypoint_workspace::form_experience::ExperienceMatch]>,
+) {
+    if !revisions.is_empty()
+        && !current.is_some_and(|items| experience_snapshot_current(revisions, items))
+    {
+        preview.suggestions.clear();
+        preview.manual_review.push("A lesson changed or could not be checked during inspection; suggestions were discarded. Inspect again.".into());
+    }
+}
+
 /// A listing source is only a retrieval hint; the application may be hosted elsewhere.
+fn navigation_experiences(
+    ws: &Workspace,
+    id: &JobIdentityId,
+) -> Result<Vec<waypoint_workspace::form_experience::ExperienceMatch>, String> {
+    use waypoint_workspace::form_experience::{Control, Stage};
+    let job = ws
+        .job(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
+    let platform = experience_platform_hint(&job.source);
+    let mut result = ws
+        .related_form_experiences(Stage::EnterInformation, Control::Text, platform)
+        .map_err(|e| e.to_string())?;
+    result.extend(
+        ws.related_form_experiences(Stage::EnterInformation, Control::Choice, platform)
+            .map_err(|e| e.to_string())?,
+    );
+    Ok(result)
+}
+
 fn experience_platform_hint(source: &str) -> Option<waypoint_workspace::form_experience::Platform> {
     use waypoint_workspace::form_experience::Platform;
     match source {
@@ -5550,6 +5583,7 @@ fn serve(
             } else {
                 None
             };
+            let experiences = navigation_experiences(ws, &current.job_id)?;
             let task_id = random_id()?;
             let pending_revision = form_links::begin_pending(ws, &current.job_id, &task_id, now())?;
             let current = session.take().ok_or("Form session expired")?;
@@ -5560,7 +5594,7 @@ fn serve(
                 allow_other,
                 reviewed_label,
                 profile,
-                pending_revision,
+                (pending_revision, experiences),
             ) {
                 let cleanup =
                     form_links::finish_pending(ws, &current.job_id, &task_id, pending_revision);
@@ -5593,7 +5627,15 @@ fn serve(
                         json!({"status":"failed","error":error.reason}),
                     )
                 }
-                Some(Ok((mut current, pending_revision))) => {
+                Some(Ok((mut current, pending_revision, experience_revisions))) => {
+                    if !experience_revisions.is_empty() {
+                        let lessons = ws.form_experiences();
+                        protect_navigation_experience_snapshot(
+                            &mut current.preview,
+                            &experience_revisions,
+                            lessons.as_deref().ok(),
+                        );
+                    }
                     let job = ws.job(&current.job_id).map_err(|e| e.to_string())?;
                     let job_unchanged = job.as_ref().is_some_and(|job| {
                         matches!(
@@ -5673,6 +5715,7 @@ fn serve(
                 }
                 None => json!({}),
             };
+            let experiences = navigation_experiences(ws, &current.job_id)?;
             let task_id = random_id()?;
             let pending_revision = form_links::begin_pending(ws, &current.job_id, &task_id, now())?;
             let current = session.take().ok_or("Form session expired")?;
@@ -5683,7 +5726,7 @@ fn serve(
                 false,
                 None,
                 profile,
-                pending_revision,
+                (pending_revision, experiences),
             ) {
                 let cleanup =
                     form_links::finish_pending(ws, &current.job_id, &task_id, pending_revision);
@@ -10388,6 +10431,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn reviewed_form_experience_api_persists_and_revokes() {
+        let _guard = crate::form_task::TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -10539,11 +10583,49 @@ mod tests {
         ));
         let mut changed = item.clone();
         changed.revision = 2;
-        assert!(!experience_snapshot_current(&snapshot, &[changed]));
-        let mut disabled = item;
+        assert!(!experience_snapshot_current(
+            &snapshot,
+            std::slice::from_ref(&changed)
+        ));
+        let mut disabled = item.clone();
         disabled.experience.enabled = false;
-        assert!(!experience_snapshot_current(&snapshot, &[disabled]));
+        assert!(!experience_snapshot_current(
+            &snapshot,
+            std::slice::from_ref(&disabled)
+        ));
         assert!(!experience_snapshot_current(&snapshot, &[]));
+        let preview = || form_preview::FormPreview {
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.org".into(),
+                fields: vec![],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![waypoint_applications::form_mapping::ProposedMapping {
+                field_selector: "#fictional".into(),
+                value: waypoint_applications::form_mapping::PacketValue::Text("fictional".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        for current in [
+            Some(vec![changed]),
+            Some(vec![disabled]),
+            Some(vec![]),
+            None,
+        ] {
+            let mut result = preview();
+            protect_navigation_experience_snapshot(&mut result, &snapshot, current.as_deref());
+            assert!(result.suggestions.is_empty());
+            assert!(result
+                .manual_review
+                .iter()
+                .any(|reason| reason.contains("could not be checked")));
+        }
+        let mut result = preview();
+        protect_navigation_experience_snapshot(&mut result, &snapshot, Some(&[item]));
+        assert_eq!(result.suggestions.len(), 1);
+        assert!(result.manual_review.is_empty());
     }
 
     #[test]

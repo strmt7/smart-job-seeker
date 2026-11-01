@@ -3462,29 +3462,49 @@ mod tests {
             "expected one non-sensitive phone label; form may have changed"
         );
         let profile = json!({"first_name":"Avery","last_name":"Example","email":"avery@example.invalid","phone":"+12025550123"});
-        let baseline = suggest_for_live_form(live.clone(), &mut llm, &profile).unwrap();
-        assert!(
-            llm.completed > 0,
-            "baseline produced no completed model mapping"
-        );
-        let baseline_completions = llm.completed;
         let lesson = ExperienceMatch { id:"00000000000000000000000000000001".into(), revision:1, same_platform:true, experience:Experience { version:1,reviewed:true,enabled:true,observed_at:1,platform:Some(Platform::Greenhouse),stage:Stage::EnterInformation,control:Control::Text,observation:Observation::AmbiguousLabel,response:Response::InspectContext,outcome:Outcome::Unknown,note:Some("On a prior form, a field explicitly asking for the applicant's phone was ordinary contact information; confirm whose phone this form asks for.".into()),use_note_in_model:true } };
-        let mut informed =
-            crate::experience_inference::ExperienceInference::new(&mut llm, &[lesson]);
-        let with_lesson = suggest_for_live_form(live.clone(), &mut informed, &profile).unwrap();
-        assert!(
-            informed.attempted_with_hints(),
-            "no lesson-assisted model request was attempted"
-        );
-        assert!(
-            llm.completed > baseline_completions,
-            "lesson-assisted run produced no completed model mapping"
-        );
+        let lesson_first = std::env::var_os("WAYPOINT_LESSON_FIRST").is_some();
+        let run_lesson = |llm: &mut Counting<_>| {
+            let before = llm.completed;
+            let mut informed = crate::experience_inference::ExperienceInference::new(
+                llm,
+                std::slice::from_ref(&lesson),
+            );
+            let preview = suggest_for_live_form(live.clone(), &mut informed, &profile).unwrap();
+            assert!(
+                informed.attempted_with_hints(),
+                "no lesson-assisted request"
+            );
+            assert!(
+                llm.completed > before,
+                "no completed lesson-assisted mapping"
+            );
+            preview
+        };
+        let run_baseline = |llm: &mut Counting<_>| {
+            let before = llm.completed;
+            let preview = suggest_for_live_form(live.clone(), llm, &profile).unwrap();
+            assert!(llm.completed > before, "no completed baseline mapping");
+            preview
+        };
+        let (baseline, with_lesson) = if lesson_first {
+            let with_lesson = run_lesson(&mut llm);
+            (run_baseline(&mut llm), with_lesson)
+        } else {
+            let baseline = run_baseline(&mut llm);
+            (baseline, run_lesson(&mut llm))
+        };
+        println!("lesson_first={lesson_first}");
         for (name, preview) in [("baseline", baseline), ("with lesson", with_lesson)] {
-            let mapped = preview
+            let phone_mappings: Vec<_> = preview
                 .suggestions
                 .iter()
-                .any(|mapping| mapping.field_selector == phone[0]);
+                .filter(|mapping| mapping.field_selector == phone[0])
+                .collect();
+            let mapped = !phone_mappings.is_empty();
+            let value_correct = phone_mappings
+                .iter()
+                .all(|mapping| mapping.value == PacketValue::Text("+12025550123".into()));
             let flagged = preview.model_review_selectors.contains(&phone[0]);
             let sensitive_mapped = preview.suggestions.iter().any(|mapping| {
                 preview.schema.fields.iter().any(|field| {
@@ -3493,7 +3513,17 @@ mod tests {
                             || preview.model_review_selectors.contains(&field.selector))
                 })
             });
-            println!("{name}: phone_mapped={mapped}, phone_flagged={flagged}, sensitive_mapping={sensitive_mapped}, walls={:?}",preview.manual_review);
+            let value_result = if mapped {
+                value_correct.to_string()
+            } else {
+                "not_applicable".into()
+            };
+            println!("{name}: phone_mapped={mapped}, phone_value_correct={value_result}, phone_flagged={flagged}, sensitive_mapping={sensitive_mapped}, review_reasons={}", preview.manual_review.len());
+            assert!(phone_mappings.len() <= 1, "duplicate phone suggestions");
+            assert!(
+                value_correct,
+                "phone suggestion differs from fictional profile"
+            );
             assert!(!sensitive_mapped);
         }
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
