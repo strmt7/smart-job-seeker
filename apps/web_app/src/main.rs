@@ -6227,8 +6227,7 @@ fn serve(
                     let mut outcome_error = None;
                     if let Some(record) = &mut current.record {
                         let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These commands completed before the failure; they are not proof that all values remain correct or that an application was submitted."});
-                        if let Err(problem) = record.answer_outcome(outcome.clone()) {
-                            let _ = record.event(outcome);
+                        if let Err(problem) = record.incomplete_fill(outcome, now()) {
                             outcome_error = Some(problem);
                         }
                         if let Ok(image) = current.driver.screenshot_base64() {
@@ -6260,7 +6259,7 @@ fn serve(
                         ""
                     };
                     let outcome_note = outcome_error
-                        .map(|e| format!(" The separate answer outcome could not be saved: {e}."))
+                        .map(|e| format!(" The attempt record could not be fully updated: {e}."))
                         .unwrap_or_default();
                     return Err(format!(
                         "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{flag_note}{outcome_note}", completed.len()

@@ -1044,3 +1044,7 @@ The browser now applies its existing center-point hit test to contenteditable fi
 ### Final input event verification (2026-11-01)
 
 Text filling now rechecks the field's focus and rendered visibility after the final inserted segment, before reporting success. A fictional browser fixture covered a Unicode input event that displays an overlay and another that moves focus; both return an error for review, and an already-entered partial value may remain. The existing hidden-field fixture, web Clippy and formatting passed. The check is point-in-time and cannot guarantee detection of every overlay or later change. No employer site was contacted and no application was submitted.
+
+### Interrupted fill attempt status (2026-11-01)
+
+An interrupted form fill now independently updates the attempt folder to manual review and saves the answer outcome; a failure in either operation is reported. If the separate outcome cannot be saved, the event log is still attempted and the status update is still attempted. Focused fictional-workspace tests exercised the normal and failed-outcome paths, and the existing local browser/API prefill fixture passed. Web Clippy and formatting passed. No employer site was contacted and no application was submitted.

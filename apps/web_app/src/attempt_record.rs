@@ -1513,6 +1513,22 @@ impl AttemptRecord {
         value["outcome_file"] = json!(path);
         self.event(value)
     }
+    /// Record an interrupted fill and independently mark the attempt for review.
+    pub fn incomplete_fill(&mut self, outcome: Value, timestamp: i64) -> Result<(), String> {
+        let outcome_error = self.answer_outcome(outcome.clone()).err();
+        if outcome_error.is_some() {
+            let _ = self.event(outcome);
+        }
+        let status_error = self.status("manual_review", timestamp).err();
+        match (outcome_error, status_error) {
+            (None, None) => Ok(()),
+            (Some(error), None) => Err(format!("Answer outcome could not be saved: {error}")),
+            (None, Some(error)) => Err(format!("Attempt review status could not be saved: {error}")),
+            (Some(outcome), Some(status)) => Err(format!(
+                "Answer outcome could not be saved: {outcome}; attempt review status could not be saved: {status}"
+            )),
+        }
+    }
     pub fn status(&mut self, status: &str, timestamp: i64) -> Result<(), String> {
         if !matches!(
             status,
@@ -2057,6 +2073,29 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_fill_marks_review_even_if_outcome_cannot_be_saved() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.invalid/interrupted","title":"Role","employer":"Fixture"}), 1).unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut record = AttemptRecord::start(&ws, &job, "interrupted-fixture", 2)
+            .unwrap()
+            .unwrap();
+        fs::rename(record.dir.join("answers"), record.dir.join("old-answers")).unwrap();
+        let error = record
+            .incomplete_fill(json!({"type":"fill_incomplete","completed_commands":[]}), 3)
+            .unwrap_err();
+        assert!(error.contains("Answer outcome could not be saved"));
+        let meta: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(meta["status"], "manual_review");
+        assert!(fs::read_to_string(record.dir.join("events.jsonl"))
+            .unwrap()
+            .contains("fill_incomplete"));
+    }
+
+    #[test]
     fn answer_history_is_bound_to_attempt_and_reports_incomplete_files() {
         let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
         let directory = tempfile::tempdir_in(base).unwrap();
@@ -2073,10 +2112,14 @@ mod tests {
         let requested = json!({"type":"fields_requested","fields":[{"question":"Name","value":{"text":"Fictional Candidate"}}]});
         let path = record.requested_answers(&requested).unwrap();
         record
-            .answer_outcome(
+            .incomplete_fill(
                 json!({"type":"fill_incomplete","answer_file":path,"completed_commands":[]}),
+                4,
             )
             .unwrap();
+        let meta: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(meta["status"], "manual_review");
         fs::write(record.dir.join("answers").join("9999.json"), b"invalid").unwrap();
         let history = answer_history(&ws, &job, "answer-fixture", 0).unwrap();
         assert_eq!(history["available"], true);
