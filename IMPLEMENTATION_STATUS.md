@@ -1,3 +1,8 @@
+## Local control advice refinement — 2026-11-01
+
+- Navigation advice now asks the local model to exclude controls that edit field values or upload documents. On one read-only inspection of a public Workable application, the resident qwen3.5:9b initially suggested a phone-country selector alongside cookie options; after the prompt change it suggested an education control and four cookie options, without the phone selector or submission control. These are individual observations, not a general accuracy guarantee. Advice is displayed for user review and does not click controls.
+- The same 9B model passed two fictional checks covering combined review-and-submit controls, including German and Spanish labels. Two deterministic control-ranking tests, the control-advice UI checks, web-app Clippy, and formatting checks passed. The public-page run clicked only controls in Waypoint, not on the employer site; it did not fill or submit an application. Minimum sampled available system RAM was 18.27 GiB. The app's GPU admission check declined the installed 12B model with 10,422 MiB free against its 11,229 MiB estimate; the 9B model was unloaded after testing.
+
 # Implementation checkpoint
 
 ## Overlay control advice — 2026-11-01
