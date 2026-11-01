@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
-const start = source.indexOf(' async function inspectVisual(targetSelector=null){');
+const start = source.indexOf(' async function inspectVisual(targetSelector=null,destination=null){');
 const end = source.indexOf('\n visualButton.addEventListener', start);
 assert.ok(start >= 0 && end > start);
 const calls = [], store = new Map(), messages = []; let refreshes=0;

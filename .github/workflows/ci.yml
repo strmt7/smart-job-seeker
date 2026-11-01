@@ -39,6 +39,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/fit-badge-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/fit-batch-failure-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/tests/fit-read-retry-ui.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/fit-split-ui.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node apps/web_app/tests/fit-dimensions-ui.test.js
