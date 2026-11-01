@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "converts a fictional styled DOCX using local LibreOffice"]
+    #[ignore = "converts a fictional styled DOCX using local LibreOffice and the PDF worker"]
     fn styled_run_edit_converts_to_pdf() {
         let input = std::env::var("WAYPOINT_STYLED_FIXTURE").expect("fixture path");
         let output = std::env::var("WAYPOINT_STYLED_PDF").expect("new PDF output path");
@@ -400,6 +400,9 @@ mod tests {
             .unwrap()
             .contains("Sénior Systems Engineer"));
         let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let pdf_text = crate::pdf_extract::extract(&pdf).unwrap();
+        assert!(pdf_text.contains("Sénior Systems Engineer"));
+        assert!(!pdf_text.contains("Sénior Software Engineer"));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Styled DOCX conversion fixture — 2026-11-01
+
+- A fictional styled DOCX was edited across text runs and converted with local LibreOffice. The one-page PDF's extracted text contained the replacement and omitted the original; a manually inspected render retained the visible mixed text styles. The fixture test now checks PDF text extraction as well as DOCX text. The source SHA-256 was `8edfc3c730cd4852d421a074ed408cf8f288d368db962833ef5d42944bc92d58` and the manually inspected PDF SHA-256 was `f80ff80ae414ddc527a4493e210144eefc0e26b75a63ecdec4fdf368d1f9c9b9`. This is one synthetic template, not a local-model visual review or evidence of general template fidelity.
+
 ## Text-to-PDF fixture — 2026-11-01
 
 - A Windows local test converted fictional UTF-8 text with LibreOffice, then extracted its accented names and rendered its single PDF page with the configured PDF worker. The test now keeps its result in memory instead of overwriting a fixed output file. The run passed in 16.31 seconds on this host; it is not a visual-quality assessment or a clean-host installation test.
