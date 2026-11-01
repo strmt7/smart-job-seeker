@@ -12,4 +12,8 @@ const card=render({url:'https://example.org/role',title:'Untitled result from ex
 card.children.find(item=>item.textContent==='Enter details manually').listeners.click();
 assert.equal(form.elements.url.value,'https://example.org/role');
 assert.equal(form.elements.title.value,'');
+const attributed=render({url:'https://example.org/job',title:'Role',snippet:'',engines:['one','two'],engines_limited:true,published_date:'2026-10-01',alternative_published_dates:['2026-10-02'],dates_limited:false});
+assert.ok(attributed.children.some(item=>item.textContent.includes('one, two')));
+assert.ok(attributed.children.some(item=>item.textContent.includes('2026-10-02') && item.textContent.includes('may conflict')));
+assert.ok(attributed.children.some(item=>item.textContent.includes('additional entries may be omitted')));
 console.log('Untitled candidate UI checks passed.');

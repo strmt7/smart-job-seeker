@@ -72,6 +72,59 @@ pub(crate) fn parse(payload: &str) -> Result<Value, String> {
     parse_excluding(payload, &std::collections::HashSet::new())
 }
 
+fn merge_result_provenance(
+    entry: &mut Value,
+    title: &str,
+    title_missing: bool,
+    snippet: &str,
+    engines: &[String],
+    engines_limited: bool,
+    date: &str,
+) {
+    if entry["title_missing"] == true && !title_missing {
+        entry["title"] = json!(title);
+        entry["title_missing"] = json!(false);
+    }
+    if entry
+        .get("snippet")
+        .and_then(Value::as_str)
+        .is_some_and(|current| current.trim().is_empty())
+        && !snippet.trim().is_empty()
+    {
+        entry["snippet"] = json!(snippet);
+    }
+    let mut truncated = engines_limited || entry["engines_limited"] == true;
+    if let Some(existing) = entry["engines"].as_array_mut() {
+        for engine in engines {
+            if !existing
+                .iter()
+                .any(|item| item.as_str() == Some(engine.as_str()))
+            {
+                if existing.len() < 8 {
+                    existing.push(json!(engine));
+                } else {
+                    truncated = true;
+                }
+            }
+        }
+    }
+    entry["engines_limited"] = json!(truncated);
+    let previous_date = entry["published_date"].as_str().unwrap_or("");
+    if previous_date.is_empty() && !date.is_empty() {
+        entry["published_date"] = json!(date);
+    } else if !date.is_empty() && date != previous_date {
+        if let Some(dates) = entry["alternative_published_dates"].as_array_mut() {
+            if !dates.iter().any(|item| item.as_str() == Some(date)) {
+                if dates.len() < 4 {
+                    dates.push(json!(date));
+                } else {
+                    entry["dates_limited"] = json!(true);
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn parse_excluding(
     payload: &str,
     excluded: &std::collections::HashSet<String>,
@@ -83,7 +136,7 @@ pub(crate) fn parse_excluding(
         .and_then(Value::as_array)
         .ok_or("Provider returned no results array")?;
     let mut links: Vec<Value> = Vec::new();
-    let mut repeated = Vec::new();
+    let mut repeated: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut examined = 0;
     let mut previously_seen = 0;
@@ -123,19 +176,6 @@ pub(crate) fn parse_excluding(
         } else {
             cleaned_title
         };
-        if !seen.insert(url.to_string()) {
-            within_page_duplicates += 1;
-            if !title_missing {
-                if let Some(earlier) = links
-                    .iter_mut()
-                    .find(|entry| entry["url"] == url.as_str() && entry["title_missing"] == true)
-                {
-                    earlier["title"] = json!(title);
-                    earlier["title_missing"] = json!(false);
-                }
-            }
-            continue;
-        }
         let snippet: String = item
             .get("content")
             .and_then(Value::as_str)
@@ -145,12 +185,18 @@ pub(crate) fn parse_excluding(
             .take(1000)
             .collect();
         let mut engines = Vec::new();
+        let mut engines_limited = false;
         if let Some(values) = item.get("engines").and_then(Value::as_array) {
-            for value in values.iter().take(8).filter_map(Value::as_str) {
+            engines_limited = values.len() > 32;
+            for value in values.iter().take(32).filter_map(Value::as_str) {
                 let cleaned: String = value.chars().filter(|c| !c.is_control()).take(80).collect();
                 let cleaned = cleaned.trim().to_owned();
                 if !cleaned.is_empty() && !engines.contains(&cleaned) {
-                    engines.push(cleaned);
+                    if engines.len() < 8 {
+                        engines.push(cleaned);
+                    } else {
+                        engines_limited = true;
+                    }
                 }
             }
         }
@@ -171,14 +217,33 @@ pub(crate) fn parse_excluding(
             .filter(|c| !c.is_control())
             .take(80)
             .collect();
-        if excluded.contains(url.as_str()) {
-            previously_seen += 1;
-            if repeated.len() < 10 {
-                repeated.push(json!({"url":url.as_str(),"title":title,"engines":engines,"published_date":published_date.trim()}));
+        if !seen.insert(url.to_string()) {
+            within_page_duplicates += 1;
+            if let Some(earlier) = links
+                .iter_mut()
+                .chain(repeated.iter_mut())
+                .find(|entry| entry["url"] == url.as_str())
+            {
+                merge_result_provenance(
+                    earlier,
+                    &title,
+                    title_missing,
+                    &snippet,
+                    &engines,
+                    engines_limited,
+                    published_date.trim(),
+                );
             }
             continue;
         }
-        links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"published_date":published_date.trim()}));
+        if excluded.contains(url.as_str()) {
+            previously_seen += 1;
+            if repeated.len() < 10 {
+                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+            }
+            continue;
+        }
+        links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
         if links.len() == 100 {
             break;
         }
@@ -428,6 +493,47 @@ mod tests {
     }
 
     #[test]
+    fn identical_urls_keep_bounded_engine_and_conflicting_date_evidence() {
+        let rows = json!([
+            {"url":"https://example.org/job", "title":"", "engines":["alpha"], "publishedDate":"2026-10-01"},
+            {"url":"https://example.org/job", "title":"Fictional role", "content":"Fictional description", "engines":["alpha","beta","gamma","delta","epsilon","zeta","eta","theta","iota"], "publishedDate":"2026-10-02"},
+            {"url":"https://example.org/job", "engines":["beta"], "publishedDate":"2026-10-02"}
+        ]);
+        let data = parse(&json!({"results":rows}).to_string()).unwrap();
+        let item = &data["results"][0];
+        assert_eq!(data["within_page_duplicates"], 2);
+        assert_eq!(data["results_rejected"], 0);
+        assert_eq!(item["title"], "Fictional role");
+        assert_eq!(item["snippet"], "Fictional description");
+        assert_eq!(item["engines"].as_array().unwrap().len(), 8);
+        assert_eq!(item["engines_limited"], true);
+        assert_eq!(item["published_date"], "2026-10-01");
+        assert_eq!(item["alternative_published_dates"], json!(["2026-10-02"]));
+        let excluded = std::collections::HashSet::from(["https://example.org/job".to_owned()]);
+        let repeated = parse_excluding(&json!({"results":rows}).to_string(), &excluded).unwrap();
+        assert_eq!(repeated["previously_seen"], 1);
+        assert_eq!(repeated["within_page_duplicates"], 2);
+        assert_eq!(
+            repeated["repeated_references"][0]["title"],
+            "Fictional role"
+        );
+        assert_eq!(
+            repeated["repeated_references"][0]["alternative_published_dates"],
+            json!(["2026-10-02"])
+        );
+        let many: Vec<_> = (1..=7).map(|day| json!({"url":"https://example.org/job","publishedDate":format!("2026-10-{day:02}")})).collect();
+        let bounded = parse(&json!({"results":many}).to_string()).unwrap();
+        assert_eq!(
+            bounded["results"][0]["alternative_published_dates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(bounded["results"][0]["dates_limited"], true);
+    }
+
+    #[test]
     fn repeated_urls_keep_bounded_search_provenance_without_new_candidates() {
         let excluded: std::collections::HashSet<String> = (0..15)
             .map(|index| format!("https://example.org/job/{index}"))
@@ -470,7 +576,7 @@ mod tests {
             let text = std::str::from_utf8(&request[..n]).unwrap();
             assert!(text.starts_with("GET /search?"));
             assert!(text.contains("format=json"));
-            let body = r#"{"results":[{"title":"Fictional role","url":"https://example.org/role","content":"A fictional listing"}]}"#;
+            let body = r#"{"results":[{"title":"Fictional role","url":"https://example.org/role","content":"A fictional listing","engines":["one"],"publishedDate":"2026-10-01"},{"title":"Fictional role","url":"https://example.org/role","engines":["two"],"publishedDate":"2026-10-02"}]}"#;
             write!(
                 socket,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -511,6 +617,14 @@ mod tests {
             let result = poll("fixture-search").unwrap();
             if result["status"] == "complete" {
                 assert_eq!(result["data"]["results"][0]["title"], "Fictional role");
+                assert_eq!(
+                    result["data"]["results"][0]["engines"],
+                    json!(["one", "two"])
+                );
+                assert_eq!(
+                    result["data"]["results"][0]["alternative_published_dates"],
+                    json!(["2026-10-02"])
+                );
                 assert_eq!(poll("fixture-search").unwrap(), result);
                 assert!(!busy());
                 assert!(pending().unwrap().is_none());

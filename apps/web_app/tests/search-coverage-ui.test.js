@@ -33,5 +33,7 @@ const details = repeated({previously_seen:15,repeated_references:references});
 assert.equal(details.children[0].text,'Repeated results: showing 10 of 15');
 assert.match(details.children[2].text,/Role 0.*https:\/\/example.org\/0.*fictional engine/);
 assert.equal(details.children.length,12);
+const bounded = repeated({previously_seen:1,repeated_references:[{title:'Role',url:'https://example.org/job',engines:['one','two'],engines_limited:true,published_date:'2026-10-01',alternative_published_dates:['2026-10-02'],dates_limited:true}]});
+assert.match(bounded.children[2].text,/one, two.*engine list limited.*2026-10-01.*other dates: 2026-10-02.*date list limited/);
 assert.equal(repeated({previously_seen:1}),null);
 console.log('Search coverage UI checks passed.');

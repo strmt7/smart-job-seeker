@@ -1,3 +1,8 @@
+## Search-result attribution — 2026-11-01
+
+- When a provider repeats the exact same URL within one response, the search parser now retains distinct reported engine labels, fills a missing title or snippet from a later copy, and displays differing provider-reported dates separately. It keeps at most eight engine labels and four alternative dates and signals when those bounds may omit entries. The same treatment applies to bounded references to URLs seen on earlier pages. These are provider reports, not verified listing dates, and URL equality does not establish whether different URLs advertise the same position.
+- Fictional parser fixtures covered duplicate counts, missing metadata, conflicting dates and bounds. A local loopback provider exercised background search and result replay with repeated attribution; focused UI and batch tests passed. No external provider or employer was contacted, and no application was submitted.
+
 ## Length-limited draft recovery — 2026-11-01
 
 - A length repair now receives the prior valid draft, its measured UTF-16 length and the question. If a structurally valid answer remains too long or short after the bounded repair, the interface offers it as a draft requiring edits instead of discarding it. Its evidence check remains advisory; reviewed prefill still rejects the unedited out-of-range value. An explicit model abstention remains a failure. If the repair prompt cannot fit the context budget, the earlier draft can likewise be reviewed rather than silently lost.
