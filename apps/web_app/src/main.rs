@@ -9069,6 +9069,30 @@ mod tests {
         assert!(letter_answer_provenance(&ws, &id, "letter", "Fictional experience").is_err());
     }
 
+    #[test]
+    #[ignore = "starts one browser on a fictional 46-control fixture"]
+    fn custom_choice_snapshot_preserves_later_controls_and_incomplete_status() {
+        use waypoint_applications::driver::BrowserDriver;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_custom_choice_paging.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let (inventory, digest) = custom_choice_snapshot(&mut driver).unwrap();
+        assert_eq!(inventory.choices.len(), 45);
+        assert!(inventory
+            .choices
+            .iter()
+            .any(|choice| choice.label == "Choice 16"));
+        assert!(inventory.incomplete);
+        assert_eq!(digest.len(), 64);
+        assert!(driver.trace.iter().all(|event| !event.contains("typed")
+            && !event.contains("clicked")
+            && !event.contains("submitted")));
+    }
+
     #[cfg(all(windows, feature = "sqlcipher"))]
     #[test]
     fn saved_generated_draft_reopens_and_marks_changed_context() {
