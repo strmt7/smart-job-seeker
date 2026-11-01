@@ -373,6 +373,7 @@ impl Store {
             }
         }
         let candidate_count = candidates.len();
+        let source_title_words = title_words(&job.title);
         let mut result = Vec::new();
         for other in candidates {
             let other_employer = employer_words(&other.employer);
@@ -397,7 +398,7 @@ impl Store {
             {
                 continue;
             }
-            let score = title_score(&job.title, &other.title);
+            let score = overlap(&source_title_words, &title_words(&other.title));
             let description_score = if score < 65 {
                 if description_words.is_none() {
                     let description = self.job_description(&job.id)?.unwrap_or_default();
