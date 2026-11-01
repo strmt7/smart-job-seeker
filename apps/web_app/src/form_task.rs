@@ -256,6 +256,23 @@ fn observed_platform(origin: &str) -> Option<waypoint_workspace::form_experience
     }
 }
 
+/// Keep newly observed walls even if the first inspection missed them. A
+/// different schema cannot safely reuse mappings made for the earlier page.
+fn merge_final_inspection(
+    preview: &mut form_preview::FormPreview,
+    fresh: &waypoint_applications::driver::LiveForm,
+) -> Result<(), String> {
+    if fresh.origin != preview.schema.origin || fresh.schema != preview.schema {
+        return Err("The application changed while preparing its review; inspect it again".into());
+    }
+    for wall in &fresh.walls {
+        if !preview.manual_review.contains(wall) {
+            preview.manual_review.push(wall.clone());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn relevant_experiences(
     schema: &waypoint_applications::form_mapping::FormSchema,
     experiences: &[ExperienceMatch],
@@ -498,6 +515,7 @@ pub fn start(
                     live.walls.push("The page changed during form discovery; inspect manually.".into());
                 }
             }
+            let observed_url = driver.current_url().map_err(|e| e.to_string())?;
             let relevant = relevant_experiences(&live.schema, &experiences);
             let mut preview = if let Some(model) = model {
                 let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -525,6 +543,12 @@ pub fn start(
             if let Some(warning) = navigation_warning {
                 preview.manual_review.push(warning);
             }
+            let fresh = driver.with_review_timeout(|browser| browser.inspect_current())
+                .map_err(|e| format!("Final form check failed; inspect it again: {e}"))?;
+            if driver.current_url().map_err(|e| e.to_string())? != observed_url {
+                return Err("The application changed while preparing its review; inspect it again".into());
+            }
+            merge_final_inspection(&mut preview, &fresh)?;
             Ok((driver, preview))
         }))
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
@@ -783,6 +807,51 @@ mod tests {
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
             && !entry.contains("submitted")));
+    }
+
+    #[test]
+    fn final_inspection_preserves_late_walls_and_rejects_schema_changes() {
+        use waypoint_applications::{driver::LiveForm, form_mapping::FormSchema};
+        let schema = FormSchema {
+            origin: "https://example.invalid".into(),
+            fields: vec![],
+            multi_step: false,
+            steps: 1,
+        };
+        let mut preview = form_preview::FormPreview {
+            schema: schema.clone(),
+            suggestions: vec![],
+            manual_review: vec!["earlier wall".into()],
+            model_review_selectors: Default::default(),
+        };
+        let mut fresh = LiveForm {
+            origin: schema.origin.clone(),
+            schema,
+            walls: vec!["captcha present".into()],
+        };
+        merge_final_inspection(&mut preview, &fresh).unwrap();
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|wall| wall == "captcha present"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|wall| wall == "earlier wall"));
+        merge_final_inspection(&mut preview, &fresh).unwrap();
+        assert_eq!(
+            preview
+                .manual_review
+                .iter()
+                .filter(|wall| *wall == "captcha present")
+                .count(),
+            1
+        );
+        fresh.schema.multi_step = true;
+        assert!(merge_final_inspection(&mut preview, &fresh).is_err());
+        fresh.schema = preview.schema.clone();
+        fresh.origin = "https://other.invalid".into();
+        assert!(merge_final_inspection(&mut preview, &fresh).is_err());
     }
 
     #[test]

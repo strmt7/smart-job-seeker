@@ -465,7 +465,7 @@ mod tests {
             "fictional role",
         )
         .unwrap();
-        let error = fetch(&url).err().expect("403 must be reported");
+        let error = fetch(&url).expect_err("403 must be reported");
         worker.join().unwrap();
         assert!(error.stop_batch);
         assert!(error.message.contains("JSON search may be disabled"));

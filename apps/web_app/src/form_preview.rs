@@ -3304,7 +3304,14 @@ mod tests {
                 );
             }
         }
-        println!("walls={:?}", live.walls);
+        let refreshed = driver.inspect_current().unwrap();
+        println!(
+            "initial_walls={} initial_captcha={} refreshed_walls={} refreshed_captcha={}",
+            live.walls.len(),
+            live.walls.iter().any(|wall| wall == "captcha present"),
+            refreshed.walls.len(),
+            refreshed.walls.iter().any(|wall| wall == "captcha present")
+        );
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
             && !entry.contains("submitted")));
