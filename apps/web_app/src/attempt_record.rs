@@ -1444,12 +1444,51 @@ fn capture_page_unchanged(
     initial_url == current_url && initial_dimensions == current_dimensions
 }
 
-/// Save a maximum of six segments; report when a page exceeds the limit.
+enum CaptureError {
+    DimensionsChanged,
+    Other(String),
+}
+impl From<String> for CaptureError {
+    fn from(error: String) -> Self {
+        Self::Other(error)
+    }
+}
+impl From<&str> for CaptureError {
+    fn from(error: &str) -> Self {
+        Self::Other(error.to_owned())
+    }
+}
+
+/// Save at most six segments per attempt. A dimension change gets one fresh
+/// capture, since Chromium can change scrollbar width during the first tile.
 pub fn capture_page(
     driver: &mut waypoint_browser::CdpDriver,
     record: &mut AttemptRecord,
     timestamp: i64,
 ) -> Result<(), String> {
+    for attempt in 0..2 {
+        match capture_page_once(driver, record, timestamp) {
+            Ok(()) => return Ok(()),
+            Err(CaptureError::DimensionsChanged) if attempt == 0 => {
+                record.event(json!({"type":"page_capture_retry","time":timestamp,"note":"Page dimensions changed; starting one new capture."}))?;
+            }
+            Err(CaptureError::DimensionsChanged) => {
+                return Err(
+                    "Page dimensions changed during both captures; inspect and capture again"
+                        .into(),
+                )
+            }
+            Err(CaptureError::Other(error)) => return Err(error),
+        }
+    }
+    unreachable!("the retry loop always returns")
+}
+
+fn capture_page_once(
+    driver: &mut waypoint_browser::CdpDriver,
+    record: &mut AttemptRecord,
+    timestamp: i64,
+) -> Result<(), CaptureError> {
     let initial_url = driver.current_url().map_err(|e| e.to_string())?;
     let (width, height) = driver.page_dimensions().map_err(|e| e.to_string())?;
     let (tiles, within_limits) = capture_tiles(width, height);
@@ -1469,10 +1508,11 @@ pub fn capture_page(
         let dimensions = driver.page_dimensions().map_err(|e| e.to_string())?;
         if !capture_page_unchanged(&initial_url, (width, height), &current_url, dimensions) {
             record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"after_segment":count,"initial_dimensions":[width,height],"observed_dimensions":[dimensions.0,dimensions.1],"address_changed":current_url != initial_url,"note":"Page address or dimensions changed while capturing; screenshots may show different states."}))?;
-            return Err(
-                "Page address or dimensions changed during capture; inspect and capture again"
-                    .into(),
-            );
+            return if current_url == initial_url {
+                Err(CaptureError::DimensionsChanged)
+            } else {
+                Err("Page address changed during capture; inspect and capture again".into())
+            };
         }
     }
     if let (Some((x, y, tile_width, tile_height)), Some(original)) =
@@ -1678,6 +1718,30 @@ mod tests {
         assert!(!capture_tiles(4097.0, 1000.0).1);
         assert!(capture_tiles(2048.0, 12000.0).1);
     }
+    #[test]
+    #[ignore = "starts one headless browser against a fictional narrow form"]
+    fn captures_stable_narrow_page_with_scrollbar() {
+        use waypoint_applications::driver::BrowserDriver;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        fs::create_dir(root.path().join("screenshots")).unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_path_buf(),
+            sequence: 0,
+        };
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-narrow-capture.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        capture_page(&mut driver, &mut record, 1).unwrap();
+        let events = fs::read_to_string(root.path().join("events.jsonl")).unwrap();
+        assert!(events.contains("full_dimensions_captured\":true"));
+    }
+
     #[test]
     #[ignore = "starts one headless browser against a fictional changing form"]
     fn changing_page_content_is_recorded_as_incomplete() {
