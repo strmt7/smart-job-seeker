@@ -779,6 +779,8 @@ fn read_fit_with_context(
                 assessment["preference_coverage"] = json!(coverage);
                 assessment["requirement_coverage"] =
                     json!(fit_task::requirement_coverage(&assessment));
+                assessment["requirement_audit_incomplete"] =
+                    json!(fit_task::requirement_audit_incomplete(&assessment));
                 Ok(
                     json!({"status":"current","assessment":assessment,"model":value["model"],"user_review":value["user_review"],"review_history":value["review_history"],"review_history_omitted":value["review_history_omitted"],"review_revision":fit_review_revision(&value)}),
                 )
@@ -2715,6 +2717,9 @@ fn serve(
                         json!(fit_task::preference_coverage(&result["assessment"]));
                     result["assessment"]["requirement_coverage"] =
                         json!(fit_task::requirement_coverage(&result["assessment"]));
+                    result["assessment"]["requirement_audit_incomplete"] = json!(
+                        fit_task::requirement_audit_incomplete(&result["assessment"])
+                    );
                     if let Some(previous) = ws.fit_assessment(&job_id).map_err(|e| e.to_string())? {
                         let previous: Value = serde_json::from_slice(&previous).map_err(|_| {
                             "Previous saved assessment is invalid; it was not replaced"
@@ -2813,7 +2818,7 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
-                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"requirement_coverage":value["assessment"]["requirement_coverage"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
+                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"requirement_coverage":value["assessment"]["requirement_coverage"],"requirement_audit_incomplete":value["assessment"]["requirement_audit_incomplete"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
                     }
                     Ok(value) => json!({"id":id.as_str(),"status":value["status"]}),
                     Err(_) => json!({"id":id.as_str(),"status":"unavailable"}),
@@ -9218,6 +9223,7 @@ mod tests {
             "possible_conflict"
         );
         assert_eq!(json["results"][0]["requirement_coverage"], "needs_review");
+        assert_eq!(json["results"][0]["requirement_audit_incomplete"], true);
         assert_eq!(json["results"][0]["review_score"], 75);
         assert_eq!(
             json["results"][0]["review_range"],

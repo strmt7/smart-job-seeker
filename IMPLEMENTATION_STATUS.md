@@ -1100,3 +1100,7 @@ The duplicate indexer now reports whether a step compared a job or only advanced
 ### Encrypted title-level recheck timing (2026-11-01)
 
 A single debug-build SQLCipher disk run of the same 10,000-fictional-job fixture, with 10 affected titles and distinct employers, took 162 calls and 1.058 seconds of active work; the slowest call took 24.2 ms. It excludes production delays, descriptions and crowded employers and does not measure peak memory, concurrent load or worst-case behavior. The test created and removed its own fictional encrypted database. Web Clippy and formatting passed. No application was submitted.
+
+### Independent fit-audit warning (2026-11-01)
+
+A fit badge can now show both an unknown or conflicting required criterion and an incomplete requirement audit. The latter is calculated independently from the saved assessment's coverage and audit fields, including for older saved assessments; it does not change the score or its range. Focused coverage and local API tests, all UI checks, web Clippy and formatting passed. A mocked Edge job-list fixture rendered the combined warning at 1,200 and 390 pixels without horizontal overflow or page errors. This does not validate the model's assessment or establish complete requirement extraction. No application was submitted.
