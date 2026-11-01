@@ -3885,10 +3885,12 @@ impl CdpDriver {
                             self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
                         }
                         if !line.is_empty() {
-                            self.ensure_text_focus(node, object)?;
-                            self.cdp
-                                .call("Input.insertText", json!({"text":line}))
-                                .map_err(derr)?;
+                            for segment in text_segments(line) {
+                                self.ensure_text_focus(node, object)?;
+                                self.cdp
+                                    .call("Input.insertText", json!({"text":segment}))
+                                    .map_err(derr)?;
+                            }
                         }
                     }
                 } else if !t.is_empty()

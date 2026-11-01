@@ -1300,6 +1300,10 @@ fn text_entry_emits_keys_and_stops_when_focus_moves() {
     driver.verify_text_value("#name", &long).unwrap();
     assert!(driver.execute(&fill("#long-redirect", &long)).is_err());
     driver.verify_text_value("#other", "").unwrap();
+    assert!(driver
+        .execute(&fill("#rich-redirect", &format!("{long}\nSecond line")))
+        .is_err());
+    driver.verify_text_value("#other", "").unwrap();
     assert!(driver.execute(&fill("#redirect", "xyz")).is_err());
     driver.verify_text_value("#other", "").unwrap();
     let (text, _) = driver.page_text_bounded(2000).unwrap();
@@ -1831,15 +1835,26 @@ fn labelled_rich_textbox_accepts_plain_text_and_checks_retention() {
     driver
         .verify_text_value(&selector, "First\n\nThird")
         .unwrap();
+    let long = format!(
+        "{}\nSecond line",
+        "Relevant résumé experience with international teams. "
+            .repeat(4)
+            .trim_end()
+    );
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text(long.clone()),
+        })
+        .unwrap();
+    driver.verify_text_value(&selector, &long).unwrap();
     assert!(driver
         .execute(&BrowserCommand::Fill {
             selector: selector.clone(),
             value: PacketValue::Text("line\n".repeat(41))
         })
         .is_err());
-    driver
-        .verify_text_value(&selector, "First\n\nThird")
-        .unwrap();
+    driver.verify_text_value(&selector, &long).unwrap();
     for selector in ["#unsafe", "#disabled"] {
         assert!(driver
             .execute(&BrowserCommand::Fill {
