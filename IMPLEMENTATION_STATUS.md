@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Reviewed date and time controls — 2026-11-01
+
+- The form panel now displays typed date, month and time suggestions using their actual serialized values and native input types. A simulated panel test exercised both a manually entered time and typed suggestions. A fictional browser test passed the reviewed time through answer preparation and a one-use grant, verified the retained value, and rejected grant replay; it did not submit an application. Current model profile mapping does not suggest these date/time values automatically.
+
 ## Native time visual review — 2026-11-01
 
 - A fictional reviewed-fill browser fixture now verifies that a time answer is prepared through the review path, filled under a one-use grant, and cannot replay that grant. In an isolated CPU run, `gemma4:12b-it-q4_K_M` transcribed the displayed time as `01:30 PM` while the native value was `13:30`, initially producing a mismatch. The comparison now reconciles unambiguous 12-hour displays only for completed native time fields, then still verifies the live DOM value. A rerun produced a transcription match and live-value match; available RAM stayed at or above 16.47 GiB. A separate fictional test rejected ambiguous labels, left text fields unchanged, and refused confirmation after the live time changed. These observations do not establish general model accuracy. Evidence is retained under `target/model-eval/isolated-gemma-native-time-20261101` and `target/model-eval/isolated-gemma-native-time-normalized-20261101`.
