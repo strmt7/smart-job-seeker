@@ -562,9 +562,18 @@ impl Store {
         )
     }
 
-    /// Gather bounded, undecided neighbors sharing employer tokens. Reserve some
-    /// slots for employer-ranked candidates even when titles differ completely.
+    /// Gather bounded, undecided employer or requisition neighbors for review.
+    /// A shared requisition alone is only a candidate, never a duplicate decision.
     pub fn duplicate_neighbors(&self, id: &str) -> rusqlite::Result<(Vec<StoredJob>, bool)> {
+        let source = match waypoint_domain::JobIdentityId::new(id) {
+            Ok(id) => self.get_job(&id)?,
+            Err(_) => None,
+        };
+        let source_requisition = source
+            .as_ref()
+            .and_then(|job| job.requisition_id.as_deref())
+            .map(str::trim)
+            .filter(|value| value.len() >= 3);
         let mut tokens = self.conn.prepare("SELECT token FROM job_employer_tokens WHERE job_id=?1 ORDER BY length(token) DESC,token LIMIT 8")?;
         let tokens = tokens
             .query_map([id], |r| r.get::<_, String>(0))?
@@ -583,19 +592,25 @@ impl Store {
                 *counts.entry(other).or_default() += 1;
             }
         }
+        if let Some(requisition) = source_requisition {
+            let mut stmt = self.conn.prepare("SELECT j.id FROM jobs j INDEXED BY jobs_requisition_lookup WHERE lower(trim(j.requisition_id))=?1 AND j.id<>?2 AND NOT EXISTS (SELECT 1 FROM possible_duplicates p WHERE (p.job_a=?2 AND p.job_b=j.id) OR (p.job_b=?2 AND p.job_a=j.id)) ORDER BY j.id LIMIT 101")?;
+            for (index, row) in stmt
+                .query_map(params![requisition.to_ascii_lowercase(), id], |r| {
+                    r.get::<_, String>(0)
+                })?
+                .enumerate()
+            {
+                if index == 100 {
+                    truncated = true;
+                    break;
+                }
+                counts.entry(row?).or_default();
+            }
+        }
         let mut ranked: Vec<_> = counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         truncated |= ranked.len() > 12;
-        let source = match waypoint_domain::JobIdentityId::new(id) {
-            Ok(id) => self.get_job(&id)?,
-            Err(_) => None,
-        };
         let source_title = source.as_ref().map(|job| job.title.as_str()).unwrap_or("");
-        let source_requisition = source
-            .as_ref()
-            .and_then(|job| job.requisition_id.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
         let prioritize = ranked.len() > 12;
         let mut result = Vec::new();
         let mut candidates = Vec::new();
@@ -632,8 +647,7 @@ impl Store {
         Ok((result, truncated))
     }
 
-    /// Keyset page over indexed employer neighbors. Each token contributes at
-    /// most 13 IDs, so even a large employer cannot force an unbounded scan.
+    /// Keyset page over employer and requisition neighbors, bounded per index.
     pub fn duplicate_neighbors_page(
         &self,
         id: &str,
@@ -649,6 +663,26 @@ impl Store {
             for candidate in
                 candidates.query_map(params![token, id, after], |row| row.get::<_, String>(0))?
             {
+                ids.insert(candidate?);
+            }
+        }
+        let requisition: Option<String> = self
+            .conn
+            .query_row("SELECT requisition_id FROM jobs WHERE id=?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .flatten();
+        if let Some(requisition) = requisition
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| value.len() >= 3)
+        {
+            let mut exact = self.conn.prepare("SELECT j.id FROM jobs j INDEXED BY jobs_requisition_lookup WHERE lower(trim(j.requisition_id))=?1 AND j.id<>?2 AND j.id>?3 ORDER BY j.id LIMIT 13")?;
+            for candidate in exact.query_map(
+                params![requisition.to_ascii_lowercase(), id, after],
+                |row| row.get::<_, String>(0),
+            )? {
                 ids.insert(candidate?);
             }
         }
@@ -1625,6 +1659,61 @@ mod tests {
             0
         );
         assert!(!store.has_duplicate_hold("a").unwrap());
+    }
+    #[test]
+    fn requisition_neighbors_include_other_employer_names_without_automatic_decisions() {
+        let mut store = Store::in_memory().unwrap();
+        let source = job(
+            "source",
+            "Software engineer",
+            "Alpha Systems",
+            Some("REQ-42"),
+        );
+        store.upsert_job(&source).unwrap();
+        for index in 0..16 {
+            let candidate = job(
+                &format!("candidate-{index:02}"),
+                "Infrastructure specialist",
+                "Beta Staffing",
+                Some(" req-42 "),
+            );
+            store.upsert_job(&candidate).unwrap();
+        }
+        let unrelated = job("other", "Different role", "Gamma", Some("REQ-99"));
+        store.upsert_job(&unrelated).unwrap();
+        let (first, truncated) = store.duplicate_neighbors("source").unwrap();
+        assert_eq!(first.len(), 12);
+        assert!(truncated);
+        assert!(store.possible_duplicates().unwrap().is_empty());
+        let (page, next) = store.duplicate_neighbors_page("source", "").unwrap();
+        assert_eq!(page.len(), 12);
+        let (next_page, end) = store
+            .duplicate_neighbors_page("source", &next.unwrap())
+            .unwrap();
+        assert_eq!(next_page.len(), 4);
+        assert!(end.is_none());
+        assert!(page.iter().all(|a| next_page.iter().all(|b| a.id != b.id)));
+        assert!(page
+            .iter()
+            .chain(&next_page)
+            .all(|job| job.id.as_str() != "other"));
+        store
+            .add_ai_duplicates("source", &[("candidate-00".into(), "Review".into())])
+            .unwrap();
+        let (after_decision, _) = store.duplicate_neighbors("source").unwrap();
+        assert!(after_decision
+            .iter()
+            .all(|job| job.id.as_str() != "candidate-00"));
+        let short = job("short", "Engineer", "Delta", Some("42"));
+        let short_other = job("short-other", "Engineer", "Omega", Some("42"));
+        store.upsert_job(&short).unwrap();
+        store.upsert_job(&short_other).unwrap();
+        assert!(store.duplicate_neighbors("short").unwrap().0.is_empty());
+        assert!(store
+            .duplicate_neighbors_page("short", "")
+            .unwrap()
+            .0
+            .is_empty());
     }
     #[test]
     fn bounded_neighbors_prioritize_similar_titles_and_keep_employer_only_slots() {

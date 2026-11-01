@@ -1937,7 +1937,7 @@ fn serve(
             };
             let input = duplicate_search_inputs_page(ws, &job, after)?;
             if input.candidates.is_empty() && input.next_cursor.is_none() {
-                return Err("No unreviewed related-employer candidates were found".into());
+                return Err("No unreviewed employer or requisition candidates were found".into());
             }
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
