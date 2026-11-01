@@ -104,6 +104,13 @@ impl Workspace {
         Ok(self.store.reviewed_active_claims(limit, max_text_bytes)?)
     }
 
+    pub fn reviewed_fact_coverage(
+        &self,
+        max_text_bytes: usize,
+    ) -> Result<(usize, usize), WorkspaceError> {
+        Ok(self.store.reviewed_claim_coverage(max_text_bytes)?)
+    }
+
     pub fn active_facts_digest(&self) -> Result<String, WorkspaceError> {
         Ok(self.store.active_claims_digest()?)
     }

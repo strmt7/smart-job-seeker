@@ -209,6 +209,21 @@ impl Store {
         Ok(())
     }
 
+    /// Count reviewed active claims omitted by the per-claim size limit.
+    pub fn reviewed_claim_coverage(
+        &self,
+        max_text_bytes: usize,
+    ) -> Result<(usize, usize), StoreError> {
+        let (mut total, mut oversized) = (0usize, 0usize);
+        self.visit_claims(true, true, None, None, usize::MAX, |claim| {
+            total += 1;
+            if claim.text.len() > max_text_bytes {
+                oversized += 1;
+            }
+        })?;
+        Ok((total, oversized))
+    }
+
     /// Hash active claim content one row at a time, including unreviewed claims.
     pub fn active_claims_digest(&self) -> Result<String, StoreError> {
         let mut digest = waypoint_domain::sha256_hex(b"waypoint-active-claims-v1");

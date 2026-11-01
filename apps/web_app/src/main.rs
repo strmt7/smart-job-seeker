@@ -302,8 +302,11 @@ fn fit_source_coverage(
         None => json!({}),
     };
     let full_instructions = profile["instructions"].as_str().unwrap_or("");
+    let (reviewed_total, oversized) = ws.reviewed_fact_coverage(1000).map_err(|e| e.to_string())?;
+    let eligible = reviewed_total.saturating_sub(oversized);
+    let bounded = eligible.min(500);
     Ok(
-        json!({"listing_used_chars":listing.chars().count(),"listing_total_chars":full_listing.chars().count(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count()}),
+        json!({"listing_used_chars":listing.chars().count(),"listing_total_chars":full_listing.chars().count(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count(),"reviewed_facts_total":reviewed_total,"reviewed_facts_bounded":bounded,"reviewed_facts_oversized":oversized,"reviewed_facts_over_limit":eligible.saturating_sub(bounded)}),
     )
 }
 
@@ -7134,6 +7137,27 @@ mod tests {
         ws.correct_fact(&new_fact, "Corrected reviewed fact", 2)
             .unwrap();
         assert_ne!(added, ws.active_facts_digest().unwrap());
+    }
+
+    #[test]
+    fn fit_coverage_counts_oversized_and_inventory_limited_facts() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/coverage","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        for index in 0..502 {
+            ws.add_fact(&format!("Fictional fact {index}"), FactOrigin::UserAttested)
+                .unwrap();
+        }
+        ws.add_fact(&"long fact ".repeat(110), FactOrigin::UserAttested)
+            .unwrap();
+        ws.add_fact("Unreviewed fictional claim", FactOrigin::ModelInferred)
+            .unwrap();
+        let (_, _, instructions, listing, _) = fit_assessment_inputs(&ws, &id).unwrap();
+        let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
+        assert_eq!(coverage["reviewed_facts_total"], 503);
+        assert_eq!(coverage["reviewed_facts_bounded"], 500);
+        assert_eq!(coverage["reviewed_facts_oversized"], 1);
+        assert_eq!(coverage["reviewed_facts_over_limit"], 2);
     }
 
     #[cfg(windows)]
