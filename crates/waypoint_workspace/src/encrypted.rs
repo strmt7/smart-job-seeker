@@ -64,6 +64,9 @@ impl Workspace {
             .ok_or_else(|| error("Windows DPAPI is required"))?;
         let key = read_key(&dir.join("workspace-key.dpapi"), sealer.as_ref())?;
         let store = Store::open_encrypted(path, &key).map_err(error)?;
+        store
+            .configure_nonblocking_duplicate_indexer()
+            .map_err(error)?;
         Ok(DuplicateIndexer {
             store,
             _workspace_lock: lock,

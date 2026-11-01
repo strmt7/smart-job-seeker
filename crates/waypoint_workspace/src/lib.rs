@@ -189,6 +189,8 @@ pub struct ExcludedJob {
 #[derive(Debug)]
 pub enum WorkspaceError {
     Store(StoreError),
+    /// The background duplicate indexer yielded to another database user.
+    DuplicateIndexBusy,
     Domain(DomainError),
     Io(std::io::Error),
     /// The requested application-state change is not a legal transition.
@@ -220,6 +222,7 @@ impl std::fmt::Display for WorkspaceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WorkspaceError::Store(e) => write!(f, "store: {e}"),
+            WorkspaceError::DuplicateIndexBusy => write!(f, "duplicate index database is busy"),
             WorkspaceError::Domain(e) => write!(f, "domain: {e}"),
             WorkspaceError::Io(e) => write!(f, "io: {e}"),
             WorkspaceError::IllegalTransition { from, to } => {
@@ -311,9 +314,13 @@ pub struct DuplicateIndexer {
 
 impl DuplicateIndexer {
     pub fn index_next(&self, after: &str) -> Result<Option<String>, WorkspaceError> {
-        self.store
-            .index_next_duplicate_job(after)
-            .map_err(|e| WorkspaceError::Export(format!("Duplicate indexing: {e}")))
+        self.store.index_next_duplicate_job(after).map_err(|e| {
+            if Store::duplicate_index_is_busy(&e) {
+                WorkspaceError::DuplicateIndexBusy
+            } else {
+                WorkspaceError::Export(format!("Duplicate indexing: {e}"))
+            }
+        })
     }
 }
 
@@ -333,6 +340,9 @@ impl Workspace {
             return self.encrypted_duplicate_indexer(path, lock);
         }
         let store = Store::open(path)
+            .map_err(|e| WorkspaceError::Export(format!("Duplicate index connection: {e}")))?;
+        store
+            .configure_nonblocking_duplicate_indexer()
             .map_err(|e| WorkspaceError::Export(format!("Duplicate index connection: {e}")))?;
         Ok(DuplicateIndexer {
             store,

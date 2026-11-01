@@ -5786,6 +5786,7 @@ fn serve_loop(
                                 cursor.clear();
                                 30
                             }
+                            Err(waypoint_workspace::WorkspaceError::DuplicateIndexBusy) => 2,
                             Err(error) => {
                                 eprintln!("Duplicate indexing paused: {error}");
                                 cursor.clear();

@@ -481,11 +481,24 @@ impl Store {
         Ok(result)
     }
 
+    /// Make a dedicated background index connection yield immediately to another writer.
+    pub fn configure_nonblocking_duplicate_indexer(&self) -> rusqlite::Result<()> {
+        self.conn.busy_timeout(std::time::Duration::ZERO)
+    }
+
+    pub fn duplicate_index_is_busy(error: &rusqlite::Error) -> bool {
+        matches!(error, rusqlite::Error::SqliteFailure(code, _) if
+            matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
+    }
+
     /// Index and compare one previously unindexed job; caller schedules bounded work.
     pub fn index_next_duplicate_job(&self, after: &str) -> rusqlite::Result<Option<String>> {
         // One idle indexing step is atomic: partial pair updates and index
         // markers roll back together if any comparison or write fails.
-        let transaction = self.conn.unchecked_transaction()?;
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
         let next = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j WHERE j.id>?1 AND NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) ORDER BY j.id LIMIT 1", [after], Self::row_to_job).optional()?;
         let indexed = if let Some(job) = next {
             let id = job.id.as_str().to_owned();
@@ -694,6 +707,64 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    fn check_background_indexer_yields(writer: &mut Store, indexer: &Store) {
+        let candidate = job("pending", "Engineer", "Example", None);
+        writer.upsert_job(&candidate).unwrap();
+        indexer.configure_nonblocking_duplicate_indexer().unwrap();
+        let timeout: i64 = indexer
+            .conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(timeout, 0);
+        writer.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let error = indexer.index_next_duplicate_job("").unwrap_err();
+        assert!(Store::duplicate_index_is_busy(&error));
+        writer.conn.execute_batch("ROLLBACK").unwrap();
+        assert!(indexer.duplicate_index_pending().unwrap());
+        assert_eq!(
+            indexer.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("pending")
+        );
+        assert!(!writer.duplicate_index_pending().unwrap());
+    }
+
+    #[test]
+    fn background_indexer_yields_to_writer_and_retries() {
+        let path = std::env::temp_dir().join(format!(
+            "waypoint-index-lock-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        {
+            let mut writer = Store::open(&path).unwrap();
+            let indexer = Store::open(&path).unwrap();
+            check_background_indexer_yields(&mut writer, &indexer);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(feature = "sqlcipher")]
+    #[test]
+    fn encrypted_background_indexer_yields_to_writer_and_retries() {
+        let path = std::env::temp_dir().join(format!(
+            "waypoint-index-cipher-lock-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        {
+            let mut writer = Store::open_encrypted(&path, &[19; 32]).unwrap();
+            let indexer = Store::open_encrypted(&path, &[19; 32]).unwrap();
+            check_background_indexer_yields(&mut writer, &indexer);
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
