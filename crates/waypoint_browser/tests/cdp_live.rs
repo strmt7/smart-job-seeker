@@ -1304,6 +1304,10 @@ fn text_entry_emits_keys_and_stops_when_focus_moves() {
         .execute(&fill("#rich-redirect", &format!("{long}\nSecond line")))
         .is_err());
     driver.verify_text_value("#other", "").unwrap();
+    assert!(driver.execute(&fill("#role-change", &long)).is_err());
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("FIRST SEGMENT ONLY"), "{text}");
+    assert!(!text.contains("CONTINUED UNSAFELY"), "{text}");
     assert!(driver.execute(&fill("#redirect", "xyz")).is_err());
     driver.verify_text_value("#other", "").unwrap();
     let (text, _) = driver.page_text_bounded(2000).unwrap();

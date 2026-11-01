@@ -6,6 +6,8 @@
   <label for="other">Other field</label><input id="other">
   <label for="long-redirect">Long redirecting field</label><textarea id="long-redirect"></textarea>
   <div id="rich-redirect" role="textbox" aria-label="Rich redirecting field" contenteditable="true"></div>
+  <label for="role-change">Changing field</label><input id="role-change">
+  <output id="role-change-result">NO INPUT</output>
   <output id="events"></output><output id="submitted">NOT SUBMITTED</output>
   <button type="submit">Submit</button>
 </form>
@@ -22,6 +24,11 @@ document.querySelector('#long-redirect').addEventListener('input', () => {
 });
 document.querySelector('#rich-redirect').addEventListener('input', () => {
   document.querySelector('#other').focus();
+});
+document.querySelector('#role-change').addEventListener('input', event => {
+  const result = document.querySelector('#role-change-result');
+  result.textContent = result.textContent === 'NO INPUT' ? 'FIRST SEGMENT ONLY' : 'CONTINUED UNSAFELY';
+  event.target.setAttribute('role', 'combobox');
 });
 </script>
 </body></html>

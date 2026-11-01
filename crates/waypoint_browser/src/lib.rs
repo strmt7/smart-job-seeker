@@ -3781,12 +3781,12 @@ impl CdpDriver {
                 "Text field is no longer visible; review it manually".into(),
             ));
         }
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this.getRootNode().activeElement === this && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && !this.matches(':disabled') && !this.readOnly; }","returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this.getRootNode().activeElement === this && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && (((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) || ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]'))); }","returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
             return Err(DriverError(
-                "Text field lost focus; review it manually".into(),
+                "Text field lost focus or changed type; review it manually".into(),
             ));
         }
         Ok(())
