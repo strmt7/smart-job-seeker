@@ -572,10 +572,16 @@ impl Store {
         let mut ranked: Vec<_> = counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         truncated |= ranked.len() > 12;
-        let source_title = match waypoint_domain::JobIdentityId::new(id) {
-            Ok(id) => self.get_job(&id)?.map(|job| job.title).unwrap_or_default(),
-            Err(_) => String::new(),
+        let source = match waypoint_domain::JobIdentityId::new(id) {
+            Ok(id) => self.get_job(&id)?,
+            Err(_) => None,
         };
+        let source_title = source.as_ref().map(|job| job.title.as_str()).unwrap_or("");
+        let source_requisition = source
+            .as_ref()
+            .and_then(|job| job.requisition_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
         let prioritize = ranked.len() > 12;
         let mut result = Vec::new();
         let mut candidates = Vec::new();
@@ -586,21 +592,29 @@ impl Store {
                         result.push(job);
                         continue;
                     }
-                    let title = title_score(&source_title, &job.title);
-                    candidates.push((job, count, title));
-                    candidates.sort_by(|(a, a_count, a_title), (b, b_count, b_title)| {
-                        b_title
-                            .cmp(a_title)
-                            .then_with(|| b_count.cmp(a_count))
-                            .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+                    let title = title_score(source_title, &job.title);
+                    let requisition = source_requisition.is_some_and(|source| {
+                        job.requisition_id
+                            .as_deref()
+                            .is_some_and(|other| source.eq_ignore_ascii_case(other.trim()))
                     });
+                    candidates.push((job, count, title, requisition));
+                    candidates.sort_by(
+                        |(a, a_count, a_title, a_req), (b, b_count, b_title, b_req)| {
+                            b_req
+                                .cmp(a_req)
+                                .then_with(|| b_title.cmp(a_title))
+                                .then_with(|| b_count.cmp(a_count))
+                                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+                        },
+                    );
                     candidates.truncate(8);
                 }
             }
         }
         // Preserve a small set selected only by employer evidence, so title
         // changes cannot exclude all semantically equivalent roles.
-        result.extend(candidates.into_iter().map(|(job, _, _)| job));
+        result.extend(candidates.into_iter().map(|(job, _, _, _)| job));
         Ok((result, truncated))
     }
 
@@ -1638,6 +1652,56 @@ mod tests {
                 .iter()
                 .any(|job| job.id.as_str() == format!("candidate-{index:02}")));
         }
+        assert!(store.possible_duplicates().unwrap().is_empty());
+    }
+    #[test]
+    fn crowded_employer_keeps_matching_requisition_despite_changed_title() {
+        let mut store = Store::in_memory().unwrap();
+        let source = job(
+            "source",
+            "Senior Platform Engineer",
+            "Acme Research",
+            Some("REQ-42"),
+        );
+        store.upsert_job(&source).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                [source.id.as_str()],
+            )
+            .unwrap();
+        for index in 0..20 {
+            let id = format!("candidate-{index:02}");
+            let candidate = job(
+                &id,
+                if index == 19 {
+                    "Infrastructure Specialist"
+                } else {
+                    "Senior Platform Engineer"
+                },
+                "Acme Research",
+                if index == 19 {
+                    Some(" req-42 ")
+                } else {
+                    Some("OTHER")
+                },
+            );
+            store.upsert_job(&candidate).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                    [candidate.id.as_str()],
+                )
+                .unwrap();
+        }
+        let (neighbors, truncated) = store.duplicate_neighbors("source").unwrap();
+        assert!(truncated);
+        assert_eq!(neighbors.len(), 12);
+        assert!(neighbors
+            .iter()
+            .any(|job| job.id.as_str() == "candidate-19"));
         assert!(store.possible_duplicates().unwrap().is_empty());
     }
     #[test]
