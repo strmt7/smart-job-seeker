@@ -1609,7 +1609,9 @@ fn model_status_with_capabilities_at(addr: std::net::SocketAddr) -> Result<Value
     // Discard capability claims if the resident model changed between calls.
     let after = resident_model_status_at(addr).ok();
     if after.as_ref().is_some_and(|after| {
-        after["model"] == status["model"]
+        status["model_digest"].is_string()
+            && after["model_digest"] == status["model_digest"]
+            && after["model"] == status["model"]
             && after["reported_bytes"] == status["reported_bytes"]
             && after["reported_vram_bytes"] == status["reported_vram_bytes"]
             && after["context_length"] == status["context_length"]
@@ -9530,6 +9532,41 @@ mod tests {
         worker.join().unwrap();
         assert_eq!(result["model"], "second");
         assert!(result["vision"].is_null());
+    }
+
+    #[test]
+    fn model_capability_requires_a_stable_reported_digest() {
+        for (before, after, expected) in [
+            (Some("a".repeat(64)), Some("a".repeat(64)), json!(true)),
+            (Some("a".repeat(64)), Some("b".repeat(64)), Value::Null),
+            (None, None, Value::Null),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let worker = std::thread::spawn(move || {
+                let report = |digest: Option<String>| json!({"models":[{"name":"local","size":10,"size_vram":10,"context_length":4096,"digest":digest}]});
+                for body in [
+                    report(before),
+                    json!({"capabilities":["vision"]}),
+                    report(after),
+                ] {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0; 4096];
+                    let _ = stream.read(&mut request).unwrap();
+                    let body = body.to_string();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+            });
+            let result = model_status_with_capabilities_at(addr).unwrap();
+            worker.join().unwrap();
+            assert_eq!(result["vision"], expected);
+        }
     }
 
     #[test]

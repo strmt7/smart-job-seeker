@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Local model capability identity — 2026-11-01
+
+- The displayed vision-capability result now requires the same valid resident-model digest before and after the capability lookup, in addition to the existing name and resource checks. Missing or changed digests leave capability unknown. Fictional local-service tests passed for stable, changed and missing digests; this remains a snapshot and does not reserve the model or prove a capability lookup describes the resident weights.
+
 ## Salary currency comparison — 2026-11-01
 
 - Salary constraints compare three-letter currency codes without case or surrounding-space differences. Missing or malformed codes remain unknown; basis, period and compensation category still have to match. The search suite and 46 workspace tests passed; network tests were not run.
