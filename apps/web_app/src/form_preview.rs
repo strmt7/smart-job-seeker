@@ -2333,7 +2333,7 @@ mod tests {
         assert!(preview
             .manual_review
             .iter()
-            .any(|reason| reason == "Conflicting suggestions need review: First name"));
+            .any(|reason| reason == "Invalid or duplicate suggestion needs review: First name"));
         preview.suggestions.push(ProposedMapping {
             field_selector: "#first".into(),
             value: PacketValue::Text("Example".into()),
