@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Focused visual review of choices — 2026-11-01
+
+- Focused visual review now asks the local model to report checkbox, radio and select states as well as entered text, and explicitly excludes placeholders. A fictional local service test verified the request and comparison path. The modified prompt has not been evaluated with a real model, and visual transcription remains advisory and subject to live-value cross-checks and manual review.
+
 ## Text-only datalist options — 2026-11-01
 
 - Native datalist options without a value attribute can be reviewed and selected when their value is a single unambiguous text node. The driver checks the live option value and rechecks it after input events; ambiguous whitespace or markup still requires manual review. The existing datalist review warning remains because retained text does not prove a site's internal selection state.
