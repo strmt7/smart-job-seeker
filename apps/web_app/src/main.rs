@@ -3559,6 +3559,40 @@ fn serve(
                 attempt_record::answer_history(ws, &job, attempt, after)?,
             );
         }
+        "/api/attempts/screenshots" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            let after = match body.get("after") {
+                None | Some(Value::Null) => 0,
+                Some(value) => value
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or("Invalid screenshot cursor")?,
+            };
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::screenshot_index(ws, &job, attempt, after)?,
+            );
+        }
+        "/api/attempts/screenshot" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            let name = body["name"].as_str().ok_or("missing screenshot name")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::screenshot_image(ws, &job, attempt, name)?,
+            );
+        }
         "/api/gmail/reconcile-handoff" => {
             if body["reviewed"].as_bool() != Some(true) {
                 return Err("Confirm that you checked the mailbox first".into());

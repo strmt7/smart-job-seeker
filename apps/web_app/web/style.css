@@ -77,6 +77,7 @@ nav a.active{padding:22px 0}
 
 .answer-draft{padding:4px 0;font-size:13px;overflow-wrap:anywhere}.answer-draft:empty{display:none}
 .template-style-sample{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font:13px/1.5 "Segoe UI",system-ui,sans-serif}
+.attempt-screenshot{display:block;max-width:100%;height:auto;margin:12px 0;border:1px solid #dbe7e1;border-radius:6px}
 
 .duplicate-comparison{font-size:13px;overflow-wrap:anywhere}.duplicate-comparison:empty{display:none}
 

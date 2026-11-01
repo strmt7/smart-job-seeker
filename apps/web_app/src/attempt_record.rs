@@ -714,14 +714,11 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     Ok(json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable}))
 }
 
-/// Read a bounded set of answer snapshots from the selected job's own attempt.
-/// Older records may not contain the answers directory.
-pub fn answer_history(
+fn attempt_directory(
     ws: &Workspace,
     job: &JobIdentityId,
     attempt: &str,
-    after: u32,
-) -> Result<Value, String> {
+) -> Result<PathBuf, String> {
     if attempt.is_empty()
         || attempt.len() > 64
         || !attempt
@@ -756,6 +753,18 @@ pub fn answer_history(
     {
         return Err("Application record does not match the selected job".into());
     }
+    Ok(dir)
+}
+
+/// Read a bounded set of answer snapshots from the selected job's own attempt.
+/// Older records may not contain the answers directory.
+pub fn answer_history(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    after: u32,
+) -> Result<Value, String> {
+    let dir = attempt_directory(ws, job, attempt)?;
     let directory = dir.join("answers");
     let meta = match fs::symlink_metadata(&directory) {
         Ok(meta) => meta,
@@ -852,6 +861,104 @@ pub fn answer_history(
     Ok(
         json!({"available":true,"items":items,"truncated":truncated,"unreadable":unreadable,"next_after":next_after}),
     )
+}
+
+fn screenshot_number(name: &str) -> Option<u32> {
+    let digits = name.strip_suffix(".png")?;
+    if digits.is_empty() || digits.len() > 10 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let number: u32 = digits.parse().ok()?;
+    (number > 0 && name == format!("{number:04}.png")).then_some(number)
+}
+
+fn screenshot_directory(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+) -> Result<PathBuf, String> {
+    let path = attempt_directory(ws, job, attempt)?.join("screenshots");
+    let meta = fs::symlink_metadata(&path).map_err(|_| "Screenshot directory is unavailable")?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err("Invalid screenshot directory".into());
+    }
+    Ok(path)
+}
+
+/// List a bounded page; each image is loaded only when explicitly requested.
+pub fn screenshot_index(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    after: u32,
+) -> Result<Value, String> {
+    let directory = screenshot_directory(ws, job, attempt)?;
+    let mut names = Vec::new();
+    let (mut truncated, mut unreadable) = (false, 0usize);
+    for (index, entry) in fs::read_dir(directory)
+        .map_err(|_| "Cannot inspect screenshots")?
+        .enumerate()
+    {
+        if index >= 2000 {
+            truncated = true;
+            break;
+        }
+        let Ok(entry) = entry else {
+            unreadable += 1;
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(number) = screenshot_number(&name) else {
+            unreadable += 1;
+            continue;
+        };
+        if number <= after {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+            unreadable += 1;
+            continue;
+        };
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 6 * 1024 * 1024 {
+            unreadable += 1;
+            continue;
+        }
+        names.push((number, name));
+    }
+    names.sort_by_key(|(number, _)| *number);
+    let next_after = if names.len() > 24 {
+        Some(names[23].0)
+    } else {
+        None
+    };
+    names.truncate(24);
+    Ok(
+        json!({"items":names.into_iter().map(|(_,name)| name).collect::<Vec<_>>(),"next_after":next_after,"truncated":truncated,"unreadable":unreadable}),
+    )
+}
+
+pub fn screenshot_image(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    name: &str,
+) -> Result<Value, String> {
+    use std::io::Read;
+    screenshot_number(name).ok_or("Invalid screenshot name")?;
+    let path = screenshot_directory(ws, job, attempt)?.join(name);
+    let meta = fs::symlink_metadata(&path).map_err(|_| "Screenshot is unavailable")?;
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 6 * 1024 * 1024 {
+        return Err("Invalid screenshot file".into());
+    }
+    let file = fs::File::open(path).map_err(|_| "Cannot read screenshot")?;
+    let mut bytes = Vec::new();
+    file.take(6 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Cannot read screenshot")?;
+    if bytes.len() > 6 * 1024 * 1024 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("Invalid screenshot content".into());
+    }
+    Ok(json!({"name":name,"image_base64":STANDARD.encode(bytes)}))
 }
 /// Make a self-contained index for locally saved PNGs. Metadata supplies only
 /// validated numbers; captured page text and URLs never become HTML markup.
@@ -1773,6 +1880,75 @@ mod tests {
             answer_history(&ws, &job, "answer-fixture", 0).unwrap()["available"],
             false
         );
+    }
+    #[test]
+    fn screenshot_viewer_is_paged_bounded_and_bound_to_the_attempt() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.invalid/screenshots","title":"Role","employer":"Fixture"}), 1).unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let record = AttemptRecord::start(&ws, &job, "screens-fixture", 2)
+            .unwrap()
+            .unwrap();
+        for index in 1..=25 {
+            fs::write(
+                record
+                    .dir
+                    .join("screenshots")
+                    .join(format!("{index:04}.png")),
+                b"\x89PNG\r\n\x1a\nfixture",
+            )
+            .unwrap();
+        }
+        fs::write(record.dir.join("screenshots/not-a-capture.txt"), b"ignored").unwrap();
+        fs::File::create(record.dir.join("screenshots/9999.png"))
+            .unwrap()
+            .set_len(6 * 1024 * 1024 + 1)
+            .unwrap();
+        let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 24);
+        assert_eq!(first["next_after"], 24);
+        assert_eq!(first["unreadable"], 2);
+        let second = screenshot_index(&ws, &job, "screens-fixture", 24).unwrap();
+        assert_eq!(second["items"], json!(["0025.png"]));
+        assert!(second["next_after"].is_null());
+        let image = screenshot_image(&ws, &job, "screens-fixture", "0001.png").unwrap();
+        assert_eq!(
+            STANDARD
+                .decode(image["image_base64"].as_str().unwrap())
+                .unwrap(),
+            b"\x89PNG\r\n\x1a\nfixture"
+        );
+        {
+            use std::io::{Read, Write};
+            use std::net::{TcpListener, TcpStream};
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let body = json!({"id":job.as_str(),"attempt_id":"screens-fixture","name":"0001.png"})
+                .to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "POST /api/attempts/screenshot HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let body: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(body, image);
+        }
+        assert!(screenshot_image(&ws, &job, "screens-fixture", "../attempt.json").is_err());
+        assert!(screenshot_image(&ws, &job, "screens-fixture", "9999.png").is_err());
+        assert!(screenshot_image(
+            &ws,
+            &JobIdentityId::new("different-job").unwrap(),
+            "screens-fixture",
+            "0001.png"
+        )
+        .is_err());
+        fs::write(record.dir.join("screenshots/0001.png"), b"not a PNG").unwrap();
+        assert!(screenshot_image(&ws, &job, "screens-fixture", "0001.png").is_err());
     }
     #[test]
     fn answer_history_pages_in_order_across_unreadable_and_large_records() {
