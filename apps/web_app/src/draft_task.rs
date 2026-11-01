@@ -59,24 +59,19 @@ pub(crate) fn scanned_template<F>(
 where
     F: FnMut(&[u8], usize) -> Result<Value, String>,
 {
-    let (selectable, coverage, page) = match crate::pdf_extract::extract_with_coverage(bytes) {
-        Ok((text, coverage)) => {
-            let empty = coverage["pages_without_selectable_text"]
-                .as_array()
-                .ok_or("PDF page coverage unavailable")?;
-            let blank = coverage["structurally_blank_pages"]
-                .as_array()
-                .ok_or("PDF page coverage unavailable")?;
-            let page = empty
-                .iter()
-                .find(|page| !blank.contains(page))
-                .and_then(Value::as_u64)
-                .ok_or("No scanned template page was found")?;
-            (text, Some(coverage), (page - 1) as usize)
-        }
-        Err(error) if error == "PDF extractor returned invalid text" || error == "PDF extraction failed: No selectable text was found; scanned PDFs need OCR" => (String::new(), None, 0),
-        Err(error) => return Err(error),
-    };
+    let (selectable, coverage) = crate::pdf_extract::scan_coverage(bytes)?;
+    let empty = coverage["pages_without_selectable_text"]
+        .as_array()
+        .ok_or("PDF page coverage unavailable")?;
+    let blank = coverage["structurally_blank_pages"]
+        .as_array()
+        .ok_or("PDF page coverage unavailable")?;
+    let page = empty
+        .iter()
+        .find(|page| !blank.contains(page))
+        .and_then(Value::as_u64)
+        .ok_or("No scanned template page was found")?;
+    let page = (page - 1) as usize;
     let result = transcribe(bytes, page)?;
     let text = result["text"]
         .as_str()
@@ -103,7 +98,7 @@ where
     };
     Ok((
         combined,
-        coverage,
+        Some(coverage),
         json!({"page": page + 1, "pages": pages, "uncertain": uncertain, "text": text, "image": image, "other_pages_not_transcribed": pages - 1}),
     ))
 }
@@ -158,63 +153,75 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
-            let (template, template_coverage, template_vision) = if let Some((reviewed, vision)) = &input.reviewed_template {
-                let (_, bytes) = input.template.as_ref().ok_or("Selected template is unavailable")?;
-                let (selectable, coverage) = match crate::pdf_extract::extract_with_coverage(bytes) {
-                    Ok((text, coverage)) => (text, Some(coverage)),
-                    Err(error) if error == "PDF extraction failed: No selectable text was found; scanned PDFs need OCR" || error == "PDF extractor returned invalid text" => (String::new(), None),
-                    Err(error) => return Err(error),
+            let (template, template_coverage, template_vision) = if let Some((reviewed, vision)) =
+                &input.reviewed_template
+            {
+                let (_, bytes) = input
+                    .template
+                    .as_ref()
+                    .ok_or("Selected template is unavailable")?;
+                let (selectable, coverage) = crate::pdf_extract::scan_coverage(bytes)?;
+                let text = if selectable.is_empty() {
+                    reviewed.clone()
+                } else {
+                    format!("{reviewed}\n{selectable}")
                 };
-                let text = if selectable.is_empty() { reviewed.clone() } else { format!("{reviewed}\n{selectable}") };
-                (text, coverage, Some(vision.clone()))
-            } else { match &input.template {
-                Some((name, bytes)) => match extract_template(name, bytes) {
-                    Ok((text, coverage)) => (text, coverage, None),
-                    Err(error)
-                        if name
-                            .rsplit_once('.')
-                            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
-                            && (error.to_ascii_lowercase().contains("no selectable text")
-                                || error == "PDF extractor returned invalid text") =>
-                    {
-                        let addr = "127.0.0.1:11434"
-                            .parse()
-                            .map_err(|_| "Invalid local runtime address")?;
-                        let (text, coverage, vision) = scanned_template(bytes, |bytes, page| {
-                            crate::pdf_transcribe::transcribe(
-                                bytes,
-                                page,
-                                "full",
-                                crate::pdf_extract::render_page,
-                                |image| {
-                                    if crate::resident_model()?.as_deref() != Some(model.as_str()) {
-                                        return Err(
+                (text, Some(coverage), Some(vision.clone()))
+            } else {
+                match &input.template {
+                    Some((name, bytes)) => match extract_template(name, bytes) {
+                        Ok((text, coverage)) => (text, coverage, None),
+                        Err(error)
+                            if name
+                                .rsplit_once('.')
+                                .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
+                                && (error.to_ascii_lowercase().contains("no selectable text")
+                                    || error == "PDF extractor returned invalid text") =>
+                        {
+                            let addr = "127.0.0.1:11434"
+                                .parse()
+                                .map_err(|_| "Invalid local runtime address")?;
+                            let (text, coverage, vision) =
+                                scanned_template(bytes, |bytes, page| {
+                                    crate::pdf_transcribe::transcribe(
+                                        bytes,
+                                        page,
+                                        "full",
+                                        crate::pdf_extract::render_page,
+                                        |image| {
+                                            if crate::resident_model()?.as_deref()
+                                                != Some(model.as_str())
+                                            {
+                                                return Err(
                                             "Resident model changed during template transcription"
                                                 .into(),
                                         );
-                                    }
-                                    let output = crate::visual_review::generate_vision(
-                                        addr,
-                                        &model,
-                                        image,
-                                        crate::pdf_transcribe::TRANSCRIBE_PROMPT,
-                                    )?;
-                                    if crate::resident_model()?.as_deref() != Some(model.as_str()) {
-                                        return Err(
+                                            }
+                                            let output = crate::visual_review::generate_vision(
+                                                addr,
+                                                &model,
+                                                image,
+                                                crate::pdf_transcribe::TRANSCRIBE_PROMPT,
+                                            )?;
+                                            if crate::resident_model()?.as_deref()
+                                                != Some(model.as_str())
+                                            {
+                                                return Err(
                                             "Resident model changed during template transcription"
                                                 .into(),
                                         );
-                                    }
-                                    Ok(output)
-                                },
-                            )
-                        })?;
-                        (text, coverage, Some(vision))
-                    }
-                    Err(error) => return Err(error),
-                },
-                None => (String::new(), None, None),
-            }};
+                                            }
+                                            Ok(output)
+                                        },
+                                    )
+                                })?;
+                            (text, coverage, Some(vision))
+                        }
+                        Err(error) => return Err(error),
+                    },
+                    None => (String::new(), None, None),
+                }
+            };
             let template: String = template.chars().take(8000).collect();
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
                 .map_err(|e| e.to_string())?

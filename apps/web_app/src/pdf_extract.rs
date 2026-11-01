@@ -175,11 +175,23 @@ fn run(
 }
 /// Extract selectable text and identify pages where none was found.
 pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
+    extract_coverage_inner(bytes, false)
+}
+
+/// Inventory scanned pages even when the whole document has no selectable text.
+pub(crate) fn scan_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
+    extract_coverage_inner(bytes, true)
+}
+
+fn extract_coverage_inner(
+    bytes: &[u8],
+    allow_empty: bool,
+) -> Result<(String, serde_json::Value), String> {
     let data = run(
         bytes,
         bytes,
         include_str!("pdf_extract.py"),
-        None,
+        allow_empty.then_some("allow-empty"),
         1_300_000,
         true,
     )?;
@@ -187,7 +199,7 @@ pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value)
         serde_json::from_slice(&data).map_err(|_| "PDF extractor returned invalid data")?;
     let text = result["text"]
         .as_str()
-        .filter(|text| !text.trim().is_empty() && text.len() <= 200_000)
+        .filter(|text| (allow_empty || !text.trim().is_empty()) && text.len() <= 200_000)
         .ok_or("PDF extractor returned invalid text")?;
     let pages = result["page_count"]
         .as_u64()
@@ -544,10 +556,35 @@ mod tests {
             })
             .unwrap();
         assert_eq!(template, "Fictional template");
-        assert!(coverage.is_none());
+        assert_eq!(
+            coverage.unwrap()["pages_without_selectable_text"],
+            serde_json::json!([1])
+        );
         assert_eq!(vision["page"], 1);
         assert!(observed_image.len() > 100);
         assert_eq!(vision["image"].as_str().unwrap(), observed_image);
+
+        let blank_then_scan = include_bytes!("../tests/fictional-blank-then-scanned.pdf");
+        assert!(super::extract(blank_then_scan).is_err());
+        let (_, scan_coverage) = super::scan_coverage(blank_then_scan).unwrap();
+        assert_eq!(
+            scan_coverage["pages_without_selectable_text"],
+            serde_json::json!([1, 2])
+        );
+        assert_eq!(
+            scan_coverage["structurally_blank_pages"],
+            serde_json::json!([1])
+        );
+        let (_, coverage, vision) =
+            crate::draft_task::scanned_template(blank_then_scan, |bytes, page| {
+                assert_eq!(page, 1);
+                crate::pdf_transcribe::transcribe(bytes, page, "full", super::render_page, |_| {
+                    Ok(serde_json::json!({"text":"Fictional template", "uncertain":false}))
+                })
+            })
+            .unwrap();
+        assert_eq!(coverage.unwrap(), scan_coverage);
+        assert_eq!(vision["page"], 2);
 
         let complete = include_bytes!("../tests/fictional-document-overlap.pdf");
         let (_, complete_coverage) = super::extract_with_coverage(complete).unwrap();
