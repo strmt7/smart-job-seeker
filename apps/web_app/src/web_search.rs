@@ -448,17 +448,29 @@ mod tests {
     #[test]
     #[ignore = "requires live Wiby network access"]
     fn live_wiby_search_returns_unverified_candidates() {
-        let url = request_url("https://wiby.me/", "software engineer jobs").unwrap();
-        let payload = fetch(&url).map_err(|error| error.message).unwrap();
-        let result = parse_provider(&payload, &url, &std::collections::HashSet::new()).unwrap();
-        assert_eq!(result["provider"], "wiby");
-        let results = result["results"].as_array().unwrap();
-        assert!(!results.is_empty());
-        println!(
-            "provider results={}, usable https candidates={}",
-            result["results_reported"],
-            results.len()
-        );
+        for query in [
+            "software engineer jobs",
+            "laboratory scientist vacancies",
+            "electrical engineer jobs switzerland",
+        ] {
+            let url = request_url("https://wiby.me/", query).unwrap();
+            let payload = fetch(&url).map_err(|error| error.message).unwrap();
+            let result = parse_provider(&payload, &url, &std::collections::HashSet::new()).unwrap();
+            assert_eq!(result["provider"], "wiby");
+            let results = result["results"].as_array().unwrap();
+            let titles_mentioning_jobs = results
+                .iter()
+                .filter(|item| {
+                    item["title"].as_str().is_some_and(|title| {
+                        let title = title.to_ascii_lowercase();
+                        ["job", "career", "vacanc", "hiring"]
+                            .iter()
+                            .any(|word| title.contains(word))
+                    })
+                })
+                .count();
+            println!("query={query:?}: provider results={}, usable https candidates={}, titles mentioning jobs={titles_mentioning_jobs}", result["results_reported"], results.len());
+        }
     }
     #[test]
     fn wiby_search_normalizes_results_and_uses_its_page_parameter() {
