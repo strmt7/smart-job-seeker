@@ -322,14 +322,23 @@ impl Store {
         if let Some(requisition) = usable_requisition.filter(|_| candidates.len() < 200) {
             let mut stmt = self.conn.prepare("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j INDEXED BY jobs_requisition_lookup WHERE lower(trim(j.requisition_id))=?1 AND j.id<>?2 ORDER BY j.id LIMIT 200")?;
             let mut count = 0usize;
+            let mut additional = 0usize;
             for row in stmt.query_map(
                 params![requisition.to_ascii_lowercase(), job.id.as_str()],
                 Self::row_to_job,
             )? {
                 count += 1;
                 let other = row?;
-                if seen.insert(other.id.as_str().to_owned()) {
+                if !seen.contains(other.id.as_str()) {
+                    // Do not let a widely reused identifier consume the
+                    // entire budget before ordinary employer comparisons.
+                    if !missing_employer && additional >= 50 {
+                        bounded = true;
+                        break;
+                    }
+                    seen.insert(other.id.as_str().to_owned());
                     candidates.push(other);
+                    additional += 1;
                 }
                 if candidates.len() >= 200 {
                     bounded = true;
@@ -1641,6 +1650,41 @@ mod tests {
         }
         assert!(store.possible_duplicates().unwrap().is_empty());
         assert!(!store.has_duplicate_hold("first").unwrap());
+    }
+
+    #[test]
+    fn crowded_requisition_keeps_capacity_for_same_employer_candidates() {
+        let mut store = Store::in_memory().unwrap();
+        for index in 0..210 {
+            let candidate = job(
+                &format!("other-{index:03}"),
+                "Unrelated role",
+                "Beta Staffing",
+                Some("REQ-481"),
+            );
+            store.upsert_job(&candidate).unwrap();
+        }
+        let neighbor = job(
+            "same-employer",
+            "Software engineer",
+            "Alpha Systems",
+            Some("OTHER-REQ"),
+        );
+        store.upsert_job(&neighbor).unwrap();
+        store.find_possible_duplicates(&neighbor).unwrap();
+        let source = job(
+            "source",
+            "Software engineer",
+            "Alpha Systems",
+            Some("REQ-481"),
+        );
+        store.upsert_job(&source).unwrap();
+        let pairs = store.find_possible_duplicates(&source).unwrap();
+        assert!(pairs
+            .iter()
+            .any(|pair| pair.job_a == "same-employer" || pair.job_b == "same-employer"));
+        assert!(store.has_duplicate_hold("source").unwrap());
+        assert!(store.duplicate_coverage_counts().unwrap().2 > 0);
     }
 
     #[test]
