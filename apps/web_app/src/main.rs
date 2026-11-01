@@ -911,7 +911,7 @@ fn reviewed_form_answers(
                     .iter()
                     .map(|item| {
                         item.as_str()
-                            .filter(|value| value.len() <= 4000)
+                            .filter(|value| value.encode_utf16().count() <= 4000)
                             .map(str::to_owned)
                     })
                     .collect();
@@ -921,7 +921,9 @@ fn reviewed_form_answers(
                 }
                 PacketValue::TextList(values)
             }
-            (kind, Value::String(value)) if !value.trim().is_empty() && value.len() <= 4000 => {
+            (kind, Value::String(value))
+                if !value.trim().is_empty() && value.encode_utf16().count() <= 4000 =>
+            {
                 match kind {
                     FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => {
                         PacketValue::Text(value.clone())
@@ -9302,6 +9304,22 @@ mod tests {
             manual_review: vec![],
         };
         assert_eq!(reviewed_form_answers(&json!([{"selector":"#question","value":"Research interests"},{"selector":"#country","value":"Germany"}]), &preview).unwrap().len(), 2);
+        // Browser maxlength counts UTF-16 units, not UTF-8 bytes. Preserve
+        // multilingual answers up to that boundary, including surrogate pairs.
+        for answer in ["é".repeat(4000), "😀".repeat(2000)] {
+            assert!(reviewed_form_answers(
+                &json!([{"selector":"#question","value":answer}]),
+                &preview
+            )
+            .is_ok());
+        }
+        for answer in ["é".repeat(4001), "😀".repeat(2001)] {
+            assert!(reviewed_form_answers(
+                &json!([{"selector":"#question","value":answer}]),
+                &preview
+            )
+            .is_err());
+        }
         let mut model_flagged = preview.clone();
         model_flagged
             .model_review_selectors

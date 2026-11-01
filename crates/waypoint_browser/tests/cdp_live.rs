@@ -1719,6 +1719,15 @@ fn text_entry_emits_keys_and_stops_when_focus_moves() {
     let unicode = "Renée 🧭";
     driver.execute(&fill("#name", unicode)).unwrap();
     driver.verify_text_value("#name", unicode).unwrap();
+    // More than 4,000 UTF-8 bytes but within the 4,000 UTF-16-unit form
+    // answer limit. Verify the browser can also read back the complete value.
+    let multilingual = "é".repeat(2001);
+    driver.execute(&fill("#name", &multilingual)).unwrap();
+    driver.verify_text_value("#name", &multilingual).unwrap();
+    assert_eq!(
+        driver.text_value_snapshot("#name").unwrap().value,
+        multilingual
+    );
     let long = "Relevant experience with international teams and résumé review. 🧭 ".repeat(3);
     driver.execute(&fill("#name", &long)).unwrap();
     driver.verify_text_value("#name", &long).unwrap();
