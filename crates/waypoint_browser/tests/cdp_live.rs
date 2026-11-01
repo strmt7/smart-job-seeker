@@ -87,6 +87,39 @@ fn verification_rejects_hidden_and_transparent_text_fields() {
         .walls
         .iter()
         .any(|wall| wall == "a custom control needs manual review"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Partial"));
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#partial".into(),
+            value: PacketValue::Text("Changed".into()),
+        })
+        .is_err());
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#reveal-partial".into(),
+            value: PacketValue::Text("reveal".into()),
+        })
+        .unwrap();
+    driver.verify_text_value("#partial", "Example").unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#focus-clipped".into(),
+            value: PacketValue::Text("Changed".into()),
+        })
+        .is_err());
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#reveal-focus".into(),
+            value: PacketValue::Text("reveal".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value("#focus-clipped", "Example")
+        .unwrap();
     driver.verify_text_value("#visible", "Example").unwrap();
     driver.verify_text_value("#offscreen", "Example").unwrap();
     driver

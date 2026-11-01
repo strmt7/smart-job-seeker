@@ -15,6 +15,10 @@
 <div style="position:relative;overflow:auto;width:60px;height:40px"><label for="scrollable">Scrollable</label><input id="scrollable" style="position:absolute;left:200px;top:0" value="Example"></div>
 <div style="position:relative;overflow:hidden;width:60px;height:40px"><input id="check-clipped" type="checkbox" checked style="position:absolute;left:200px;top:0"><select id="select-clipped" style="position:absolute;left:200px;top:0"><option selected>Alpha</option></select></div>
 <fieldset><legend>Clipped choice</legend><label><input id="radio-first" type="radio" name="mixed">Office</label><div style="position:relative;overflow:hidden;width:60px;height:40px"><label style="position:absolute;left:200px;top:0"><input id="radio-clipped" type="radio" name="mixed" checked>Remote</label></div></fieldset>
+<div id="partial-holder" style="position:relative;overflow:hidden;width:100px;height:40px"><label for="partial">Partial</label><input id="partial" style="position:absolute;left:50px;top:0;width:100px" value="Example"></div>
+<div id="focus-holder" style="position:relative;overflow:hidden;width:200px;height:40px"><input id="focus-clipped" style="position:absolute;left:0;top:0;width:100px" value="Example" onfocus="document.querySelector('#focus-holder').style.width='50px'"></div>
+<input id="reveal-focus" oninput="document.querySelector('#focus-holder').style.overflow='visible'">
+<input id="reveal-partial" oninput="document.querySelector('#partial-holder').style.overflow='visible'">
 <input id="hide-trigger" oninput="document.querySelector('#dynamic-holder').style.overflow='hidden'">
 <div id="dynamic-holder" style="position:relative;overflow:visible;width:60px;height:40px"><input id="dynamic-field" style="position:absolute;left:200px;top:0" value="Example"></div>
 </form></body></html>

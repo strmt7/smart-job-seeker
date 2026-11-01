@@ -960,7 +960,9 @@ impl CdpDriver {
                     }
                 }
             }
-            if (right <= left || bottom <= top) needsReview = true;
+            // A partly hidden answer cannot be visually reviewed in full.
+            // Allow subpixel layout rounding without treating it as clipping.
+            if (right <= left || bottom <= top || left > rect.left + 0.5 || right < rect.right - 0.5 || top > rect.top + 0.5 || bottom < rect.bottom - 0.5) needsReview = true;
             const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !needsReview;
             const parts = []; let current = this;
             while (current && current.nodeType === 1) {
