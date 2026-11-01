@@ -1219,6 +1219,133 @@ impl CdpDriver {
         Ok(())
     }
 
+    fn section_control_nodes(
+        &mut self,
+        section: &str,
+        deadline: Instant,
+    ) -> Result<(usize, Vec<(u64, u64)>), DriverError> {
+        let root = self.document_with_frames(false)?;
+        let root_id = root
+            .get("nodeId")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| DriverError("Document root unavailable".into()))?;
+        let sections = self
+            .cdp
+            .call(
+                "DOM.querySelectorAll",
+                json!({"nodeId":root_id,"selector":section}),
+            )
+            .map_err(derr)?;
+        let ids = sections
+            .get("nodeIds")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("Section lookup unavailable".into()))?;
+        if ids.len() != 1 {
+            return Err(DriverError(
+                "Application section is missing or ambiguous".into(),
+            ));
+        }
+        let section_id = ids[0]
+            .as_u64()
+            .ok_or_else(|| DriverError("Invalid section node".into()))?;
+        let controls = self.cdp.call("DOM.querySelectorAll", json!({"nodeId":section_id,"selector":"input:not([type=hidden]):not([type=file]):not([type=submit]):not([type=button]):not([type=image]), textarea, select"})).map_err(derr)?;
+        let nodes = controls
+            .get("nodeIds")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("Section controls unavailable".into()))?;
+        let total = nodes.len();
+        let mut result = Vec::new();
+        for node in nodes.iter().take(12) {
+            if Instant::now() >= deadline {
+                return Err(DriverError("Form discovery time limit reached".into()));
+            }
+            let id = node
+                .as_u64()
+                .ok_or_else(|| DriverError("Invalid control node".into()))?;
+            let description = self
+                .cdp
+                .call("DOM.describeNode", json!({"nodeId":id}))
+                .map_err(derr)?;
+            let backend = description
+                .pointer("/node/backendNodeId")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| DriverError("Control identity unavailable".into()))?;
+            result.push((id, backend));
+        }
+        Ok((total, result))
+    }
+
+    /// Reveal a bounded number of ordinary controls inside one identified section.
+    /// This scrolls only; it never focuses, types, attaches or activates controls.
+    pub fn reveal_section_controls(&mut self, section: &str) -> Result<(usize, bool), DriverError> {
+        let before = self.current_url()?;
+        let deadline = Instant::now() + Duration::from_secs(12);
+        // Only the explicit custom-control advisory is compatible with this
+        // optional scroll. Unknown walls stop the sweep as well.
+        let has_wall = |live: &LiveForm| {
+            live.walls.iter().any(|wall| {
+                wall != "a custom control needs manual review"
+                    && !wall.starts_with("a custom control needs manual review: ")
+            })
+        };
+        if has_wall(&self.inspect_current()?) {
+            return Err(DriverError(
+                "The page requires manual review before form discovery".into(),
+            ));
+        }
+        let (total, mut nodes) = self.section_control_nodes(section, deadline)?;
+        let identities: Vec<_> = nodes.iter().map(|(_, backend)| *backend).collect();
+        let truncated = total > 12;
+        let mut scrolled = 0;
+        while scrolled < total.min(12) {
+            if Instant::now() >= deadline {
+                return Err(DriverError("Form discovery time limit reached".into()));
+            }
+            let node = nodes[scrolled].0;
+            self.cdp
+                .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
+                .map_err(derr)?;
+            self.cdp.pump(Duration::from_millis(120));
+            if self.current_url()? != before {
+                return Err(DriverError("The page changed during form discovery".into()));
+            }
+            scrolled += 1;
+            if scrolled % 4 == 0 {
+                let live = self.inspect_current()?;
+                if has_wall(&live) {
+                    return Err(DriverError(
+                        "The page requires manual review during form discovery".into(),
+                    ));
+                }
+                if scrolled < total.min(12) {
+                    // DOM inspection can invalidate frontend node IDs. Requery
+                    // before continuing and refuse a changed control inventory.
+                    let (current_total, current_nodes) =
+                        self.section_control_nodes(section, deadline)?;
+                    if current_total != total
+                        || current_nodes
+                            .iter()
+                            .map(|(_, backend)| *backend)
+                            .ne(identities.iter().copied())
+                    {
+                        return Err(DriverError("Form controls changed during discovery".into()));
+                    }
+                    nodes = current_nodes;
+                }
+            }
+        }
+        let (current_total, current_nodes) = self.section_control_nodes(section, deadline)?;
+        if current_total != total
+            || current_nodes
+                .iter()
+                .map(|(_, backend)| *backend)
+                .ne(identities.iter().copied())
+        {
+            return Err(DriverError("Form controls changed during discovery".into()));
+        }
+        Ok((scrolled, truncated))
+    }
+
     /// Capture a bounded area around a known field after it has been scrolled
     /// into view. The crop may omit a distant label or obscured content.
     pub fn screenshot_field_context(&mut self, selector: &str) -> Result<String, DriverError> {

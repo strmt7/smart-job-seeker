@@ -282,6 +282,70 @@ pub(crate) fn relevant_experiences(
         .collect()
 }
 
+fn discovery_anchor_selector(current: &str, links: &[String]) -> Option<String> {
+    let target = crate::application_check::application_destination(current, links)?;
+    let from = url::Url::parse(current).ok()?;
+    let to = url::Url::parse(&target).ok()?;
+    let fragment = to.fragment()?;
+    if from.origin() != to.origin()
+        || from.path() != to.path()
+        || from.query() != to.query()
+        || fragment.contains('/')
+    {
+        return None;
+    }
+    Some(format!("[id=\"{fragment}\"]"))
+}
+
+fn should_seek_obscured_form(live: &waypoint_applications::driver::LiveForm) -> bool {
+    live.schema.fields.is_empty()
+        && live
+            .walls
+            .iter()
+            .any(|wall| wall.contains("A field may be obscured, clipped or transparent"))
+        && live
+            .walls
+            .iter()
+            .all(|wall| form_preview::is_custom_review(wall))
+}
+
+fn warn_missing_observed_fields(
+    previous: &waypoint_applications::driver::LiveForm,
+    current: &mut waypoint_applications::driver::LiveForm,
+) {
+    let missing: Vec<_> = previous
+        .schema
+        .fields
+        .iter()
+        .filter(|field| {
+            !current
+                .schema
+                .fields
+                .iter()
+                .any(|next| next.selector == field.selector)
+        })
+        .collect();
+    if !missing.is_empty() {
+        let labels: Vec<String> = missing
+            .iter()
+            .take(3)
+            .map(|field| {
+                let mut chars = field.label.chars().filter(|ch| !ch.is_control());
+                let mut label: String = chars.by_ref().take(80).collect();
+                if chars.next().is_some() {
+                    label.push('…');
+                }
+                if label.trim().is_empty() {
+                    "Unlabelled field".into()
+                } else {
+                    label
+                }
+            })
+            .collect();
+        current.walls.push(format!("a custom control needs manual review: {} field(s) seen earlier are absent from this inspection ({}{}). Scroll and inspect again; the form may be incomplete.", missing.len(), labels.join("; "), if missing.len() > labels.len() { "; more omitted" } else { "" }));
+    }
+}
+
 pub fn start(
     id: String,
     job_id: JobIdentityId,
@@ -327,7 +391,45 @@ pub fn start(
         let result = std::panic::catch_unwind(|| -> Result<_, String> {
             let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
                 .map_err(|e| e.to_string())?;
-            let (live, navigation_warning) = open_application_page(&mut driver, &url)?;
+            let (mut live, navigation_warning) = open_application_page(&mut driver, &url)?;
+            if should_seek_obscured_form(&live) {
+                let current = driver.current_url().map_err(|e| e.to_string())?;
+                let selector = driver.application_links().ok().and_then(|links| discovery_anchor_selector(&current, &links));
+                if let Some(selector) = selector {
+                    if driver.with_review_timeout(|browser| browser.scroll_field_into_view(&selector)).is_ok() {
+                        std::thread::sleep(std::time::Duration::from_millis(600));
+                        if driver.current_url().ok().as_deref() == Some(current.as_str()) {
+                            if let Ok(mut refreshed) = driver.with_review_timeout(|browser| browser.inspect_current()) {
+                                if refreshed.walls.iter().all(|wall| form_preview::is_custom_review(wall)) {
+                                    match driver.with_review_timeout(|browser| browser.reveal_section_controls(&selector)) {
+                                        Ok((count, truncated)) => {
+                                            std::thread::sleep(std::time::Duration::from_millis(500));
+                                            if let Ok(mut after) = driver.with_review_timeout(|browser| browser.inspect_current()) {
+                                                warn_missing_observed_fields(&refreshed, &mut after);
+                                                for wall in &refreshed.walls { if !after.walls.contains(wall) { after.walls.push(wall.clone()); } }
+                                                after.walls.push(format!("a custom control needs manual review: Scrolled through {count} controls in the application section{}; inspect the entire form.", if truncated { " (the 12-control limit was reached)" } else { "" }));
+                                                refreshed = after;
+                                            } else {
+                                                refreshed.walls.push("Could not inspect the form after scrolling; review manually.".into());
+                                            }
+                                        }
+                                        Err(_) => refreshed.walls.push("Could not safely inspect all controls while scrolling; review manually.".into()),
+                                    }
+                                }
+                                for wall in &live.walls { if !refreshed.walls.contains(wall) { refreshed.walls.push(wall.clone()); } }
+                                refreshed.walls.push("a custom control needs manual review: Scrolled to a possible application section; other fields may be outside the inspected area.".into());
+                                live = refreshed;
+                            }
+                        } else {
+                            live.walls.push("The page changed while locating the application section; inspect manually.".into());
+                        }
+                    }
+                }
+                if driver.current_url().ok().as_deref() != Some(current.as_str()) {
+                    live.schema.fields.clear();
+                    live.walls.push("The page changed during form discovery; inspect manually.".into());
+                }
+            }
             let relevant = relevant_experiences(&live.schema, &experiences);
             let mut preview = if let Some(model) = model {
                 let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -446,6 +548,119 @@ mod tests {
     use waypoint_applications::form_mapping::{
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
+
+    #[test]
+    fn discovery_scroll_target_is_one_safe_same_page_anchor() {
+        let base = "https://example.org/careers";
+        assert_eq!(
+            discovery_anchor_selector(base, &["#apply".into(), "#apply".into()]).as_deref(),
+            Some("[id=\"apply\"]")
+        );
+        for links in [
+            vec!["/apply"],
+            vec!["https://other.example/apply#apply"],
+            vec!["#submit"],
+            vec!["#apply?x"],
+            vec!["#apply", "#other"],
+        ] {
+            assert!(discovery_anchor_selector(
+                base,
+                &links.into_iter().map(str::to_owned).collect::<Vec<_>>()
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn discovery_scroll_never_bypasses_a_captcha_or_other_wall() {
+        let mut live = LiveForm { origin: "https://example.org".into(), schema: FormSchema { origin: "https://example.org".into(), fields: vec![], multi_step: false, steps: 1 }, walls: vec!["a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into()] };
+        assert!(should_seek_obscured_form(&live));
+        live.walls.push("captcha present".into());
+        assert!(!should_seek_obscured_form(&live));
+        live.walls.pop();
+        live.walls.push("login required".into());
+        assert!(!should_seek_obscured_form(&live));
+    }
+
+    #[test]
+    fn discovery_warns_when_previously_observed_fields_disappear() {
+        let field = FormField {
+            selector: "#previous".into(),
+            label: "Earlier field".into(),
+            field_type: FormFieldType::Text,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        let previous = LiveForm {
+            origin: "https://example.org".into(),
+            schema: FormSchema {
+                origin: "https://example.org".into(),
+                fields: vec![field.clone()],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let mut current = previous.clone();
+        warn_missing_observed_fields(&previous, &mut current);
+        assert!(current.walls.is_empty());
+        current.schema.fields.clear();
+        warn_missing_observed_fields(&previous, &mut current);
+        assert!(
+            current
+                .walls
+                .iter()
+                .any(|wall| wall.contains("1 field(s) seen earlier")
+                    && wall.contains("Earlier field"))
+        );
+        assert!(form_preview::is_custom_review(&current.walls[0]));
+    }
+
+    #[test]
+    #[ignore = "read-only public form; requires a browser and an explicitly supplied field selector"]
+    fn live_scroll_reveals_deferred_form_fields_without_filling() {
+        let url = std::env::var("WAYPOINT_SCROLL_TEST_URL").unwrap();
+        let selector = std::env::var("WAYPOINT_SCROLL_TEST_SELECTOR").unwrap();
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let initial = driver.open(&url).unwrap();
+        assert!(
+            initial.schema.fields.is_empty(),
+            "initial form state changed"
+        );
+        if let Ok(section) = std::env::var("WAYPOINT_SCROLL_TEST_SECTION") {
+            let (count, truncated) = driver.reveal_section_controls(&section).unwrap();
+            assert!(count > 0);
+            println!("section controls scrolled: {count}; truncated: {truncated}");
+        }
+        driver.scroll_field_into_view(&selector).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let refreshed = driver.inspect_current().unwrap();
+        assert!(
+            !refreshed.schema.fields.is_empty(),
+            "scroll did not reveal form fields"
+        );
+        println!(
+            "fields after scroll: {}; walls: {:?}",
+            refreshed.schema.fields.len(),
+            refreshed.walls
+        );
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
 
     #[test]
     fn lesson_selection_uses_live_non_sensitive_control_types() {

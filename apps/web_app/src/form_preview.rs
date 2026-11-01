@@ -758,6 +758,12 @@ fn build_preview(
     }
     if live.schema.fields.is_empty() {
         manual_review.push("No form fields were detected; navigation, login, an embedded frame, or manual review may be required".into());
+        if manual_review
+            .iter()
+            .any(|wall| wall.contains("A field may be obscured, clipped or transparent"))
+        {
+            manual_review.push("Some pages reveal fields as you scroll. Open the visible browser, scroll to the form and inspect again; an overlay or another issue may also be responsible.".into());
+        }
     }
     if live.schema.multi_step {
         manual_review.push("A possible multi-step application was detected. Inspect each section manually; later steps and submission status are unknown".into());
@@ -2801,6 +2807,26 @@ mod tests {
         mixed.walls.push("login required".into());
         let preview = suggest_without_model(mixed, &json!({"first_name":"A"}), "offline").unwrap();
         assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    fn hidden_empty_form_suggests_scrolling_without_promising_a_fix() {
+        let mut live = LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: FormSchema { origin: "https://example.invalid".into(), fields: vec![], multi_step: false, steps: 1 },
+            walls: vec!["a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into()],
+        };
+        let preview = suggest_without_model(live.clone(), &json!({}), "offline").unwrap();
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("reveal fields as you scroll")));
+        live.walls.clear();
+        let preview = suggest_without_model(live, &json!({}), "offline").unwrap();
+        assert!(!preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("reveal fields as you scroll")));
     }
 
     #[test]

@@ -157,6 +157,9 @@ pub fn is_sensitive_label(label: &str) -> bool {
         "date of birth",
         "social security",
         "national id",
+        "passport",
+        "nationality",
+        "citizenship",
         "consent",
         "i agree",
         "terms",
@@ -202,7 +205,7 @@ pub fn is_sensitive_label(label: &str) -> bool {
     ];
     MARKERS.iter().any(|m| l.contains(m))
         || l.split(|c: char| !c.is_alphanumeric())
-            .any(|word| matches!(word, "race" | "dob" | "ssn"))
+            .any(|word| matches!(word, "race" | "dob" | "ssn" | "age"))
 }
 
 /// How many bytes of a page's visible text were searched for a confirmation.
@@ -328,6 +331,11 @@ mod tests {
             "Política de privacidad",
             "Nationalité",
             "Race / ethnicity",
+            "Passport Country",
+            "Nationality",
+            "Citizenship status",
+            "Age",
+            "What is your age?",
         ] {
             assert!(is_sensitive_label(label), "{label} must be sensitive");
         }
@@ -337,6 +345,7 @@ mod tests {
             "First name",
             "Email address",
             "Grace",
+            "Manage projects",
             "Vorname",
             "E-Mail-Adresse",
             "Nombre",

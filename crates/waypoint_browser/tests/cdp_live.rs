@@ -44,6 +44,85 @@ fn file_url(name: &str) -> String {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn section_reveal_is_bounded_and_does_not_activate_controls() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_reveal_bounded.html")).unwrap();
+    assert_eq!(
+        driver.reveal_section_controls("#application").unwrap(),
+        (12, true)
+    );
+    assert!(driver.reveal_section_controls("#missing").is_err());
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn section_reveal_refuses_a_captcha_wall() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver.open(&file_url("form_reveal_captcha.html")).unwrap();
+    assert!(page.walls.iter().any(|wall| wall.contains("captcha")));
+    assert!(driver.reveal_section_controls("#application").is_err());
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn section_reveal_stops_when_scrolling_changes_the_page() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_reveal_navigation.html"))
+        .unwrap();
+    let error = driver
+        .reveal_section_controls("#application")
+        .expect_err("changed page must stop discovery");
+    assert!(error.to_string().contains("page changed"), "{error}");
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn section_reveal_stops_when_the_control_inventory_changes() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_reveal_mutation.html")).unwrap();
+    let error = driver
+        .reveal_section_controls("#application")
+        .expect_err("changed control inventory must stop discovery");
+    assert!(
+        error.to_string().contains("changed") || error.to_string().contains("manual review"),
+        "{error}"
+    );
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn section_reveal_stops_when_control_is_replaced_without_count_change() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_reveal_replacement.html"))
+        .unwrap();
+    let error = driver
+        .reveal_section_controls("#application")
+        .expect_err("replaced control must stop discovery");
+    assert!(
+        error.to_string().contains("changed") || error.to_string().contains("manual review"),
+        "{error}"
+    );
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn aria_required_tokens_are_case_insensitive() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

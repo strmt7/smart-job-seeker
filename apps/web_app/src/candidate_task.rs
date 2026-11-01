@@ -1584,6 +1584,33 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "read-only public listing; requires a real browser and a previously verified HTTP 404 URL"]
+    fn live_missing_listing_is_rejected_before_extraction() {
+        use waypoint_applications::driver::BrowserDriver;
+        let url =
+            std::env::var("WAYPOINT_MISSING_LISTING_URL").expect("public missing listing URL");
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let error = browser
+            .open(&url)
+            .expect_err("missing listing must not be accepted");
+        assert!(
+            error.to_string().contains("HTTP 404"),
+            "unexpected result: {error}"
+        );
+        assert!(browser.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     fn truncated_address_at_text_boundary_is_not_reported() {
         let mut email = email_link_candidates(&[]);
         add_page_text_contacts(
@@ -2198,10 +2225,11 @@ mod tests {
         )
         .0
         .is_err());
-        let (_, response) = call(
+        let (apply_result, response) = call(
             apply,
             json!({"task_id":"reinspection-preview","reviewed":true,"source":"observed_section"}),
         );
+        apply_result.expect("reviewed description update should succeed");
         let applied: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(applied["updated"], true);
