@@ -747,6 +747,31 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches a browser against a fictional hidden-control fixture"]
+fn required_hidden_proxy_is_not_exposed_as_a_text_answer() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_hidden_proxy.html")).unwrap();
+    assert!(live.schema.fields.iter().any(|field| field.label == "Name"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector.contains("location-proxy")));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("custom control needs manual review: Job location")));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a browser against a fictional pointer fixture"]
 fn pointer_moves_in_bounded_steps_between_clicks() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

@@ -87,6 +87,23 @@ exact matching, not an isolated measurement of model contribution. The CAPTCHA
 wall remained, no fields were filled or clicked, and the model was unloaded.
 Two runs on one page do not establish general mapping accuracy.
 
+## Hidden proxy follow-up
+
+The earlier 12-field schema included a required `aria-hidden` text input behind
+the visible Job location combobox. The browser reader now excludes controls
+under `aria-hidden` from ordinary suggestions and reports a directly marked,
+required hidden control for manual review. The visible combobox remains a
+separate custom-control review item. A fictional browser fixture and all 63
+browser integration fixtures passed; browser and web Clippy checks passed.
+
+One subsequent read-only GoGlobal check found 11 ordinary fields, reported both
+the Job location custom control and the required hidden control, and retained
+the three expected fictional contact suggestions. No field was filled or
+clicked and the local model was unloaded. The combobox is not automatically
+filled by this change; hidden controls nested under an `aria-hidden` ancestor
+are excluded, but only a required control directly marked `aria-hidden` gets
+the specific hidden-required warning.
+
 ## Staged rendering follow-up
 
 If the first inspection is empty, the bounded retry now checks for one unchanged

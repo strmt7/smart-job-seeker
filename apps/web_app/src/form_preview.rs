@@ -63,6 +63,7 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
         || reason == waypoint_browser::EMBEDDED_SCOPE_LIMIT_REVIEW
         || reason == waypoint_browser::NATIVE_DATALIST_REVIEW
         || reason == "an unavailable field needs manual review"
+        || reason == "a required hidden control needs manual review"
         || reason == "a required custom control needs manual review"
         || reason.starts_with("a required custom control needs manual review: ")
         || reason == "a custom control needs manual review"
@@ -1247,6 +1248,9 @@ mod tests {
     #[test]
     fn optional_custom_choice_is_a_reviewable_obligation() {
         assert!(is_custom_review("a custom control needs manual review"));
+        assert!(is_custom_review(
+            "a required hidden control needs manual review"
+        ));
         assert!(is_custom_review(
             "a custom control needs manual review: City"
         ));

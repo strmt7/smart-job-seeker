@@ -1775,32 +1775,44 @@ impl CdpDriver {
                 || attrs
                     .get("aria-required")
                     .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+            if required_custom
+                && matches!(tag.as_str(), "input" | "textarea" | "select")
+                && attrs
+                    .get("aria-hidden")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                && !attrs
+                    .get("type")
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("hidden"))
+            {
+                wall_flags.push("a required hidden control needs manual review".into());
+            }
             // Custom ARIA controls are not handled by the native-field driver.
             // Do not silently omit a required question on an otherwise readable form.
-            if dynamic_choice
-                || required_custom
-                    && !plain_editor
-                    && (attrs.get("contenteditable").is_some_and(|value| {
-                        matches!(
-                            value.to_ascii_lowercase().as_str(),
-                            "" | "true" | "plaintext-only"
-                        ) && !matches!(tag.as_str(), "input" | "textarea" | "select")
-                    }) || attrs.get("role").is_some_and(|role| {
-                        match role.to_ascii_lowercase().as_str() {
-                            "combobox" | "listbox" => tag != "select",
-                            "spinbutton" => {
-                                !(tag == "input"
-                                    && attrs
-                                        .get("type")
-                                        .is_some_and(|kind| kind.eq_ignore_ascii_case("number")))
+            if !hidden
+                && (dynamic_choice
+                    || required_custom
+                        && !plain_editor
+                        && (attrs.get("contenteditable").is_some_and(|value| {
+                            matches!(
+                                value.to_ascii_lowercase().as_str(),
+                                "" | "true" | "plaintext-only"
+                            ) && !matches!(tag.as_str(), "input" | "textarea" | "select")
+                        }) || attrs.get("role").is_some_and(|role| {
+                            match role.to_ascii_lowercase().as_str() {
+                                "combobox" | "listbox" => tag != "select",
+                                "spinbutton" => {
+                                    !(tag == "input"
+                                        && attrs.get("type").is_some_and(|kind| {
+                                            kind.eq_ignore_ascii_case("number")
+                                        }))
+                                }
+                                "slider" | "switch" => true,
+                                "textbox" | "searchbox" | "checkbox" | "radio" => {
+                                    !matches!(tag.as_str(), "input" | "textarea" | "select")
+                                }
+                                _ => false,
                             }
-                            "slider" | "switch" => true,
-                            "textbox" | "searchbox" | "checkbox" | "radio" => {
-                                !matches!(tag.as_str(), "input" | "textarea" | "select")
-                            }
-                            _ => false,
-                        }
-                    }))
+                        })))
             {
                 if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
                     let label = attrs
@@ -4255,7 +4267,12 @@ fn walk_with_visibility<F: FnMut(&Value, bool, bool) -> bool>(
 ) {
     let mut pending = vec![(node, in_control, hidden)];
     while let Some((current, inside_control, parent_hidden)) = pending.pop() {
-        let hidden = parent_hidden || attributes(current).contains_key("hidden");
+        let attrs = attributes(current);
+        let hidden = parent_hidden
+            || attrs.contains_key("hidden")
+            || attrs
+                .get("aria-hidden")
+                .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         if !cb(current, inside_control, hidden) {
             continue;
         }
