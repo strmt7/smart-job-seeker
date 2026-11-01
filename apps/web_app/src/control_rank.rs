@@ -556,6 +556,16 @@ mod tests {
             json!({"task_id":id,"index":0}),
         );
         let vision_id = vision["task_id"].as_str().unwrap();
+        let pending_vision = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-pending",
+            json!({}),
+        );
+        assert_eq!(pending_vision["task_id"], vision_id);
+        assert_eq!(pending_vision["session_id"], "fixture-session");
+        assert_eq!(pending_vision["rank_task_id"], id);
+        assert_eq!(pending_vision["control_index"], 0);
         assert!(ws
             .manual_review_reasons(&job_id)
             .unwrap()
@@ -580,6 +590,17 @@ mod tests {
             observed["status"], observed["comparison"], observed["buttons"]
         );
         assert_eq!(observed["status"], "complete");
+        assert_eq!(observed["session_id"], "fixture-session");
+        assert_eq!(observed["rank_task_id"], id);
+        assert_eq!(observed["control_index"], 0);
+        let replay = call(
+            &mut ws,
+            &mut session,
+            "/api/form/control-vision-status",
+            json!({"task_id":vision_id}),
+        );
+        assert_eq!(replay["rank_task_id"], id);
+        assert_eq!(replay["control_index"], 0);
         assert!(!ws
             .manual_review_reasons(&job_id)
             .unwrap()
