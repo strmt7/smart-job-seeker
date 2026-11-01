@@ -537,9 +537,12 @@ fn execute_and_verify_field(
     command: &BrowserCommand,
     completed: &mut Vec<Value>,
 ) -> Result<(), String> {
-    driver
-        .execute(command)
-        .map_err(|e| format!("Prefill stopped; review the form: {e}"))?;
+    driver.execute(command).map_err(|e| {
+        format!(
+            "Prefill stopped at {}; review the form: {e}",
+            field_review_label(&preview.schema, field)
+        )
+    })?;
     completed.push(serde_json::json!({"selector":field.selector,"label":field.label}));
     verify_filled_field(driver, preview, &field.selector)
         .map_err(|error| format!("After filling, {error}"))
@@ -1268,6 +1271,61 @@ mod tests {
         assert!(outcome.unwrap_err().contains("Name (field 1 of 2)"));
         assert_eq!(driver.written, vec!["#first"]);
         assert_eq!(completed.len(), 1);
+    }
+
+    #[test]
+    fn failed_fill_reports_field_and_constraint_without_marking_it_complete() {
+        struct RejectingDriver;
+        impl BrowserDriver for RejectingDriver {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                unreachable!()
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                Err(DriverError(
+                    "the value does not match the required format".into(),
+                ))
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                unreachable!()
+            }
+        }
+        let field = waypoint_applications::form_mapping::FormField {
+            selector: "#code".into(),
+            label: "Reference code".into(),
+            field_type: FormFieldType::Text,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            autocomplete: None,
+        };
+        let preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![field.clone()],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut completed = vec![];
+        let error = execute_and_verify_field(
+            &mut RejectingDriver,
+            &preview,
+            &field,
+            &BrowserCommand::Fill {
+                selector: "#code".into(),
+                value: PacketValue::Text("private-fixture".into()),
+            },
+            &mut completed,
+        )
+        .unwrap_err();
+        assert!(error.contains("Reference code"));
+        assert!(error.contains("required format"));
+        assert!(!error.contains("private-fixture"));
+        assert!(completed.is_empty());
     }
 
     #[test]

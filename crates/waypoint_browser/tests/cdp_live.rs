@@ -128,6 +128,40 @@ fn aria_invalid_tracks_visible_fields_and_correction() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn native_validation_reports_failure_without_exposing_input() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_native_constraint.html"))
+        .unwrap();
+    let fill = |selector: &str, text: &str| BrowserCommand::Fill {
+        selector: selector.into(),
+        value: PacketValue::Text(text.into()),
+    };
+    let error = driver.execute(&fill("#code", "AB-12")).unwrap_err().0;
+    assert!(error.contains("required format"), "{error}");
+    assert!(!error.contains("AB-12"));
+    driver.execute(&fill("#code", "AB-123")).unwrap();
+    let error = driver
+        .execute(&fill("#email", "fictional-at-example"))
+        .unwrap_err()
+        .0;
+    assert!(error.contains("expected type"), "{error}");
+    assert!(!error.contains("fictional-at-example"));
+    let changed = driver.verify_text_value("#code", "AB-123").unwrap_err().0;
+    assert!(changed.contains("custom validation error"), "{changed}");
+    assert!(!changed.contains("Fictional private detail"));
+    assert!(!changed.contains("AB-123"));
+    driver
+        .execute(&fill("#email", "fictional@example.test"))
+        .unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn radio_group_required_is_inherited_by_its_options() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

@@ -3917,6 +3917,47 @@ impl CdpDriver {
         Ok(())
     }
 
+    /// Report only fixed browser validity categories, never site-provided text
+    /// or the candidate's value. Failure to inspect remains an unknown reason.
+    fn native_text_validation_reason(
+        &mut self,
+        object: &str,
+        expected: &str,
+    ) -> Option<&'static str> {
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(expected) {
+            if (!this.isConnected || !(this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) || this.value !== expected || !this.willValidate || this.validity.valid) return null;
+            const v = this.validity;
+            if (v.valueMissing) return 'missing';
+            if (v.typeMismatch) return 'type';
+            if (v.patternMismatch) return 'pattern';
+            if (v.tooShort) return 'short';
+            if (v.tooLong) return 'long';
+            if (v.rangeUnderflow) return 'under';
+            if (v.rangeOverflow) return 'over';
+            if (v.stepMismatch) return 'step';
+            if (v.badInput) return 'input';
+            if (v.customError) return 'custom';
+            return 'other';
+        }"#, "arguments":[{"value":expected}], "returnByValue":true})).ok()?;
+        if result.get("exceptionDetails").is_some() {
+            return None;
+        }
+        match result.pointer("/result/value").and_then(Value::as_str)? {
+            "missing" => Some("a value is required"),
+            "type" => Some("the value does not match the expected type"),
+            "pattern" => Some("the value does not match the required format"),
+            "short" => Some("the value is too short"),
+            "long" => Some("the value is too long"),
+            "under" => Some("the value is below the allowed minimum"),
+            "over" => Some("the value is above the allowed maximum"),
+            "step" => Some("the value does not match the allowed increment"),
+            "input" => Some("the browser cannot interpret the value"),
+            "custom" => Some("the site supplied a custom validation error"),
+            "other" => Some("the browser reports invalid input"),
+            _ => None,
+        }
+    }
+
     fn fill(&mut self, selector: &str, value: &PacketValue) -> Result<(), DriverError> {
         let Some(node) = self.node_id(selector)? else {
             return Err(DriverError(format!("field {selector} not found")));
@@ -4047,6 +4088,9 @@ impl CdpDriver {
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
+                    if let Some(reason) = self.native_text_validation_reason(object, t) {
+                        return Err(DriverError(format!("The field retained the text but failed a browser constraint: {reason}. Review it manually")));
+                    }
                     return Err(DriverError(
                         "Text was not retained exactly or the field is invalid; review it manually"
                             .into(),
@@ -4731,6 +4775,11 @@ impl BrowserDriver for CdpDriver {
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
+            if let Some(reason) = self.native_text_validation_reason(object, expected) {
+                return Err(DriverError(format!(
+                    "A previously filled field failed a browser constraint: {reason}"
+                )));
+            }
             return Err(DriverError(
                 "A previously filled field changed or became invalid".into(),
             ));

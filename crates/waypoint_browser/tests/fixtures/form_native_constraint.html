@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><body><form>
+<label for="code">Fictional reference</label>
+<input id="code" type="text" pattern="[A-Z]{2}-[0-9]{3}">
+<label for="email">Email</label><input id="email" type="email" oninput="document.getElementById('code').setCustomValidity(this.value ? 'Fictional private detail' : '')">
+</form></body></html>

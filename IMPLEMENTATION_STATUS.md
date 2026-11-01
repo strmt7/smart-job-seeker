@@ -1,3 +1,8 @@
+## Native field validation feedback — 2026-11-01
+
+- When a text field retains the requested value but Chromium reports a native constraint failure, the prefill error now names the field and a fixed category such as invalid type, required format or a site-supplied custom error. The same category is available when verifying a previously filled field. The app does not copy the entered value or the site's custom validation text into this diagnostic; an uninspectable or changed field keeps the existing generic failure. Other validation mechanisms still need review.
+- A local fictional browser form exercised format and email-type failures, successful corrections, and a later custom validity change to an earlier field. It confirmed that diagnostics omitted both the fictional input and custom message. A focused prefill test checked the field label and that a failed fill is not marked complete. No employer was contacted or application submitted.
+
 ## Site error details — 2026-11-01
 
 - Invalid-field warnings now include visible messages referenced by `aria-errormessage` when the references resolve unambiguously. Hidden, duplicate, missing, oversized or over-budget references are reported as unavailable. Reads are bounded to 32 unique references, four per field and a short inspection budget; changed warning text requires a fresh inspection. Messages are page-provided and may contain user data. Other error patterns remain undetected.
