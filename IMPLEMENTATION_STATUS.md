@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Reviewed native time input — 2026-11-01
+
+- Reviewed form answers now support native time fields at minute precision (`HH:MM`). The browser checks the control type, site limits and validity, then verifies the retained value. A fictional browser fixture rejected invalid and out-of-range values and filled `13:30` without submission; the review API rejects malformed times. Other special native controls still need manual handling. Seconds and fractional seconds are not supported, and visual transcription may differ from the stored 24-hour value.
+
 ## Native special form controls — 2026-11-01
 
 - Native time, week, datetime-local, range and color inputs are now identified for manual review instead of being eligible for text mapping. Their labels and required status are reported, while ordinary fields remain reviewable. Local browser and preview fixtures and Clippy passed without entering values or submitting. These control types are not yet automatically filled.

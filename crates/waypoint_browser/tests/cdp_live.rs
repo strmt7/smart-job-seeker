@@ -125,13 +125,7 @@ fn native_special_controls_are_reported_for_manual_review() {
         .find(|field| field.label == "Name")
         .unwrap();
     assert!(!name.sensitive);
-    for label in [
-        "Interview time",
-        "Start week",
-        "Appointment",
-        "Preference",
-        "Colour",
-    ] {
+    for label in ["Start week", "Appointment", "Preference", "Colour"] {
         let field = live
             .schema
             .fields
@@ -146,7 +140,7 @@ fn native_special_controls_are_reported_for_manual_review() {
             |wall| wall.contains("custom control needs manual review") && wall.contains(label)
         ));
     }
-    for label in ["Interview time", "Start week"] {
+    for label in ["Start week"] {
         assert!(live
             .walls
             .iter()
@@ -155,6 +149,37 @@ fn native_special_controls_are_reported_for_manual_review() {
     assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
         && !entry.contains("clicked")
         && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn native_time_is_filled_and_verified_within_site_limits() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_native_special_controls.html"))
+        .unwrap();
+    let field = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Interview time")
+        .unwrap();
+    assert_eq!(field.field_type, FormFieldType::Time);
+    let fill = |value: &str| BrowserCommand::Fill {
+        selector: "#time".into(),
+        value: PacketValue::Date(value.into()),
+    };
+    assert!(driver.execute(&fill("25:00")).is_err());
+    assert!(driver.execute(&fill("08:30")).is_err());
+    assert!(driver.execute(&fill("2026-11-01")).is_err());
+    assert_eq!(driver.text_value_snapshot("#time").unwrap().value, "");
+    driver.ensure_text_replaceable("#time", "13:30").unwrap();
+    driver.execute(&fill("13:30")).unwrap();
+    driver.verify_text_value("#time", "13:30").unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
 }
 
 #[test]

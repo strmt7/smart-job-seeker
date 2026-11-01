@@ -851,6 +851,11 @@ fn reviewed_form_answers(
                     {
                         PacketValue::Date(value.clone())
                     }
+                    FormFieldType::Time
+                        if waypoint_applications::form_mapping::valid_iso_time(value) =>
+                    {
+                        PacketValue::Date(value.clone())
+                    }
                     FormFieldType::Select { options } | FormFieldType::Radio { options }
                         if options
                             .iter()
@@ -5845,6 +5850,7 @@ fn serve(
                         | waypoint_applications::form_mapping::FormFieldType::TextArea
                         | waypoint_applications::form_mapping::FormFieldType::Date
                         | waypoint_applications::form_mapping::FormFieldType::Month
+                        | waypoint_applications::form_mapping::FormFieldType::Time
                 )
             {
                 return Err("This field requires manual handling".into());
@@ -5966,6 +5972,7 @@ fn serve(
                                 | waypoint_applications::form_mapping::FormFieldType::TextArea
                                 | waypoint_applications::form_mapping::FormFieldType::Date
                                 | waypoint_applications::form_mapping::FormFieldType::Month
+                                | waypoint_applications::form_mapping::FormFieldType::Time
                                 | waypoint_applications::form_mapping::FormFieldType::MultiSelect { .. }
                                 | waypoint_applications::form_mapping::FormFieldType::Radio { .. }
                                 | waypoint_applications::form_mapping::FormFieldType::Checkbox
@@ -8533,6 +8540,16 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        selector: "#time".into(),
+                        label: "Interview time".into(),
+                        field_type: FormFieldType::Time,
+                        required: false,
+                        sensitive: false,
+                        editing_mode: None,
+                        max_length_utf16: None,
+                        autocomplete: None,
+                    },
+                    FormField {
                         selector: "#skills".into(),
                         label: "Skills".into(),
                         field_type: FormFieldType::MultiSelect {
@@ -8597,6 +8614,13 @@ mod tests {
             &preview
         )
         .is_err());
+        assert!(
+            reviewed_form_answers(&json!([{"selector":"#time","value":"13:30"}]), &preview).is_ok()
+        );
+        assert!(
+            reviewed_form_answers(&json!([{"selector":"#time","value":"24:30"}]), &preview)
+                .is_err()
+        );
         assert!(reviewed_form_answers(
             &json!([{"selector":"#skills","value":["Rust","Python"]}]),
             &preview

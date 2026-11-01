@@ -252,7 +252,10 @@ fn check_existing_value(
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                 PacketValue::Text(_),
             )
-            | (FormFieldType::Date | FormFieldType::Month, PacketValue::Date(_)) => {
+            | (
+                FormFieldType::Date | FormFieldType::Month | FormFieldType::Time,
+                PacketValue::Date(_),
+            ) => {
                 let snapshot = driver
                     .text_value_snapshot(&field.selector)
                     .map_err(|error| error.to_string())?;
@@ -287,7 +290,10 @@ fn check_existing_value(
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
             PacketValue::Text(text),
         )
-        | (FormFieldType::Date | FormFieldType::Month, PacketValue::Date(text)) => driver
+        | (
+            FormFieldType::Date | FormFieldType::Month | FormFieldType::Time,
+            PacketValue::Date(text),
+        ) => driver
             .ensure_text_replaceable(&field.selector, text)
             .map_err(|error| format!("{} needs manual review: {error}", field.label)),
         (FormFieldType::Select { .. }, PacketValue::Text(label)) => driver
@@ -424,6 +430,9 @@ pub fn apply_reviewed_text_fields_with_replacements(
             }
             (FormFieldType::Month, PacketValue::Date(value)) => {
                 waypoint_applications::form_mapping::valid_iso_month(value)
+            }
+            (FormFieldType::Time, PacketValue::Date(value)) => {
+                waypoint_applications::form_mapping::valid_iso_time(value)
             }
             (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -607,9 +616,10 @@ pub fn verify_filled_field(
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
             PacketValue::Text(value),
         )
-        | (FormFieldType::Date | FormFieldType::Month, PacketValue::Date(value)) => {
-            driver.verify_text_value(selector, value)
-        }
+        | (
+            FormFieldType::Date | FormFieldType::Month | FormFieldType::Time,
+            PacketValue::Date(value),
+        ) => driver.verify_text_value(selector, value),
         (FormFieldType::MultiSelect { .. }, PacketValue::TextList(labels)) => {
             driver.verify_choice(&BrowserCommand::SelectOptions {
                 selector: selector.into(),
@@ -2773,7 +2783,7 @@ mod tests {
             .schema
             .fields
             .iter()
-            .filter(|field| field.label != "Name")
+            .filter(|field| field.label != "Name" && field.label != "Interview time")
             .map(|field| field.selector.clone())
             .collect();
         let preview = suggest_without_model(

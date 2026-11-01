@@ -20,6 +20,7 @@ pub enum FormFieldType {
     File,
     Date,
     Month,
+    Time,
     Radio { options: Vec<String> },
 }
 
@@ -131,6 +132,16 @@ pub fn valid_iso_month(value: &str) -> bool {
             .is_ok_and(|month| (1..=12).contains(&month))
 }
 
+/// A minute-precision time accepted by native time inputs.
+pub fn valid_iso_time(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 5
+        && bytes[2] == b':'
+        && [0, 1, 3, 4].iter().all(|&i| bytes[i].is_ascii_digit())
+        && value[0..2].parse::<u32>().is_ok_and(|hour| hour < 24)
+        && value[3..5].parse::<u32>().is_ok_and(|minute| minute < 60)
+}
+
 /// Accept a complete Gregorian calendar date in the format used by native date inputs.
 pub fn valid_iso_date(value: &str) -> bool {
     let b = value.as_bytes();
@@ -235,6 +246,7 @@ pub fn validate_mapping(
             ) => text_fits_field(f, text),
             (FormFieldType::Date, PacketValue::Date(date)) => valid_iso_date(date),
             (FormFieldType::Month, PacketValue::Date(date)) => valid_iso_month(date),
+            (FormFieldType::Time, PacketValue::Date(time)) => valid_iso_time(time),
             (FormFieldType::Checkbox, PacketValue::Bool(_)) => true,
             (FormFieldType::Select { options }, PacketValue::Text(t)) => options.contains(t),
             (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -367,6 +379,16 @@ mod tests {
             "é020-01",
         ] {
             assert!(!valid_iso_month(invalid));
+        }
+    }
+
+    #[test]
+    fn native_time_requires_a_valid_minute_precision_time() {
+        for value in ["00:00", "09:05", "23:59"] {
+            assert!(valid_iso_time(value));
+        }
+        for value in ["24:00", "12:60", "9:05", "09:05:00", "é:05", ""] {
+            assert!(!valid_iso_time(value));
         }
     }
 

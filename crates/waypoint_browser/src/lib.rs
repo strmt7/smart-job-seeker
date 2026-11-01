@@ -3604,7 +3604,7 @@ impl CdpDriver {
             let unsupported_native = control.tag == "input"
                 && matches!(
                     input_type.as_str(),
-                    "time" | "week" | "datetime-local" | "range" | "color"
+                    "week" | "datetime-local" | "range" | "color"
                 );
             if unsupported_native {
                 let prefix = if required {
@@ -3753,6 +3753,7 @@ impl CdpDriver {
                 (_, "email") => FormFieldType::Email,
                 (_, "date") => FormFieldType::Date,
                 (_, "month") => FormFieldType::Month,
+                (_, "time") => FormFieldType::Time,
                 ("textarea", _) => FormFieldType::TextArea,
                 (_, _) if supported_editing_host(&control.tag, &control.attrs) => {
                     FormFieldType::TextArea
@@ -4002,8 +4003,10 @@ impl CdpDriver {
                     "date"
                 } else if waypoint_applications::form_mapping::valid_iso_month(d) {
                     "month"
+                } else if waypoint_applications::form_mapping::valid_iso_time(d) {
+                    "time"
                 } else {
-                    return Err(DriverError("Invalid calendar date or month".into()));
+                    return Err(DriverError("Invalid calendar date, month or time".into()));
                 };
                 let resolved = self
                     .cdp
@@ -4581,7 +4584,7 @@ impl BrowserDriver for CdpDriver {
             const editable = (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]');
             let value;
             if (editable) value = this.innerText;
-            else if ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) value = this.value;
+            else if ((this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month','time'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) value = this.value;
             else return null;
             return typeof value === 'string' && value.length <= 4000 ? {value} : null;
         }"#,"returnByValue":true})).map_err(derr)?;
@@ -4619,7 +4622,7 @@ impl BrowserDriver for CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Existing field value cannot be inspected".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(expected) { if (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) return false; const editable = (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]'); if (editable) return this.innerText === '' || this.innerText === expected; if (!(this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month'].includes(this.type))) || this.matches(':disabled') || this.readOnly || this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) return false; return this.value === '' || this.value === expected; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(expected) { if (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) return false; const editable = (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]'); if (editable) return this.innerText === '' || this.innerText === expected; if (!(this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month','time'].includes(this.type))) || this.matches(':disabled') || this.readOnly || this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) return false; return this.value === '' || this.value === expected; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
@@ -4645,7 +4648,7 @@ impl BrowserDriver for CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.getClientRects().length) return false; for (let node = this, depth = 0; node; node = node.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(node); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.getClientRects().length) return false; for (let node = this, depth = 0; node; node = node.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(node); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month','time'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
         if result.get("exceptionDetails").is_some()
             || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {
