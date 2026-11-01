@@ -1050,6 +1050,7 @@ mod tests {
         use waypoint_applications::driver::BrowserDriver;
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".into());
+        let (addr, context) = benchmark_target(&model).unwrap();
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fictional-visual-placeholder.html")
             .canonicalize()
@@ -1059,11 +1060,11 @@ mod tests {
         browser.open(url.as_str()).unwrap();
         let image = browser.screenshot_base64().unwrap();
         let result = analyze_with_context(
-            "127.0.0.1:11434".parse().unwrap(),
+            addr,
             &model,
             &image,
             &[("Email".into(), "avery@example.invalid".into())],
-            Some(4096),
+            context,
         )
         .unwrap();
         println!("Fictional raw placeholder result: {result}");
@@ -1076,15 +1077,7 @@ mod tests {
         use waypoint_applications::driver::BrowserDriver;
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".to_owned());
-        let addr = "127.0.0.1:11434".parse().unwrap();
-        let (_, bytes) =
-            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
-        let ps: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some(model.as_str())
-        );
-        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let (addr, context) = benchmark_target(&model).unwrap();
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fictional-visual-placeholder.html");
         let url = format!(
@@ -1098,7 +1091,7 @@ mod tests {
             ("Full name".into(), "Avery Example".into()),
             ("Email".into(), "avery@example.invalid".into()),
         ];
-        let mut result = analyze_with_context(addr, &model, &image, &expected, Some(4096)).unwrap();
+        let mut result = analyze_with_context(addr, &model, &image, &expected, context).unwrap();
         let schema = driver.inspect_current().unwrap().schema;
         let preview = crate::form_preview::FormPreview {
             schema,

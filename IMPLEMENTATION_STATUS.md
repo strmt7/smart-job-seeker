@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Placeholder review with local vision — 2026-11-01
+
+- In a fictional browser form (fixture SHA-256 `667ebb2deecdcdd7d9bbe423a3fbdeb5b577eb01f4fe991123e73624c4eb4f0a`), CPU-hosted `gemma4:12b-it-q4_K_M` transcribed an empty email field's placeholder as though it were an entered value, despite the prompt. The app's separate live DOM check downgraded that apparent match to unobserved; an actually entered name remained confirmed. A raw-model qualification assertion failed in the first run, while a separate pipeline cross-check passed in a second run. This is one fixture and does not establish general model or site behavior.
+- The CPU-only browser and model test took 26.86 seconds after preload, with at least 17.56 GiB available RAM and 27.2 GiB after cleanup. The shared model service remained empty. Both placeholder qualification tests can now use the explicitly isolated test runtime; production model eligibility is unchanged. Logs are retained under `target/model-eval/isolated-gemma-placeholder-20261101` and `target/model-eval/isolated-gemma-placeholder-crosscheck-20261101`. Lint passed.
+
 ## Dense form visual comparison — 2026-11-01
 
 - A CPU-only `gemma4:12b-it-q4_K_M` run on a fictional 16-field image (SHA-256 `de8310338c0257db2f0cc57517dd0eee675b0d10ef71f0486189c5473d65f68e`) transcribed all values but prefixed each label with the visible section heading. The comparison initially treated all 16 as unobserved. It now accepts a section-prefixed observation for an unqualified label only when the expected leaf label and matching observation are unique; repeated and ambiguous labels remain unobserved.
