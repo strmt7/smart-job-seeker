@@ -147,6 +147,43 @@ def add_libreoffice(archive, root):
         hashes['dependencies/libreoffice/' + relative] = sha.hexdigest()
     return hashes
 
+
+def add_chromium(archive, root):
+    """Bundle a supplied browser and its notices without changing the host."""
+    root = Path(root).resolve(strict=True)
+    if not root.is_dir() or not (root / 'chrome.exe').is_file():
+        raise ValueError('Chromium directory must contain chrome.exe')
+    if not (root / 'LICENSES.chromium.html').is_file():
+        raise ValueError('Chromium directory must contain LICENSES.chromium.html')
+    files, seen, total = [], set(), 0
+    for path in root.rglob('*'):
+        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+            raise ValueError('Chromium distribution contains a link or junction')
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        parts = relative.split('/')
+        if (any(part in ('', '.', '..') or part.endswith(('.', ' ')) for part in parts)
+            or any(re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in parts)
+            or re.search(r'[\\:*?"<>|\x00-\x1f]', relative)
+            or relative.casefold() in seen):
+            raise ValueError(f'Unsupported Chromium file path: {relative}')
+        seen.add(relative.casefold())
+        total += path.stat().st_size
+        files.append((path, relative))
+        if len(files) > 50000 or total > 2 * 1024**3:
+            raise ValueError('Chromium distribution exceeds package limits')
+    hashes = {}
+    for path, relative in sorted(files):
+        name = 'dependencies/chromium/' + relative
+        digest = hashlib.sha256()
+        with path.open('rb') as src, archive.open('app/' + name, 'w') as dest:
+            while chunk := src.read(1024 * 1024):
+                digest.update(chunk)
+                dest.write(chunk)
+        hashes[name] = digest.hexdigest()
+    return hashes
+
 def add_pdf_wheels(archive, wheel_dir=None):
     for name, url, expected_hash in PDF_WHEELS:
         with tempfile.TemporaryFile() as temporary:
@@ -341,6 +378,7 @@ def main():
     parser.add_argument('--build-dir', help='Directory containing the executable and its build receipt (defaults to target/<profile>)')
     parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
+    parser.add_argument('--chromium-dir', help='Optional complete, redistributable Chromium directory with license notices')
     ollama = parser.add_mutually_exclusive_group()
     ollama.add_argument('--ollama-archive-dir', help='Optional directory of pinned Ollama archives for offline packaging')
     ollama.add_argument('--no-ollama', action='store_true', help='Do not bundle the local model runtime')
@@ -455,6 +493,7 @@ def main():
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
             office_hashes = add_libreoffice(archive, office_root) if office_root else {}
+            chromium_hashes = add_chromium(archive, args.chromium_dir) if args.chromium_dir else {}
             if args.no_ollama:
                 ollama_hashes = {}
             elif args.ollama_from_package:
@@ -481,10 +520,11 @@ def main():
                 for index,path in enumerate(files): add(path,f'app/licenses/crates/{name}-{version}/{index}-{path.name}')
                 inventory.append({'name':name,'version':version,'license':license_expr,'files':len(files)})
             archive.writestr('app/licenses/dependencies.json',json.dumps(inventory,indent=2))
-            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'ollama_files':ollama_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
+            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'ollama_files':ollama_hashes,'chromium_files':chromium_hashes,'note':'Prototype bundle. No applications are sent by the interface.'},indent=2))
             office_note = 'LibreOffice is bundled.' if office_hashes else 'LibreOffice is not bundled and needs separate setup for document conversion.'
             ollama_note = 'Ollama is bundled; start it from Settings.' if ollama_hashes else 'Ollama is not bundled and needs separate setup.'
-            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} Microsoft Visual C++ runtime and a Chromium browser may need separate installation. See app/README.md.\n')
+            browser_note = 'A supplied Chromium browser is bundled.' if chromium_hashes else 'A Chromium browser needs separate installation.'
+            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} {browser_note} Microsoft Visual C++ runtime may need separate installation. See app/README.md.\n')
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise

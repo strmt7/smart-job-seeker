@@ -23,7 +23,7 @@ try {
     $installer = Join-Path $testRoot 'install.ps1'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-package.ps1') -Destination $installer
     $app = Join-Path $testRoot 'app'
-    foreach ($name in @('waypoint_web.exe', 'libcrypto-test.dll', 'dependencies/python/python.exe', 'dependencies/libreoffice/program/soffice.com', 'dependencies/libreoffice/LICENSE.html', 'dependencies/ollama/ollama.exe', 'dependencies/ollama/LICENSE', 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE', 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll', 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')) {
+    foreach ($name in @('waypoint_web.exe', 'libcrypto-test.dll', 'dependencies/python/python.exe', 'dependencies/libreoffice/program/soffice.com', 'dependencies/libreoffice/LICENSE.html', 'dependencies/chromium/chrome.exe', 'dependencies/chromium/LICENSES.chromium.html', 'dependencies/ollama/ollama.exe', 'dependencies/ollama/LICENSE', 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE', 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll', 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')) {
         $file = Join-Path $app $name
         New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
         [IO.File]::WriteAllText($file, "fictional fixture: $name")
@@ -40,6 +40,10 @@ try {
         openssl_dll = 'libcrypto-test.dll'
         openssl_sha256 = Hash 'libcrypto-test.dll'
         python_files = @{ 'dependencies/python/python.exe' = (Hash 'dependencies/python/python.exe') }
+        chromium_files = @{
+            'dependencies/chromium/chrome.exe' = (Hash 'dependencies/chromium/chrome.exe')
+            'dependencies/chromium/LICENSES.chromium.html' = (Hash 'dependencies/chromium/LICENSES.chromium.html')
+        }
         ollama_files = @{
             'dependencies/ollama/ollama.exe' = (Hash 'dependencies/ollama/ollama.exe')
             'dependencies/ollama/LICENSE' = (Hash 'dependencies/ollama/LICENSE')
@@ -115,6 +119,24 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/hidden.dll') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $installed 'hidden-top.txt') -PathType Leaf)) { throw 'Hidden package files were not copied.' }
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/ollama/ollama.exe') -PathType Leaf)) { throw 'Bundled local runtime was not copied.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/chromium/chrome.exe') -PathType Leaf)) { throw 'Bundled browser was not copied.' }
+    $extraBrowserFile = Join-Path $app 'dependencies/chromium/unlisted.dll'
+    [IO.File]::WriteAllText($extraBrowserFile, 'unlisted fixture')
+    $rejected = $false
+    try { & $installer -InstallDirectory (Join-Path $testRoot 'unlisted-browser') -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'unlisted file') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'An unlisted browser file was not rejected.' }
+    Remove-Item -LiteralPath $extraBrowserFile
+    [IO.File]::WriteAllText((Join-Path $app 'dependencies/chromium/chrome.exe'), 'damaged')
+    $rejected = $false
+    try { & $installer -InstallDirectory (Join-Path $testRoot 'damaged-browser') -NoShortcut } catch {
+        if ($_.Exception.Message -notmatch 'missing or damaged') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'A damaged browser was not rejected.' }
+    [IO.File]::WriteAllText((Join-Path $app 'dependencies/chromium/chrome.exe'), 'fictional fixture: dependencies/chromium/chrome.exe')
     $runtimeLink = Join-Path $app 'dependencies/ollama/linked-directory'
     New-Item -ItemType Junction -Path $runtimeLink -Target $other | Out-Null
     try {

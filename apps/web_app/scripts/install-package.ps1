@@ -129,6 +129,40 @@ if ($null -ne $manifest.ollama_files) {
     $ollamaFiles = @($manifest.ollama_files.PSObject.Properties)
 }
 $ollamaRoot = Join-Path $source 'dependencies/ollama'
+$chromiumFiles = @()
+if ($null -ne $manifest.chromium_files) { $chromiumFiles = @($manifest.chromium_files.PSObject.Properties) }
+$chromiumRoot = Join-Path $source 'dependencies/chromium'
+if ($chromiumFiles.Count -eq 0 -and (Test-Path -LiteralPath $chromiumRoot)) {
+    throw 'The package contains an unlisted Chromium runtime.'
+}
+if ($chromiumFiles.Count -gt 0) {
+    $expectedChromium = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    if ($chromiumFiles.Count -gt 50000 -or -not $manifest.chromium_files.'dependencies/chromium/chrome.exe' -or -not $manifest.chromium_files.'dependencies/chromium/LICENSES.chromium.html') {
+        throw 'Package manifest contains an incomplete Chromium runtime inventory.'
+    }
+    foreach ($entry in $chromiumFiles) {
+        $name = $entry.Name
+        if (-not $name.StartsWith('dependencies/chromium/', [StringComparison]::Ordinal) -or $name -match '[\\:*?"<>|\x00-\x1f]' -or $name -match '(^|/)\.{1,2}(/|$)|//|[. ](/|$)' -or $entry.Value -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'Package manifest contains an invalid Chromium runtime entry.'
+        }
+        if (-not $expectedChromium.Add($name)) { throw 'Package manifest contains duplicate Chromium runtime entries.' }
+        $file = Join-Path $source $name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+            throw "Bundled Chromium file is missing or damaged: $name. Extract the complete package and try again."
+        }
+    }
+    $rootItem = Get-Item -LiteralPath $chromiumRoot -Force -ErrorAction Stop
+    if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The bundled Chromium directory cannot be a link.' }
+    foreach ($item in @(Get-ChildItem -LiteralPath $chromiumRoot -Force -Recurse -ErrorAction Stop)) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The bundled Chromium runtime cannot contain links.' }
+        if (-not $item.PSIsContainer) {
+            if (-not $item.FullName.StartsWith($sourcePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'The bundled Chromium runtime escaped the package directory.' }
+            $relative = $item.FullName.Substring($sourcePrefix.Length).Replace('\', '/')
+            if (-not $expectedChromium.Remove($relative)) { throw 'The bundled Chromium runtime contains an unlisted file.' }
+        }
+    }
+    if ($expectedChromium.Count -ne 0) { throw 'The bundled Chromium inventory was not fully verified.' }
+}
 if ($ollamaFiles.Count -eq 0 -and (Test-Path -LiteralPath $ollamaRoot)) {
     throw 'The package contains an unlisted Ollama runtime.'
 }
@@ -199,7 +233,7 @@ try {
             throw "Installed package file is missing or damaged: $($entry.Name)."
         }
     }
-    foreach ($entry in (@($pythonFiles) + @($officeFiles) + @($ollamaFiles))) {
+    foreach ($entry in (@($pythonFiles) + @($officeFiles) + @($ollamaFiles) + @($chromiumFiles))) {
         $file = Join-Path $InstallDirectory $entry.Name
         if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
             throw "Installed dependency file is missing or damaged: $($entry.Name)."

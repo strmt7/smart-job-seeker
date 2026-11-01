@@ -93,6 +93,29 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
 
 print('Fictional LibreOffice bundle and license checks passed.')
 
+with tempfile.TemporaryDirectory(prefix='waypoint-chromium-fixture-', dir=target) as temp:
+    root = Path(temp) / 'browser'
+    root.mkdir()
+    (root / 'chrome.exe').write_bytes(b'fictional browser')
+    (root / 'LICENSES.chromium.html').write_text('fictional notices', encoding='utf-8')
+    (root / 'resources.pak').write_bytes(b'fictional resources')
+    output = Path(temp) / 'browser.zip'
+    with zipfile.ZipFile(output, 'w') as archive:
+        inventory = packager.add_chromium(archive, root)
+    with zipfile.ZipFile(output) as archive:
+        assert len(inventory) == 3
+        for name, digest in inventory.items():
+            assert hashlib.sha256(archive.read('app/' + name)).hexdigest() == digest
+    (root / 'LICENSES.chromium.html').unlink()
+    try:
+        with zipfile.ZipFile(output, 'w') as archive:
+            packager.add_chromium(archive, root)
+    except ValueError as error:
+        assert 'LICENSES.chromium.html' in str(error)
+    else:
+        raise AssertionError('A browser without notices was accepted')
+print('Fictional Chromium bundle and notice checks passed.')
+
 # Exercise the pinned-runtime bundler using tiny fictional archives.
 with tempfile.TemporaryDirectory(prefix='waypoint-ollama-fixture-', dir=target) as temp:
     root = Path(temp)
