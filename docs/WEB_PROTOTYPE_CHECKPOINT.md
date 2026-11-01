@@ -1384,3 +1384,5 @@ Duplicate decisions already reopened when core job fields changed. They now also
 Reopened duplicate pairs now show the most recent prior decision, which listing was kept when applicable, and which listing changed. An index keeps the latest-history lookup bounded per pair. Fictional store and UI-helper checks passed; decisions predating the history migration remain unavailable.
 
 Web duplicate decisions now carry a per-pair revision. Material job or description changes advance it even while review is pending; stale and repeated decisions are rejected atomically, and the interface refreshes on failure. Fictional store and local API checks passed, including a listing change between state read and decision. This protects the web decision path; older internal store calls remain separate.
+
+New application-record job snapshots now write the revision-bound remote indicator as true, false or null; null means the status is unconfirmed. The snapshot also explains that the indicator does not establish geographic eligibility or hybrid arrangements. Fictional archive tests covered all three states. Existing snapshots remain unchanged.

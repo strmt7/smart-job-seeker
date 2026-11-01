@@ -946,6 +946,7 @@ impl AttemptRecord {
             .map_err(|e| e.to_string())?
             .ok_or("Job not found")?;
         let description = ws.job_description(id).map_err(|e| e.to_string())?;
+        let remote_status = ws.job_remote_status(id).map_err(|e| e.to_string())?;
         let captured = ws.job_capture(id).map_err(|e| e.to_string())?;
         let source_only = ws.job_source_only(id).map_err(|e| e.to_string())?;
         let requested_url = |metadata: &[u8]| {
@@ -1002,7 +1003,8 @@ impl AttemptRecord {
             "posted_at": job.posted_at,
             "first_seen": job.first_seen,
             "last_seen": job.last_seen,
-            "remote": job.remote,
+            "remote": remote_status,
+            "remote_status_note": "Null means unconfirmed. A true or false indicator does not establish geographic eligibility or hybrid arrangements.",
             "snapshot_at": timestamp,
             "description_available": description.is_some(),
             "description_sha256": description.as_deref().map(|text| Sha256Digest::of(text).as_str().to_owned()),
@@ -2314,6 +2316,69 @@ mod tests {
     }
 
     #[test]
+    fn attempt_records_unknown_remote_status_as_null() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let id = JobIdentityId::new("unknown-remote-fixture").unwrap();
+        ws.import_manual_job(
+            StoredJob {
+                id: id.clone(),
+                title: "Engineer".into(),
+                employer: "Example".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some("https://example.org/role".into()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            },
+            Some("Fictional listing"),
+        )
+        .unwrap();
+        let record = AttemptRecord::start(&ws, &id, "unknown-fixture", 1)
+            .unwrap()
+            .unwrap();
+        let listing: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("original-job.json")).unwrap())
+                .unwrap();
+        assert!(listing["remote"].is_null());
+        assert!(listing["remote_status_note"]
+            .as_str()
+            .unwrap()
+            .contains("unconfirmed"));
+    }
+
+    #[test]
+    fn attempt_records_explicit_non_remote_source_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let body = r#"{"jobs":[{"id":"onsite","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/onsite","isRemote":false}]}"#;
+        let fetcher = waypoint_workspace::StaticFetcher::default()
+            .route("https://api.ashbyhq.com/posting-api/job-board/ashby", body);
+        assert_eq!(
+            ws.discover(
+                &[waypoint_workspace::DiscoveryTarget::new("ashby", "ashby")],
+                &fetcher,
+                1
+            )
+            .inserted,
+            1
+        );
+        let id = ws.jobs().unwrap().remove(0).id;
+        let record = AttemptRecord::start(&ws, &id, "onsite-fixture", 1)
+            .unwrap()
+            .unwrap();
+        let listing: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("original-job.json")).unwrap())
+                .unwrap();
+        assert_eq!(listing["remote"], false);
+    }
+
+    #[test]
     fn attempt_archives_the_saved_listing_and_source() {
         let root = tempfile::tempdir().unwrap();
         let mut ws = Workspace::open(root.path()).unwrap();
@@ -2378,6 +2443,11 @@ mod tests {
         let listing: Value =
             serde_json::from_slice(&fs::read(record.dir.join("original-job.json")).unwrap())
                 .unwrap();
+        assert_eq!(listing["remote"], true);
+        assert!(listing["remote_status_note"]
+            .as_str()
+            .unwrap()
+            .contains("Null means unconfirmed"));
         assert_eq!(listing["description"], "Fictional job description.");
         assert_eq!(listing["source_url"], "https://example.org/jobs/1");
         assert_eq!(listing["description_available"], true);
