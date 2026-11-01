@@ -658,7 +658,7 @@ fn build_preview(
         manual_review.push("A possible next-step control was found. Navigate and inspect the next page manually; the total number of steps is unknown".into());
     }
     let mut model_review_selectors = std::collections::HashSet::new();
-    let suggestions = if !blocked {
+    let mut suggestions = if !blocked {
         let mapped = match inference {
             Some(inference) => {
                 crate::suggestions::suggest_with_review(inference, &live.schema, profile)
@@ -689,6 +689,30 @@ fn build_preview(
     } else {
         vec![]
     };
+    suggestions.retain(|mapping| {
+        let Some(field) = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == mapping.field_selector)
+        else {
+            return true;
+        };
+        if let PacketValue::Text(text) = &mapping.value {
+            if matches!(
+                field.field_type,
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
+            ) && !waypoint_applications::form_mapping::text_fits_field(field, text)
+            {
+                manual_review.push(format!(
+                    "Suggested value exceeds field limit: {}",
+                    field.label
+                ));
+                return false;
+            }
+        }
+        true
+    });
     let mut preview = FormPreview {
         schema: live.schema,
         suggestions,
@@ -727,6 +751,7 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
         for prefix in [
             "Conflicting suggestions need review: ",
             "Invalid or duplicate suggestion needs review: ",
+            "Suggested value exceeds field limit: ",
         ] {
             if let Some(label) = reason.strip_prefix(prefix) {
                 let fields: Vec<_> = preview
@@ -2338,6 +2363,60 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("captcha")));
         assert!(preview.suggestions.is_empty());
+    }
+
+    #[test]
+    fn oversized_suggestion_does_not_block_other_fields() {
+        let field = |selector: &str, label: &str, hint: &str, limit| {
+            waypoint_applications::form_mapping::FormField {
+                selector: selector.into(),
+                label: label.into(),
+                field_type: FormFieldType::Text,
+                required: true,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: limit,
+                autocomplete: Some(hint.into()),
+            }
+        };
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![
+                    field("#first", "First name", "given-name", Some(2)),
+                    field("#last", "Last name", "family-name", Some(20)),
+                ],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let mut preview = suggest_without_model(
+            live,
+            &json!({"first_name":"A😀", "last_name":"Example"}),
+            "No model",
+        )
+        .unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        assert_eq!(preview.suggestions[0].field_selector, "#last");
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Suggested value exceeds field limit: First name"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Required field needs review: First name"));
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#first".into(),
+            value: PacketValue::Text("Al".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(!preview
+            .manual_review
+            .iter()
+            .any(|item| item.contains("First name")));
     }
 
     #[test]
