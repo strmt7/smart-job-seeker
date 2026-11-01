@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Changing form during read-only inspection — 2026-11-01
+
+- A Greenhouse page intermittently replaced a DOM node during the initial read, causing inspection to fail. Navigation inspection now retries that specific stale-node error once without reloading and adds a blocking manual-review warning; a second failure still surfaces. A disappearing custom choice also leaves its inventory incomplete. Other protocol failures are not converted to success.
+- A unit test covered the retry, retained CAPTCHA wall and failure paths; a fictional changing-control browser fixture passed. A subsequent read-only visit to the same public page passed; a separate visit reported 10 detected fields and 14 collapsed custom choices with an incomplete inventory. The live visit does not prove the retry was exercised, and CAPTCHA and custom controls still require manual review. No values were entered or submitted.
+
 ## Public listing and form inspection — 2026-11-01
 
 - The read-only Greenhouse connector test parsed 91 listings from the public Vercel board. A separate capture of the API response also contained 91 entries (SHA-256 `c8842fc2d7e4f2654b4c6e22a11e4570dba9d3eb5af8e66b328d211807eed776`). Counts are point-in-time observations.

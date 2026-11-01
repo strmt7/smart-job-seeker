@@ -1008,6 +1008,27 @@ fn option_capture_targets_later_unique_choice_without_clicking() {
 }
 
 #[test]
+#[ignore = "launches a browser against a fictional changing choice"]
+fn disappearing_custom_choice_leaves_inventory_incomplete() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_disappears.html"))
+        .unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#arm".into(),
+        })
+        .unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    assert!(inventory.incomplete);
+    assert!(inventory.choices.is_empty());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
 fn opening_custom_choice_rejects_submit_controls_and_reports_options() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

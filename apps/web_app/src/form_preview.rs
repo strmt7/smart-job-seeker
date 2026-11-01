@@ -2762,6 +2762,17 @@ mod tests {
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
         assert!(!live.schema.fields.is_empty(), "no fields detected");
+        let choices = driver.page_custom_choices().unwrap();
+        println!(
+            "fields={} required={} sensitive={} custom_choices={} expanded={} incomplete_choices={} inventory_incomplete={}",
+            live.schema.fields.len(),
+            live.schema.fields.iter().filter(|field| field.required).count(),
+            live.schema.fields.iter().filter(|field| field.sensitive).count(),
+            choices.choices.len(),
+            choices.choices.iter().filter(|choice| choice.expanded).count(),
+            choices.choices.iter().filter(|choice| choice.options_incomplete).count(),
+            choices.incomplete,
+        );
         for field in &live.schema.fields {
             if matches!(field.field_type, FormFieldType::Radio { .. }) {
                 println!(

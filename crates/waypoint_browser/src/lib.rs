@@ -36,6 +36,38 @@ use waypoint_applications::receipt::ReceiptKind;
 
 use cdp::{BrowserProcess, Cdp, CdpError};
 
+fn is_stale_inspection_node(error: &CdpError) -> bool {
+    is_disappeared_node_error(&error.0)
+}
+
+fn is_disappeared_node_error(message: &str) -> bool {
+    message.contains("DOM.resolveNode: protocol error")
+        && message.contains("No node with given id found")
+}
+
+const CHANGED_DURING_INSPECTION: &str =
+    "The page changed during inspection; review the form manually";
+
+fn retry_changed_inspection(
+    first: Result<LiveForm, DriverError>,
+    retry: impl FnOnce() -> Result<LiveForm, DriverError>,
+) -> Result<LiveForm, DriverError> {
+    match first {
+        Err(error) if is_disappeared_node_error(&error.0) => {
+            let mut result = retry()?;
+            if !result
+                .walls
+                .iter()
+                .any(|wall| wall == CHANGED_DURING_INSPECTION)
+            {
+                result.walls.push(CHANGED_DURING_INSPECTION.into());
+            }
+            Ok(result)
+        }
+        result => result,
+    }
+}
+
 /// Frame contents are outside the current form reader's inspection boundary.
 pub const UNINSPECTED_FRAME_REVIEW: &str =
     "An embedded frame may contain uninspected application content; review it manually";
@@ -555,16 +587,23 @@ impl CdpDriver {
                     }
                 };
             if !visible {
+                // The original DOM snapshot contained a visible candidate;
+                // a later visibility change means the inventory is incomplete.
+                incomplete = true;
                 continue;
             }
-            let resolved = self
-                .cdp
-                .call("DOM.resolveNode", json!({"nodeId":node}))
-                .map_err(derr)?;
-            let object = resolved
-                .pointer("/object/objectId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| DriverError("Choice disappeared during inspection".into()))?;
+            let resolved = match self.cdp.call("DOM.resolveNode", json!({"nodeId":node})) {
+                Ok(value) => value,
+                Err(error) if is_stale_inspection_node(&error) => {
+                    incomplete = true;
+                    continue;
+                }
+                Err(error) => return Err(derr(error)),
+            };
+            let Some(object) = resolved.pointer("/object/objectId").and_then(Value::as_str) else {
+                incomplete = true;
+                continue;
+            };
             let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
                 const expanded = (this.getAttribute('aria-expanded') || '').toLowerCase() === 'true';
                 if (!this.isConnected || !expanded) return {expanded:false,options:[],incomplete:true};
@@ -1694,6 +1733,16 @@ impl CdpDriver {
         let mut text = String::new();
         collect_text(&root, false, &mut text);
         Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
+    }
+
+    /// Retry one read-only observation if the page replaced a node while it was
+    /// being inspected. The failed observation may have missed a review wall.
+    fn inspect_after_navigation(&mut self) -> Result<LiveForm, DriverError> {
+        let first = self.inspect_current();
+        retry_changed_inspection(first, || {
+            self.cdp.pump(Duration::from_millis(100));
+            self.inspect_current()
+        })
     }
 
     /// Inspect rendered visibility and derive a structural selector without changing the page.
@@ -4319,7 +4368,7 @@ impl BrowserDriver for CdpDriver {
                 break;
             }
         }
-        let mut result = self.inspect_current()?;
+        let mut result = self.inspect_after_navigation()?;
         // Client-rendered forms may appear in stages. If the initial inspection
         // is empty, allow a later nonempty schema one further observation to
         // settle, while retaining any previously observed review walls.
@@ -4333,7 +4382,7 @@ impl BrowserDriver for CdpDriver {
                     Duration::from_millis(750)
                         .min(dynamic_deadline.saturating_duration_since(Instant::now())),
                 );
-                let mut next = self.inspect_current()?;
+                let mut next = self.inspect_after_navigation()?;
                 let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
                 retain_observed_walls(result.walls, &mut next);
                 result = next;
@@ -5403,6 +5452,47 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn changed_inspection_retries_once_and_keeps_manual_review_wall() {
+        let form = || LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec!["captcha present".into()],
+        };
+        let stale =
+            || DriverError("DOM.resolveNode: protocol error No node with given id found".into());
+        let result = retry_changed_inspection(Err(stale()), || Ok(form())).unwrap();
+        assert!(result
+            .walls
+            .iter()
+            .any(|wall| wall == CHANGED_DURING_INSPECTION));
+        assert!(result.walls.iter().any(|wall| wall == "captcha present"));
+        assert!(retry_changed_inspection(Err(stale()), || Err(stale())).is_err());
+        assert!(retry_changed_inspection(
+            Err(DriverError("browser disconnected".into())),
+            || panic!("unexpected retry")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn only_the_known_disappeared_node_error_is_recoverable() {
+        assert!(is_stale_inspection_node(&CdpError(
+            "DOM.resolveNode: protocol error {\"code\":-32000,\"message\":\"No node with given id found\"}".into()
+        )));
+        assert!(!is_stale_inspection_node(&CdpError(
+            "browser disconnected".into()
+        )));
+        assert!(!is_stale_inspection_node(&CdpError(
+            "protocol timeout".into()
+        )));
+    }
 
     #[test]
     fn printable_ascii_has_key_metadata_but_unicode_and_controls_do_not() {

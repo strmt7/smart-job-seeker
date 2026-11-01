@@ -1,0 +1,16 @@
+<!doctype html><html><body>
+<button id="arm" type="button">Arm fictional change</button>
+<label for="choice">Location</label>
+<input id="choice" role="combobox" aria-expanded="false">
+<script>
+document.querySelector('#arm').addEventListener('click', () => {
+  const choice = document.querySelector('#choice');
+  const original = choice.getBoundingClientRect.bind(choice);
+  choice.getBoundingClientRect = () => {
+    const result = original();
+    choice.remove();
+    return result;
+  };
+});
+</script>
+</body></html>
