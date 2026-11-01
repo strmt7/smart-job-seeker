@@ -4325,6 +4325,9 @@ fn serve(
                     || !check.failed_labels.is_empty()
                     || check.unverified != 0
                 {
+                    if let Some(detail) = check.failed_details.first() {
+                        return Err(format!("A previously filled field needs review: {detail}"));
+                    }
                     return Err(
                         "Previously filled fields changed or could not be checked; inspect again"
                             .into(),
@@ -4705,12 +4708,12 @@ fn serve(
                     current.preview.manual_review.push(reason.into());
                 }
             }
-            let saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"control_focus_capture","time":now(),"task_id":task_id,"index":index,"page_unchanged":same,"filled_verified":check.as_ref().map(|value| value.verified),"filled_unverified":check.as_ref().map(|value| value.unverified),"failed_fields":check.as_ref().map(|value| &value.failed_labels),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments,"screenshot":format!("screenshots/{name}"),"note":"Scrolled only; no control was clicked."}))).is_ok());
+            let saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"control_focus_capture","time":now(),"task_id":task_id,"index":index,"page_unchanged":same,"filled_verified":check.as_ref().map(|value| value.verified),"filled_unverified":check.as_ref().map(|value| value.unverified),"failed_fields":check.as_ref().map(|value| &value.failed_labels),"failed_details":check.as_ref().map(|value| &value.failed_details),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments,"screenshot":format!("screenshots/{name}"),"note":"Scrolled only; no control was clicked."}))).is_ok());
             current.created = Instant::now();
             json_reply(
                 stream,
                 "200 OK",
-                json!({"screenshot":screenshot,"record_saved":saved,"page_unchanged":same,"verified_count":check.as_ref().map_or(0, |value| value.verified),"unverified_count":check.as_ref().map_or(0, |value| value.unverified),"failed_fields":check.as_ref().map_or_else(Vec::new, |value| value.failed_labels.clone()),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments}),
+                json!({"screenshot":screenshot,"record_saved":saved,"page_unchanged":same,"verified_count":check.as_ref().map_or(0, |value| value.verified),"unverified_count":check.as_ref().map_or(0, |value| value.unverified),"failed_fields":check.as_ref().map_or_else(Vec::new, |value| value.failed_labels.clone()),"failed_details":check.as_ref().map_or_else(Vec::new, |value| value.failed_details.clone()),"failed_attachments":failed_attachments,"unverified_attachments":unverified_attachments}),
             );
         }
         "/api/form/control-vision-pending" => {
@@ -5356,12 +5359,12 @@ fn serve(
             let field_label = capture_field_label(&current.preview.schema, selector);
             let saved = current.record.as_mut().is_some_and(|record| {
                 let original = if freshness != "same" { record.screenshot_with_name(&before).map(Some) } else { Ok(None) };
-                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"field_label":field_label,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"screenshot":format!("screenshots/{name}")})))).is_ok()
+                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"field_label":field_label,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"failed_details":check.failed_details,"screenshot":format!("screenshots/{name}")})))).is_ok()
             });
             json_reply(
                 stream,
                 "200 OK",
-                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels}),
+                json!({"screenshot":screenshot,"record_saved":saved,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"failed_details":check.failed_details}),
             );
         }
         "/api/form/visual-review-start" => {

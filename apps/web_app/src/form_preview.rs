@@ -555,6 +555,8 @@ pub struct CompletedFieldCheck {
     pub verified: usize,
     pub unverified: usize,
     pub failed_labels: Vec<String>,
+    /// Fixed native-constraint categories only; never an entered value.
+    pub failed_details: Vec<String>,
 }
 
 pub fn verify_completed_fields(
@@ -568,6 +570,7 @@ pub fn verify_completed_fields(
     let mut verified = 0usize;
     let mut selected_retained = false;
     let mut failed_labels = Vec::new();
+    let mut failed_details = Vec::new();
     for selector in std::iter::once(selected).chain(
         completed
             .iter()
@@ -578,22 +581,27 @@ pub fn verify_completed_fields(
             break;
         }
         checked += 1;
-        let valid = verify_filled_field(driver, preview, selector).is_ok();
+        let result = verify_filled_field(driver, preview, selector);
+        let valid = result.is_ok();
         if selector == selected {
             selected_retained = valid;
         }
         if valid {
             verified += 1;
         } else {
-            failed_labels.push(
-                preview
-                    .schema
-                    .fields
-                    .iter()
-                    .find(|field| field.selector == selector)
-                    .map(|field| field.label.clone())
-                    .unwrap_or_else(|| "Unknown field".into()),
-            );
+            let label = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == selector)
+                .map(|field| field_review_label(&preview.schema, field))
+                .unwrap_or_else(|| "Unknown field".into());
+            if let Err(error) = result {
+                if let Some(reason) = native_constraint_detail(&error) {
+                    failed_details.push(format!("{label}: {reason}"));
+                }
+            }
+            failed_labels.push(label);
             // A changed field or disconnected browser requires manual review;
             // do not spend the remaining budget repeatedly querying a broken page.
             break;
@@ -604,6 +612,34 @@ pub fn verify_completed_fields(
         verified,
         unverified: completed.len().saturating_sub(checked),
         failed_labels,
+        failed_details,
+    }
+}
+
+fn native_constraint_detail(error: &str) -> Option<&'static str> {
+    let (_, reason) =
+        error.rsplit_once("A previously filled field failed a browser constraint: ")?;
+    match reason {
+        "a value is required" => Some("a value is required"),
+        "the value does not match the expected type" => {
+            Some("the value does not match the expected type")
+        }
+        "the value does not match the required format" => {
+            Some("the value does not match the required format")
+        }
+        "the value is too short" => Some("the value is too short"),
+        "the value is too long" => Some("the value is too long"),
+        "the value is below the allowed minimum" => Some("the value is below the allowed minimum"),
+        "the value is above the allowed maximum" => Some("the value is above the allowed maximum"),
+        "the value does not match the allowed increment" => {
+            Some("the value does not match the allowed increment")
+        }
+        "the browser cannot interpret the value" => Some("the browser cannot interpret the value"),
+        "the site supplied a custom validation error" => {
+            Some("the site supplied a custom validation error")
+        }
+        "the browser reports invalid input" => Some("the browser reports invalid input"),
+        _ => None,
     }
 }
 
@@ -1139,7 +1175,7 @@ mod tests {
             }
             fn verify_text_value(&mut self, selector: &str, _: &str) -> Result<(), DriverError> {
                 if self.failed.as_deref() == Some(selector) {
-                    Err(DriverError("fictional change".into()))
+                    Err(DriverError("A previously filled field failed a browser constraint: the value does not match the required format".into()))
                 } else {
                     Ok(())
                 }
@@ -1198,6 +1234,64 @@ mod tests {
         assert_eq!(failed.verified, 1);
         assert_eq!(failed.unverified, 32);
         assert_eq!(failed.failed_labels, vec!["Field 1"]);
+        assert_eq!(
+            failed.failed_details,
+            vec!["Field 1: the value does not match the required format"]
+        );
+        assert!(native_constraint_detail(
+            "A previously filled field failed a browser constraint: private-fixture"
+        )
+        .is_none());
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional form without submitting"]
+    fn later_field_native_validation_reason_reaches_completed_review() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_native_constraint.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let fill = |selector: &str, value: &str| BrowserCommand::Fill {
+            selector: selector.into(),
+            value: PacketValue::Text(value.into()),
+        };
+        driver.execute(&fill("#code", "AB-123")).unwrap();
+        driver
+            .execute(&fill("#email", "fictional@example.test"))
+            .unwrap();
+        let preview = FormPreview {
+            schema: live.schema,
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#code".into(),
+                    value: PacketValue::Text("AB-123".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#email".into(),
+                    value: PacketValue::Text("fictional@example.test".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let result = verify_completed_fields(
+            &mut driver,
+            &preview,
+            &["#code".into(), "#email".into()],
+            "#email",
+        );
+        assert!(result.selected_retained);
+        assert_eq!(result.verified, 1);
+        assert_eq!(result.failed_labels, vec!["Fictional reference"]);
+        assert_eq!(
+            result.failed_details,
+            vec!["Fictional reference: the site supplied a custom validation error"]
+        );
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
     }
 
     #[test]

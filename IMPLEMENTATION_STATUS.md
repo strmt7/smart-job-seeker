@@ -1,3 +1,8 @@
+## Earlier-field validation details — 2026-11-01
+
+- When a completed field later fails a native browser constraint, bounded rechecks now carry its label and fixed constraint category into control-focus and visual-focus review, and into the application record when capture succeeds. The custom-choice precheck also reports that category. Unrecognized errors remain generic; entered values and site-provided custom error text are not copied into these diagnostics. Rechecks still stop at the first failure and may leave other fields unchecked.
+- A fictional local-browser form made a previously completed reference field invalid after an email field changed; the completed-field review identified the reference and custom-validation category without submitting. A focused test verified the four-second/32-field accounting and ignored unrecognized detail, and UI checks covered the visual-review message. This does not establish behavior on employer sites.
+
 ## Native field validation feedback — 2026-11-01
 
 - When a text field retains the requested value but Chromium reports a native constraint failure, the prefill error now names the field and a fixed category such as invalid type, required format or a site-supplied custom error. The same category is available when verifying a previously filled field. The app does not copy the entered value or the site's custom validation text into this diagnostic; an uninspectable or changed field keeps the existing generic failure. Other validation mechanisms still need review.
