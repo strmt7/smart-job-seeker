@@ -1,5 +1,11 @@
 # Implementation checkpoint
 
+## Public listing and form inspection — 2026-11-01
+
+- The read-only Greenhouse connector test parsed 91 listings from the public Vercel board. A separate capture of the API response also contained 91 entries (SHA-256 `c8842fc2d7e4f2654b4c6e22a11e4570dba9d3eb5af8e66b328d211807eed776`). Counts are point-in-time observations.
+- Crawl4AI `0.9.4+superzip.portable2`, using a separate local cache, a temporary browser context, robots checking and a 30-second page timeout, extracted substantive text from `https://job-boards.greenhouse.io/vercel/jobs/6231864004` (HTTP 200; native result SHA-256 `90aa030a4ce98eeb94a115513a2cacb934249d015a71103f5b9b0eff0345e2c4`). A read-only Waypoint browser test detected fields on that page and reported CAPTCHA and custom controls for manual review. No form values were entered, no model was used, and no application was submitted. The test does not establish that the form can be filled or completed.
+- Crawls of the previously identified Workable listing and application URLs returned HTTP 200 but only navigation and cookie text; they were rejected as insufficient source evidence (native result SHA-256 `122882f5010343494506358002536fc170f436c9d143c4a0182f0addcbbbd932` and `f8b616eacad1f8635453dc8751477d21609e1c9928f119dc8812eb952284a6c8`). Native captures are retained locally under `target/waypoint-crawl-6e6a530c112f472ebdc44c43a41f2f66`, not in Git.
+
 ## Search-constraint review cues — 2026-11-01
 
 - Jobs with unresolved search constraints show the specific reason on the card and a review cue in the selected-job panel, with details under the match explanation. A redundant card badge was removed after rendered review. Mocked JavaScript checks cover the selected-panel cue. A fictional, intercepted-API browser fixture rendered the interface at 1440×900 and 390×844; the cue appeared, keyboard activation opened the explanation and selected the job, and no horizontal overflow or browser errors were observed. This was not a live backend or employer-site test.
