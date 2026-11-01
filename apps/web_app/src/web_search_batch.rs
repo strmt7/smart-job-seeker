@@ -667,7 +667,7 @@ mod tests {
                 let len = stream.read(&mut request).unwrap();
                 let request = std::str::from_utf8(&request[..len]).unwrap();
                 assert!(request.contains(if n == 0 { "first" } else { "second" }));
-                let mut results: Vec<Value> = (0..70)
+                let mut results: Vec<Value> = (0..100)
                     .map(|i| json!({"title":"Repeated", "url":format!("https://example.org/{i}"),"engine":if n == 0 {"engine-a"} else {"engine-b"}}))
                     .collect();
                 if n == 1 {
@@ -705,10 +705,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 70);
+        assert_eq!(batches[0]["data"]["results"].as_array().unwrap().len(), 100);
         assert_eq!(batches[1]["data"]["results"].as_array().unwrap().len(), 1);
         assert_eq!(batches[1]["data"]["results"][0]["title"], "New result");
-        assert_eq!(batches[1]["data"]["previously_seen"], 70);
+        assert_eq!(batches[1]["data"]["previously_seen"], 100);
         assert_eq!(
             batches[1]["data"]["repeated_references"]
                 .as_array()
@@ -720,8 +720,8 @@ mod tests {
             batches[1]["data"]["repeated_references"][0]["engines"],
             json!(["engine-b"])
         );
-        assert_eq!(batches[1]["data"]["repeated_references_omitted"], 60);
-        assert_eq!(batches[1]["data"]["results_examined"], 71);
+        assert_eq!(batches[1]["data"]["repeated_references_omitted"], 90);
+        assert_eq!(batches[1]["data"]["results_examined"], 101);
         provider.join().unwrap();
     }
 

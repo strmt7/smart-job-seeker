@@ -87,7 +87,9 @@ pub(crate) fn parse_excluding(
     let mut seen = std::collections::HashSet::new();
     let mut examined = 0;
     let mut previously_seen = 0;
-    for item in results.iter().take(100) {
+    // A provider can repeat earlier pages before returning new results. Scan a
+    // larger bounded prefix while still retaining at most 100 new links.
+    for item in results.iter().take(500) {
         examined += 1;
         let Some(raw) = item.get("url").and_then(Value::as_str) else {
             continue;
@@ -323,9 +325,9 @@ mod tests {
         let complete = parse(&json!({"results":invalid}).to_string()).unwrap();
         assert_eq!(complete["results_examined"], 35);
         assert_eq!(complete["limited"], false);
-        let invalid = vec![json!({"title":"No URL"}); 120];
+        let invalid = vec![json!({"title":"No URL"}); 501];
         let bounded = parse(&json!({"results":invalid}).to_string()).unwrap();
-        assert_eq!(bounded["results_examined"], 100);
+        assert_eq!(bounded["results_examined"], 500);
         assert_eq!(bounded["limited"], true);
     }
 

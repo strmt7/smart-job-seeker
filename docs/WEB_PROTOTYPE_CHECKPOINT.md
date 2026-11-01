@@ -359,6 +359,8 @@ Form attachment now uses a bounded Windows-safe temporary filename, retains the 
 
 Wider-web search now retains up to 100 valid candidates from each provider page, matching its existing 100-item examination bound; previously it stopped after 30 and could leave additional results on the same page unexamined. The global 600-link batch cap, single in-flight request, 2 MiB response cap and five-page-per-phrase limit remain. If a page has more valid candidates than the remaining batch budget, coverage reports how many were omitted instead of describing them as unexamined. A fictional loopback provider returned 70 candidates on one page and a later new result after 70 duplicates; the search tests passed. A rendered local mock exercised pagination and the coverage notice. These are unverified links, not confirmed vacancies or application pages; no live provider or employer was contacted.
 
+The search parser now examines up to 500 provider entries per page while retaining at most 100 new candidates. This allows later unique results to be found when earlier entries repeat a previous page; the existing batch, response-size and request limits remain. A fictional loopback provider returned 100 repeated results followed by one new result, which was retained. Pages with unexamined entries are still reported as limited. This does not verify vacancies or establish live-provider coverage.
+
 ## Fit input coverage — 2026-10-30
 
 New job-fit assessments report when the bounded model input excludes part of
