@@ -1,6 +1,7 @@
 <!doctype html><html><body><form>
 <label for="candidate">First name</label><input id="candidate" autocomplete="section-app given-name" oninput="this.setAttribute('data-seen', this.value)">
 <label for="ambiguous">Applicant name</label><input id="ambiguous" autocomplete="given-name">
+<label for="conflicting-type">First name</label><input id="conflicting-type" type="email" autocomplete="given-name">
 <label for="permit">Work authorization</label><input id="permit" autocomplete="email">
 <div role="combobox" aria-label="Preferred location" aria-required="true">Choose a location</div>
 <button type="submit">Submit</button>

@@ -2846,6 +2846,10 @@ mod tests {
             .suggestions
             .iter()
             .any(|mapping| mapping.field_selector == "#ambiguous"));
+        assert!(!preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#conflicting-type"));
         assert!(preview
             .manual_review
             .iter()
@@ -2923,6 +2927,7 @@ mod tests {
             Some("Example")
         );
         assert_eq!(driver.read_attribute("#permit", "value").unwrap(), None);
+        driver.verify_text_value("#conflicting-type", "").unwrap();
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 

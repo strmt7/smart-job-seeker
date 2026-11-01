@@ -173,9 +173,8 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             continue;
         };
         let chosen = match &field.field_type {
-            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => {
-                value.to_owned()
-            }
+            FormFieldType::Email if key == "email" => value.to_owned(),
+            FormFieldType::Text | FormFieldType::TextArea => value.to_owned(),
             FormFieldType::Select { options } | FormFieldType::Radio { options } => {
                 let matches: Vec<_> = options
                     .iter()
@@ -706,6 +705,9 @@ fn validate_suggestions(
                 .iter()
                 .find(|field| field.selector == selector)?;
             if field.sensitive || !AUTOFILL_PROFILE_FIELDS.contains(&key) {
+                return None;
+            }
+            if matches!(field.field_type, FormFieldType::Email) && key != "email" {
                 return None;
             }
             if !matches!(
@@ -1583,6 +1585,31 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|w| w.contains("1 required field(s) have no suggestion")));
+    }
+    #[test]
+    fn email_controls_reject_non_email_profile_values() {
+        let mut schema = form();
+        schema.fields[0].label = "First name".into();
+        schema.fields[0].field_type = FormFieldType::Email;
+        schema.fields[0].autocomplete = Some("given-name".into());
+        let profile = json!({"first_name":"Example","email":"example@example.invalid"});
+        assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+        let (mappings, invalid, _) = validate_suggestions(
+            &schema,
+            profile.as_object().unwrap(),
+            &json!({"mappings":[{"selector":"#candidate","profile_key":"first_name"}]}),
+        )
+        .unwrap();
+        assert!(mappings.is_empty());
+        assert!(invalid.contains("#candidate"));
+        let (mappings, invalid, _) = validate_suggestions(
+            &schema,
+            profile.as_object().unwrap(),
+            &json!({"mappings":[{"selector":"#candidate","profile_key":"email"}]}),
+        )
+        .unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert!(invalid.is_empty());
     }
     #[test]
     fn offline_mapping_is_exact_and_never_infers_sensitive_values() {
