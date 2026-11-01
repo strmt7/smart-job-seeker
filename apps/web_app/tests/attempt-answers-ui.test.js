@@ -5,7 +5,7 @@ const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf('function renderAttemptAnswers(');
 const end = source.indexOf('\nfunction ', start);
 assert.ok(start >= 0 && end > start);
-function element(tag, text = '') { return {tag, text, children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; }}; }
+function element(tag, text = '') { return {tag, text, children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; }, addEventListener(event,fn) { this[event]=fn; }}; }
 const context = {element};
 vm.runInNewContext(source.slice(start, end), context);
 const panel = element('div');
@@ -29,3 +29,5 @@ assert.match(text, /Work authorization · required · sensitive or review requir
 assert.match(text, /2 questions were omitted/);
 assert.match(text, /Page origin: https:\/\/example.invalid/);
 assert.match(text, /Available choices: Yes · No/);
+
+(async()=>{const calls=[];context.api=async(path,body)=>{calls.push(body.after);return {available:true,items:[{data:{type:'fields_inspected',fields:[{question:`Question ${body.after}`}]}}],next_after:body.after===0?64:null}};await context.loadAttemptAnswers(panel,'job','attempt');assert.match(panel.children[1].children[2].text,/Question 0/);await panel.children.find(item=>item.text==='Next history page').click();assert.match(panel.children[1].children[2].text,/Question 64/);await panel.children.find(item=>item.text==='First history page').click();assert.deepEqual(calls,[0,64,0]);console.log('Answer history paging checks passed.');})().catch(error=>{console.error(error);process.exitCode=1});

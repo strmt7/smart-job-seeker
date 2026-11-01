@@ -716,7 +716,12 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
 
 /// Read a bounded set of answer snapshots from the selected job's own attempt.
 /// Older records may not contain the answers directory.
-pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {
+pub fn answer_history(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+    after: u32,
+) -> Result<Value, String> {
     if attempt.is_empty()
         || attempt.len() > 64
         || !attempt
@@ -769,7 +774,7 @@ pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Res
         .map_err(|_| "Cannot inspect answer records")?
         .enumerate()
     {
-        if index >= 256 {
+        if index >= 2000 {
             truncated = true;
             break;
         }
@@ -786,28 +791,39 @@ pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Res
             unreadable += 1;
             continue;
         };
-        files.push((number, name, entry.path()));
+        if name != format!("{number:04}.json") {
+            unreadable += 1;
+            continue;
+        }
+        if number > after {
+            files.push((number, name, entry.path()));
+        }
     }
     files.sort_by_key(|(number, _, _)| *number);
-    if files.len() > 64 {
-        files.truncate(64);
-        truncated = true;
-    }
     let mut items = Vec::new();
     let mut bytes_read = 0u64;
-    for (_, name, path) in files {
+    let mut next_after = None;
+    let mut last_processed = None;
+    for (index, (number, name, path)) in files.into_iter().enumerate() {
+        if index >= 64 {
+            next_after = last_processed;
+            break;
+        }
         let Ok(meta) = fs::symlink_metadata(&path) else {
+            last_processed = Some(number);
             unreadable += 1;
             continue;
         };
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 256 * 1024 {
+            last_processed = Some(number);
             unreadable += 1;
             continue;
         }
         if bytes_read.saturating_add(meta.len()) > 2 * 1024 * 1024 {
-            truncated = true;
+            next_after = last_processed;
             break;
         }
+        last_processed = Some(number);
         bytes_read += meta.len();
         let value: Value = match fs::read(path)
             .ok()
@@ -833,7 +849,9 @@ pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Res
         }
         items.push(json!({"file":format!("answers/{name}"),"data":value}));
     }
-    Ok(json!({"available":true,"items":items,"truncated":truncated,"unreadable":unreadable}))
+    Ok(
+        json!({"available":true,"items":items,"truncated":truncated,"unreadable":unreadable,"next_after":next_after}),
+    )
 }
 /// Make a self-contained index for locally saved PNGs. Metadata supplies only
 /// validated numbers; captured page text and URLs never become HTML markup.
@@ -1717,7 +1735,7 @@ mod tests {
             )
             .unwrap();
         fs::write(record.dir.join("answers").join("9999.json"), b"invalid").unwrap();
-        let history = answer_history(&ws, &job, "answer-fixture").unwrap();
+        let history = answer_history(&ws, &job, "answer-fixture", 0).unwrap();
         assert_eq!(history["available"], true);
         assert_eq!(history["items"].as_array().unwrap().len(), 3);
         assert_eq!(history["items"][0]["data"]["type"], "fields_inspected");
@@ -1742,19 +1760,69 @@ mod tests {
             history["items"][1]["file"]
         );
         assert_eq!(history["unreadable"], 1);
-        assert!(answer_history(&ws, &job, "../invalid").is_err());
+        assert!(answer_history(&ws, &job, "../invalid", 0).is_err());
         assert!(answer_history(
             &ws,
             &JobIdentityId::new("different-job").unwrap(),
-            "answer-fixture"
+            "answer-fixture",
+            0
         )
         .is_err());
         fs::rename(record.dir.join("answers"), record.dir.join("old-answers")).unwrap();
         assert_eq!(
-            answer_history(&ws, &job, "answer-fixture").unwrap()["available"],
+            answer_history(&ws, &job, "answer-fixture", 0).unwrap()["available"],
             false
         );
     }
+    #[test]
+    fn answer_history_pages_in_order_across_unreadable_and_large_records() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let added = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.invalid/paged","title":"Role","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut record = AttemptRecord::start(&ws, &job, "paged-fixture", 2)
+            .unwrap()
+            .unwrap();
+        for n in 1..=130 {
+            record
+                .requested_answers(&json!({"type":"fields_requested","number":n}))
+                .unwrap();
+        }
+        fs::write(record.dir.join("answers/0010.json"), b"invalid").unwrap();
+        let first = answer_history(&ws, &job, "paged-fixture", 0).unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 63);
+        assert_eq!(first["unreadable"], 1);
+        assert_eq!(first["next_after"], 64);
+        let second = answer_history(&ws, &job, "paged-fixture", 64).unwrap();
+        assert_eq!(second["items"][0]["data"]["number"], 65);
+        assert_eq!(second["next_after"], 128);
+        let third = answer_history(&ws, &job, "paged-fixture", 128).unwrap();
+        assert_eq!(third["items"].as_array().unwrap().len(), 2);
+        assert!(third["next_after"].is_null());
+        let mut large = AttemptRecord::start(&ws, &job, "large-fixture", 3)
+            .unwrap()
+            .unwrap();
+        for n in 1..=12 {
+            large
+                .requested_answers(
+                    &json!({"type":"fields_requested","number":n,"text":"x".repeat(200_000)}),
+                )
+                .unwrap();
+        }
+        let page = answer_history(&ws, &job, "large-fixture", 0).unwrap();
+        let cursor = page["next_after"].as_u64().unwrap() as u32;
+        assert!(cursor > 0 && cursor < 12);
+        let remainder = answer_history(&ws, &job, "large-fixture", cursor).unwrap();
+        assert_eq!(remainder["items"][0]["data"]["number"], cursor + 1);
+        assert!(remainder["next_after"].is_null());
+    }
+
     #[test]
     fn reviewed_answer_snapshots_preserve_each_request_without_overwriting() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
