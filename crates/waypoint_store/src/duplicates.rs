@@ -48,6 +48,20 @@ fn title_score(a: &str, b: &str) -> u32 {
     overlap(&title_words(a), &title_words(b))
 }
 
+fn title_terms(title: &str) -> BTreeSet<String> {
+    title
+        .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
+        .map(|word| word.trim_start_matches(['+', '#']))
+        .filter(|word| word.chars().any(char::is_alphanumeric))
+        .map(|word| match word.to_lowercase().as_str() {
+            "sr" => "senior".into(),
+            "jr" => "junior".into(),
+            "dev" | "developer" => "engineer".into(),
+            other => other.to_owned(),
+        })
+        .collect()
+}
+
 /// Remove only a standalone, bracketed or trailing gender notation such as
 /// (m/w/d). The remaining words, including single-letter skills, are retained.
 fn title_words(title: &str) -> BTreeSet<String> {
@@ -90,10 +104,10 @@ fn title_words(title: &str) -> BTreeSet<String> {
     let trimmed = cleaned.trim_end();
     if let Some((prefix, last)) = trimmed.rsplit_once(char::is_whitespace) {
         if gender_marker(last) {
-            return words(prefix);
+            return title_terms(prefix);
         }
     }
-    words(trimmed)
+    title_terms(trimmed)
 }
 
 fn employer_words(s: &str) -> BTreeSet<String> {
@@ -1779,5 +1793,31 @@ mod tests {
         );
         assert!(title_score("Senior Rust Engineer", "Rust Engineer") >= 70);
         assert!(title_score("Senior Rust Engineer", "Marketing Director") < 70);
+    }
+
+    #[test]
+    fn technology_punctuation_distinguishes_titles_without_overriding_requisition() {
+        assert_eq!(title_score("C++ Developer", "C# Engineer"), 50);
+        assert_eq!(title_score("C++ Developer", "C++ Engineer"), 100);
+        assert_eq!(title_score("Engineer #42", "Developer 42"), 100);
+        let mut store = Store::in_memory().unwrap();
+        let cpp = job("cpp", "C++ Developer", "Acme", None);
+        let csharp = job("csharp", "C# Developer", "Acme", None);
+        for item in [&cpp, &csharp] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        assert!(store.possible_duplicates().unwrap().is_empty());
+        let same_requisition = job("same", "C# Developer", "Acme", Some("REQ-42"));
+        let mut identified_cpp = cpp.clone();
+        identified_cpp.requisition_id = Some("REQ-42".into());
+        store.upsert_job(&identified_cpp).unwrap();
+        store.upsert_job(&same_requisition).unwrap();
+        store.find_possible_duplicates(&same_requisition).unwrap();
+        assert!(store
+            .possible_duplicates()
+            .unwrap()
+            .iter()
+            .any(|pair| pair.job_a == "cpp" && pair.job_b == "same"));
     }
 }
