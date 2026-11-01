@@ -883,6 +883,14 @@ pub(crate) fn requirement_coverage(assessment: &Value) -> &'static str {
         "needs_review"
     } else if required == 0 {
         "none_identified"
+    } else if assessment["criteria_limit_reached"] == true
+        || rubric.len() == 12
+        || assessment["requirement_audit"]["status"] != "completed"
+        || assessment["requirement_audit"]["listing_truncated"] != false
+        || assessment["requirement_audit"]["criterion_limit_reached"] != false
+        || assessment["requirement_audit"]["audit_limit_reached"] != false
+    {
+        "incomplete"
     } else {
         "supported"
     }
@@ -2271,12 +2279,21 @@ mod tests {
 
     #[test]
     fn required_job_coverage_exposes_unknown_conflict_and_missing_rubrics() {
-        let mut assessment = json!({"rubric":[
+        let mut assessment = json!({"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[
             {"source":"listing","importance":"required","status":"supported"},
             {"source":"listing","importance":"preferred","status":"unknown"},
             {"source":"preference","importance":"required","status":"contradicted"}
         ]});
         assert_eq!(requirement_coverage(&assessment), "supported");
+        assessment["requirement_audit"]["status"] = json!("unavailable");
+        assert_eq!(requirement_coverage(&assessment), "incomplete");
+        assessment["requirement_audit"]["status"] = json!("completed");
+        assessment["criteria_limit_reached"] = json!(true);
+        assert_eq!(requirement_coverage(&assessment), "incomplete");
+        assessment["criteria_limit_reached"] = json!(false);
+        assessment["requirement_audit"]["listing_truncated"] = json!(true);
+        assert_eq!(requirement_coverage(&assessment), "incomplete");
+        assessment["requirement_audit"]["listing_truncated"] = json!(false);
         assessment["rubric"][0]["status"] = json!("unknown");
         assert_eq!(requirement_coverage(&assessment), "needs_review");
         assessment["rubric"][0]["status"] = json!("contradicted");

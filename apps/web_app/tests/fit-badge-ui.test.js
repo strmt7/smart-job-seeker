@@ -17,6 +17,7 @@ assert.doesNotMatch(label(75,{lower:50,upper:100},'included'), /check preference
 assert.match(label(80,{lower:60,upper:100},'included','needs_review'), /required criterion unknown/);
 assert.match(label(80,{lower:60,upper:100},'included','possible_conflict'), /AI flagged possible required conflict/);
 assert.match(label(80,{lower:60,upper:100},'included','none_identified'), /no required criteria identified/);
+assert.match(label(80,{lower:60,upper:100},'included','incomplete'), /requirement check incomplete/);
 assert.match(label(80,{lower:60,upper:100},'included','unavailable'), /required criteria unavailable/);
 assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(item.score,item.score_range,item.preference_coverage,item.requirement_coverage)'), 'batch badges must use their stored range and coverage');
 assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage,result.assessment?.requirement_coverage)'), 'new assessments must use their range and coverage');

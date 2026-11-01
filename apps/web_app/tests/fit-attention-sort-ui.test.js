@@ -10,6 +10,7 @@ const context = {state:{jobs:rows,reviews:[]},reviewedOrder:null,reviewedOrderGe
 for (const name of ['filteredJobRows','orderByReviewedFit','resetReviewedOrder','reviewedOrderChanged','fitAttentionPriority','sortByFitAttention']) context[name] = vm.runInNewContext('('+line(name)+')',context);
 (async()=>{
   assert.equal(context.fitAttentionPriority({status:'current',requirement_coverage:'none_identified',preference_coverage:'not_requested'}),1);
+  assert.equal(context.fitAttentionPriority({status:'current',requirement_coverage:'incomplete',preference_coverage:'not_requested'}),1);
   assert.equal(context.fitAttentionPriority({status:'current',requirement_coverage:'supported',preference_coverage:'possible_conflict'}),3);
   await context.sortByFitAttention();
   assert.equal(context.orderByReviewedFit(rows,context.reviewedOrder).map(row=>row.job.id).join(','),'conflict,unknown,missing,clear,excluded');
