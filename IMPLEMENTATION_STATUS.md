@@ -1092,3 +1092,7 @@ Workspace migration v42 schedules a resumable background recheck so the Roman/nu
 ### Title-level recheck timing fixture (2026-11-01)
 
 A single debug-build, in-memory run rechecked 10,000 fictional indexed jobs with 10 affected titles and distinct employers. It took 162 calls, 243 ms total active time, and 5.3 ms for the slowest call on this host. The fixture had no descriptions, crowded employers or production scheduling delays; the actual worker waits two seconds between progressing steps, so its elapsed time would be much longer. This is not an encrypted-disk, peak-memory, worst-case or freeze-safety measurement. The ignored fixture is retained for repeatable investigation. Web Clippy and formatting passed; no application was submitted.
+
+### Duplicate recheck scheduling (2026-11-01)
+
+The duplicate indexer now reports whether a step compared a job or only advanced an empty scan page. Both the background worker and idle fallback wait two seconds after comparisons, 200 ms after an empty page while more work remains, and 30 seconds when idle; lock contention and errors retain their slower retry. This avoids spending two seconds on every empty 64-record page without adding concurrent comparisons. Tests cover scan, comparison, phase transition and idle scheduling, including the SQLCipher store; 87 store tests, web Clippy and formatting passed. The new elapsed time and resource use have not been measured on a large encrypted workspace. No application was submitted.

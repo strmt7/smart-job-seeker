@@ -25,6 +25,14 @@ pub struct PreviousDuplicateDecision {
     pub recorded_at: String,
 }
 
+/// One bounded indexing operation, distinguishing a cheap page scan from a
+/// job comparison so the caller can schedule them at different rates.
+pub struct DuplicateIndexStep {
+    pub cursor: Option<String>,
+    pub compared: bool,
+    pub more_pending: bool,
+}
+
 fn decision_needs_recovery(status: &str, preferred: Option<&str>, a: &str, b: &str) -> bool {
     match status {
         "pending" | "different" => false,
@@ -601,6 +609,10 @@ impl Store {
 
     /// Index one job or advance one bounded legacy-recheck page.
     pub fn index_next_duplicate_job(&self, after: &str) -> rusqlite::Result<Option<String>> {
+        Ok(self.index_next_duplicate_step(after)?.cursor)
+    }
+
+    pub fn index_next_duplicate_step(&self, after: &str) -> rusqlite::Result<DuplicateIndexStep> {
         // One idle indexing step is atomic: partial pair updates and index
         // markers roll back together if any comparison or write fails.
         let transaction = rusqlite::Transaction::new_unchecked(
@@ -682,6 +694,7 @@ impl Store {
                 )?;
             }
         }
+        let compared = next.is_some();
         let indexed = if let Some(job) = next {
             let id = job.id.as_str().to_owned();
             self.find_possible_duplicates(&job)?;
@@ -689,8 +702,17 @@ impl Store {
         } else {
             progressed
         };
+        let more_pending = if indexed.is_none() {
+            self.duplicate_index_pending()?
+        } else {
+            true
+        };
         transaction.commit()?;
-        Ok(indexed)
+        Ok(DuplicateIndexStep {
+            cursor: indexed,
+            compared,
+            more_pending,
+        })
     }
 
     pub fn duplicate_index_pending(&self) -> rusqlite::Result<bool> {
@@ -1385,6 +1407,38 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert!(matches[0].reason.contains("description overlap 100%"));
         assert_eq!(matches[0].status, "pending");
+    }
+
+    #[test]
+    fn index_step_distinguishes_scans_comparisons_and_pending_phases() {
+        let mut store = Store::in_memory().unwrap();
+        let plain = job("a", "Nurse", "Example Hospital", None);
+        let numeric = job("b", "Nurse II", "Example Hospital", None);
+        for item in [&plain, &numeric] {
+            store.upsert_job(item).unwrap();
+            store.find_possible_duplicates(item).unwrap();
+        }
+        store.conn.execute("INSERT INTO meta(key,value) VALUES('duplicate_cross_employer_cursor','z'),('duplicate_title_level_cursor','')", []).unwrap();
+        let transition = store.index_next_duplicate_step("").unwrap();
+        assert!(transition.cursor.is_none() && !transition.compared && transition.more_pending);
+        let compared = store.index_next_duplicate_step("").unwrap();
+        assert_eq!(compared.cursor.as_deref(), Some("b"));
+        assert!(compared.compared && compared.more_pending);
+        let done = store.index_next_duplicate_step("b").unwrap();
+        assert!(done.cursor.is_none() && !done.compared && !done.more_pending);
+        let mut empty = Store::in_memory().unwrap();
+        empty.upsert_job(&plain).unwrap();
+        empty.find_possible_duplicates(&plain).unwrap();
+        empty
+            .conn
+            .execute(
+                "INSERT INTO meta(key,value) VALUES('duplicate_title_level_cursor','')",
+                [],
+            )
+            .unwrap();
+        let scanned = empty.index_next_duplicate_step("").unwrap();
+        assert_eq!(scanned.cursor.as_deref(), Some("a"));
+        assert!(!scanned.compared && scanned.more_pending);
     }
 
     #[test]

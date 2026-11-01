@@ -7195,6 +7195,16 @@ fn save_uncollected_draft(ws: &Workspace) -> Result<bool, String> {
     Ok(true)
 }
 
+fn duplicate_index_delay(compared: bool, more_pending: bool) -> Duration {
+    if compared {
+        Duration::from_secs(2)
+    } else if more_pending {
+        Duration::from_millis(200)
+    } else {
+        Duration::from_secs(30)
+    }
+}
+
 fn serve_loop(
     mut ws: Workspace,
     listener: TcpListener,
@@ -7210,23 +7220,21 @@ fn serve_loop(
                 let mut next = Instant::now();
                 while !index_stop.load(std::sync::atomic::Ordering::Acquire) {
                     if Instant::now() >= next {
-                        let delay = match indexer.index_next(&cursor) {
-                            Ok(Some(id)) => {
-                                cursor = id;
-                                2
+                        let delay = match indexer.index_next_step(&cursor) {
+                            Ok(step) => {
+                                cursor = step.cursor.unwrap_or_default();
+                                duplicate_index_delay(step.compared, step.more_pending)
                             }
-                            Ok(None) => {
-                                cursor.clear();
-                                30
+                            Err(waypoint_workspace::WorkspaceError::DuplicateIndexBusy) => {
+                                Duration::from_secs(2)
                             }
-                            Err(waypoint_workspace::WorkspaceError::DuplicateIndexBusy) => 2,
                             Err(error) => {
                                 eprintln!("Duplicate indexing paused: {error}");
                                 cursor.clear();
-                                30
+                                Duration::from_secs(30)
                             }
                         };
-                        next = Instant::now() + Duration::from_secs(delay);
+                        next = Instant::now() + delay;
                     }
                     std::thread::sleep(Duration::from_millis(200));
                 }
@@ -7331,14 +7339,11 @@ fn serve_loop(
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if index_worker.is_none() && Instant::now() >= next_duplicate_index {
-                    match ws.index_next_duplicate_job(&duplicate_cursor) {
-                        Ok(Some(id)) => {
-                            duplicate_cursor = id;
-                            next_duplicate_index = Instant::now() + Duration::from_secs(2);
-                        }
-                        Ok(None) => {
-                            duplicate_cursor.clear();
-                            next_duplicate_index = Instant::now() + Duration::from_secs(30);
+                    match ws.index_next_duplicate_step(&duplicate_cursor) {
+                        Ok(step) => {
+                            duplicate_cursor = step.cursor.unwrap_or_default();
+                            let delay = duplicate_index_delay(step.compared, step.more_pending);
+                            next_duplicate_index = Instant::now() + delay;
                         }
                         Err(error) => {
                             eprintln!("Duplicate indexing paused: {error}");
@@ -7370,6 +7375,23 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn duplicate_index_scheduling_keeps_comparisons_throttled() {
+        use std::time::Duration;
+        assert_eq!(
+            super::duplicate_index_delay(true, true),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            super::duplicate_index_delay(false, true),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            super::duplicate_index_delay(false, false),
+            Duration::from_secs(30)
+        );
+    }
+
     #[test]
     fn screenshot_field_label_requires_a_unique_usable_schema_field() {
         use waypoint_applications::form_mapping::{FormField, FormSchema};

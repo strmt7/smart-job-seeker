@@ -329,6 +329,19 @@ impl DuplicateIndexer {
             }
         })
     }
+
+    pub fn index_next_step(
+        &self,
+        after: &str,
+    ) -> Result<waypoint_store::duplicates::DuplicateIndexStep, WorkspaceError> {
+        self.store.index_next_duplicate_step(after).map_err(|e| {
+            if Store::duplicate_index_is_busy(&e) {
+                WorkspaceError::DuplicateIndexBusy
+            } else {
+                WorkspaceError::Export(format!("Duplicate indexing: {e}"))
+            }
+        })
+    }
 }
 
 impl Workspace {
@@ -740,6 +753,13 @@ impl Workspace {
 
     pub fn index_next_duplicate_job(&self, after: &str) -> Result<Option<String>, WorkspaceError> {
         Ok(self.store.index_next_duplicate_job(after)?)
+    }
+
+    pub fn index_next_duplicate_step(
+        &self,
+        after: &str,
+    ) -> Result<waypoint_store::duplicates::DuplicateIndexStep, WorkspaceError> {
+        Ok(self.store.index_next_duplicate_step(after)?)
     }
 
     pub fn duplicate_index_pending(&self) -> Result<bool, WorkspaceError> {
