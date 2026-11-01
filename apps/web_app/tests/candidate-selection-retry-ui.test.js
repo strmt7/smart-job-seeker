@@ -1,0 +1,7 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('function sameCandidateSelection('),end=source.indexOf('\nasync function saveCandidateSelection(',start);
+assert.ok(start>=0 && end>start);
+const items=[{url:'https://example.org/job',title:'Fictional'}];
+async function run(mode){let calls=[];const context={api:async(_path,body)=>{calls.push(body.action);if(body.action==='load'){if(mode==='committed')return {revision:5,items:[{title:'Fictional',url:'https://example.org/job'}]};if(mode==='conflict')return {revision:5,items:[]};return {revision:4,items:[]};}if(mode==='retry' && calls.filter(x=>x==='save').length===2)return {revision:5};throw Error('Lost response');}};const save=vm.runInNewContext(`${source.slice(start,end)}; persistCandidateSnapshot`,context);return {save,calls};}
+(async()=>{let t=await run('committed');assert.equal(await t.save(4,items),5);assert.deepEqual(t.calls,['save','load']);t=await run('retry');assert.equal(await t.save(4,items),5);assert.deepEqual(t.calls,['save','load','save']);t=await run('conflict');await assert.rejects(()=>t.save(4,items),/another window/);assert.deepEqual(t.calls,['save','load']);t=await run('failed');await assert.rejects(()=>t.save(4,items),/Lost response/);assert.deepEqual(t.calls,['save','load','save','load']);console.log('Candidate selection retry checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

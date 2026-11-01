@@ -20,3 +20,9 @@ initial invalid answer was injected by the test, not produced by the model.
 Each test exercised one fictional scenario on one model and host. These results
 do not establish broad drafting accuracy, resource safety on other machines,
 or reliable behavior on real application forms.
+
+Later on the same date, a separate attempt to start `ministral-3:14b` was
+refused by the resource gate. One snapshot reported 10,141 MiB free GPU memory
+against the gate's 12,443 MiB estimate. The model was not loaded, so this is
+not a capability or performance measurement and does not establish whether it
+would fit under different system load.
