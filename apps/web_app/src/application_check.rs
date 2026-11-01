@@ -70,6 +70,16 @@ fn browser_start_failure(error: &waypoint_applications::driver::DriverError) -> 
     }
 }
 
+fn ensure_inspected_page(
+    browser: &mut waypoint_browser::CdpDriver,
+    expected: &str,
+) -> Result<(), String> {
+    if browser.current_url().ok().as_deref() != Some(expected) {
+        return Err("The page changed during the application check; inspect it again.".into());
+    }
+    Ok(())
+}
+
 /// The model's judgment is advisory. A matching DOM excerpt supports where
 /// its evidence came from, but does not prove visibility or interpretation.
 fn visual_page_advice(
@@ -447,6 +457,28 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             let mut page = browser
                 .open(&url)
                 .map_err(|error| navigation_failure("listing page", &error))?;
+            let mut current = browser
+                .current_url()
+                .map_err(|_| "The listing destination could not be checked.")?;
+            let original = Url::parse(&url).map_err(|_| "The listing URL is invalid.")?;
+            let reached =
+                Url::parse(&current).map_err(|_| "The listing destination is invalid.")?;
+            // File URLs have opaque origins, so even two parses of the same
+            // fixture URL need an exact-URL equality check first.
+            let redirected_external = original != reached && original.origin() != reached.origin();
+            if redirected_external {
+                if !eligible_external_redirect(&url, &current, allow_external) {
+                    return Ok((
+                        "The listing redirected to another site; review the destination manually."
+                            .into(),
+                        true,
+                    ));
+                }
+                let parsed = waypoint_net::parse_url(&current)
+                    .map_err(|_| "The redirected destination is invalid.")?;
+                waypoint_net::resolve_public(&parsed)
+                    .map_err(|_| "The redirected host could not be verified as public.")?;
+            }
             let contact_inventory = if page.walls.is_empty() {
                 let links = browser.page_links().ok();
                 let text = browser.page_text_bounded(32_000).ok();
@@ -459,36 +491,21 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
             } else {
                 None
             };
+            ensure_inspected_page(&mut browser, &current)?;
             let mut followed = false;
             let mut link_warning = None;
-            let mut redirect_warning = None;
-            let mut inspected_url = browser
-                .current_url()
-                .ok()
-                .and_then(|current| displayable_inspected_url(&url, &current));
+            let redirect_warning = redirected_external.then_some("The listing redirected to an external destination before inspection; review its identity and the original listing.");
+            let mut inspected_url = if redirected_external {
+                displayable_inspected_url(&current, &current)
+            } else {
+                displayable_inspected_url(&url, &current)
+            };
             if !crate::form_task::has_main_fields_and_embedded_content(&page)
                 && page.walls.iter().all(|wall| {
                     wall == waypoint_browser::UNINSPECTED_FRAME_REVIEW
                         || wall == waypoint_browser::SHADOW_FORM_REVIEW
                 })
             {
-                let current = browser
-                    .current_url()
-                    .map_err(|_| "The listing destination could not be checked.")?;
-                let original = Url::parse(&url).map_err(|e| e.to_string())?;
-                let reached = Url::parse(&current).map_err(|e| e.to_string())?;
-                let redirected_external = original.origin() != reached.origin();
-                if redirected_external {
-                    let accepted = eligible_external_redirect(&url, &current, allow_external);
-                    if !accepted {
-                        return Ok(("The listing redirected to another site; review the destination manually.".into(), true));
-                    }
-                    let parsed = waypoint_net::parse_url(&current)
-                        .map_err(|_| "The redirected destination is invalid.")?;
-                    waypoint_net::resolve_public(&parsed)
-                        .map_err(|_| "The redirected host could not be verified as public.")?;
-                    inspected_url = displayable_inspected_url(&current, &current);
-                }
                 let links = if crate::form_task::has_upload_control(&page.schema.fields) {
                     Vec::new()
                 } else {
@@ -513,6 +530,7 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                         }
                     }
                 };
+                ensure_inspected_page(&mut browser, &current)?;
                 if let Some(destination) = vetted_application_destination(
                     &current,
                     &links,
@@ -538,16 +556,15 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                         return Ok(("The application link redirected to another site; review the destination manually.".into(), true));
                     }
                     inspected_url = displayable_inspected_url(&destination, &final_url);
+                    current = final_url;
                     if destination_origin != original.origin() {
                         link_warning = Some("An external application destination was opened for inspection; review its identity and the original listing.");
                     }
                 } else if !links.is_empty() && link_warning.is_none() {
                     link_warning = Some("Application links need manual review before opening.");
                 }
-                if redirected_external {
-                    redirect_warning = Some("The listing redirected to an external destination before inspection; review its identity and the original listing.");
-                }
             }
+            ensure_inspected_page(&mut browser, &current)?;
             let (mut message, review) = if !page.walls.is_empty()
                 && page
                     .walls
@@ -632,6 +649,7 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                     }
                 }
             }
+            ensure_inspected_page(&mut browser, &current)?;
             Ok((report_inspected_page(message, inspected_url), review))
         })();
         if result.is_err() {
@@ -930,7 +948,7 @@ mod tests {
                     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
                     let mut request = [0u8; 2048];
                     let _ = stream.read(&mut request);
-                    let body = "<html><body><label>Name<input name='name'></label></body></html>";
+                    let body = "<html><body><label>Name<input name='name'></label><iframe title='Extra' srcdoc=\"<label>Question<input></label>\"></iframe></body></html>";
                     let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                     served_destination = true;
                 }
@@ -957,6 +975,35 @@ mod tests {
         assert!(review);
         assert!(result.contains("redirected to another site"), "{result}");
         assert!(!result.contains("form fields detected"), "{result}");
+    }
+
+    #[test]
+    #[ignore = "starts one browser against fictional local pages"]
+    fn application_check_refuses_evidence_after_page_changes() {
+        use waypoint_applications::driver::BrowserDriver;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        let first = url::Url::from_file_path(
+            base.join("application-check-form.html")
+                .canonicalize()
+                .unwrap(),
+        )
+        .unwrap();
+        let second = url::Url::from_file_path(
+            base.join("form-embedded-listing.html")
+                .canonicalize()
+                .unwrap(),
+        )
+        .unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(first.as_str()).unwrap();
+        super::ensure_inspected_page(&mut browser, first.as_str()).unwrap();
+        browser.open(second.as_str()).unwrap();
+        assert!(super::ensure_inspected_page(&mut browser, first.as_str())
+            .unwrap_err()
+            .contains("page changed"));
+        assert!(browser.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
     }
 
     #[test]

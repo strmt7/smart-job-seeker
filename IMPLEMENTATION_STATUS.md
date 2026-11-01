@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Application-check destination consistency — 2026-11-01
+
+- A fictional cross-origin redirect to a page containing both a form and embedded content exposed a path that reported fields without first checking the redirect. The application checker now validates the initial destination on every path and checks that the page address remains stable through evidence collection and local-model inspection. The failing redirect fixture passed after the fix, as did local changed-page, embedded-form and custom-control fixtures, 14 non-ignored application-check tests and web Clippy. These checks cannot detect every same-address content change or a navigation away and back between checks. No employer application was submitted.
+
 ## Reviewed date and time controls — 2026-11-01
 
 - The form panel now displays typed date, month and time suggestions using their actual serialized values and native input types. A simulated panel test exercised both a manually entered time and typed suggestions. A fictional browser test passed the reviewed time through answer preparation and a one-use grant, verified the retained value, and rejected grant replay; it did not submit an application. Current model profile mapping does not suggest these date/time values automatically.
