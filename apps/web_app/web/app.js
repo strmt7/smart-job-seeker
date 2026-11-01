@@ -110,6 +110,7 @@ function visualComparisonStatus(item,expected,observations,allFresh,segmentCompa
  if(checks.some(check=>check.dom_status==='unconfirmed'))return 'live field value not confirmed';
  return same.length!==1 || matches.length!==1?'not uniquely observed':matches[0].visible_value===item.expected?(checks.some(check=>check.dom_status==='matches')?'transcription and live value match reviewed answer':'live field value not confirmed'):'transcription differs from reviewed answer';
 }
+function visualRetrySelector(fields,available,label){if(!Array.isArray(fields)||typeof label!=='string')return null;const allowed=new Set(Array.from(available || [],option=>option.value)),matches=fields.filter(field=>field&&field.label===label&&typeof field.selector==='string'&&allowed.has(field.selector));return matches.length===1?matches[0].selector:null;}
 function visualReviewNeedsQueueRefresh(review){return Array.isArray(review?.comparisons) && review.comparisons.some(item=>item.status==='differs_from_transcription' || item.dom_status==='unconfirmed');}
 function showAutomaticFit(job,result){const badge=fitBadges.get(job),score=result.assessment?.score;if(badge && Number.isInteger(score)){badge.dataset.updated='1';showFitBadge(badge,fitBadgeWithReview(fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage),result.user_review?.score,result.user_review?.score_range));}}
 function loadFitBadges(entries,generation){
@@ -453,7 +454,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
    }
    if(!coverage)visualPanel.append(element('p','Full capture coverage is not established. Embedded frames, nested scrollers or page size can hide content.','review-label'));
    visualPanel.append(element('p','Comparison with reviewed answers (model transcription may be wrong):','review-label'));
-   for(const item of expected){const status=visualComparisonStatus(item,expected,observations,allFresh,segmentComparisons);visualPanel.append(element('p',`${item.label}: ${status} (reviewed: ${item.expected})`,'review-label'));}
+   for(const item of expected){const status=visualComparisonStatus(item,expected,observations,allFresh,segmentComparisons);visualPanel.append(element('p',`${item.label}: ${status} (reviewed: ${item.expected})`,'review-label'));if(!targeted&&status!=='transcription and live value match reviewed answer'){const selector=visualRetrySelector(result.fields,fieldFocusSelect.options,item.label);if(selector){const retry=element('button',`Inspect ${item.label} more closely`);retry.type='button';retry.addEventListener('click',()=>{fieldFocusSelect.value=selector;fieldVisionButton.click();});visualPanel.append(retry);}}}
    visualPanel.append(element('p','The final rechecks are sequential, so the page can still change afterward or between checks. This is not proof of correctness or submission approval; review the live form yourself.','footnote'));
   }catch(e){if(/not found|session expired|no longer current/i.test(e.message))sessionStorage.removeItem('waypoint-form-vision');visualPanel.append(element('p',`Visual review incomplete: ${e.message}. Inspect the live form manually.`, 'review-label'));await refresh().catch(()=>{});}finally{visualButton.disabled=false;if(fillButton && !fillCompleted)fillButton.disabled=false;}
  }

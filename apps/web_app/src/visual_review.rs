@@ -856,6 +856,21 @@ mod tests {
                 "differs_from_transcription"
             );
         }
+        let crop = driver.screenshot_field_context("#reference").unwrap();
+        let targeted = analyze_targeted_with_context(
+            "127.0.0.1:11434".parse().unwrap(),
+            &model,
+            &crop,
+            &expected[1].0,
+            &expected[1..],
+            Some(4096),
+        )
+        .unwrap();
+        println!("Fictional targeted reference review: {targeted}");
+        assert_eq!(
+            targeted["comparisons"][0]["status"],
+            "matches_transcription"
+        );
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 

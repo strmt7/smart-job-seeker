@@ -27,3 +27,5 @@ async function run(fail, retained=true, otherFailed=false, changed=false) {
   if(changed)assert.ok(messages.some(message=>message.includes('visible page changed during verification')));
 }
 (async()=>{await run(false);await run(false,false);await run(false,true,true);await run(false,false,false,true);await run(true);console.log('Visual focus UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
+
+const helperStart=source.indexOf('function visualRetrySelector('),helperEnd=source.indexOf('\nfunction ',helperStart);assert.ok(helperStart>=0&&helperEnd>helperStart);const selector=vm.runInNewContext('('+source.slice(helperStart,helperEnd)+')');const fields=[{label:'Applicant — Email',selector:'#a'},{label:'Reference — Email',selector:'#b'}],available=[{value:'#a'},{value:'#b'}];assert.equal(selector(fields,available,'Reference — Email'),'#b');assert.equal(selector([...fields,{label:'Reference — Email',selector:'#c'}],[...available,{value:'#c'}],'Reference — Email'),null);assert.equal(selector(fields,[{value:'#a'}],'Reference — Email'),null);assert.equal(selector(fields,available,'Missing'),null);
