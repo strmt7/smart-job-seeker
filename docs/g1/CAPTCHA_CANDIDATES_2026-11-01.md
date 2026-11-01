@@ -33,3 +33,25 @@ locally under ignored `target/captcha-research/`; SHA-256 digests:
 
 All five page captures reported HTTP 200 and substantive extracted content.
 GitHub metadata and manifest checks used the native GitHub API.
+
+## Existing-browser compatibility probe
+
+On Windows, an isolated test launched Waypoint's `BrowserProcess` and attached
+PyPasser `910c3def3d69e68d42d86ccba5a1b4cf105ee1ed` to its loopback CDP port
+using the existing Playwright runtime. A fictional page contained a local
+checkbox iframe which wrote a fictional response token when clicked. The
+candidate reported success and the expected fictional token; the fixture's
+submit handler was not triggered. This establishes basic attachment and
+checkbox interaction only: it is not a real CAPTCHA, does not measure a real
+provider's acceptance, and does not prove that interacting with a third-party
+widget cannot trigger an application action.
+
+The source archive SHA-256 was
+`a11b655d4725967a85e7190d79d66e58b280da4cc02351e6fcce9d5a6a63d0d0`.
+The temporary harness and pinned archive remain under ignored
+`target/captcha-research/pypasser-test/`; no candidate code is shipped. The
+adapter's result includes session cookies and user agent, and it may fall back
+to synthetic click dispatch. A product integration must account for these
+behaviors, enforce the existing application submission boundary and test its
+actual effects. A local vision model may assist with image challenges and
+inspection, but its effectiveness and resource use for this task are unmeasured.
