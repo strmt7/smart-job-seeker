@@ -823,6 +823,7 @@ impl AttemptRecord {
             .map_err(|e| e.to_string())?;
         fs::create_dir(dir.join("screenshots")).map_err(|e| e.to_string())?;
         fs::create_dir(dir.join("materials")).map_err(|e| e.to_string())?;
+        fs::create_dir(dir.join("answers")).map_err(|e| e.to_string())?;
         let posting = json!({
             "job_id": id.as_str(),
             "title": job.title,
@@ -921,6 +922,22 @@ impl AttemptRecord {
         serde_json::to_writer(&mut f, &value).map_err(|e| e.to_string())?;
         f.write_all(b"\n").map_err(|e| e.to_string())?;
         f.flush().map_err(|e| e.to_string())
+    }
+    /// Save one reviewed fill request separately from the event log. These
+    /// are intended values, not evidence of successful filling or submission.
+    pub fn requested_answers(&mut self, value: &Value) -> Result<String, String> {
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Answer sequence exhausted")?;
+        let name = format!("{:04}.json", self.sequence);
+        let directory = self.dir.join("answers");
+        let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
+        serde_json::to_writer_pretty(&mut file, value).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())?;
+        file.persist_noclobber(directory.join(&name))
+            .map_err(|e| e.to_string())?;
+        Ok(format!("answers/{name}"))
     }
     pub fn status(&mut self, status: &str, timestamp: i64) -> Result<(), String> {
         if !matches!(
@@ -1285,6 +1302,33 @@ pub fn capture_before_navigation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reviewed_answer_snapshots_preserve_each_request_without_overwriting() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        fs::create_dir(dir.path().join("answers")).unwrap();
+        let mut record = AttemptRecord {
+            dir: dir.path().to_path_buf(),
+            sequence: 0,
+        };
+        let first = json!({"fields":[{"question":"Name","value":{"text":"Fictional Candidate"}}],"note":"Requested only; not proof of filling or submission."});
+        let second = json!({"fields":[{"question":"Available","value":{"bool":true}}]});
+        let first_path = record.requested_answers(&first).unwrap();
+        let second_path = record.requested_answers(&second).unwrap();
+        assert_ne!(first_path, second_path);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(dir.path().join(first_path)).unwrap())
+                .unwrap(),
+            first
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(dir.path().join(second_path)).unwrap())
+                .unwrap(),
+            second
+        );
+        record.dir = dir.path().join("missing");
+        assert!(record.requested_answers(&first).is_err());
+    }
     #[test]
     fn saved_listing_view_reconstructs_tiles_and_rejects_untrusted_markup() {
         let metadata = json!({"page_width":3000,"page_height":2000,"full_dimensions_captured":true,

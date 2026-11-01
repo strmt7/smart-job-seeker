@@ -1178,3 +1178,9 @@ A fictional local-model assessment incorrectly treated a fact stating seven year
 In the same fictional check after the change, the mixed-duration case was unknown with a 0–100 range, three years alone remained unknown, and seven years of Python was supported. The focused fit suite passed 44 tests (23 live tests ignored), and the three-case check passed with `qwen3.5:9b`; the model was unloaded afterward. These examples do not establish overall scoring accuracy.
 
 The duration safeguard now recognizes common abbreviated and several non-English year and month units without depending on a short list of number words. It also considers nearby source text when a quoted skill omits the duration. It conservatively counts unit mentions and may associate nearby, unrelated requirements, so some cases require unnecessary review; other languages and expressions may still be missed. A fictional local-model case using “fifteen years” and “3 yrs” remained unknown, and older saved assessments are marked stale. German unit recognition was checked deterministically, not with a German local-model assessment.
+
+## Reviewed answer snapshots — 2026-11-01
+
+Each reviewed form-fill request is now also saved as a separate JSON file in the attempt's `answers` folder, with questions, requested values, provenance when available, and a note that the request is not proof of filling or submission. The event log links to the snapshot. If saving either the snapshot or its event fails, the app refuses that fill request and marks the job for review. These plaintext records may contain personal information, as do the other application-record files.
+
+A fictional browser/API test checked that the saved snapshot matches the event's reviewed fields; a focused test checked separate snapshots and a write failure. No employer site or application submission was involved.

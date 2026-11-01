@@ -4861,11 +4861,25 @@ fn serve(
                 }
             }
             if let Some(record) = &mut current.record {
-                if let Err(error) = record.event(json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions,"reviewed_replacements":replacements,"fields":requested_fields,"note":"These are requested answers, not proof that the fields were filled or submitted."})) {
-                    let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written; no fields were filled", now()).err();
+                let requested = json!({"type":"fields_requested","time":now(),"origin":current.preview.schema.origin,"answers":current.preview.suggestions,"reviewed_replacements":replacements,"fields":requested_fields,"note":"These are requested answers, not proof that the fields were filled or submitted."});
+                let saved = record.requested_answers(&requested).and_then(|path| {
+                    let mut event = requested;
+                    event["answer_file"] = json!(path);
+                    record.event(event)
+                });
+                if let Err(error) = saved {
+                    let review_error = ws
+                        .mark_manual_review(
+                            &current.job_id,
+                            "Application record could not be written; no fields were filled",
+                            now(),
+                        )
+                        .err();
                     current.preview = original_preview;
                     *session = Some(current);
-                    let note = review_error.map(|e| format!(" The manual-review flag could not be saved: {e}.")).unwrap_or_default();
+                    let note = review_error
+                        .map(|e| format!(" The manual-review flag could not be saved: {e}."))
+                        .unwrap_or_default();
                     return Err(format!("No fields were filled because the attempt record could not be written: {error}. The review session remains open.{note}"));
                 }
             }
@@ -9062,6 +9076,12 @@ mod tests {
                 "Fictional research experience"
             );
             assert!(requested["note"].as_str().unwrap().contains("not proof"));
+            let answer_path = requested["answer_file"].as_str().unwrap();
+            assert!(answer_path.starts_with("answers/"));
+            let snapshot: Value =
+                serde_json::from_slice(&std::fs::read(record.join(answer_path)).unwrap()).unwrap();
+            assert_eq!(snapshot["fields"], requested["fields"]);
+            assert_eq!(snapshot["note"], requested["note"]);
             let incomplete = event_values
                 .iter()
                 .position(|event| event["type"] == "fill_incomplete")
