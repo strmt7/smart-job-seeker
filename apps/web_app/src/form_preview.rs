@@ -623,9 +623,19 @@ pub fn verify_filled_field(
                 value: PacketValue::Bool(*value),
             })
         }
-        _ => return Err(format!("{} needs manual verification", field.label)),
+        _ => {
+            return Err(format!(
+                "{} needs manual verification",
+                field_review_label(&preview.schema, field)
+            ))
+        }
     };
-    checked.map_err(|error| format!("{} needs review: {error}", field.label))
+    checked.map_err(|error| {
+        format!(
+            "{} needs review: {error}",
+            field_review_label(&preview.schema, field)
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1170,7 +1180,7 @@ mod tests {
             .iter()
             .map(|name| waypoint_applications::form_mapping::FormField {
                 selector: format!("#{name}"),
-                label: name.to_string(),
+                label: "Name".into(),
                 field_type: FormFieldType::Text,
                 required: true,
                 sensitive: false,
@@ -1212,7 +1222,7 @@ mod tests {
             };
             execute_and_verify_field(&mut driver, &preview, field, &command, &mut completed)
         });
-        assert!(outcome.is_err());
+        assert!(outcome.unwrap_err().contains("Name (field 1 of 2)"));
         assert_eq!(driver.written, vec!["#first"]);
         assert_eq!(completed.len(), 1);
     }
@@ -2605,6 +2615,81 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason.contains("standard autocomplete")));
+        assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional form without submitting"]
+    fn hidden_filled_field_stops_later_writes_in_browser() {
+        use waypoint_domain::GrantId;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-disappearing-field.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(
+            live,
+            &json!({"first_name":"Avery","last_name":"Example"}),
+            "No model",
+        )
+        .unwrap();
+        assert_eq!(preview.suggestions.len(), 2);
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("disappearing-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("disappearing-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("disappearing-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        let error = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("After filling"), "{error}");
+        assert_eq!(completed.len(), 1);
+        driver.verify_text_value("#last", "").unwrap();
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 
