@@ -681,7 +681,7 @@ fn build_preview(
         manual_review.push("No form fields were detected; navigation, login, an embedded frame, or manual review may be required".into());
     }
     if live.schema.multi_step {
-        manual_review.push("A possible next-step control was found. Navigate and inspect the next page manually; the total number of steps is unknown".into());
+        manual_review.push("A possible multi-step application was detected. Inspect each section manually; later steps and submission status are unknown".into());
     }
     let mut model_review_selectors = std::collections::HashSet::new();
     let mut suggestions = if !blocked {

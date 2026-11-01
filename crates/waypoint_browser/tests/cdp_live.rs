@@ -660,6 +660,23 @@ fn flags_accessibly_named_custom_next_control_without_clicking() {
 }
 
 #[test]
+#[ignore = "launches one browser against local fixtures without clicking or submitting"]
+fn accessible_current_step_indicates_a_multistep_form() {
+    let mut driver = CdpDriver::launch(vec![]).expect("launch browser");
+    let live = driver.open(&file_url("form_aria_step.html")).unwrap();
+    assert!(live.schema.multi_step);
+    assert_eq!(
+        driver.read_attribute("#forward", "data-clicked").unwrap(),
+        None
+    );
+    let hidden = driver
+        .open(&file_url("form_aria_step_hidden.html"))
+        .unwrap();
+    assert!(!hidden.schema.multi_step);
+    assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser and immediately exercises startup timeout cleanup"]
 fn timed_out_browser_start_cleans_its_private_profile() {
     let temp = std::env::temp_dir();

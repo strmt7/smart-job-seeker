@@ -1611,6 +1611,19 @@ impl CdpDriver {
                     wall_flags.push(UNINSPECTED_FRAME_REVIEW.into());
                 }
             }
+            // An accessible current-step indicator is evidence of a staged
+            // workflow independent of the language used by its buttons.
+            if !hidden
+                && attrs
+                    .get("aria-current")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("step"))
+            {
+                if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                    next_nodes.push(id);
+                } else {
+                    possible_next_step = true;
+                }
+            }
             if (tag == "button"
                 || attrs
                     .get("role")
