@@ -733,6 +733,24 @@ fn listing_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
     (tiles, width <= 3200.0 && height <= 8000.0)
 }
 
+fn listing_capture_identity(
+    browser: &mut waypoint_browser::CdpDriver,
+    source_url: &str,
+    dimensions: (f64, f64),
+) -> Result<(), String> {
+    let current = browser.current_url().map_err(|error| error.to_string())?;
+    if current != source_url {
+        return Err("Listing address changed during capture".into());
+    }
+    let current_dimensions = browser
+        .page_dimensions()
+        .map_err(|error| error.to_string())?;
+    if current_dimensions != dimensions {
+        return Err("Listing dimensions changed during capture".into());
+    }
+    Ok(())
+}
+
 fn capture_listing(
     browser: &mut waypoint_browser::CdpDriver,
     requested_url: &str,
@@ -744,12 +762,13 @@ fn capture_listing(
     let mut dimensions = None;
     let mut rectangles = Vec::new();
     let mut full = false;
+    let mut capture_state_unverified = false;
     match browser.page_dimensions() {
         Ok((width, height)) => {
             dimensions = Some((width, height));
             let (tiles, within_limits) = listing_tiles(width, height);
             let mut bytes = 0usize;
-            for (x, y, tile_width, tile_height) in tiles {
+            for (x, y, tile_width, tile_height) in tiles.iter().copied() {
                 let image = browser
                     .screenshot_tile(x, y, tile_width, tile_height)
                     .and_then(|encoded| {
@@ -783,12 +802,52 @@ fn capture_listing(
                         break;
                     }
                 }
+                if let Err(changed) = listing_capture_identity(browser, source_url, (width, height))
+                {
+                    error = Some(changed);
+                    capture_state_unverified = true;
+                    break;
+                }
+            }
+            if error.is_none() {
+                if let (Some(&(x, y, tile_width, tile_height)), Some(first)) =
+                    (tiles.first(), segments.first())
+                {
+                    let check = browser
+                        .screenshot_tile(x, y, tile_width, tile_height)
+                        .map_err(|e| e.to_string())
+                        .and_then(|encoded| {
+                            if encoded.len() > 3 * 1024 * 1024 {
+                                return Err("Listing capture segment exceeded size limit".into());
+                            }
+                            STANDARD
+                                .decode(encoded)
+                                .map_err(|_| "Listing capture could not be decoded".into())
+                        })
+                        .and_then(|image| {
+                            if image == *first {
+                                Ok(())
+                            } else {
+                                Err("Listing page changed during capture".into())
+                            }
+                        })
+                        .and_then(|()| {
+                            listing_capture_identity(browser, source_url, (width, height))
+                        });
+                    if let Err(changed) = check {
+                        error = Some(changed);
+                        capture_state_unverified = true;
+                    }
+                }
             }
             full = within_limits && error.is_none();
         }
-        Err(e) => error = Some(e.to_string()),
+        Err(e) => {
+            error = Some(e.to_string());
+            capture_state_unverified = true;
+        }
     }
-    let mut metadata = json!({"requested_url":requested_url,"source_url":source_url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"segment_rectangles":rectangles,"full_dimensions_captured":full,"error":error,"note":"Captured page segments may omit hidden content, nested scrollers or dynamic content."});
+    let mut metadata = json!({"requested_url":requested_url,"source_url":source_url,"captured_at":crate::now(),"page_width":dimensions.map(|d|d.0),"page_height":dimensions.map(|d|d.1),"segments":segments.len(),"segment_rectangles":rectangles,"full_dimensions_captured":full,"error":error,"note":"A complete capture checks the address, dimensions and first tile; other changes, hidden content and nested scrollers may still be missed."});
     let raw_size: usize = scripts.iter().map(String::len).sum();
     if scripts.is_empty() {
         metadata["structured_source_status"] = json!("unavailable");
@@ -802,6 +861,10 @@ fn capture_listing(
     } else {
         metadata["structured_source_status"] = json!("captured");
         metadata["structured_source_scripts"] = json!(scripts);
+    }
+    if capture_state_unverified {
+        metadata["page_text_status"] = json!("unavailable_capture_incomplete");
+        return ListingCapture { metadata, segments };
     }
     match browser.page_text_bounded(32_000) {
         Ok((text, truncated)) if !text.is_empty() => {
@@ -820,6 +883,14 @@ fn capture_listing(
             metadata["page_text_status"] = json!("unavailable");
             metadata["page_text_error"] =
                 json!(error.to_string().chars().take(500).collect::<String>());
+        }
+    }
+    if let Some(dimensions) = dimensions {
+        if let Err(changed) = listing_capture_identity(browser, source_url, dimensions) {
+            metadata.as_object_mut().unwrap().remove("page_text");
+            metadata["page_text_status"] = json!("unavailable_capture_incomplete");
+            metadata["full_dimensions_captured"] = json!(false);
+            metadata["error"] = json!(changed);
         }
     }
     ListingCapture { metadata, segments }
@@ -1021,6 +1092,26 @@ mod tests {
             .segments
             .iter()
             .all(|png| png.starts_with(b"\x89PNG\r\n\x1a\n")));
+        let changed = super::capture_listing(
+            &mut browser,
+            "https://example.invalid/job",
+            "https://example.invalid/other",
+            &[],
+        );
+        assert_eq!(changed.metadata["full_dimensions_captured"], false);
+        assert_eq!(
+            changed.metadata["error"],
+            "Listing address changed during capture"
+        );
+        assert_eq!(
+            changed.metadata["page_text_status"],
+            "unavailable_capture_incomplete"
+        );
+        assert!(changed.metadata.get("page_text").is_none());
+        assert_eq!(
+            super::listing_capture_identity(&mut browser, url.as_str(), (1.0, 1.0)).unwrap_err(),
+            "Listing dimensions changed during capture"
+        );
         assert!(browser
             .trace
             .iter()

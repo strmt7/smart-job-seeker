@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Listing capture consistency — 2026-11-01
+
+- Listing captures now check the page address and dimensions between tiles and compare a fresh first tile before calling the screenshot set complete. If the capture changes, the partial screenshots remain available, but page text is not attributed to that capture. A local wide-page fixture verifies stable capture, address mismatch and dimension mismatch. These checks cannot detect every change in another tile, hidden content or nested scrolling areas.
+
 ## Read-only Ashby application preview — 2026-11-01
 
 - The public Ashby board API returned 74 listings (raw response SHA-256 `5cd3b481cf94f61fbda8d83570dc4977726fc676c11f5cf47352ce4dc677fafb`). The selected Engineering Manager application page initially produced an empty crawler extraction; a new optional, bounded post-load wait produced substantive content after five seconds (native capture SHA-256 `7c0af163a784b3926123ca13ddfd54181d3b2bcdb952a6f9db62ff9997f7a2ca`). The unsuccessful initial capture is retained separately. These counts and the posting are point-in-time observations.
