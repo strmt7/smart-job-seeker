@@ -118,6 +118,17 @@ collapsed; no options were available to inspect without interaction. No
 control was clicked and no field was filled. Automatic opening, option choice,
 and verified retention are not implemented by this inventory.
 
+The browser crate now also has separate primitives to open a closed ARIA
+combobox and choose one unique rendered option. A fictional fixture verified
+opening, displayed-value retention, `aria-owns`, duplicate labels, a control
+changing to submit on hover, and a selection that was not retained. Direct
+submit-style controls were refused. The full 65-fixture browser suite passed
+before the `aria-owns` fallback refinement; its focused fixture and Clippy
+passed afterward. These primitives are not connected to the web workflow,
+approval recording, local-model visual review or employer pages. A successful
+display check is not proof of server-side retention, and a site can run its own
+handlers during any interaction.
+
 ## Staged rendering follow-up
 
 If the first inspection is empty, the bounded retry now checks for one unchanged

@@ -89,6 +89,16 @@ pub struct CustomChoices {
     pub incomplete: bool,
 }
 
+enum ClickGuard<'a> {
+    Ordinary,
+    ClosedCombobox,
+    ChoiceOption {
+        label: &'a str,
+        list_id: &'a str,
+        owner_selector: &'a str,
+    },
+}
+
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
     DriverError(e.0)
@@ -630,6 +640,174 @@ impl CdpDriver {
             choices,
             incomplete,
         })
+    }
+
+    /// Open one already identified, closed ARIA combobox. The caller is
+    /// responsible for policy, explicit review, and recording the action.
+    pub fn open_custom_choice(&mut self, selector: &str) -> Result<CustomChoice, DriverError> {
+        let inventory = self.page_custom_choices()?;
+        let matching: Vec<_> = inventory
+            .choices
+            .iter()
+            .filter(|choice| choice.selector == selector)
+            .collect();
+        if matching.len() != 1 || matching[0].expanded {
+            return Err(DriverError(
+                "Choice is unavailable, ambiguous, or already open; review it manually".into(),
+            ));
+        }
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Choice disappeared; review it manually".into()))?;
+        self.click_node_guarded(node, selector, ClickGuard::ClosedCombobox)?;
+        for _ in 0..4 {
+            self.cdp.pump(Duration::from_millis(200));
+            let fresh = self.page_custom_choices()?;
+            let mut matching = fresh
+                .choices
+                .into_iter()
+                .filter(|choice| choice.selector == selector);
+            if let Some(choice) = matching.next() {
+                if matching.next().is_none() && choice.expanded {
+                    return Ok(choice);
+                }
+            }
+        }
+        Err(DriverError(
+            "Choice did not open or changed; review it manually".into(),
+        ))
+    }
+
+    /// Select one uniquely identified rendered option and verify the displayed
+    /// value. The caller must bind this action to explicit user review.
+    pub fn select_custom_choice_option(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<(), DriverError> {
+        if label.trim().is_empty() || label.len() > 200 || label != label.trim() {
+            return Err(DriverError("Invalid choice label".into()));
+        }
+        let inventory = self.page_custom_choices()?;
+        let matching: Vec<_> = inventory
+            .choices
+            .iter()
+            .filter(|choice| choice.selector == selector)
+            .collect();
+        if matching.len() != 1
+            || !matching[0].expanded
+            || matching[0]
+                .options
+                .iter()
+                .filter(|option| option.as_str() == label)
+                .count()
+                != 1
+        {
+            return Err(DriverError(
+                "Choice option is unavailable or ambiguous; review it manually".into(),
+            ));
+        }
+        let controls = self
+            .read_attribute(selector, "aria-controls")?
+            .filter(|id| !id.is_empty());
+        let list_id = match controls {
+            Some(id) => Some(id),
+            None => self.read_attribute(selector, "aria-owns")?,
+        }
+        .filter(|id| !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_whitespace))
+        .ok_or_else(|| {
+            DriverError("Choice list cannot be identified; review it manually".into())
+        })?;
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Choice disappeared; review it manually".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Choice disappeared; review it manually".into()))?;
+        let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label,id) {
+            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'true' || (this.getAttribute('aria-controls') || this.getAttribute('aria-owns')) !== id) return null;
+            const lists = this.getRootNode().querySelectorAll('#' + CSS.escape(id));
+            if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return null;
+            const nodes = lists[0].querySelectorAll('[role="option"]');
+            if (nodes.length > 30) return null;
+            let result = null, count = 0;
+            for (const option of nodes) {
+                const text = (option.getAttribute('aria-label') || option.innerText || '').trim().replace(/\s+/g,' ');
+                if (text === label) { count++; result = option; }
+            }
+            return count === 1 ? result : null;
+        }"#, "arguments":[{"value":label},{"value":list_id}],"returnByValue":false}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let found = found.map_err(derr)?;
+        released.map_err(derr)?;
+        let option_object = found
+            .pointer("/result/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Choice option is unavailable or ambiguous; review it manually".into())
+            })?;
+        let requested = self
+            .cdp
+            .call("DOM.requestNode", json!({"objectId":option_object}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":option_object}));
+        let requested = requested.map_err(derr)?;
+        released.map_err(derr)?;
+        let option_node = requested
+            .get("nodeId")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(|| DriverError("Choice option disappeared; review it manually".into()))?;
+        self.click_node_guarded(
+            option_node,
+            "reviewed custom option",
+            ClickGuard::ChoiceOption {
+                label,
+                list_id: &list_id,
+                owner_selector: selector,
+            },
+        )?;
+        for _ in 0..4 {
+            self.cdp.pump(Duration::from_millis(200));
+            let Some(current) = self.node_id(selector)? else {
+                break;
+            };
+            let resolved = self
+                .cdp
+                .call("DOM.resolveNode", json!({"nodeId":current}))
+                .map_err(derr)?;
+            let object = resolved
+                .pointer("/object/objectId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    DriverError("Choice changed after selection; review it manually".into())
+                })?;
+            let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label) {
+                if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox') return false;
+                const text = this instanceof HTMLInputElement ? this.value : this.innerText;
+                return typeof text === 'string' && text.trim().replace(/\s+/g,' ') === label;
+            }"#, "arguments":[{"value":label}],"returnByValue":true}));
+            let released = self
+                .cdp
+                .call("Runtime.releaseObject", json!({"objectId":object}));
+            let checked = checked.map_err(derr)?;
+            released.map_err(derr)?;
+            if checked.pointer("/result/value").and_then(Value::as_bool) == Some(true) {
+                return Ok(());
+            }
+        }
+        Err(DriverError(
+            "Choice may have changed but its displayed value was not verified; review it manually"
+                .into(),
+        ))
     }
     pub fn launch(upload_dirs: Vec<PathBuf>) -> Result<Self, DriverError> {
         Self::launch_with_mode(upload_dirs, false)
@@ -3163,6 +3341,15 @@ impl CdpDriver {
     }
 
     fn click_node(&mut self, node: u64, selector: &str) -> Result<(), DriverError> {
+        self.click_node_guarded(node, selector, ClickGuard::Ordinary)
+    }
+
+    fn click_node_guarded(
+        &mut self,
+        node: u64,
+        selector: &str,
+        guard: ClickGuard<'_>,
+    ) -> Result<(), DriverError> {
         let model = self
             .cdp
             .call("DOM.getBoxModel", json!({ "nodeId": node }))
@@ -3245,8 +3432,33 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Click target disappeared; review it manually".into()))?;
-        let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+        let guard_value = match guard {
+            ClickGuard::Ordinary => json!({"kind":"ordinary"}),
+            ClickGuard::ClosedCombobox => json!({"kind":"combobox"}),
+            ClickGuard::ChoiceOption {
+                label,
+                list_id,
+                owner_selector,
+            } => {
+                json!({"kind":"option","label":label,"list_id":list_id,"owner_selector":owner_selector})
+            }
+        };
+        let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(guard) {
             if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i]')) return false;
+            if (guard.kind !== 'ordinary' && this.closest('button:not([type="button"]), input[type="submit" i], input[type="image" i], a[href]')) return false;
+            if (guard.kind === 'combobox' && ((this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'false')) return false;
+            if (guard.kind === 'option') {
+                if (this.closest('[aria-hidden="true" i]')) return false;
+                const root = this.getRootNode(), list = this.closest('[role="listbox"]');
+                const label = (this.getAttribute('aria-label') || this.innerText || '').trim().replace(/\s+/g,' ');
+                const owners = root.querySelectorAll(guard.owner_selector), lists = root.querySelectorAll('#' + CSS.escape(guard.list_id));
+                if ((this.getAttribute('role') || '').toLowerCase() !== 'option' || label !== guard.label || !list || list.id !== guard.list_id || lists.length !== 1 || owners.length !== 1 || (owners[0].getAttribute('role') || '').toLowerCase() !== 'combobox' || (owners[0].getAttribute('aria-expanded') || '').toLowerCase() !== 'true' || (owners[0].getAttribute('aria-controls') || owners[0].getAttribute('aria-owns')) !== guard.list_id) return false;
+                const options = list.querySelectorAll('[role="option"]');
+                if (options.length > 30) return false;
+                let matches = 0;
+                for (const option of options) if ((option.getAttribute('aria-label') || option.innerText || '').trim().replace(/\s+/g,' ') === guard.label) matches++;
+                if (matches !== 1) return false;
+            }
             const rect = this.getBoundingClientRect();
             const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
             if (rect.width <= 0 || rect.height <= 0 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
@@ -3271,7 +3483,7 @@ impl CdpDriver {
                 view = view.parent;
             }
             return false;
-        }"#, "returnByValue":true}));
+        }"#, "arguments":[{"value":guard_value}], "returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));

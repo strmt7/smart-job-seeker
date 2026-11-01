@@ -748,6 +748,84 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn opening_custom_choice_rejects_submit_controls_and_reports_options() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_open.html"))
+        .unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    let location = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Location")
+        .unwrap()
+        .selector
+        .clone();
+    let danger = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Danger")
+        .unwrap()
+        .selector
+        .clone();
+    let work_mode = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Work mode")
+        .unwrap()
+        .selector
+        .clone();
+    let opened = driver.open_custom_choice(&location).unwrap();
+    assert!(opened.expanded);
+    assert_eq!(
+        opened.options,
+        [
+            "Berlin",
+            "Lisbon",
+            "Rome",
+            "Duplicate",
+            "Duplicate",
+            "Send",
+            "Hover duplicate",
+            "Changing action"
+        ]
+    );
+    assert!(driver.open_custom_choice(&location).is_err());
+    driver
+        .select_custom_choice_option(&location, "Berlin")
+        .unwrap();
+    assert!(driver
+        .select_custom_choice_option(&location, "Duplicate")
+        .is_err());
+    assert!(driver
+        .select_custom_choice_option(&location, "Send")
+        .is_err());
+    assert!(driver
+        .select_custom_choice_option(&location, "Rome")
+        .is_err());
+    assert!(driver
+        .select_custom_choice_option(&location, "Hover duplicate")
+        .is_err());
+    assert!(driver
+        .select_custom_choice_option(&location, "Changing action")
+        .is_err());
+    assert!(driver
+        .select_custom_choice_option(&location, "Unavailable")
+        .is_err());
+    assert!(driver.open_custom_choice(&danger).is_err());
+    driver
+        .select_custom_choice_option(&work_mode, "Remote")
+        .unwrap();
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("NOT SUBMITTED"), "{text}");
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn custom_choice_inventory_reads_rendered_options_without_interaction() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver.open(&file_url("form_custom_choices.html")).unwrap();
