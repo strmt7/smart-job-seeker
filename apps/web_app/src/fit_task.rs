@@ -1293,14 +1293,20 @@ fn find_unknown_qualification_evidence(
 }
 
 fn has_explicit_negation(fact: &str) -> bool {
-    fact.to_lowercase()
+    let lower = fact.to_lowercase();
+    let words: Vec<_> = lower
         .split(|c: char| !(c.is_alphanumeric() || c == '\''))
-        .any(|word| {
-            matches!(
-                word,
-                "no" | "not" | "never" | "without" | "cannot" | "can't"
-            )
-        })
+        .filter(|word| !word.is_empty())
+        .collect();
+    words.iter().enumerate().any(|(index, word)| {
+        let next = words.get(index + 1).copied();
+        match *word {
+            "not" if matches!(next, Some("only" | "just" | "merely")) => false,
+            "no" if matches!(next, Some("less" | "fewer" | "later" | "earlier")) => false,
+            "no" | "not" | "never" | "without" | "cannot" | "can't" => true,
+            _ => false,
+        }
+    })
 }
 
 /// A short quote can occur in multiple requirements with different levels.
@@ -2281,6 +2287,24 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn affirmative_negation_phrases_do_not_establish_a_contradiction() {
+        for fact in [
+            "Not only Python but also Rust",
+            "No fewer than five years of Python",
+            "Not just Python experience",
+        ] {
+            let result = validate(
+                json!({"summary":"Review","criteria":[{"source":"listing","excerpt":"Python","importance":"required","status":"contradicted","fact_index":1,"explanation":"Model claim"}]}),
+                &[fact.into()], "", "Python required",
+            ).unwrap();
+            assert_eq!(result["rubric"][0]["status"], "unknown", "{fact}");
+            assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+        }
+        assert!(has_explicit_negation("Not only Python, but never Rust"));
+        assert!(has_explicit_negation("No Python experience"));
+    }
 
     #[test]
     fn required_job_coverage_exposes_unknown_conflict_and_missing_rubrics() {
