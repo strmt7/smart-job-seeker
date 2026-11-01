@@ -1,3 +1,8 @@
+## Email duplicate recheck gate — 2026-11-01
+
+- Email approval, rehearsal and reservation now treat an active legacy duplicate-recheck cursor as pending indexing, even when every job already has an index row. The check occurs in the same database transaction as the existing handoff gate. Acknowledging bounded coverage does not bypass pending work; an existing approval is not consumed by the refusal.
+- A fictional database fixture verified refusal during the cursor recheck and successful rehearsal after it clears, using both SQLite and SQLCipher. Web-app Clippy passed. The email transport was not called and no message or application was sent. Bounded duplicate comparison still cannot establish that all duplicates were found.
+
 ## Duplicate indexing before form actions — 2026-11-01
 
 - Reviewed form fills, document attachments and custom-choice actions now wait while any job remains queued for duplicate indexing, including migration rechecks. Existing duplicate-pair holds still apply. This is a conservative global wait: large or interrupted indexing can delay unrelated jobs. Completed bounded indexing does not guarantee every duplicate was found, and concurrent changes after the check remain possible.

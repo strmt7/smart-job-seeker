@@ -7,7 +7,7 @@ use waypoint_domain::{ApplicationState, JobIdentityId, Sha256Digest};
 const MAX_RELATED_JOBS: usize = 500;
 
 fn coverage_flags(tx: &rusqlite::Transaction<'_>) -> Result<(bool, bool), String> {
-    tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs j LEFT JOIN job_employer_indexed i ON i.job_id=j.id LEFT JOIN job_duplicate_coverage c ON c.job_id=j.id WHERE i.job_id IS NULL OR c.job_id IS NULL), EXISTS(SELECT 1 FROM job_duplicate_coverage WHERE status IN ('bounded','missing_employer'))", [], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|e| e.to_string())
+    tx.query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key='duplicate_cross_employer_cursor') OR EXISTS(SELECT 1 FROM jobs j LEFT JOIN job_employer_indexed i ON i.job_id=j.id LEFT JOIN job_duplicate_coverage c ON c.job_id=j.id WHERE i.job_id IS NULL OR c.job_id IS NULL), EXISTS(SELECT 1 FROM job_duplicate_coverage WHERE status IN ('bounded','missing_employer'))", [], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|e| e.to_string())
 }
 
 // Confirmed duplicate links form a graph, not necessarily a star. Fail closed
@@ -433,6 +433,28 @@ mod tests {
             assert!(store.approve_email_handoff(&approval).is_err()); // Acknowledgement required.
             approval.acknowledge_incomplete_coverage = true;
             store.approve_email_handoff(&approval).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO meta(key,value) VALUES('duplicate_cross_employer_cursor','')",
+                    [],
+                )
+                .unwrap();
+            approval.id = "blocked-during-recheck";
+            assert!(store.approve_email_handoff(&approval).is_err());
+            assert!(store
+                .rehearse_email_handoff(&reservation("blocked-rehearsal", "approval-one"))
+                .is_err());
+            assert!(store
+                .reserve_email_handoff(&reservation("blocked-reservation", "approval-one"))
+                .is_err());
+            store
+                .conn
+                .execute(
+                    "DELETE FROM meta WHERE key='duplicate_cross_employer_cursor'",
+                    [],
+                )
+                .unwrap();
             store
                 .rehearse_email_handoff(&reservation("rehearsal", "approval-one"))
                 .unwrap();
