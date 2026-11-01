@@ -2569,15 +2569,64 @@ mod tests {
             live.clone(),
             &mut llm,
             &json!({
-                "first_name":"Alex", "last_name":"Example", "email":"alex@example.invalid"
+                "first_name":"Alex", "last_name":"Example", "email":"alex@example.invalid",
+                "phone":"+12025550123", "address":"10 Example Street", "city":"Example City",
+                "linkedin":"https://example.invalid/alex"
             }),
         )
         .unwrap();
         println!(
-            "public read-only preview: fields={fields} suggestions={} walls={:?}",
+            "public read-only preview: fields={fields} suggestions={} selectors={:?} walls={:?}",
             preview.suggestions.len(),
+            preview
+                .suggestions
+                .iter()
+                .map(|item| item.field_selector.as_str())
+                .collect::<Vec<_>>(),
             live.walls
         );
+        let selected: std::collections::HashSet<_> = preview
+            .suggestions
+            .iter()
+            .filter_map(|item| {
+                if let PacketValue::Text(text) = &item.value {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            selected,
+            [
+                "+12025550123",
+                "10 Example Street",
+                "https://example.invalid/alex"
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(preview.suggestions.len(), 3);
+        for mapping in &preview.suggestions {
+            let label = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == mapping.field_selector)
+                .expect("suggested field")
+                .label
+                .to_lowercase();
+            let expected_label = match &mapping.value {
+                PacketValue::Text(value) if value == "+12025550123" => "phone",
+                PacketValue::Text(value) if value == "10 Example Street" => "address",
+                PacketValue::Text(value) if value == "https://example.invalid/alex" => "linkedin",
+                _ => panic!("unexpected suggestion"),
+            };
+            assert!(
+                label.contains(expected_label),
+                "unexpected mapping for {label}"
+            );
+        }
         assert!(!same_reviewable_walls(&preview, &live.walls));
         assert!(!same_reviewable_walls(&preview, &[]));
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")

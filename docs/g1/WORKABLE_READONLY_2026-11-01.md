@@ -76,6 +76,17 @@ blocked from filling both with the existing wall and if it later disappeared.
 No field was filled or clicked, and the model was unloaded. This does not
 solve a CAPTCHA or establish useful mapping coverage on that page.
 
+The initial profile supplied only a name and email; the 12 detected fields did
+not include name or email inputs. The zero-suggestion result therefore did not
+establish a model failure. With a fuller fictional profile containing phone,
+address and a profile link, two subsequent read-only runs each produced three
+suggestions for the corresponding phone, address and profile-link fields.
+The second run checked the suggested values against their field labels. These
+are results of the model-assisted pipeline, which also includes deterministic
+exact matching, not an isolated measurement of model contribution. The CAPTCHA
+wall remained, no fields were filled or clicked, and the model was unloaded.
+Two runs on one page do not establish general mapping accuracy.
+
 ## Staged rendering follow-up
 
 If the first inspection is empty, the bounded retry now checks for one unchanged
