@@ -1435,12 +1435,22 @@ fn capture_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
     (tiles, width <= 4096.0 && height <= 12000.0)
 }
 
+fn capture_page_unchanged(
+    initial_url: &str,
+    initial_dimensions: (f64, f64),
+    current_url: &str,
+    current_dimensions: (f64, f64),
+) -> bool {
+    initial_url == current_url && initial_dimensions == current_dimensions
+}
+
 /// Save a maximum of six segments; report when a page exceeds the limit.
 pub fn capture_page(
     driver: &mut waypoint_browser::CdpDriver,
     record: &mut AttemptRecord,
     timestamp: i64,
 ) -> Result<(), String> {
+    let initial_url = driver.current_url().map_err(|e| e.to_string())?;
     let (width, height) = driver.page_dimensions().map_err(|e| e.to_string())?;
     let (tiles, within_limits) = capture_tiles(width, height);
     let capture_id = crate::random_id()?;
@@ -1451,8 +1461,17 @@ pub fn capture_page(
             .map_err(|e| e.to_string())?;
         let name = record.screenshot_with_name(&image)?;
         record.event(json!({"type":"page_capture_segment","time":timestamp,"capture_id":capture_id,"index":count,"x":x,"y":y,"width":tile_width,"height":tile_height,"screenshot":format!("screenshots/{name}")}))?;
+        let current_url = driver.current_url().map_err(|e| e.to_string())?;
+        let dimensions = driver.page_dimensions().map_err(|e| e.to_string())?;
+        if !capture_page_unchanged(&initial_url, (width, height), &current_url, dimensions) {
+            record.event(json!({"type":"page_capture_changed","time":timestamp,"capture_id":capture_id,"after_segment":count,"note":"Page address or dimensions changed while capturing; screenshots may show different states."}))?;
+            return Err(
+                "Page address or dimensions changed during capture; inspect and capture again"
+                    .into(),
+            );
+        }
     }
-    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":tiles.len(),"full_dimensions_captured":within_limits,"note":"Page dimensions alone do not guarantee capture of hidden content or nested scrollers."}))?;
+    record.event(json!({"type":"page_capture","time":timestamp,"capture_id":capture_id,"page_width":width,"page_height":height,"segments":tiles.len(),"full_dimensions_captured":within_limits,"note":"Address and dimensions stayed the same between tiles; content changes, hidden content and nested scrollers may still be missed."}))?;
     if !within_limits {
         return Err("Page exceeded screenshot capture limits".into());
     }
@@ -1479,6 +1498,29 @@ pub fn capture_before_navigation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_capture_detects_navigation_and_dimension_changes() {
+        let baseline = (1200.0, 3000.0);
+        assert!(capture_page_unchanged(
+            "https://example.invalid/a",
+            baseline,
+            "https://example.invalid/a",
+            baseline
+        ));
+        assert!(!capture_page_unchanged(
+            "https://example.invalid/a",
+            baseline,
+            "https://example.invalid/b",
+            baseline
+        ));
+        assert!(!capture_page_unchanged(
+            "https://example.invalid/a",
+            baseline,
+            "https://example.invalid/a",
+            (1200.0, 3001.0)
+        ));
+    }
+
     #[test]
     fn answer_history_is_bound_to_attempt_and_reports_incomplete_files() {
         let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
