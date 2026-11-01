@@ -287,17 +287,18 @@ pub fn start(
     job_id: JobIdentityId,
     url: String,
     profile: serde_json::Value,
-    model: Option<String>,
+    model: Result<Option<String>, String>,
     visible: bool,
     review: (i64, Vec<ExperienceMatch>),
 ) -> Result<(), String> {
     let (pending_revision, experiences) = review;
     let (model, lease, no_model_reason) = match model {
-        Some(model) => match doc_suggest::lease() {
+        Ok(Some(model)) => match doc_suggest::lease() {
             Ok(lease) => (Some(model), Some(lease), String::new()),
             Err(error) => (None, None, error),
         },
-        None => (None, None, "No eligible local model is loaded".into()),
+        Ok(None) => (None, None, "No eligible local model is loaded".into()),
+        Err(error) => (None, None, format!("Local model unavailable: {error}")),
     };
     let mut task = TASK.lock().map_err(|_| "Form inspection unavailable")?;
     if task.is_some() {
@@ -556,7 +557,7 @@ mod tests {
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({"email":"alex@example.invalid"}),
-            Some(model),
+            Ok(Some(model)),
             false,
             (0, experiences),
         )
@@ -886,7 +887,7 @@ mod tests {
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({"country":"Germany"}),
-            Some("fictional-model".into()),
+            Ok(Some("fictional-model".into())),
             false,
             (0, vec![]),
         )
@@ -1268,7 +1269,7 @@ mod tests {
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({"email":"alex@example.invalid"}),
-            None,
+            Ok(None),
             false,
             (0, vec![]),
         )
@@ -1317,7 +1318,7 @@ mod tests {
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({"email":"alex@example.invalid"}),
-            Some(model),
+            Ok(Some(model)),
             false,
             (0, vec![]),
         )
@@ -1420,7 +1421,7 @@ mod tests {
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({}),
-            None,
+            Err("fictional memory guard failure".into()),
             false,
             (0, vec![]),
         )
@@ -1432,10 +1433,8 @@ mod tests {
                 let (driver, preview) = finished.result.unwrap();
                 assert!(!preview.schema.fields.is_empty());
                 assert!(preview.suggestions.is_empty());
-                assert!(preview
-                    .manual_review
-                    .iter()
-                    .any(|reason| reason.contains("No eligible local model")));
+                assert!(preview.manual_review.iter().any(|reason| reason
+                    .contains("Local model unavailable: fictional memory guard failure")));
                 assert!(preview
                     .manual_review
                     .iter()

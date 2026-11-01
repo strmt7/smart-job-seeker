@@ -1636,6 +1636,29 @@ fn resident_model() -> Result<Option<String>, String> {
     Ok(status["model"].as_str().map(str::to_owned))
 }
 
+fn form_model_from_status(status: &Value) -> Result<Option<String>, String> {
+    match status["state"].as_str() {
+        Some("ready") => status["model"]
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .map(|name| Some(name.to_owned()))
+            .ok_or_else(|| "Model status is incomplete".into()),
+        Some("no_model") => Ok(None),
+        Some("multiple_models") => {
+            Err("Multiple models are resident; use one eligible model".into())
+        }
+        Some("not_fully_gpu") => Err("The resident model is not fully GPU-resident".into()),
+        Some("over_budget") => Err("The resident model exceeds the GPU memory budget".into()),
+        _ => Err("Resident model status is incomplete or unavailable".into()),
+    }
+}
+
+fn form_resident_model() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    check_inference_memory()?;
+    form_model_from_status(&resident_model_status()?)
+}
+
 fn resident_model_status() -> Result<Value, String> {
     let addr = "127.0.0.1:11434"
         .parse()
@@ -4264,8 +4287,8 @@ fn serve(
                 return Err("Application URL is not a public HTTPS URL".into());
             }
             let visible = body["visible"].as_bool().unwrap_or(false);
-            let model = resident_model().ok().flatten();
-            let experiences = if model.is_some() {
+            let model = form_resident_model();
+            let experiences = if matches!(&model, Ok(Some(_))) {
                 use waypoint_workspace::form_experience::{Control, Stage};
                 let platform_hint = experience_platform_hint(&job.source);
                 let mut items = ws
@@ -10626,6 +10649,31 @@ mod tests {
         protect_navigation_experience_snapshot(&mut result, &snapshot, Some(&[item]));
         assert_eq!(result.suggestions.len(), 1);
         assert!(result.manual_review.is_empty());
+    }
+
+    #[test]
+    fn form_model_status_explains_ineligible_runtime_states() {
+        assert_eq!(
+            form_model_from_status(&json!({"state":"no_model"})).unwrap(),
+            None
+        );
+        assert_eq!(
+            form_model_from_status(&json!({"state":"ready","model":"fixture"})).unwrap(),
+            Some("fixture".into())
+        );
+        for state in [
+            "multiple_models",
+            "not_fully_gpu",
+            "over_budget",
+            "incomplete_report",
+            "unexpected",
+        ] {
+            assert!(
+                form_model_from_status(&json!({"state":state})).is_err(),
+                "{state}"
+            );
+        }
+        assert!(form_model_from_status(&json!({"state":"ready"})).is_err());
     }
 
     #[test]

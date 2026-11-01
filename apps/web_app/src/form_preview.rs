@@ -780,6 +780,9 @@ fn build_preview(
                 manual_review.push(format!(
                     "{error}; only exact labels or standard autocomplete hints are suggested"
                 ));
+                if crate::suggestions::missing_full_name_for_form(&live.schema, profile) {
+                    manual_review.push("This form asks for a full name, but your profile has no full name for applications. Enter it in Personal details or handle the field manually.".into());
+                }
                 match crate::suggestions::suggest_exact(&live.schema, profile) {
                     Ok(items) => items,
                     Err(fallback_error) => {
@@ -3496,6 +3499,33 @@ mod tests {
         };
         println!("lesson_first={lesson_first}");
         for (name, preview) in [("baseline", baseline), ("with lesson", with_lesson)] {
+            for (label, expected) in [
+                ("first name", "Avery"),
+                ("last name", "Example"),
+                ("email", "avery@example.invalid"),
+                ("phone", "+12025550123"),
+            ] {
+                let selectors: Vec<_> = preview
+                    .schema
+                    .fields
+                    .iter()
+                    .filter(|field| field.label.trim().eq_ignore_ascii_case(label))
+                    .map(|field| &field.selector)
+                    .collect();
+                if selectors.len() == 1 {
+                    for mapping in preview
+                        .suggestions
+                        .iter()
+                        .filter(|mapping| &mapping.field_selector == selectors[0])
+                    {
+                        assert_eq!(
+                            mapping.value,
+                            PacketValue::Text(expected.into()),
+                            "{name}: incorrect fictional value for {label}"
+                        );
+                    }
+                }
+            }
             let phone_mappings: Vec<_> = preview
                 .suggestions
                 .iter()

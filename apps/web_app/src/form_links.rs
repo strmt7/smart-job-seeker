@@ -25,6 +25,14 @@ pub struct NavigationFailure {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED_FAILURE: Mutex<Option<(String, NavigationFailure)>> = Mutex::new(None);
 
+fn model_unavailable_reason(status: Result<Option<String>, String>) -> String {
+    match status {
+        Err(error) => format!("Local model unavailable: {error}"),
+        Ok(None) => "No eligible local model is loaded".into(),
+        Ok(Some(_)) => unreachable!("a resident model is not an unavailable status"),
+    }
+}
+
 pub fn pending_reason(task_id: &str) -> String {
     format!("Application navigation pending: {task_id}")
 }
@@ -400,8 +408,8 @@ pub fn start(
                     check_destination(&fresh.origin, Operation::Read)?;
                     fresh
                 };
-                let model = crate::resident_model().ok().flatten();
-                if let Some(model) = model {
+                let model = crate::form_resident_model();
+                if let Ok(Some(model)) = model {
                     match crate::doc_suggest::lease() {
                         Ok(_lease) => {
                             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -427,11 +435,8 @@ pub fn start(
                         Err(error) => form_preview::suggest_without_model(live, &profile, &error),
                     }
                 } else {
-                    form_preview::suggest_without_model(
-                        live,
-                        &profile,
-                        "No eligible local model is loaded",
-                    )
+                    let reason = model_unavailable_reason(model);
+                    form_preview::suggest_without_model(live, &profile, &reason)
                 }
             },
         ))
@@ -558,6 +563,18 @@ mod tests {
     use super::*;
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
+
+    #[test]
+    fn unavailable_model_status_preserves_error_details() {
+        assert_eq!(
+            model_unavailable_reason(Ok(None)),
+            "No eligible local model is loaded"
+        );
+        assert_eq!(
+            model_unavailable_reason(Err("memory guard paused inference".into())),
+            "Local model unavailable: memory guard paused inference"
+        );
+    }
 
     #[test]
     fn prior_fills_remain_a_review_obligation_after_navigation_or_rescan() {
