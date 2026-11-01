@@ -5769,11 +5769,54 @@ fn serve_loop(
     port: u16,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    let mut index_worker = match ws.duplicate_indexer() {
+        Ok(indexer) => {
+            let index_stop = stop.clone();
+            Some(std::thread::spawn(move || {
+                let mut cursor = String::new();
+                let mut next = Instant::now();
+                while !index_stop.load(std::sync::atomic::Ordering::Acquire) {
+                    if Instant::now() >= next {
+                        let delay = match indexer.index_next(&cursor) {
+                            Ok(Some(id)) => {
+                                cursor = id;
+                                2
+                            }
+                            Ok(None) => {
+                                cursor.clear();
+                                30
+                            }
+                            Err(error) => {
+                                eprintln!("Duplicate indexing paused: {error}");
+                                cursor.clear();
+                                30
+                            }
+                        };
+                        next = Instant::now() + Duration::from_secs(delay);
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }))
+        }
+        Err(error) => {
+            eprintln!("Background duplicate indexing unavailable: {error}; using idle indexing");
+            None
+        }
+    };
     let mut session: Option<ReviewSession> = None;
     let mut duplicate_cursor = String::new();
     let mut next_duplicate_index = Instant::now();
     let mut next_email_collect = Instant::now();
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
+        if index_worker
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished)
+        {
+            if let Some(worker) = index_worker.take() {
+                let _ = worker.join();
+                eprintln!("Background duplicate indexing stopped; using idle indexing");
+            }
+        }
         if Instant::now() >= next_email_collect {
             match email_worker::collect_finished(&mut ws) {
                 Ok(Some(email_worker::WorkerStatus::Finished {
@@ -5815,7 +5858,7 @@ fn serve_loop(
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if Instant::now() >= next_duplicate_index {
+                if index_worker.is_none() && Instant::now() >= next_duplicate_index {
                     match ws.index_next_duplicate_job(&duplicate_cursor) {
                         Ok(Some(id)) => {
                             duplicate_cursor = id;
@@ -5838,6 +5881,11 @@ fn serve_loop(
                 eprintln!("Connection failed: {error}");
                 std::thread::sleep(Duration::from_millis(200));
             }
+        }
+    }
+    if let Some(worker) = index_worker {
+        if worker.join().is_err() {
+            eprintln!("Background duplicate indexing stopped unexpectedly");
         }
     }
 }

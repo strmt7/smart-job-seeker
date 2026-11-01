@@ -51,6 +51,25 @@ fn create_key(
 }
 
 impl Workspace {
+    pub(super) fn encrypted_duplicate_indexer(
+        &self,
+        path: &Path,
+        lock: std::fs::File,
+    ) -> Result<DuplicateIndexer, WorkspaceError> {
+        let dir = path
+            .parent()
+            .ok_or_else(|| error("database has no parent directory"))?;
+        let sealer = waypoint_seal::platform_sealer()
+            .filter(|s| s.kind() == SealerKind::Dpapi)
+            .ok_or_else(|| error("Windows DPAPI is required"))?;
+        let key = read_key(&dir.join("workspace-key.dpapi"), sealer.as_ref())?;
+        let store = Store::open_encrypted(path, &key).map_err(error)?;
+        Ok(DuplicateIndexer {
+            store,
+            _workspace_lock: lock,
+        })
+    }
+
     /// Open or create an encrypted database. Existing plaintext is copied to a
     /// separate file and retained; an incomplete export is never selected.
     pub fn open_encrypted(dir: &Path) -> Result<Self, WorkspaceError> {
@@ -136,7 +155,7 @@ mod tests {
                 "second workspace must be refused"
             );
         }
-        let ws = Workspace::open_encrypted(&dir).unwrap();
+        let mut ws = Workspace::open_encrypted(&dir).unwrap();
         assert!(ws.sealing_status().contains("plaintext"));
         assert_eq!(
             ws.facts().unwrap()[0].text,
@@ -151,15 +170,48 @@ mod tests {
             .windows(position.len())
             .any(|w| w == position));
         assert_eq!(ws.jobs().unwrap()[0].title, "fictional-position-private");
+        let id = JobIdentityId::new("fictional-migrated-job").unwrap();
+        ws.store
+            .set_job_description(&id, Some("updated fictional description"))
+            .unwrap();
+        assert!(ws.duplicate_index_pending().unwrap());
+        let indexer = ws.duplicate_indexer().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let worker_barrier = barrier.clone();
+        let worker = std::thread::spawn(move || {
+            worker_barrier.wait();
+            indexer.index_next("")
+        });
+        barrier.wait();
+        ws.add_fact("fictional concurrent update", FactOrigin::UserAttested)
+            .unwrap();
+        let indexed = worker
+            .join()
+            .unwrap()
+            .or_else(|_| ws.index_next_duplicate_job(""))
+            .unwrap();
+        assert_eq!(indexed.as_deref(), Some("fictional-migrated-job"));
+        assert!(!ws.duplicate_index_pending().unwrap());
+        let indexer = ws.duplicate_indexer().unwrap();
         drop(ws);
+        assert!(
+            Workspace::open_encrypted(&dir).is_err(),
+            "indexer must keep the workspace locked"
+        );
+        drop(indexer);
         assert!(
             Workspace::open(&dir).is_err(),
             "plaintext build must not reopen the retained old database"
         );
-        assert_eq!(
-            Workspace::open_encrypted(&dir).unwrap().facts().unwrap()[0].text,
-            "fictional migrated qualification"
-        );
+        let reopened = Workspace::open_encrypted(&dir).unwrap();
+        let facts = reopened.facts().unwrap();
+        assert!(facts
+            .iter()
+            .any(|f| f.text == "fictional migrated qualification"));
+        assert!(facts
+            .iter()
+            .any(|f| f.text == "fictional concurrent update"));
+        drop(reopened);
         for name in [
             "jobs.sqlite3",
             "jobs.encrypted.sqlite3",

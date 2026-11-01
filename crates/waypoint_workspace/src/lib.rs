@@ -303,7 +303,43 @@ fn lock_workspace(dir: &Path) -> Result<std::fs::File, WorkspaceError> {
     Ok(file)
 }
 
+/// Restricted database handle for background duplicate indexing.
+pub struct DuplicateIndexer {
+    store: Store,
+    _workspace_lock: std::fs::File,
+}
+
+impl DuplicateIndexer {
+    pub fn index_next(&self, after: &str) -> Result<Option<String>, WorkspaceError> {
+        self.store
+            .index_next_duplicate_job(after)
+            .map_err(|e| WorkspaceError::Export(format!("Duplicate indexing: {e}")))
+    }
+}
+
 impl Workspace {
+    /// Open an additional connection while the workspace lock is held.
+    pub fn duplicate_indexer(&self) -> Result<DuplicateIndexer, WorkspaceError> {
+        let path = self.db_path.as_ref().ok_or_else(|| {
+            WorkspaceError::Export("Background indexing requires a disk workspace".into())
+        })?;
+        let lock = self
+            ._workspace_lock
+            .as_ref()
+            .ok_or_else(|| WorkspaceError::Export("Workspace lock is unavailable".into()))?
+            .try_clone()?;
+        #[cfg(feature = "sqlcipher")]
+        if self.database_encrypted {
+            return self.encrypted_duplicate_indexer(path, lock);
+        }
+        let store = Store::open(path)
+            .map_err(|e| WorkspaceError::Export(format!("Duplicate index connection: {e}")))?;
+        Ok(DuplicateIndexer {
+            store,
+            _workspace_lock: lock,
+        })
+    }
+
     /// Open (creating directories + migrating) a workspace on disk.
     ///
     /// The candidate's own material (facts and prepared documents) is sealed at
