@@ -233,6 +233,7 @@ pub(crate) fn parse_excluding(
     let mut examined = 0;
     let mut previously_seen = 0;
     let mut within_page_duplicates = 0usize;
+    let mut result_limit_omitted = 0usize;
     // A provider can repeat earlier pages before returning new results. Scan a
     // larger bounded prefix while still retaining at most 100 new links.
     for item in results.iter().take(500) {
@@ -335,9 +336,10 @@ pub(crate) fn parse_excluding(
             }
             continue;
         }
-        links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
-        if links.len() == 100 {
-            break;
+        if links.len() < 100 {
+            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+        } else {
+            result_limit_omitted += 1;
         }
     }
     let unavailable = data.get("unresponsive_engines").and_then(Value::as_array);
@@ -368,7 +370,7 @@ pub(crate) fn parse_excluding(
         }
     }
     Ok(
-        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len(),"results_rejected":examined-links.len()-previously_seen-within_page_duplicates,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len() || result_limit_omitted > 0,"result_limit_omitted":result_limit_omitted,"results_rejected":examined-links.len()-previously_seen-within_page_duplicates-result_limit_omitted,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
     )
 }
 
@@ -662,8 +664,22 @@ mod tests {
             .collect();
         let limited = parse(&json!({"results":valid}).to_string()).unwrap();
         assert_eq!(limited["results"].as_array().unwrap().len(), 100);
-        assert_eq!(limited["results_examined"], 100);
+        assert_eq!(limited["results_examined"], 101);
+        assert_eq!(limited["result_limit_omitted"], 1);
+        assert_eq!(limited["results_rejected"], 0);
         assert_eq!(limited["limited"], true);
+
+        let mut rows: Vec<Value> = (0..101)
+            .map(|i| json!({"url":format!("https://example.org/{i}")}))
+            .collect();
+        rows.push(json!({"url":"https://example.org/0", "title":"Updated title", "engine":"second engine"}));
+        rows.push(json!({"url":"https://example.org/100"}));
+        let after_cap = parse(&json!({"results":rows}).to_string()).unwrap();
+        assert_eq!(after_cap["results"][0]["title"], "Updated title");
+        assert_eq!(after_cap["results"][0]["engines"], json!(["second engine"]));
+        assert_eq!(after_cap["result_limit_omitted"], 1);
+        assert_eq!(after_cap["within_page_duplicates"], 2);
+        assert_eq!(after_cap["results_rejected"], 0);
 
         let invalid = vec![json!({"title":"No URL"}); 35];
         let complete = parse(&json!({"results":invalid}).to_string()).unwrap();
