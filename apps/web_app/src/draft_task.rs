@@ -39,6 +39,7 @@ pub struct Inputs {
     pub instructions: String,
     pub template: Option<(String, Vec<u8>)>,
     pub reviewed_template: Option<(String, Value)>,
+    pub template_style_focus: Option<String>,
 }
 pub(crate) fn extract_template(
     name: &str,
@@ -298,11 +299,30 @@ fn sample_template_style(template: &str) -> (String, bool) {
     )
 }
 
+fn focused_template_style(template: &str, focus: Option<&str>) -> Result<(String, bool), String> {
+    let Some(focus) = focus else {
+        return Ok(sample_template_style(template));
+    };
+    if focus.trim().is_empty()
+        || crate::answer_task::json_prefix(focus, 350).len() != focus.len()
+        || !template.contains(focus)
+    {
+        return Err(
+            "The style passage must be a short exact excerpt from the extracted template".into(),
+        );
+    }
+    let context = crate::answer_task::json_prefix(template, 200);
+    let combined = format!("{focus}\n[...]\n{context}");
+    Ok((combined, true))
+}
+
 fn generate_with_selection(
     llm: &mut dyn Inference,
     input: &Inputs,
     template: &str,
 ) -> Result<Value, String> {
+    let (template_excerpt, template_sampled) =
+        focused_template_style(template, input.template_style_focus.as_deref())?;
     let (mut selected, mut selection) = crate::fit_task::select_semantic_facts(
         llm,
         &input.facts,
@@ -377,7 +397,6 @@ fn generate_with_selection(
         }
     }
     let instructions = crate::answer_task::json_prefix(&input.instructions, 500);
-    let (template_excerpt, template_sampled) = sample_template_style(template);
     selection["used_in_draft"] = json!(qualification_count);
     selection["draft_fact_budget_omitted"] =
         json!(over_limit + selected.len() - qualification_count);
@@ -386,6 +405,7 @@ fn generate_with_selection(
     selection["instructions_truncated"] = json!(instructions.len() < input.instructions.len());
     selection["template_truncated"] = json!(template_sampled);
     selection["template_sampled_sections"] = json!(template_sampled);
+    selection["template_user_focused"] = json!(input.template_style_focus.is_some());
     if !template_excerpt.is_empty() {
         selection["template_style_sample"] = json!(template_excerpt);
         selection["template_extracted_chars"] = json!(template.chars().count());
@@ -1438,6 +1458,13 @@ mod tests {
             sample_template_style("Short template"),
             ("Short template".into(), false)
         );
+        let (focused, shortened) =
+            focused_template_style(&template, Some("MIDDLE MIDDLE")).unwrap();
+        assert!(shortened);
+        assert!(focused.starts_with("MIDDLE MIDDLE"));
+        assert!(serde_json::to_string(&focused).unwrap().len() <= 700);
+        assert!(focused_template_style(&template, Some("invented passage")).is_err());
+        assert!(focused_template_style(&template, Some(&"a".repeat(350))).is_err());
     }
 
     #[test]
@@ -1457,6 +1484,7 @@ mod tests {
             instructions: String::new(),
             template: None,
             reviewed_template: None,
+            template_style_focus: None,
         };
         let draft = generate_with_selection(&mut model, &input, &"t".repeat(1000)).unwrap();
         assert_eq!(draft["selection"]["used_in_draft"], 2);
@@ -1470,6 +1498,21 @@ mod tests {
         assert_eq!(
             draft["selection"]["template_style_sample"],
             sample_template_style(&"t".repeat(1000)).0
+        );
+        let mut with_focus = input.clone();
+        with_focus.template_style_focus = Some("tttttt".into());
+        let focused =
+            generate_with_selection(&mut Fake { calls: 0 }, &with_focus, &"t".repeat(1000))
+                .unwrap();
+        assert_eq!(focused["selection"]["template_user_focused"], true);
+        assert!(focused["selection"]["template_style_sample"]
+            .as_str()
+            .unwrap()
+            .starts_with("tttttt"));
+        with_focus.template_style_focus = Some("not present".into());
+        assert!(
+            generate_with_selection(&mut Fake { calls: 0 }, &with_focus, &"t".repeat(1000))
+                .is_err()
         );
         let mut prioritized = input;
         prioritized.priority_facts = vec![facts[7].clone()];
@@ -1543,6 +1586,7 @@ mod tests {
                 include_bytes!("../tests/fictional-scanned-cv.pdf").to_vec(),
             )),
             reviewed_template: None,
+            template_style_focus: None,
         };
         start(
             "fictional-scanned-draft".into(),
@@ -1701,6 +1745,7 @@ mod tests {
             instructions: "Be concise and retain the supplied experience.".into(),
             template: None,
             reviewed_template: None,
+            template_style_focus: None,
         };
         let result = generate_with_selection(&mut llm, &input, "");
         println!("fictional prioritized draft: {result:?}");
@@ -1750,6 +1795,7 @@ mod tests {
             instructions: "Be concise.".into(),
             template: None,
             reviewed_template: None,
+            template_style_focus: None,
         };
         let draft = generate_with_selection(&mut model, &input, "")
             .expect("local model should draft a fictional CV");

@@ -6105,6 +6105,22 @@ fn serve(
             } else {
                 None
             };
+            let template_style_focus = match &body["template_style_focus"] {
+                Value::Null => None,
+                Value::String(text)
+                    if !text.trim().is_empty()
+                        && answer_task::json_prefix(text, 350).len() == text.len()
+                        && template.is_some() =>
+                {
+                    Some(text.clone())
+                }
+                _ => {
+                    return Err(
+                        "Choose a short passage from the selected template for style guidance"
+                            .into(),
+                    )
+                }
+            };
             draft_task::start(
                 task_id.clone(),
                 model,
@@ -6121,6 +6137,7 @@ fn serve(
                     instructions,
                     template,
                     reviewed_template,
+                    template_style_focus,
                 },
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));

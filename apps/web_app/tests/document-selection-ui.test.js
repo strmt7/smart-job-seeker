@@ -11,4 +11,10 @@ show(panel,{template_style_sample:'<img src=x>\n[...]\nEnd',template_sampled_sec
 assert.equal(panel.children[0].children[2].textContent,'<img src=x>\n[...]\nEnd');
 assert.match(panel.children[0].children[1].textContent,/did not receive the full template/);
 show(panel,{template_style_sample:'x'.repeat(701)});assert.equal(panel.children.length,1);
-assert.ok(src.includes('showTemplateStyleSample(panel,draft.selection)'));
+assert.ok(src.includes('showTemplateStyleSample(panel,draft.selection,job,draft,draftId)'));
+let sent;const saved=[];
+const node=(tag,text='',className='')=>({tag,textContent:text,className,children:[],listeners:{},append(...items){this.children.push(...items)},setAttribute(){},addEventListener(event,handler){this.listeners[event]=handler}});
+const interactive=vm.runInNewContext(`(${sampleLine})`,{element:node,document:{createElement:tag=>node(tag)},draftPriorities:new Map(),api:async(_path,body)=>{sent=body;return {task_id:'task'}},sessionStorage:{setItem:(...args)=>saved.push(args)},followDraft:async()=>{},notify:()=>{}});
+const interactivePanel=node('div');interactive(interactivePanel,{template_style_sample:'Fictional style',template_sampled_sections:true},{id:'job'},{kind:'cv'},'draft');
+const details=interactivePanel.children[0],label=details.children.find(item=>item.tag==='label'),button=details.children.find(item=>item.tag==='button');label.children[0].value='Exact passage';
+button.listeners.click().then(()=>{assert.equal(sent.template_style_focus,'Exact passage');assert.equal(sent.id,'job');assert.equal(saved.length,1);}).catch(error=>{console.error(error);process.exitCode=1;});
