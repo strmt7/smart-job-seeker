@@ -919,7 +919,7 @@ fn duplicate_inputs(
     {
         return Err("This pair is no longer awaiting duplicate review".into());
     }
-    let listing = |id: &JobIdentityId| -> Result<String, String> {
+    let listing = |id: &JobIdentityId| -> Result<(String, String, bool), String> {
         let job = ws
             .job(id)
             .map_err(|e| e.to_string())?
@@ -928,7 +928,7 @@ fn duplicate_inputs(
             .job_description(id)
             .map_err(|e| e.to_string())?
             .unwrap_or_default();
-        Ok(format!(
+        let full = format!(
             "Title: {}\nEmployer: {}\nLocation: {}\nRequisition: {}\nPosted: {}\nDescription: {}",
             job.title,
             job.employer,
@@ -936,22 +936,27 @@ fn duplicate_inputs(
             job.requisition_id.unwrap_or_default(),
             job.posted_at.unwrap_or_default(),
             description
-        )
-        .chars()
-        .take(8000)
-        .collect())
+        );
+        let full_digest = Sha256Digest::of(&full).as_str().to_owned();
+        let mut chars = full.chars();
+        let sample: String = chars.by_ref().take(8000).collect();
+        let truncated = chars.next().is_some();
+        Ok((sample, full_digest, truncated))
     };
-    let first_text = listing(first)?;
-    let second_text = listing(second)?;
-    let digest = Sha256Digest::of(&json!({"first":first_text,"second":second_text}).to_string())
-        .as_str()
-        .to_owned();
+    let (first_text, first_digest, first_truncated) = listing(first)?;
+    let (second_text, second_digest, second_truncated) = listing(second)?;
+    let digest =
+        Sha256Digest::of(&json!({"first":first_digest,"second":second_digest}).to_string())
+            .as_str()
+            .to_owned();
     Ok(duplicate_compare::Inputs {
         first_id: first.as_str().to_owned(),
         second_id: second.as_str().to_owned(),
         first: first_text,
         second: second_text,
         digest,
+        first_truncated,
+        second_truncated,
     })
 }
 

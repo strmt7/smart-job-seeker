@@ -13,7 +13,7 @@ async function api(path, body) {
   assert.equal(body.task_id,'fixture-task');
   polls++;
   if(polls===1) throw new Error('Connection lost');
-  return {status:'complete',assessment:{verdict:'possibly_same',reason:'Fixture',first_excerpt:'',second_excerpt:''}};
+  return {status:'complete',first_truncated:true,second_truncated:false,assessment:{verdict:'possibly_same',reason:'Fixture',first_excerpt:'',second_excerpt:''}};
 }
 const storage = new Map();
 const sessionStorage = {getItem:key => storage.get(key) ?? null,setItem:(key,value) => storage.set(key,value),removeItem:key => storage.delete(key)};
@@ -30,6 +30,7 @@ const create = vm.runInNewContext(`(function(job,otherId){${fragment};return {co
   assert.equal(polls,2);
   assert.equal(resumed.compare.textContent,'Compare with local AI');
   assert.match(resumed.comparison.children[0].textContent,/May be the same position/);
+  assert.ok(resumed.comparison.children.some(node=>node.textContent.includes('only the beginning')));
   assert.equal(storage.size,0);
   console.log('Duplicate comparison retry UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

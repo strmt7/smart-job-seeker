@@ -9,12 +9,16 @@ pub struct Inputs {
     pub first: String,
     pub second: String,
     pub digest: String,
+    pub first_truncated: bool,
+    pub second_truncated: bool,
 }
 struct Task {
     id: String,
     first_id: String,
     second_id: String,
     digest: String,
+    first_truncated: bool,
+    second_truncated: bool,
     result: Option<Result<Value, String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -22,7 +26,7 @@ static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::ne
 
 fn terminal_result(task: &Task) -> Option<Value> {
     task.result.as_ref().map(|result| match result {
-        Ok(assessment) => json!({"status":"complete","assessment":assessment,"first_id":task.first_id,"second_id":task.second_id,"digest":task.digest}),
+        Ok(assessment) => json!({"status":"complete","assessment":assessment,"first_id":task.first_id,"second_id":task.second_id,"digest":task.digest,"first_truncated":task.first_truncated,"second_truncated":task.second_truncated}),
         Err(error) => json!({"status":"failed","error":error}),
     })
 }
@@ -44,6 +48,8 @@ pub fn start(id: String, model: String, inputs: Inputs) -> Result<(), String> {
         first_id: inputs.first_id.clone(),
         second_id: inputs.second_id.clone(),
         digest: inputs.digest.clone(),
+        first_truncated: inputs.first_truncated,
+        second_truncated: inputs.second_truncated,
         result: None,
     });
     drop(task);
@@ -151,6 +157,28 @@ mod tests {
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
 
     #[test]
+    fn comparison_binds_full_listing_when_model_input_is_shortened() {
+        fn input(tail: &str) -> Inputs {
+            let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+            let text = format!("{}{}", "F".repeat(8100), tail);
+            let first = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/first","title":"Engineer","employer":"Example","description":text}), 1).unwrap();
+            let second = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/second","title":"Engineering","employer":"Example"}), 1).unwrap();
+            let first = waypoint_domain::JobIdentityId::new(first["id"].as_str().unwrap()).unwrap();
+            let second =
+                waypoint_domain::JobIdentityId::new(second["id"].as_str().unwrap()).unwrap();
+            ws.add_ai_duplicates(&first, &[(second.as_str().into(), "Possible match".into())])
+                .unwrap();
+            crate::duplicate_inputs(&ws, &first, &second).unwrap()
+        }
+        let before = input("first ending");
+        let after = input("changed ending");
+        assert!(before.first_truncated);
+        assert!(!before.second_truncated);
+        assert_eq!(before.first, after.first);
+        assert_ne!(before.digest, after.digest);
+    }
+
+    #[test]
     fn comparison_replays_and_invalidates_after_a_decision() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
@@ -177,6 +205,8 @@ mod tests {
             first_id: input.first_id,
             second_id: input.second_id,
             digest: input.digest,
+            first_truncated: input.first_truncated,
+            second_truncated: input.second_truncated,
             result: Some(Ok(
                 json!({"verdict":"possibly_same","reason":"Fixture","first_excerpt":"Research","second_excerpt":"Scientist"}),
             )),
