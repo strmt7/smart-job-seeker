@@ -217,7 +217,12 @@ mod tests {
         use std::collections::BTreeMap;
         let path = std::env::var_os("WAYPOINT_PUBLIC_CV_FIXTURE").expect("public CV fixture path");
         let bytes = std::fs::read(path).unwrap();
-        let (_, _, pages) = crate::pdf_extract::scan_coverage_with_pages(&bytes).unwrap();
+        let reference_bytes = if let Some(path) = std::env::var_os("WAYPOINT_PUBLIC_CV_REFERENCE") {
+            std::fs::read(path).unwrap()
+        } else {
+            bytes.clone()
+        };
+        let (_, _, pages) = crate::pdf_extract::scan_coverage_with_pages(&reference_bytes).unwrap();
         let reference = pages
             .first()
             .filter(|s| !s.trim().is_empty())
@@ -281,7 +286,11 @@ mod tests {
         } else {
             None
         };
-        println!("Public CV first-page word overlap: {overlap}/{expected_count} reference and {overlap}/{observed_count} transcribed; ordered overlap: {ordered:?}; model uncertain: {}. Exact characters and visual fidelity are not measured.", result["uncertain"]);
+        let normalize_whitespace =
+            |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let exact = normalize_whitespace(reference)
+            == normalize_whitespace(result["text"].as_str().unwrap());
+        println!("Public CV first-page word overlap: {overlap}/{expected_count} reference and {overlap}/{observed_count} transcribed; ordered overlap: {ordered:?}; exact after whitespace normalization: {exact}; model uncertain: {}. Visual fidelity is not measured.", result["uncertain"]);
     }
     #[test]
     #[ignore = "requires a resource-gated resident vision model and local PDF runtime"]
