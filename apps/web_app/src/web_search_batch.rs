@@ -25,7 +25,7 @@ enum Message {
     Done(bool),
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
-static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value, bool)>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 pub fn busy() -> bool {
@@ -38,7 +38,9 @@ pub fn pending() -> Result<Value, String> {
         None => {
             let completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
             match completed.as_ref() {
-                Some((id, result)) => json!({"active":false,"last":{"task_id":id,"result":result}}),
+                Some((id, result, _)) => {
+                    json!({"active":false,"last":{"task_id":id,"result":result}})
+                }
                 None => json!({"active":false}),
             }
         }
@@ -243,8 +245,8 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
             .lock()
             .map_err(|_| "Web search unavailable")?
             .as_ref()
-            .filter(|(task_id, _)| task_id == id)
-            .map(|(_, result)| result.clone())
+            .filter(|(task_id, _, _)| task_id == id)
+            .map(|(_, result, _)| result.clone())
             .ok_or_else(|| "Batch web search not found".into());
     };
     if acknowledged > task.processed {
@@ -288,7 +290,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
             );
             let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history});
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
-                Some((id.to_owned(), response.clone()));
+                Some((id.to_owned(), response.clone(), false));
             *tasks = None;
             Ok(response)
         }
@@ -318,7 +320,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 json!({"status":"failed","processed":processed,"total":total,"error":error,"coverage":report,"history":task.history})
             };
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
-                Some((id.to_owned(), response.clone()));
+                Some((id.to_owned(), response.clone(), false));
             *tasks = None;
             Ok(response)
         }
@@ -338,6 +340,45 @@ pub fn collect_background() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Retain the latest terminal result only after sealing and storage succeed.
+pub fn persist_completed(ws: &waypoint_workspace::Workspace) -> Result<bool, String> {
+    let mut completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
+    let Some((id, result, saved)) = completed.as_mut() else {
+        return Ok(false);
+    };
+    if *saved {
+        return Ok(true);
+    }
+    let mut persisted = result.clone();
+    persisted["history_saved"] = json!(true);
+    let bytes =
+        serde_json::to_vec(&persisted).map_err(|_| "Could not serialize web search history")?;
+    if let Err(error) = ws.save_latest_web_search(id, &bytes) {
+        result["history_saved"] = json!(false);
+        return Err(error.to_string());
+    }
+    *result = persisted;
+    *saved = true;
+    Ok(true)
+}
+
+pub fn pending_with_saved(ws: &waypoint_workspace::Workspace) -> Result<Value, String> {
+    let mut current = pending()?;
+    if current["active"] == false && current.get("last").is_none() {
+        if let Some((id, bytes)) = ws.latest_web_search().map_err(|error| error.to_string())? {
+            let result: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| "Saved web search history is invalid")?;
+            if !matches!(result["status"].as_str(), Some("complete" | "failed"))
+                || !result["history"].is_array()
+            {
+                return Err("Saved web search history is invalid".into());
+            }
+            current["last"] = json!({"task_id":id,"result":result});
+        }
+    }
+    Ok(current)
+}
 pub fn cancel(id: &str) -> Result<(), String> {
     let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     let task = tasks
@@ -353,6 +394,42 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::time::Instant;
+    #[cfg(windows)]
+    #[test]
+    fn completed_history_is_recovered_after_workspace_reopens() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        fn open(path: &std::path::Path) -> waypoint_workspace::Workspace {
+            #[cfg(feature = "sqlcipher")]
+            {
+                waypoint_workspace::Workspace::open_encrypted(path).unwrap()
+            }
+            #[cfg(not(feature = "sqlcipher"))]
+            {
+                waypoint_workspace::Workspace::open(path).unwrap()
+            }
+        }
+        let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::Builder::new()
+            .prefix("waypoint-web-search-")
+            .tempdir_in(parent)
+            .unwrap();
+        let expected = json!({"status":"complete","history":[{"query":"fictional","page":1,"data":{"results":[{"url":"https://example.test/job"}]}}]});
+        {
+            let ws = open(dir.path());
+            *COMPLETED.lock().unwrap() = Some(("fixture-restart".into(), expected, false));
+            assert!(persist_completed(&ws).unwrap());
+        }
+        *COMPLETED.lock().unwrap() = None;
+        let ws = open(dir.path());
+        let recovered = pending_with_saved(&ws).unwrap();
+        assert_eq!(recovered["active"], false);
+        assert_eq!(recovered["last"]["task_id"], "fixture-restart");
+        assert_eq!(recovered["last"]["result"]["history_saved"], true);
+        assert_eq!(
+            recovered["last"]["result"]["history"][0]["data"]["results"][0]["url"],
+            "https://example.test/job"
+        );
+    }
     #[test]
     fn background_collection_retains_pages_for_later_client_recovery() {
         let _lock = TEST_LOCK.lock().unwrap();

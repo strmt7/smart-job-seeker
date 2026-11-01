@@ -2183,10 +2183,15 @@ fn serve(
             let acknowledged = body["acknowledged"].as_u64().unwrap_or(0);
             let acknowledged =
                 usize::try_from(acknowledged).map_err(|_| "Invalid batch acknowledgement")?;
-            json_reply(stream, "200 OK", web_search_batch::poll(id, acknowledged)?);
+            let mut result = web_search_batch::poll(id, acknowledged)?;
+            if matches!(result["status"].as_str(), Some("complete" | "failed")) {
+                let _ = web_search_batch::persist_completed(ws);
+                result = web_search_batch::poll(id, acknowledged)?;
+            }
+            json_reply(stream, "200 OK", result);
         }
         "/api/web-search/batch-pending" => {
-            json_reply(stream, "200 OK", web_search_batch::pending()?);
+            json_reply(stream, "200 OK", web_search_batch::pending_with_saved(ws)?);
         }
         "/api/web-search/batch-cancel" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
@@ -6237,7 +6242,18 @@ fn serve_loop(
     let mut next_email_collect = Instant::now();
     let mut next_draft_save = Instant::now();
     let mut next_discovery_collect = Instant::now();
+    let mut next_web_search_save = Instant::now();
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
+        if Instant::now() >= next_web_search_save {
+            next_web_search_save = Instant::now()
+                + match web_search_batch::persist_completed(&ws) {
+                    Ok(_) => Duration::from_secs(1),
+                    Err(error) => {
+                        eprintln!("Web search history could not be saved: {error}");
+                        Duration::from_secs(30)
+                    }
+                };
+        }
         if Instant::now() >= next_discovery_collect {
             if let Err(error) = discovery_task::collect_background(&mut ws) {
                 eprintln!("Background discovery collection failed: {error}");

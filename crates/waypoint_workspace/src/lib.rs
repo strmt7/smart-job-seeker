@@ -492,6 +492,14 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn save_latest_web_search(&self, id: &str, content: &[u8]) -> Result<(), WorkspaceError> {
+        Ok(self.store.save_latest_web_search(id, content)?)
+    }
+
+    pub fn latest_web_search(&self) -> Result<Option<(String, Vec<u8>)>, WorkspaceError> {
+        Ok(self.store.latest_web_search()?)
+    }
+
     pub fn save_fit_assessment(
         &self,
         id: &JobIdentityId,

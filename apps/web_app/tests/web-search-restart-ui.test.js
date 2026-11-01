@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('async function recoverWebBatch('),end=source.indexOf('\nvoid recoverWebBatch()',start);
+assert.ok(start>=0 && end>start);
+const storage=new Map([['waypoint-web-search-batch',JSON.stringify({task:'stale',groups:[]})]]),status={textContent:''},messages=[];
+let rendered=null;
+const context={sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
+  followWebBatch:async()=>{throw Error('Batch web search not found');},
+  api:async path=>{assert.equal(path,'/api/web-search/batch-pending');return {active:false,last:{task_id:'saved',result:{status:'complete',history_saved:true,history:[{query:'fictional',page:1,data:{results:[{url:'https://example.test/job'}]}}]}}};},
+  renderWebBatch:value=>{rendered=value;},webBatchSummary:(_result,prefix)=>prefix+'recovered',
+  document:{querySelector:()=>status},notify:message=>messages.push(message)};
+(async()=>{const recover=vm.runInNewContext(`${source.slice(start,end)}; recoverWebBatch`,context);await recover();assert.equal(storage.has('waypoint-web-search-batch'),false);assert.equal(rendered.groups[0].data.results[0].url,'https://example.test/job');assert.equal(status.textContent,'Previous recovered');assert.equal(messages.length,0);console.log('Web-search restart recovery UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

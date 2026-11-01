@@ -22,6 +22,7 @@ assert.match(mixed, /1 page had limited results.*1 page reported unavailable eng
 assert.match(batchSummary({status:'complete',processed:0,total:2,cancelled:true,coverage:{succeeded_pages:0,failed_pages:0,unattempted_pages:2}}), /stopped.*0 succeeded, 0 failed, 2 not attempted/);
 const interrupted = batchSummary({status:'failed',processed:1,total:3,error:'Results not collected',coverage:{attempted_pages:2,succeeded_pages:1,failed_pages:0,unattempted_pages:1,fetched_unreported_pages:1}});
 assert.match(interrupted,/2 of 3 pages attempted.*1 succeeded, 0 failed, 1 not attempted.*1 fetched page could not be delivered/);
+assert.match(batchSummary({status:'complete',processed:1,total:1,history_saved:false}), /history could not be saved/);
 const repeatedLine = source.split('\n').find(line=>line.startsWith('function repeatedCandidateDetails('));
 assert.ok(repeatedLine);
 const make = (tag,text='')=>({tag,text,children:[],append(...items){this.children.push(...items);}});
