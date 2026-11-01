@@ -1,3 +1,8 @@
+## Multilingual form vision — 2026-11-01
+
+- On a fictional multilingual form, the production-admitted local `qwen3.5:9b` correctly mapped and filled the name and email, but first transcribed `Vorname` as `Vornname`; the comparison correctly left the field unobserved. The full-page vision prompt now explicitly asks for exact label spelling and accents. In one rerun, the model transcribed both filled fields correctly and reported the sensitive fields empty. A separate changed-field case detected the altered value, and a two-step fictional workflow again passed its mapping, filling and visual checks. The next-step click in that test simulates a user gesture; the application does not automatically navigate or submit.
+- Minimum sampled available RAM was 19.18 GiB for the multilingual and changed-field run, and 19.14 GiB for the two-step run. The model was unloaded after each run. These single examples do not establish general transcription accuracy or prove the prompt caused the improvement. Focused visual-review tests (23 passed, 14 ignored) and web-app Clippy passed. No real employer form was filled or submitted. Native logs remain under `target/*-qwen-live.log` and `target/multilingual-qwen-before-label-prompt.log`.
+
 ## Web regression coverage — 2026-11-01
 
 - CI now discovers and runs all standalone `*-ui.test.js` checks instead of a manually maintained subset. Three stale test harnesses were updated to follow current function boundaries and dependencies. All 95 checks passed locally; these are simulated UI checks, not full rendered-browser coverage.
