@@ -2315,7 +2315,15 @@ fn serve(
                 return Err("Choose 1 to 5 pages per search phrase".into());
             }
             web_search_batch::start(id.clone(), provider.to_owned(), queries, pages as u8)?;
-            json_reply(stream, "200 OK", json!({"task_id":id}));
+            // Make the plan recoverable before acknowledging the start. Search
+            // can continue in memory if secure persistence is unavailable, but
+            // the client must be told that restart recovery is not yet assured.
+            let checkpoint_saved = matches!(web_search_batch::persist_progress(ws), Ok(true));
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":id,"checkpoint_saved":checkpoint_saved}),
+            );
         }
         "/api/web-search/batch-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;

@@ -1,3 +1,8 @@
+## Initial web-search checkpoint — 2026-11-01
+
+- Starting a batch search now attempts to save its approved plan before returning the start response. If secure persistence fails, the search can continue in memory and the interface warns that restart recovery is not yet assured. The provider worker can start before the checkpoint finishes, so a crash before the response can still interrupt both operations.
+- With a fictional loopback provider holding its first response, a real local backend returned a successful checkpoint, was stopped, and recovered the complete four-page plan after restart with zero pages saved. Fourteen batch tests, a UI warning test and web-app Clippy passed. No employer was contacted or application submitted; the local harness is `target/search-initial-recovery.cjs`.
+
 ## Interrupted search provider context — 2026-11-01
 
 - Interrupted search checkpoints now retain the original provider URL, when it is at most 2,048 bytes, and show it alongside the prepared retry. The user still reviews the current provider before starting; it is not silently changed. Older checkpoints or longer provider URLs display that the original was not saved.
