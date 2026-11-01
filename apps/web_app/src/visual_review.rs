@@ -348,6 +348,42 @@ fn twelve_hour_time(value: &str) -> Option<String> {
     Some(format!("{hour:02}:{minute:02}"))
 }
 
+/// Recognize an explicit English abbreviated month and 12-hour clock. Numeric
+/// dates are intentionally not interpreted because their ordering is ambiguous.
+fn local_datetime_display(value: &str) -> Option<String> {
+    let mut parts = value.split_whitespace();
+    let date = parts.next()?;
+    let clock = parts.next()?;
+    let suffix = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let mut date_parts = date.split('-');
+    let day = date_parts.next()?;
+    let month = date_parts.next()?;
+    let year = date_parts.next()?;
+    if date_parts.next().is_some()
+        || !(1..=2).contains(&day.len())
+        || !day.bytes().all(|b| b.is_ascii_digit())
+        || year.len() != 4
+        || !year.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let months = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let month = months.iter().position(|m| month.eq_ignore_ascii_case(m))? + 1;
+    let date = format!("{year}-{month:02}-{:02}", day.parse::<u32>().ok()?);
+    if !waypoint_applications::form_mapping::valid_iso_date(&date) {
+        return None;
+    }
+    Some(format!(
+        "{date}T{}",
+        twelve_hour_time(&format!("{clock} {suffix}"))?
+    ))
+}
+
 /// A native time control may display a 12-hour value while retaining a
 /// 24-hour DOM value. Only reconcile an unambiguous completed time field;
 /// the caller still has to verify the live control independently.
@@ -380,7 +416,11 @@ fn reconcile_time_transcriptions(
         let [field] = fields.as_slice() else {
             continue;
         };
-        if field.field_type != FormFieldType::Time || !completed.contains(&field.selector) {
+        if !matches!(
+            field.field_type,
+            FormFieldType::Time | FormFieldType::DateTimeLocal
+        ) || !completed.contains(&field.selector)
+        {
             continue;
         }
         let Some(PacketValue::Date(expected)) = preview
@@ -405,14 +445,17 @@ fn reconcile_time_transcriptions(
         let [observation] = observed.as_slice() else {
             continue;
         };
-        if observation["visible_value"]
-            .as_str()
-            .and_then(twelve_hour_time)
-            .as_deref()
-            == Some(expected.as_str())
-        {
+        let normalized =
+            observation["visible_value"]
+                .as_str()
+                .and_then(|value| match field.field_type {
+                    FormFieldType::Time => twelve_hour_time(value),
+                    FormFieldType::DateTimeLocal => local_datetime_display(value),
+                    _ => None,
+                });
+        if normalized.as_deref() == Some(expected.as_str()) {
             item["status"] = json!("matches_transcription");
-            item["comparison_note"] = json!("12-hour display normalized to 24-hour time");
+            item["comparison_note"] = json!("Unambiguous display normalized to the native value");
         }
     }
 }
@@ -1380,6 +1423,54 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires one local browser and a preloaded local vision model"]
+    fn live_vision_reads_fictional_local_datetime() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue, ProposedMapping};
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").expect("model name");
+        let (addr, context) = benchmark_target(&model).unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fictional-visual-datetime.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#datetime".into(),
+                value: PacketValue::Date("2026-11-01T13:30".into()),
+            })
+            .unwrap();
+        driver
+            .verify_text_value("#datetime", "2026-11-01T13:30")
+            .unwrap();
+        let preview = crate::form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#datetime".into(),
+                value: PacketValue::Date("2026-11-01T13:30".into()),
+            }],
+            manual_review: live.walls,
+            model_review_selectors: Default::default(),
+        };
+        let image = driver.screenshot_field_context("#datetime").unwrap();
+        let expected = vec![("Appointment".into(), "2026-11-01T13:30".into())];
+        let mut result =
+            analyze_targeted_with_context(addr, &model, &image, "Appointment", &expected, context)
+                .unwrap();
+        let verified =
+            crosscheck_live_values(&mut driver, &preview, &["#datetime".into()], &mut result);
+        println!("Fictional local datetime visual review: {result}; live checks={verified:?}");
+        assert_eq!(result["comparisons"].as_array().unwrap().len(), 1);
+        assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
+        assert_eq!(result["comparisons"][0]["dom_status"], "matches");
+        assert_eq!(verified, (1, 0));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
     fn twelve_hour_time_requires_an_unambiguous_clock() {
         assert_eq!(twelve_hour_time("01:30 PM").as_deref(), Some("13:30"));
         assert_eq!(twelve_hour_time("12:00 AM").as_deref(), Some("00:00"));
@@ -1393,6 +1484,27 @@ mod tests {
             "1:30:00 PM",
         ] {
             assert_eq!(twelve_hour_time(value), None);
+        }
+    }
+
+    #[test]
+    fn local_datetime_display_rejects_ambiguous_or_invalid_dates() {
+        assert_eq!(
+            local_datetime_display("01-Nov-2026 01:30 PM").as_deref(),
+            Some("2026-11-01T13:30")
+        );
+        assert_eq!(
+            local_datetime_display("29-Feb-2024 12:00 AM").as_deref(),
+            Some("2024-02-29T00:00")
+        );
+        for value in [
+            "01-11-2026 01:30 PM",
+            "29-Feb-2026 01:30 PM",
+            "01-Nov-2026 01:30",
+            "01-Nov-2026 01:30 PM UTC",
+            "01-Nov-2026 25:30 PM",
+        ] {
+            assert_eq!(local_datetime_display(value), None);
         }
     }
 
@@ -1454,6 +1566,72 @@ mod tests {
         let mut stale = compare(&observation, &expected);
         assert_eq!(
             crosscheck_live_values(&mut driver, &preview, &["#time".into()], &mut stale),
+            (0, 1)
+        );
+        assert_eq!(stale["comparisons"][0]["status"], "unobserved");
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and does not submit"]
+    fn datetime_visual_reconciliation_requires_the_live_value() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue, ProposedMapping};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fictional-visual-datetime.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#datetime".into(),
+                value: PacketValue::Date("2026-11-01T13:30".into()),
+            })
+            .unwrap();
+        let preview = crate::form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#datetime".into(),
+                value: PacketValue::Date("2026-11-01T13:30".into()),
+            }],
+            manual_review: live.walls,
+            model_review_selectors: Default::default(),
+        };
+        let observation = json!({"observations":[{"label":"Appointment","visible_value":"01-Nov-2026 01:30 PM"}]});
+        let expected = vec![("Appointment".into(), "2026-11-01T13:30".into())];
+        let mut ambiguous = compare(
+            &json!({"observations":[{"label":"Appointment","visible_value":"01-Nov-2026 01:30 PM"},{"label":"Appointment","visible_value":"01-Nov-2026 01:30 PM"}]}),
+            &expected,
+        );
+        reconcile_time_transcriptions(&preview, &["#datetime".into()], &mut ambiguous);
+        assert_eq!(ambiguous["comparisons"][0]["status"], "unobserved");
+        let mut other_type = preview.clone();
+        other_type.schema.fields[0].field_type =
+            waypoint_applications::form_mapping::FormFieldType::Text;
+        let mut literal = compare(&observation, &expected);
+        reconcile_time_transcriptions(&other_type, &["#datetime".into()], &mut literal);
+        assert_eq!(
+            literal["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let mut result = compare(&observation, &expected);
+        assert_eq!(
+            crosscheck_live_values(&mut driver, &preview, &["#datetime".into()], &mut result),
+            (1, 0)
+        );
+        assert_eq!(result["comparisons"][0]["dom_status"], "matches");
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#datetime".into(),
+                value: PacketValue::Date("2026-11-01T14:30".into()),
+            })
+            .unwrap();
+        let mut stale = compare(&observation, &expected);
+        assert_eq!(
+            crosscheck_live_values(&mut driver, &preview, &["#datetime".into()], &mut stale),
             (0, 1)
         );
         assert_eq!(stale["comparisons"][0]["status"], "unobserved");

@@ -1,3 +1,8 @@
+## Local date and time visual check — 2026-11-01
+
+- An isolated CPU run of `gemma4:12b-it-q4_K_M` inspected a fictional native date-time field. It read `01-Nov-2026 01:30 PM` while the stored value was `2026-11-01T13:30`; initially the comparison reported a mismatch. The comparison now recognizes this explicit English abbreviated-month and 12-hour display only for completed native local date-time fields, and still checks the live value independently. Ambiguous numeric dates and other formats remain unnormalized and require review.
+- A second run reported both a transcription match and a live-value match. Minimum sampled available RAM was 15.07 GiB during that run; the isolated model was stopped afterward. A browser fixture confirmed a changed live value is rejected, and unit tests covered invalid and ambiguous dates; web-app Clippy passed. One fictional example does not establish general visual accuracy. No employer site was used or application submitted. Local evidence is under `target/model-eval/isolated-gemma-native-datetime*`.
+
 ## Reviewed native local date and time — 2026-11-01
 
 - Native `datetime-local` fields can now be reviewed and filled at minute precision. The value has no timezone; invalid calendar dates, timezones and seconds are rejected. The browser respects native validity constraints, checks existing values before replacement and verifies the retained value. Other unsupported special controls still require manual handling.
