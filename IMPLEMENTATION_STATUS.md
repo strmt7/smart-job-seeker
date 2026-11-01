@@ -1,5 +1,10 @@
 # Implementation checkpoint
 
+## Dense form visual comparison — 2026-11-01
+
+- A CPU-only `gemma4:12b-it-q4_K_M` run on a fictional 16-field image (SHA-256 `de8310338c0257db2f0cc57517dd0eee675b0d10ef71f0486189c5473d65f68e`) transcribed all values but prefixed each label with the visible section heading. The comparison initially treated all 16 as unobserved. It now accepts a section-prefixed observation for an unqualified label only when the expected leaf label and matching observation are unique; repeated and ambiguous labels remain unobserved.
+- After the fix, the same local-model test matched 14 expected values and flagged the two deliberately different values. It took 47.63 seconds after preload, with at least 17.33 GiB of available RAM during the test and 26.9 GiB after cleanup. This checks one fictional image, not real-site or general model accuracy; screenshots remain advisory and live-value checks still apply. Focused visual-review tests and lint passed. Native output is under `target/model-eval/isolated-gemma-dense-form-fixed-20261101`.
+
 ## Two-page document review with local vision — 2026-11-01
 
 - With `gemma4:12b-it-q4_K_M` preloaded on CPU in an isolated Ollama instance, the actual PDF rendering and document-review pipeline inspected both pages of the fictional overlap fixture (SHA-256 `6c41494555775507cded703bf707ac0dc52c14be72c86d70612f9706f7b3fe60`). The model reported an overlap or legibility issue on the second page; selectable-text geometry independently found overlapping characters there, and the application kept the document for follow-up. The first page had no geometric overlaps. This is one constructed case, not a measure of general document-review accuracy.

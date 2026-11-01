@@ -277,17 +277,28 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
         .iter()
         .map(|(label, value)| {
             let normalized = normalized_label(label);
+            let leaf = normalized.rsplit('—').next().unwrap_or("").trim();
             let matches: Vec<_> = items
                 .iter()
                 .filter(|item| {
-                    item["label"]
-                        .as_str()
-                        .is_some_and(|name| normalized_label(name) == normalized)
+                    item["label"].as_str().is_some_and(|name| {
+                        let observed = normalized_label(name);
+                        observed == normalized
+                            || (!normalized.contains('—')
+                                && observed.contains('—')
+                                && observed
+                                    .rsplit('—')
+                                    .next()
+                                    .is_some_and(|part| part.trim() == normalized))
+                    })
                 })
                 .collect();
             let unique_expected = expected
                 .iter()
-                .filter(|(name, _)| normalized_label(name) == normalized)
+                .filter(|(name, _)| {
+                    let normalized = normalized_label(name);
+                    normalized.rsplit('—').next().unwrap_or("").trim() == leaf
+                })
                 .count()
                 == 1;
             let status = if !unique_expected || matches.len() != 1 {
@@ -685,12 +696,12 @@ pub(crate) fn generate_vision(
 }
 
 #[cfg(test)]
-pub(crate) fn benchmark_vision(model: &str, image: &str, prompt: &str) -> Result<Value, String> {
+fn benchmark_target(model: &str) -> Result<(std::net::SocketAddr, Option<u32>), String> {
     let Some(address) = std::env::var("WAYPOINT_VISION_BENCHMARK_ADDR").ok() else {
         if crate::resident_model()?.as_deref() != Some(model) {
             return Err("Expected a preloaded eligible model".into());
         }
-        return generate_vision("127.0.0.1:11434".parse().unwrap(), model, image, prompt);
+        return Ok(("127.0.0.1:11434".parse().unwrap(), None));
     };
     let addr: std::net::SocketAddr = address.parse().map_err(|_| "Invalid benchmark address")?;
     if addr.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) {
@@ -710,7 +721,13 @@ pub(crate) fn benchmark_vision(model: &str, image: &str, prompt: &str) -> Result
     {
         return Err("Expected one CPU-resident benchmark model with 2048 context".into());
     }
-    generate_vision_with_context(addr, model, image, prompt, Some(2048))
+    Ok((addr, Some(2048)))
+}
+
+#[cfg(test)]
+pub(crate) fn benchmark_vision(model: &str, image: &str, prompt: &str) -> Result<Value, String> {
+    let (addr, context) = benchmark_target(model)?;
+    generate_vision_with_context(addr, model, image, prompt, context)
 }
 
 fn generate_vision_with_context(
@@ -1282,18 +1299,9 @@ mod tests {
     #[ignore = "requires a preloaded local vision model and resource preflight"]
     fn live_visual_review_dense_form_checks_late_mismatches() {
         use base64::Engine;
-        let addr = "127.0.0.1:11434".parse().unwrap();
-        let (status, bytes) =
-            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
-        let ps: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(status, 200);
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".into());
-        assert_eq!(
-            crate::eligible_resident_model(&ps).unwrap().as_deref(),
-            Some(model.as_str())
-        );
-        assert_eq!(ps["models"][0]["context_length"].as_u64(), Some(4096));
+        let (addr, context) = benchmark_target(&model).unwrap();
         let image = base64::engine::general_purpose::STANDARD
             .encode(include_bytes!("../tests/fictional-dense-form.png"));
         let expected: Vec<_> = (1..=16)
@@ -1306,7 +1314,7 @@ mod tests {
                 (format!("Question {i:02}"), value)
             })
             .collect();
-        let result = analyze(addr, &model, &image, &expected).unwrap();
+        let result = analyze_with_context(addr, &model, &image, &expected, context).unwrap();
         println!("fictional dense visual result: {result}");
         let comparisons = result["comparisons"].as_array().unwrap();
         assert_eq!(comparisons.len(), 16);
@@ -1795,6 +1803,36 @@ mod tests {
         .unwrap();
         let result = compare(&different, &[("First name".into(), "Example".into())]);
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
+    }
+
+    #[test]
+    fn section_prefixes_match_only_unique_field_labels() {
+        let one = validate(
+            &json!({"observations":[{"label":"Application — Name","visible_value":"Example"}]}),
+        )
+        .unwrap();
+        let result = compare(&one, &[("Name".into(), "Example".into())]);
+        assert_eq!(result["comparisons"][0]["status"], "matches_transcription");
+        let result = compare(&one, &[("Name".into(), "Different".into())]);
+        assert_eq!(
+            result["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let two = validate(&json!({"observations":[{"label":"Applicant — Name","visible_value":"Example"},{"label":"Reference — Name","visible_value":"Other"}]})).unwrap();
+        let result = compare(&two, &[("Name".into(), "Example".into())]);
+        assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        let result = compare(
+            &one,
+            &[
+                ("Name".into(), "Example".into()),
+                ("Application — Name".into(), "Example".into()),
+            ],
+        );
+        assert!(result["comparisons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["status"] == "unobserved"));
     }
 
     #[test]
