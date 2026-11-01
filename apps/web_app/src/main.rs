@@ -6109,6 +6109,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn save_uncollected_draft(ws: &Workspace) -> Result<bool, String> {
+    let Some((id, result)) = draft_task::completed_for_save()? else {
+        return Ok(false);
+    };
+    let job = JobIdentityId::new(result["job_id"].as_str().ok_or("missing draft job")?)
+        .map_err(|e| e.to_string())?;
+    let kind = result["kind"].as_str().ok_or("missing draft type")?;
+    let bytes = serde_json::to_vec(&result).map_err(|_| "Could not serialize draft")?;
+    ws.save_generated_draft(&id, &job, kind, now(), &bytes)
+        .map_err(|e| e.to_string())?;
+    draft_task::mark_saved(&id)?;
+    Ok(true)
+}
+
 fn serve_loop(
     mut ws: Workspace,
     listener: TcpListener,
@@ -6155,6 +6169,7 @@ fn serve_loop(
     let mut duplicate_cursor = String::new();
     let mut next_duplicate_index = Instant::now();
     let mut next_email_collect = Instant::now();
+    let mut next_draft_save = Instant::now();
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
         if index_worker
             .as_ref()
@@ -6164,6 +6179,16 @@ fn serve_loop(
                 let _ = worker.join();
                 eprintln!("Background duplicate indexing stopped; using idle indexing");
             }
+        }
+        if Instant::now() >= next_draft_save {
+            next_draft_save = Instant::now()
+                + match save_uncollected_draft(&ws) {
+                    Ok(_) => Duration::from_secs(1),
+                    Err(error) => {
+                        eprintln!("Completed draft could not be saved securely: {error}");
+                        Duration::from_secs(30)
+                    }
+                };
         }
         if Instant::now() >= next_email_collect {
             match email_worker::collect_finished(&mut ws) {
@@ -7094,6 +7119,21 @@ mod tests {
         .unwrap();
         let id = JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
         let digest = draft_context_digest(&ws, &id, "cv").unwrap();
+        draft_task::set_uncollected_fixture(
+            "uncollected",
+            id.as_str(),
+            &digest,
+            json!({"kind":"cv","paragraphs":[]}),
+        );
+        assert!(save_uncollected_draft(&ws).unwrap());
+        assert!(!save_uncollected_draft(&ws).unwrap());
+        assert_eq!(
+            draft_task::poll("uncollected").unwrap()["status"],
+            "complete"
+        );
+        drop(ws);
+        let mut ws = Workspace::open_encrypted(dir.path()).unwrap();
+        assert!(ws.generated_draft("uncollected", &id).unwrap().is_some());
         let result = json!({"status":"complete","job_id":id.as_str(),"kind":"cv","digest":digest,"draft":{"kind":"cv","paragraphs":[{"text":"Fictional experience","facts":[1]}]}});
         draft_task::set_completed_fixture("draft-fixture", result.clone());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -7130,7 +7170,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            1
+            2
         );
         drop(ws);
         let mut ws = Workspace::open_encrypted(dir.path()).unwrap();

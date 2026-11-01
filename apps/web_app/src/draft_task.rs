@@ -8,6 +8,7 @@ struct Task {
     kind: String,
     digest: String,
     result: Option<Result<Value, String>>,
+    saved: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
@@ -149,6 +150,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             kind: input.kind.clone(),
             digest: input.digest.clone(),
             result: None,
+            saved: false,
         });
         lease
     };
@@ -347,6 +349,41 @@ fn generate_with_selection(
     )?;
     draft["selection"] = selection;
     Ok(draft)
+}
+// Snapshot without consuming the result, so the UI can still collect it.
+pub fn completed_for_save() -> Result<Option<(String, Value)>, String> {
+    let tasks = TASK.lock().map_err(|_| "Draft state unavailable")?;
+    let Some(task) = tasks.as_ref().filter(|task| !task.saved) else {
+        return Ok(None);
+    };
+    let Some(Ok(draft)) = &task.result else {
+        return Ok(None);
+    };
+    Ok(Some((
+        task.id.clone(),
+        json!({"status":"complete","draft":draft,"job_id":task.job_id,"kind":task.kind,"digest":task.digest}),
+    )))
+}
+pub fn mark_saved(id: &str) -> Result<(), String> {
+    let mut tasks = TASK.lock().map_err(|_| "Draft state unavailable")?;
+    if let Some(task) = tasks
+        .as_mut()
+        .filter(|task| task.id == id && matches!(task.result, Some(Ok(_))))
+    {
+        task.saved = true;
+    }
+    Ok(())
+}
+#[cfg(test)]
+pub(crate) fn set_uncollected_fixture(id: &str, job: &str, digest: &str, draft: Value) {
+    *TASK.lock().unwrap() = Some(Task {
+        id: id.into(),
+        job_id: job.into(),
+        kind: "cv".into(),
+        digest: digest.into(),
+        result: Some(Ok(draft)),
+        saved: false,
+    });
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Draft state unavailable")?;
@@ -1665,6 +1702,7 @@ mod tests {
             kind: "cv".into(),
             digest: "fixture".into(),
             result: Some(Ok(json!({"paragraphs":[]}))),
+            saved: false,
         });
         assert_eq!(
             pending().unwrap(),
