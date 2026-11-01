@@ -386,6 +386,10 @@ fn generate_with_selection(
     selection["instructions_truncated"] = json!(instructions.len() < input.instructions.len());
     selection["template_truncated"] = json!(template_sampled);
     selection["template_sampled_sections"] = json!(template_sampled);
+    if !template_excerpt.is_empty() {
+        selection["template_style_sample"] = json!(template_excerpt);
+        selection["template_extracted_chars"] = json!(template.chars().count());
+    }
     let mut draft = generate(
         llm,
         &job,
@@ -1461,6 +1465,12 @@ mod tests {
         assert_eq!(draft["selection"]["draft_fact_budget_omitted"], 6);
         assert_eq!(draft["selection"]["job_truncated"], true);
         assert_eq!(draft["selection"]["template_truncated"], true);
+        assert_eq!(draft["selection"]["template_sampled_sections"], true);
+        assert_eq!(draft["selection"]["template_extracted_chars"], 1000);
+        assert_eq!(
+            draft["selection"]["template_style_sample"],
+            sample_template_style(&"t".repeat(1000)).0
+        );
         let mut prioritized = input;
         prioritized.priority_facts = vec![facts[7].clone()];
         let prioritized_draft =

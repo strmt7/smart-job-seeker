@@ -4,3 +4,11 @@ const partial=format({method:'bounded_semantic_with_lexical_fallback',pool:60,ex
 assert.match(format({method:'all_pool_facts',pool:1,examined:1,used_in_draft:1,template_sampled_sections:true}),/sampled from different sections/);
 for(const text of ['25 of 60','1 selection batch failed','3 fallback','selection budget reached','2 selected qualifications omitted','1 contact detail omitted','template text was shortened'])assert.ok(partial.includes(text),text);
 assert.match(format({method:'all_pool_facts',pool:3,examined:3,used_in_draft:3}),/All 3 pooled qualifications were supplied/);assert.match(format(null),/details are unavailable/);assert.ok(src.includes('draftSelectionSummary(draft.selection)'));console.log('Document selection UI checks passed.');
+const sampleLine=src.split('\n').find(x=>x.startsWith('function showTemplateStyleSample('));assert.ok(sampleLine);
+const make=(tag,text='',className='')=>({tag,textContent:text,className,children:[],append(...items){this.children.push(...items)}});
+const show=vm.runInNewContext(`(${sampleLine})`,{element:make});const panel=make('div');
+show(panel,{template_style_sample:'<img src=x>\n[...]\nEnd',template_sampled_sections:true});
+assert.equal(panel.children[0].children[2].textContent,'<img src=x>\n[...]\nEnd');
+assert.match(panel.children[0].children[1].textContent,/did not receive the full template/);
+show(panel,{template_style_sample:'x'.repeat(701)});assert.equal(panel.children.length,1);
+assert.ok(src.includes('showTemplateStyleSample(panel,draft.selection)'));
