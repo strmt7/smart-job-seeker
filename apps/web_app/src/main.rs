@@ -433,7 +433,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile_fit_instructions(&profile)?;
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v47","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v49","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
@@ -472,8 +472,21 @@ fn fit_source_coverage(
     let (reviewed_total, oversized) = ws.reviewed_fact_coverage(1000).map_err(|e| e.to_string())?;
     let eligible = reviewed_total.saturating_sub(oversized);
     let bounded = eligible.min(500);
+    let (expected_listing, used_chars) = fit_listing_excerpt(&full_listing);
+    let sampling = if listing != expected_listing {
+        "unavailable"
+    } else if used_chars < full_listing.chars().count() {
+        "beginning_middle_end"
+    } else {
+        "complete"
+    };
+    let used_chars = if listing == expected_listing {
+        used_chars
+    } else {
+        0
+    };
     Ok(
-        json!({"listing_used_chars":listing.chars().count(),"listing_total_chars":full_listing.chars().count(),"description_present":!description.trim().is_empty(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count(),"reviewed_facts_total":reviewed_total,"reviewed_facts_bounded":bounded,"reviewed_facts_oversized":oversized,"reviewed_facts_over_limit":eligible.saturating_sub(bounded)}),
+        json!({"listing_used_chars":used_chars,"listing_total_chars":full_listing.chars().count(),"listing_sampling":sampling,"description_present":!description.trim().is_empty(),"instructions_used_chars":instructions.chars().count(),"instructions_total_chars":full_instructions.chars().count(),"reviewed_facts_total":reviewed_total,"reviewed_facts_bounded":bounded,"reviewed_facts_oversized":oversized,"reviewed_facts_over_limit":eligible.saturating_sub(bounded)}),
     )
 }
 
@@ -542,6 +555,28 @@ fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String
     Ok((facts, instructions))
 }
 
+/// Sample the beginning, middle and end without presenting the gaps as source text.
+fn fit_listing_excerpt(full: &str) -> (String, usize) {
+    const LIMIT: usize = 8000;
+    const TAIL: usize = 2000;
+    const MIDDLE: usize = 2000;
+    const GAP: &str = "\n[Listing text omitted; inspect the full original.]\n";
+    let total = full.chars().count();
+    if total <= LIMIT {
+        return (full.to_owned(), total);
+    }
+    let head = LIMIT - TAIL - MIDDLE - 2 * GAP.chars().count();
+    let omitted = total - (head + MIDDLE + TAIL);
+    let middle_start = head + omitted / 2;
+    let prefix: String = full.chars().take(head).collect();
+    let middle: String = full.chars().skip(middle_start).take(MIDDLE).collect();
+    let suffix: String = full.chars().skip(total - TAIL).collect();
+    (
+        format!("{prefix}{GAP}{middle}{GAP}{suffix}"),
+        head + MIDDLE + TAIL,
+    )
+}
+
 fn fit_listing_digest(
     ws: &Workspace,
     job_id: &JobIdentityId,
@@ -557,13 +592,11 @@ fn fit_listing_digest(
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
     let remote = fit_remote_status_text(ws.job_remote_status(job_id).map_err(|e| e.to_string())?);
-    let listing: String = format!(
+    let full_listing = format!(
         "Title: {}\nEmployer: {}\nLocation: {}\nRemote status: {}\nDescription: {}",
         job.title, job.employer, job.location, remote, description
-    )
-    .chars()
-    .take(8000)
-    .collect();
+    );
+    let (listing, _) = fit_listing_excerpt(&full_listing);
     let selected = select_fit_facts(facts, &listing);
     let digest = Sha256Digest::of(
         &json!({"scoring_version":"criteria-v1","facts":selected,"instructions":instructions,"listing":listing}).to_string(),
@@ -1511,10 +1544,35 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// Reserve a conservative share of RAM before beginning another inference.
+/// This is a snapshot, not a reservation or a guarantee against later pressure.
+#[cfg(any(windows, test))]
+fn inference_memory_gate(available: u64, total: u64) -> Result<(), String> {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if total == 0 || available > total {
+        return Err("System memory could not be sampled reliably; local inference paused".into());
+    }
+    let floor = (total / 4).clamp(4 * GIB, 10 * GIB);
+    if available < floor {
+        return Err(format!("Local inference paused: {} MiB system memory available; at least {} MiB is required before starting another request. Close other work and retry.", available / (1024 * 1024), floor.div_ceil(1024 * 1024)));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn check_inference_memory() -> Result<(), String> {
+    let mut system = sysinfo::System::new()
+        .map_err(|_| "System memory could not be sampled; local inference paused")?;
+    system.refresh_memory();
+    inference_memory_gate(system.available_memory(), system.total_memory())
+}
+
 /// Only use one already-resident model that Ollama reports as fully GPU
 /// resident and within the existing 14 GiB budget. This check is a snapshot,
 /// not a reservation; Ollama can change its state after it is read.
 fn resident_model() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    check_inference_memory()?;
     let status = resident_model_status()?;
     Ok(status["model"].as_str().map(str::to_owned))
 }
@@ -8331,6 +8389,19 @@ mod tests {
     }
 
     #[test]
+    fn inference_memory_gate_rejects_pressure_and_invalid_samples() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert!(inference_memory_gate(10 * GIB, 64 * GIB).is_ok());
+        assert!(inference_memory_gate(10 * GIB - 1, 64 * GIB)
+            .unwrap_err()
+            .contains("paused"));
+        assert!(inference_memory_gate(4 * GIB, 16 * GIB).is_ok());
+        assert!(inference_memory_gate(4 * GIB - 1, 16 * GIB).is_err());
+        assert!(inference_memory_gate(1, 0).is_err());
+        assert!(inference_memory_gate(17 * GIB, 16 * GIB).is_err());
+    }
+
+    #[test]
     fn assessment_digest_binds_facts_outside_semantic_pool() {
         let mut ws = Workspace::in_memory().unwrap();
         let added = manual_job::add(
@@ -8389,7 +8460,8 @@ mod tests {
         let (_, _, instructions, listing, before) = fit_assessment_inputs(&ws, &id).unwrap();
         let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
         assert_eq!(coverage["description_present"], true);
-        assert_eq!(coverage["listing_used_chars"], 8000);
+        assert!(coverage["listing_used_chars"].as_u64().unwrap() < 8000);
+        assert!(listing.contains("final requirement"));
         assert!(coverage["listing_total_chars"].as_u64().unwrap() > 8000);
         assert_eq!(coverage["instructions_used_chars"], 2000);
         assert!(coverage["instructions_total_chars"].as_u64().unwrap() > 2000);
@@ -9291,6 +9363,85 @@ mod tests {
         assert_eq!(coverage["description_present"], false);
         let assessment = json!({"source_coverage":coverage,"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[{"source":"listing","importance":"required","status":"supported"}]});
         assert_eq!(fit_task::requirement_coverage(&assessment), "incomplete");
+    }
+
+    #[test]
+    fn long_fit_listing_includes_tail_without_claiming_full_coverage() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let description = format!(
+            "Opening context {} Final requirement: fluent Japanese.",
+            "α".repeat(9000)
+        );
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/long-fit","title":"Engineer","employer":"Example","description":description}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (_, _, instructions, listing, _) = fit_assessment_inputs(&ws, &id).unwrap();
+        assert_eq!(listing.chars().count(), 8000);
+        assert!(listing.starts_with("Title: Engineer"));
+        assert!(listing.contains("Final requirement: fluent Japanese."));
+        assert!(listing.contains("Listing text omitted"));
+        let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
+        assert!(coverage["listing_used_chars"].as_u64().unwrap() < 8000);
+        assert_eq!(coverage["listing_sampling"], "beginning_middle_end");
+        assert!(
+            coverage["listing_used_chars"].as_u64().unwrap()
+                < coverage["listing_total_chars"].as_u64().unwrap()
+        );
+        let assessment = json!({"source_coverage":coverage,"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[{"source":"listing","importance":"required","status":"supported"}]});
+        assert_eq!(fit_task::requirement_coverage(&assessment), "incomplete");
+    }
+
+    #[test]
+    fn fit_listing_sampling_never_overlaps_at_the_cutoff() {
+        let full = format!("{}B{}", "A".repeat(4000), "C".repeat(4000));
+        let (excerpt, used) = fit_listing_excerpt(&full);
+        assert_eq!(excerpt.chars().count(), 8000);
+        assert!(used < full.chars().count());
+        assert_eq!(
+            excerpt
+                .matches("[Listing text omitted; inspect the full original.]")
+                .count(),
+            2
+        );
+        assert!(excerpt.matches('B').count() <= 1);
+        assert_eq!(fit_listing_excerpt("short"), ("short".to_string(), 5));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn saved_long_fit_reopens_with_sampled_coverage() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let description = format!(
+            "{} Final requirement: Japanese.",
+            "Fictional background. ".repeat(450)
+        );
+        let saved = manual_job::add(&mut ws, &json!({"url":"https://example.org/long-saved-fit","title":"Engineer","employer":"Example","description":description}), 1).unwrap();
+        let id = JobIdentityId::new(saved["id"].as_str().unwrap()).unwrap();
+        let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
+        ws.save_fit_assessment(
+            &id,
+            json!({"input_digest":digest,"assessment":{"score":50,"rubric":[]},"model":"fixture"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        drop(ws);
+        let ws = Workspace::open(directory.path()).unwrap();
+        let result = read_fit(&ws, &id).unwrap();
+        assert_eq!(result["status"], "current");
+        assert_eq!(
+            result["assessment"]["source_coverage"]["listing_sampling"],
+            "beginning_middle_end"
+        );
+        assert!(
+            result["assessment"]["source_coverage"]["listing_used_chars"]
+                .as_u64()
+                .unwrap()
+                < result["assessment"]["source_coverage"]["listing_total_chars"]
+                    .as_u64()
+                    .unwrap()
+        );
+        assert_eq!(result["assessment"]["requirement_audit_incomplete"], true);
     }
 
     #[cfg(windows)]

@@ -1293,7 +1293,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 }
                 job
             } else {
-                let model = crate::resident_model().ok().flatten().ok_or("No structured job found and no eligible local model is loaded; review manually")?;
+                let model = crate::resident_model()?.ok_or("No structured job found and no eligible local model is loaded; review manually")?;
                 let _lease = crate::doc_suggest::lease()?;
                 let (page_text, truncated) = browser.page_text_bounded(16_000).map_err(|e|e.to_string())?;
                 ensure_listing_address(&mut browser, &current)?;

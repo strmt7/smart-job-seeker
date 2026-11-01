@@ -76,6 +76,14 @@ impl std::fmt::Display for InferenceError {
 impl std::error::Error for InferenceError {}
 
 pub trait Inference {
+    /// Optional in-flight admission check. Implementations without a
+    /// cancellable transport may leave this unsupported.
+    fn set_request_guard(
+        &mut self,
+        _guard: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    ) {
+    }
+
     /// Startup probe: structured output + bounded reasoning request must both
     /// succeed for the model to be marked qualified.
     fn probe(&mut self) -> Result<CapabilityReport, InferenceError>;

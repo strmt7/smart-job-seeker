@@ -8,9 +8,14 @@ pub struct ResidentInference<I, F> {
 }
 impl<I, F> ResidentInference<I, F>
 where
+    I: Inference,
     F: FnMut() -> Result<Option<String>, String>,
 {
-    pub fn new(inner: I, model: String, resident: F) -> Self {
+    pub fn new(mut inner: I, model: String, resident: F) -> Self {
+        #[cfg(windows)]
+        inner.set_request_guard(std::sync::Arc::new(crate::check_inference_memory));
+        #[cfg(not(windows))]
+        let _ = &mut inner;
         Self {
             inner,
             model,

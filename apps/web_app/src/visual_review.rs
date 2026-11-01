@@ -618,7 +618,7 @@ fn crosscheck_live_values_with_budget(
             .iter()
             .filter(|field| normalized_label(&field.label) == normalized_label(label))
             .collect();
-        let check = if !stop && started.elapsed() < budget && matching.len() == 1 {
+        let verification = if !stop && started.elapsed() < budget && matching.len() == 1 {
             let field = matching[0];
             let mapping = preview.suggestions.iter().find(|mapping| {
                 mapping.field_selector == field.selector
@@ -629,52 +629,53 @@ fn crosscheck_live_values_with_budget(
                 Some((
                     FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                     PacketValue::Text(value),
-                )) => driver.verify_text_value(&field.selector, value),
+                )) => Some(driver.verify_text_value(&field.selector, value)),
                 Some((
                     FormFieldType::Date
                     | FormFieldType::Month
                     | FormFieldType::Time
                     | FormFieldType::DateTimeLocal,
                     PacketValue::Date(value),
-                )) => driver.verify_text_value(&field.selector, value),
+                )) => Some(driver.verify_text_value(&field.selector, value)),
                 Some((FormFieldType::Checkbox, PacketValue::Bool(value))) => {
-                    driver.verify_choice(&BrowserCommand::Fill {
+                    Some(driver.verify_choice(&BrowserCommand::Fill {
                         selector: field.selector.clone(),
                         value: PacketValue::Bool(*value),
-                    })
+                    }))
                 }
-                Some((FormFieldType::Select { .. }, PacketValue::Text(value))) => driver
-                    .verify_choice(&BrowserCommand::SelectOption {
+                Some((FormFieldType::Select { .. }, PacketValue::Text(value))) => {
+                    Some(driver.verify_choice(&BrowserCommand::SelectOption {
                         selector: field.selector.clone(),
                         label: value.clone(),
-                    }),
-                Some((FormFieldType::Radio { .. }, PacketValue::Text(value))) => driver
-                    .verify_choice(&BrowserCommand::SelectRadio {
+                    }))
+                }
+                Some((FormFieldType::Radio { .. }, PacketValue::Text(value))) => {
+                    Some(driver.verify_choice(&BrowserCommand::SelectRadio {
                         selector: field.selector.clone(),
                         label: value.clone(),
-                    }),
-                Some((FormFieldType::MultiSelect { .. }, PacketValue::TextList(value))) => driver
-                    .verify_choice(&BrowserCommand::SelectOptions {
+                    }))
+                }
+                Some((FormFieldType::MultiSelect { .. }, PacketValue::TextList(value))) => {
+                    Some(driver.verify_choice(&BrowserCommand::SelectOptions {
                         selector: field.selector.clone(),
                         labels: value.clone(),
-                    }),
-                _ => Err(waypoint_applications::driver::DriverError(
-                    "Live value unavailable".into(),
-                )),
+                    }))
+                }
+                _ => None,
             }
-            .is_ok()
         } else {
-            false
+            None
         };
-        if check {
+        if verification.as_ref().is_some_and(Result::is_ok) {
             item["dom_status"] = json!("matches");
             verified += 1;
         } else {
             item["dom_status"] = json!("unconfirmed");
             item["status"] = json!("unobserved");
             unconfirmed += 1;
-            // A disconnected browser or stale page can make every call slow.
-            stop = true;
+            // Stop after a driver failure: a disconnected or stale page can make
+            // every later call slow. Missing or ambiguous mappings made no call.
+            stop |= verification.is_some();
         }
     }
     (verified, unconfirmed)
@@ -926,12 +927,18 @@ fn generate_vision_with_context(
     let mut body = json!({"model":model,"prompt":prompt,"images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
     body["options"]["num_ctx"] = context.into();
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-    let (status, data) = waypoint_inference::ollama::http_request(
+    let memory_guard = || -> Result<(), String> {
+        #[cfg(windows)]
+        crate::check_inference_memory()?;
+        Ok(())
+    };
+    let (status, data) = waypoint_inference::ollama::http_request_with_guard(
         addr,
         "POST",
         "/api/generate",
         Some(&bytes),
         120_000,
+        &memory_guard,
     )?;
     if status != 200 {
         return Err(format!("Local vision model returned HTTP {status}"));
@@ -1186,6 +1193,7 @@ mod tests {
         };
         struct Driver {
             calls: usize,
+            fail: bool,
         }
         impl BrowserDriver for Driver {
             fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
@@ -1199,7 +1207,11 @@ mod tests {
             }
             fn verify_text_value(&mut self, _: &str, _: &str) -> Result<(), DriverError> {
                 self.calls += 1;
-                Err(DriverError("field changed".into()))
+                if self.fail {
+                    Err(DriverError("field changed".into()))
+                } else {
+                    Ok(())
+                }
             }
         }
         let fields = ["Email", "Name"]
@@ -1236,7 +1248,10 @@ mod tests {
             model_review_selectors: Default::default(),
         };
         let mut result = json!({"comparisons":[{"label":"Email","expected":"fixture","status":"matches_transcription"},{"label":"Name","expected":"fixture","status":"matches_transcription"}]});
-        let mut driver = Driver { calls: 0 };
+        let mut driver = Driver {
+            calls: 0,
+            fail: true,
+        };
         let mut exhausted = result.clone();
         assert_eq!(
             crosscheck_live_values_with_budget(
@@ -1263,6 +1278,18 @@ mod tests {
         assert_eq!(driver.calls, 1);
         assert_eq!(result["comparisons"][0]["dom_status"], "unconfirmed");
         assert_eq!(result["comparisons"][1]["status"], "unobserved");
+        let mut driver = Driver {
+            calls: 0,
+            fail: false,
+        };
+        let mut result = json!({"comparisons":[{"label":"Email","expected":"fixture","status":"matches_transcription"},{"label":"Name","expected":"fixture","status":"matches_transcription"}]});
+        assert_eq!(
+            crosscheck_live_values(&mut driver, &preview, &["#Name".into()], &mut result),
+            (1, 1)
+        );
+        assert_eq!(driver.calls, 1);
+        assert_eq!(result["comparisons"][0]["dom_status"], "unconfirmed");
+        assert_eq!(result["comparisons"][1]["dom_status"], "matches");
     }
 
     #[test]
@@ -1302,16 +1329,24 @@ mod tests {
         let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         browser.open(url.as_str()).unwrap();
         let image = browser.screenshot_base64().unwrap();
-        let result = analyze_with_context(
-            addr,
-            &model,
-            &image,
-            &[("Email".into(), "avery@example.invalid".into())],
-            context,
-        )
-        .unwrap();
-        println!("Fictional raw placeholder result: {result}");
-        assert_ne!(result["comparisons"][0]["status"], "matches_transcription");
+        let mut false_matches = 0;
+        for run in 1..=3 {
+            let result = analyze_with_context(
+                addr,
+                &model,
+                &image,
+                &[("Email".into(), "avery@example.invalid".into())],
+                context,
+            )
+            .unwrap();
+            println!("Fictional raw placeholder run {run}: {result}");
+            false_matches +=
+                usize::from(result["comparisons"][0]["status"] == "matches_transcription");
+        }
+        assert_eq!(
+            false_matches, 0,
+            "raw vision mistook a placeholder for a value"
+        );
     }
 
     #[test]
@@ -1331,10 +1366,13 @@ mod tests {
         driver.open(&url).unwrap();
         let image = driver.screenshot_base64().unwrap();
         let expected = vec![
-            ("Full name".into(), "Avery Example".into()),
             ("Email".into(), "avery@example.invalid".into()),
+            ("Full name".into(), "Avery Example".into()),
         ];
         let mut result = analyze_with_context(addr, &model, &image, &expected, context).unwrap();
+        let placeholder_was_transcribed =
+            result["comparisons"][0]["status"] == "matches_transcription";
+        println!("Placeholder transcribed by local model: {placeholder_was_transcribed}");
         let schema = driver.inspect_current().unwrap().schema;
         let preview = crate::form_preview::FormPreview {
             schema,
@@ -1355,12 +1393,8 @@ mod tests {
             manual_review: vec![],
             model_review_selectors: Default::default(),
         };
-        let (verified, unconfirmed) = crosscheck_live_values(
-            &mut driver,
-            &preview,
-            &["#name".into(), "#email".into()],
-            &mut result,
-        );
+        let (verified, unconfirmed) =
+            crosscheck_live_values(&mut driver, &preview, &["#name".into()], &mut result);
         println!("live DOM checks: verified={verified}, unconfirmed={unconfirmed}");
         println!("fictional placeholder comparison: {result}");
         assert!(

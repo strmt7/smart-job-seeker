@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -77,6 +77,7 @@ pub struct OllamaInference {
     resident_context: bool,
     pub think: bool,
     cancel_flag: Arc<AtomicBool>,
+    request_guard: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
 }
 
 impl OllamaInference {
@@ -90,6 +91,7 @@ impl OllamaInference {
             resident_context: false,
             think: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            request_guard: None,
         })
     }
 
@@ -128,8 +130,22 @@ impl OllamaInference {
     ) -> Result<Value, InferenceError> {
         let payload = serde_json::to_vec(body)
             .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))?;
-        let (status, bytes) = http_request(self.addr, "POST", path, Some(&payload), timeout_ms)
-            .map_err(InferenceError::RuntimeUnreachable)?;
+        let (status, bytes) = http_request_guarded(
+            self.addr,
+            "POST",
+            path,
+            Some(&payload),
+            timeout_ms,
+            Some(&self.cancel_flag),
+            self.request_guard.as_deref(),
+        )
+        .map_err(|error| {
+            if self.cancelled() {
+                InferenceError::Cancelled
+            } else {
+                InferenceError::RuntimeUnreachable(error)
+            }
+        })?;
         if !(200..300).contains(&status) {
             return Err(InferenceError::RuntimeUnreachable(format!(
                 "local runtime returned HTTP {status}"
@@ -153,6 +169,9 @@ impl OllamaInference {
 }
 
 impl Inference for OllamaInference {
+    fn set_request_guard(&mut self, guard: Arc<dyn Fn() -> Result<(), String> + Send + Sync>) {
+        self.request_guard = Some(guard);
+    }
     fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
         // 1. Runtime reachable.
         let version = self.get_json("/api/version", PROBE_TIMEOUT_MS)?;
@@ -434,11 +453,51 @@ pub fn http_request(
     body: Option<&[u8]>,
     timeout_ms: u64,
 ) -> Result<(u16, Vec<u8>), String> {
+    http_request_guarded(addr, method, path, body, timeout_ms, None, None)
+}
+
+/// Issue a request while periodically rechecking a caller-supplied guard.
+/// A failed guard closes this connection; it does not unload the runtime model.
+pub fn http_request_with_guard(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+    timeout_ms: u64,
+    guard: &(dyn Fn() -> Result<(), String> + Send + Sync),
+) -> Result<(u16, Vec<u8>), String> {
+    http_request_guarded(addr, method, path, body, timeout_ms, None, Some(guard))
+}
+
+fn http_request_guarded(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+    timeout_ms: u64,
+    cancel: Option<&AtomicBool>,
+    guard: Option<&(dyn Fn() -> Result<(), String> + Send + Sync)>,
+) -> Result<(u16, Vec<u8>), String> {
     let timeout = Duration::from_millis(timeout_ms);
+    let guarded = cancel.is_some() || guard.is_some();
+    let check = || -> Result<(), String> {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err("request cancelled".into());
+        }
+        if let Some(guard) = guard {
+            guard()?;
+        }
+        Ok(())
+    };
+    check()?;
     let mut stream = TcpStream::connect_timeout(&addr, timeout.min(Duration::from_secs(10)))
         .map_err(|e| format!("connect {addr}: {e}"))?;
     stream
-        .set_read_timeout(Some(timeout))
+        .set_read_timeout(Some(if guarded {
+            timeout.min(Duration::from_millis(500))
+        } else {
+            timeout
+        }))
         .map_err(|e| e.to_string())?;
     stream
         .set_write_timeout(Some(timeout))
@@ -457,10 +516,13 @@ pub fn http_request(
     let mut raw = Vec::with_capacity(8 * 1024);
     const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
     let mut buf = [0u8; 16 * 1024];
+    let mut last_progress = Instant::now();
     loop {
+        check()?;
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
+                last_progress = Instant::now();
                 raw.extend_from_slice(&buf[..n]);
                 if raw.len() > MAX_RESPONSE_BYTES {
                     return Err("runtime response exceeds the 8 MiB limit".into());
@@ -483,7 +545,9 @@ pub fn http_request(
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                return Err("timeout waiting for runtime".into())
+                if !guarded || last_progress.elapsed() >= timeout {
+                    return Err("timeout waiting for runtime".into());
+                }
             }
             Err(e) => return Err(format!("read: {e}")),
         }
@@ -561,6 +625,129 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn in_flight_guard_closes_only_its_request() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut bytes = [0u8; 2048];
+            assert!(stream.read(&mut bytes).unwrap() > 0);
+            tx.send(()).unwrap();
+            loop {
+                match stream.read(&mut bytes) {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(error) => panic!("request did not close: {error}"),
+                }
+            }
+        });
+        let pressured = Arc::new(AtomicBool::new(false));
+        let flag = pressured.clone();
+        let client = std::thread::spawn(move || {
+            let guard = || {
+                if flag.load(Ordering::Relaxed) {
+                    Err("memory pressure".to_owned())
+                } else {
+                    Ok(())
+                }
+            };
+            http_request_with_guard(addr, "POST", "/api/generate", Some(b"{}"), 5000, &guard)
+        });
+        rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        pressured.store(true, Ordering::Relaxed);
+        assert_eq!(client.join().unwrap().unwrap_err(), "memory pressure");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn cancelled_request_never_connects() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let flag = AtomicBool::new(true);
+        assert_eq!(
+            http_request_guarded(
+                listener.local_addr().unwrap(),
+                "GET",
+                "/",
+                None,
+                1000,
+                Some(&flag),
+                None
+            )
+            .unwrap_err(),
+            "request cancelled"
+        );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_disconnect_guard_then_make_another_request() {
+        use std::sync::atomic::AtomicUsize;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        assert_eq!(resident_context(addr, "qwen3.5:9b").unwrap(), 4096);
+        let checks = Arc::new(AtomicUsize::new(0));
+        let pressured = Arc::new(AtomicBool::new(false));
+        let checks_for_guard = checks.clone();
+        let pressure_for_guard = pressured.clone();
+        let mut model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        model.set_request_guard(Arc::new(move || {
+            checks_for_guard.fetch_add(1, Ordering::Relaxed);
+            if pressure_for_guard.load(Ordering::Relaxed) {
+                Err("simulated pressure".into())
+            } else {
+                Ok(())
+            }
+        }));
+        let worker = std::thread::spawn(move || {
+            model.generate_structured(
+                "test",
+                "Return JSON with an array of 300 distinct short fictional planet names.",
+                1600,
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while checks.load(Ordering::Relaxed) < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            checks.load(Ordering::Relaxed) >= 2,
+            "request did not enter read loop"
+        );
+        std::thread::sleep(Duration::from_millis(700));
+        let started = Instant::now();
+        pressured.store(true, Ordering::Relaxed);
+        let result = worker.join().unwrap();
+        assert!(
+            matches!(result, Err(InferenceError::RuntimeUnreachable(ref e)) if e == "simulated pressure")
+        );
+        println!(
+            "Fictional request disconnected after simulated pressure in {:?}",
+            started.elapsed()
+        );
+        let mut followup = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let started = Instant::now();
+        let (value, _) = followup
+            .generate_structured("test", "Return exactly this JSON: {\"ok\":true}", 32)
+            .unwrap();
+        assert_eq!(value["ok"], true);
+        println!("Independent follow-up completed in {:?}", started.elapsed());
+    }
 
     #[test]
     fn resident_context_requires_a_single_matching_gpu_model() {
