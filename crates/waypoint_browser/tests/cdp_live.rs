@@ -673,6 +673,14 @@ fn accessible_current_step_indicates_a_multistep_form() {
         .open(&file_url("form_aria_step_hidden.html"))
         .unwrap();
     assert!(!hidden.schema.multi_step);
+    let uncertain = driver
+        .open(&file_url("form_aria_step_uncertain.html"))
+        .unwrap();
+    assert!(uncertain.schema.multi_step);
+    assert_eq!(
+        driver.read_attribute("#forward", "data-clicked").unwrap(),
+        None
+    );
     assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
 }
 

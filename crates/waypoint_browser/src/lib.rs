@@ -2146,7 +2146,10 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                possible_next_step = self.control_visibility_and_path(node)?.0;
+                let (visible, _, _, needs_review) = self.control_visibility_and_path(node)?;
+                // Clipped or transparent indicators cannot be confidently
+                // dismissed as absent; leave the workflow for manual review.
+                possible_next_step = visible || needs_review;
             }
             Ok(visible)
         })();
