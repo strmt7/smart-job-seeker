@@ -24,6 +24,8 @@ For application inspection, an explicit `WAYPOINT_BROWSER` executable takes prio
 
 Public-board and batch web searches continue while the local app is running even if the web page is closed. Board results are saved incrementally. The latest web-search batch is sealed to the Windows user for recovery after restart; an active batch is normally checkpointed every five seconds and saved once more at normal shutdown. An interrupted batch is shown as incomplete and is not automatically resumed. A crash can lose pages since the last checkpoint, and the interface reports checkpoint or completed-history saving failures.
 
+After upgrading an existing workspace, duplicate checking revisits older requisitions in the background. It checks at most one eligible job or skips a page of 64 jobs per scheduled step, and resumes after interruption. Existing duplicate decisions are retained. The interface reports the recheck while it is running; duplicate search waits for indexing to finish. The comparison remains bounded and can miss matches.
+
 Up to 100 selected search links are sealed and restored from the workspace. Selecting a link does not inspect or apply for it. If another window changes the selection, reload before saving further changes.
 
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.

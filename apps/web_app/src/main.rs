@@ -3524,7 +3524,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"total":total,"pending":pending,"bounded":bounded,"missing_employer":missing_employer}),
+                json!({"total":total,"pending":pending,"bounded":bounded,"missing_employer":missing_employer,"index_pending":ws.duplicate_index_pending().map_err(|e| e.to_string())?}),
             );
         }
         "/api/attempts/list" => {

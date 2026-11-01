@@ -526,7 +526,7 @@ impl Store {
             matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
     }
 
-    /// Index and compare one previously unindexed job; caller schedules bounded work.
+    /// Index one job or advance one bounded legacy-recheck page.
     pub fn index_next_duplicate_job(&self, after: &str) -> rusqlite::Result<Option<String>> {
         // One idle indexing step is atomic: partial pair updates and index
         // markers roll back together if any comparison or write fails.
@@ -534,20 +534,55 @@ impl Store {
             &self.conn,
             rusqlite::TransactionBehavior::Immediate,
         )?;
-        let next = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j WHERE j.id>?1 AND NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) ORDER BY j.id LIMIT 1", [after], Self::row_to_job).optional()?;
+        let cursor: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='duplicate_cross_employer_cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut next = None;
+        let mut progressed = None;
+        if let Some(cursor) = cursor {
+            let mut page = self
+                .conn
+                .prepare("SELECT id FROM jobs WHERE id>?1 ORDER BY id LIMIT 64")?;
+            let ids = page
+                .query_map([&cursor], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if let Some(last) = ids.last() {
+                next = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j LEFT JOIN job_descriptions d ON d.job_id=j.id WHERE j.id>?1 AND j.id<=?2 AND (NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) OR (length(CAST(trim(j.requisition_id) AS BLOB))>=3 AND trim(j.employer)<>'' AND d.content IS NOT NULL AND d.content<>'')) ORDER BY j.id LIMIT 1", params![cursor, last], Self::row_to_job).optional()?;
+                let advanced = next.as_ref().map(|job| job.id.as_str()).unwrap_or(last);
+                self.conn.execute(
+                    "UPDATE meta SET value=?1 WHERE key='duplicate_cross_employer_cursor'",
+                    [advanced],
+                )?;
+                if next.is_none() {
+                    progressed = Some(last.clone());
+                }
+            } else {
+                self.conn.execute(
+                    "DELETE FROM meta WHERE key='duplicate_cross_employer_cursor'",
+                    [],
+                )?;
+            }
+        } else {
+            next = self.conn.query_row("SELECT j.id,j.title,j.employer,j.location,j.state,j.canonical_url,j.content_hash,j.first_seen,j.last_seen,j.remote,j.source,j.requisition_id,j.posted_at FROM jobs j WHERE j.id>?1 AND NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) ORDER BY j.id LIMIT 1", [after], Self::row_to_job).optional()?;
+        }
         let indexed = if let Some(job) = next {
             let id = job.id.as_str().to_owned();
             self.find_possible_duplicates(&job)?;
             Some(id)
         } else {
-            None
+            progressed
         };
         transaction.commit()?;
         Ok(indexed)
     }
 
     pub fn duplicate_index_pending(&self) -> rusqlite::Result<bool> {
-        self.conn.query_row("SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id) LIMIT 1", [], |_| Ok(())).optional().map(|v| v.is_some())
+        self.conn.query_row("SELECT 1 WHERE EXISTS (SELECT 1 FROM meta WHERE key='duplicate_cross_employer_cursor') OR EXISTS (SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id))", [], |_| Ok(())).optional().map(|v| v.is_some())
     }
 
     /// Counts are about bounded comparison work, not proof that every duplicate

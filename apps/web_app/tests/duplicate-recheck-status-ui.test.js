@@ -1,0 +1,20 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = name => source.split('\n').find(x => x.startsWith(`function ${name}(`) || x.startsWith(`async function ${name}(`));
+const node = {hidden:true,textContent:''}, scheduled=[];
+let pending=true;
+const context = {duplicateCoverageTimer:null,state:{},document:{querySelector:()=>node},setTimeout:(fn,delay)=>{scheduled.push({fn,delay});return scheduled.length},clearTimeout:()=>{},api:async()=>({total:4,pending:0,bounded:0,missing_employer:0,index_pending:pending})};
+for(const name of ['showDuplicateCoverage','pollDuplicateCoverage']) context[name]=vm.runInNewContext('('+line(name)+')',context);
+(async()=>{
+  await context.pollDuplicateCoverage();
+  assert.match(node.textContent,/cross-employer requisitions are still being rechecked/);
+  assert.equal(context.state.duplicate_index_pending,true);
+  assert.equal(scheduled.length,1);
+  pending=false;
+  await scheduled[0].fn();
+  assert.equal(context.state.duplicate_index_pending,false);
+  assert.doesNotMatch(node.textContent,/still being rechecked/);
+  console.log('Duplicate recheck status checks passed.');
+})().catch(error=>{console.error(error);process.exitCode=1;});
