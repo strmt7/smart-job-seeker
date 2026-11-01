@@ -22,6 +22,8 @@ Start the resulting executable to open the local browser workspace. On Windows, 
 
 For application inspection, an explicit `WAYPOINT_BROWSER` executable takes priority, followed by installed browsers and then any bundled Chromium fallback. Bundled browsers do not update automatically; replace them through a newly reviewed package when needed.
 
+Public-board searches continue while the local app is running even if the web page is closed. Results are saved incrementally, and the latest in-memory run can be recovered when the page reopens. Stopping the app ends the run; its completed history is not retained across a restart.
+
 The executable and its OpenSSL DLL must be distributed together. Installation, portable dependency provisioning, backup and key recovery are not yet complete. See `docs/WEB_PROTOTYPE_CHECKPOINT.md` for current capabilities and limitations.
 
 The project uses free local tools and must not require paid APIs. Wider-web search uses a user-configured SearXNG-compatible provider; use a free or self-hosted instance. The app cannot determine an independent provider's pricing or guarantee its availability. Local-model features use Ollama rather than a paid inference API.

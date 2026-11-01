@@ -6236,7 +6236,14 @@ fn serve_loop(
     let mut next_duplicate_index = Instant::now();
     let mut next_email_collect = Instant::now();
     let mut next_draft_save = Instant::now();
+    let mut next_discovery_collect = Instant::now();
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
+        if Instant::now() >= next_discovery_collect {
+            if let Err(error) = discovery_task::collect_background(&mut ws) {
+                eprintln!("Background discovery collection failed: {error}");
+            }
+            next_discovery_collect = Instant::now() + Duration::from_secs(1);
+        }
         if index_worker
             .as_ref()
             .is_some_and(std::thread::JoinHandle::is_finished)

@@ -30,7 +30,13 @@ pub fn pending() -> Result<Value, String> {
     let tasks = TASK.lock().map_err(|_| "Discovery task unavailable")?;
     Ok(match tasks.as_ref() {
         Some(task) => json!({"active":true,"task_id":task.id,"history":task.history}),
-        None => json!({"active":false}),
+        None => {
+            let completed = COMPLETED.lock().map_err(|_| "Discovery task unavailable")?;
+            match completed.as_ref() {
+                Some((id, result)) => json!({"active":false,"last":{"task_id":id,"result":result}}),
+                None => json!({"active":false}),
+            }
+        }
     })
 }
 struct BoundedFetcher;
@@ -223,6 +229,20 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
         }
     }
 }
+
+/// Drain at most one result on the workspace-owning thread even when the UI
+/// is closed. Completed results remain available through `poll` and `pending`.
+pub fn collect_background(ws: &mut Workspace) -> Result<(), String> {
+    let id = TASK
+        .lock()
+        .map_err(|_| "Discovery task unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone());
+    if let Some(id) = id {
+        poll(&id, ws)?;
+    }
+    Ok(())
+}
 pub fn cancel(id: &str) -> Result<(), String> {
     let tasks = TASK.lock().map_err(|_| "Discovery task unavailable")?;
     let task = tasks
@@ -280,6 +300,34 @@ mod tests {
         }
         assert!(seen);
         assert!(degraded);
+        let background_target = DiscoveryTarget::new("greenhouse", "background");
+        let background_plan = waypoint_connectors::discovery_plan(
+            &waypoint_workspace::default_registry(),
+            "greenhouse",
+            "background",
+        )
+        .unwrap();
+        let background_fetcher = StaticFetcher::default().route(&background_plan.url,
+            r#"[{"id":124,"title":"Scientist","location":{"name":"Remote"},"absolute_url":"https://example.com/other-job"}]"#);
+        start_with_fetcher(
+            "background".into(),
+            vec![background_target],
+            Arc::new(background_fetcher),
+            None,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            collect_background(&mut ws).unwrap();
+            if pending().unwrap()["active"] == false {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(ws.job_count().unwrap(), 2);
+        assert_eq!(pending().unwrap()["last"]["task_id"], "background");
+        assert_eq!(poll("background", &mut ws).unwrap()["status"], "complete");
         let jobicy = DiscoveryTarget::new("jobicy", "materials engineer");
         let plan = waypoint_connectors::discovery_plan(
             &waypoint_workspace::default_registry(),
@@ -300,7 +348,7 @@ mod tests {
             let result = poll("jobicy-fixture", &mut ws).unwrap();
             if result.get("summary").is_some() {
                 assert_eq!(result["has_more"], true);
-                assert_eq!(ws.job_count().unwrap(), 2);
+                assert_eq!(ws.job_count().unwrap(), 3);
                 let job = ws
                     .jobs()
                     .unwrap()
