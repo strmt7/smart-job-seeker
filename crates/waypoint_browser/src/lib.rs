@@ -1401,7 +1401,8 @@ impl CdpDriver {
         let mut labels: HashMap<String, String> = HashMap::new();
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
-        let mut field_containers: HashMap<u64, Vec<(String, Option<String>)>> = HashMap::new();
+        type GroupContext = (String, Option<String>, Option<u64>, bool);
+        let mut field_containers: HashMap<u64, Vec<GroupContext>> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
@@ -1634,7 +1635,9 @@ impl CdpDriver {
                 .get("role")
                 .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"));
             if named_field_group || radio_group {
-                let legend = if tag == "fieldset" {
+                let mut implicit_heading = None;
+                let mut ambiguous_heading = false;
+                let mut legend = if tag == "fieldset" {
                     attrs
                         .get("aria-label")
                         .filter(|label| !label.trim().is_empty())
@@ -1661,10 +1664,39 @@ impl CdpDriver {
                     attrs.get("aria-label").cloned().unwrap_or_default()
                 };
                 let group_ref = attrs.get("aria-labelledby").cloned();
+                if tag == "section" && legend.trim().is_empty() && group_ref.is_none() {
+                    let headings: Vec<_> = node
+                        .get("children")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter(|child| {
+                            child
+                                .get("nodeName")
+                                .and_then(Value::as_str)
+                                .is_some_and(|name| {
+                                    matches!(
+                                        name.to_ascii_lowercase().as_str(),
+                                        "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                                    )
+                                })
+                        })
+                        .take(2)
+                        .collect();
+                    if let [heading] = headings.as_slice() {
+                        let mut text = String::new();
+                        collect_text(heading, false, &mut text);
+                        legend = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                        implicit_heading = heading.get("nodeId").and_then(Value::as_u64);
+                        ambiguous_heading = implicit_heading.is_none() || legend.trim().is_empty();
+                    } else if headings.len() > 1 {
+                        ambiguous_heading = true;
+                    }
+                }
                 if let Some(fieldset_id) = node
                     .get("nodeId")
                     .and_then(Value::as_u64)
-                    .filter(|_| !legend.is_empty() || group_ref.is_some())
+                    .filter(|_| !legend.is_empty() || group_ref.is_some() || ambiguous_heading)
                 {
                     walk(node, false, &mut |child, _| {
                         let child_tag = child
@@ -1679,7 +1711,12 @@ impl CdpDriver {
                             if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
                                 let groups = field_containers.entry(id).or_default();
                                 if groups.len() < 9 {
-                                    groups.push((legend.clone(), group_ref.clone()));
+                                    groups.push((
+                                        legend.clone(),
+                                        group_ref.clone(),
+                                        implicit_heading,
+                                        ambiguous_heading,
+                                    ));
                                 }
                             }
                         }
@@ -1965,7 +2002,7 @@ impl CdpDriver {
             .chain(
                 field_containers
                     .values()
-                    .flat_map(|groups| groups.iter().map(|(_, group_ref)| group_ref)),
+                    .flat_map(|groups| groups.iter().map(|(_, group_ref, _, _)| group_ref)),
             )
         {
             if let Some(ids) = group_ref.as_ref().filter(|s| s.len() <= 512) {
@@ -2008,6 +2045,7 @@ impl CdpDriver {
         }
 
         let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
+        let mut checked_section_headings: HashMap<u64, bool> = HashMap::new();
         for control in controls {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector)
@@ -2083,7 +2121,33 @@ impl CdpDriver {
                         walls.push("field group nesting exceeds the inspection limit".into());
                     }
                     let mut context = Vec::new();
-                    for (legend, group_ref) in groups.iter().take(8) {
+                    for (legend, group_ref, heading, ambiguous) in groups.iter().take(8) {
+                        if *ambiguous {
+                            walls.push(
+                                "a section heading is ambiguous; review the form manually".into(),
+                            );
+                            continue;
+                        }
+                        if let Some(node) = heading {
+                            let visible = if let Some(visible) = checked_section_headings.get(node)
+                            {
+                                *visible
+                            } else if checked_section_headings.len() < 32 {
+                                let visible = self
+                                    .with_review_timeout(|driver| {
+                                        driver.control_visibility_and_path(*node)
+                                    })
+                                    .is_ok_and(|value| value.0);
+                                checked_section_headings.insert(*node, visible);
+                                visible
+                            } else {
+                                false
+                            };
+                            if !visible {
+                                walls.push("a section heading could not be verified; review the form manually".into());
+                                continue;
+                            }
+                        }
                         let group = if let Some(ids) = group_ref {
                             let parts: Vec<_> = ids.split_whitespace().collect();
                             if ids.len() <= 512 && !parts.is_empty() && parts.len() <= 16 {

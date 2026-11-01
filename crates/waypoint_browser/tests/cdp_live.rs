@@ -269,6 +269,55 @@ fn named_sections_and_regions_supply_context_for_fields() {
 }
 
 #[test]
+#[ignore = "launches one local browser against fictional section headings"]
+fn visible_unambiguous_headings_give_context_and_others_require_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let first = driver
+        .open(&file_url("form_contact_headed_sections.html"))
+        .unwrap();
+    assert!(first
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#self" && field.label == "Applicant contact — Email"));
+    assert!(first
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#reference"
+            && field.label == "Professional reference — Contact details — Email"));
+    let before = first.schema.schema_hash_input();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#change-context".into(),
+        })
+        .unwrap();
+    let after = driver.inspect_current().unwrap();
+    assert_ne!(before, after.schema.schema_hash_input());
+    assert!(after
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#reference"
+            && field.label == "Emergency contact — Contact details — Email"));
+    let unclear = driver
+        .open(&file_url("form_ambiguous_headings.html"))
+        .unwrap();
+    assert!(unclear
+        .walls
+        .iter()
+        .any(|reason| reason.contains("section heading is ambiguous")));
+    assert!(unclear
+        .walls
+        .iter()
+        .any(|reason| reason.contains("section heading could not be verified")));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional fixture"]
 fn verification_rejects_hidden_choices() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
