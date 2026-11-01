@@ -137,6 +137,11 @@ fn staged_file_matches(path: &std::path::Path, expected_sha256: &str) -> bool {
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
+    if file.metadata().map_or(true, |metadata| {
+        !metadata.is_file() || metadata.len() > MAX_DOCUMENT as u64
+    }) {
+        return false;
+    }
     let mut bytes = Vec::new();
     if file
         .take(MAX_DOCUMENT as u64 + 1)
@@ -6512,6 +6517,18 @@ mod tests {
             "current",
             "#upload"
         ));
+    }
+    #[test]
+    fn oversized_staged_document_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oversized.pdf");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(super::MAX_DOCUMENT as u64 + 1)
+            .unwrap();
+        let digest = waypoint_domain::sha256_hex(&vec![0; super::MAX_DOCUMENT + 1]);
+        assert!(!super::staged_file_matches(&path, &digest));
+        assert!(!super::staged_file_matches(dir.path(), &digest));
     }
     #[test]
     fn attachment_groups_preserve_order_and_exclude_old_inspections() {
