@@ -1,5 +1,9 @@
 # Implementation checkpoint
 
+## Text-to-PDF fixture — 2026-11-01
+
+- A Windows local test converted fictional UTF-8 text with LibreOffice, then extracted its accented names and rendered its single PDF page with the configured PDF worker. The test now keeps its result in memory instead of overwriting a fixed output file. The run passed in 16.31 seconds on this host; it is not a visual-quality assessment or a clean-host installation test.
+
 ## Document visual-review completeness — 2026-11-01
 
 - Attachment follow-up now treats a visual report as incomplete when its overall completion flag, inspected-page count, or error state conflicts with the page findings. Seven focused document-visual tests passed. On Windows, the PDF worker (pypdf 6.10.0, pypdfium2 5.14.0, Pillow 12.3.0) rendered a fictional two-page PDF and flagged its intentionally overlapping text for follow-up, including when a simulated model pass failed. The vision-model test was not run; these fixtures do not establish general visual quality or model accuracy.

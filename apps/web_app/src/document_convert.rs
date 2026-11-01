@@ -175,10 +175,13 @@ mod tests {
                 .as_bytes();
         let pdf = super::text_to_pdf(bytes).unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/model-eval/fictional-text-conversion.pdf");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, pdf).unwrap();
+        let text = crate::pdf_extract::extract(&pdf).unwrap();
+        assert!(text.contains("Avery Example"));
+        assert!(text.contains("München"));
+        assert!(text.contains("São Paulo"));
+        let page = crate::pdf_extract::render_page_for_review(&pdf, 0).unwrap();
+        assert_eq!(page["pages"], 1);
+        assert!(page["image"].as_str().unwrap().starts_with("iVBOR"));
     }
 
     #[test]
