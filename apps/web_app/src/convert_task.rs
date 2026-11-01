@@ -20,16 +20,32 @@ fn compare_plain_text(source: &[u8], extracted: Result<String, String>) -> Value
     let Ok(source) = std::str::from_utf8(source) else {
         return json!({"status":"unavailable","reason":"Source is not UTF-8"});
     };
-    let Ok(extracted) = extracted else {
-        return json!({"status":"unavailable","reason":"Selectable PDF text could not be extracted"});
-    };
     let normalize = |text: &str| {
         text.trim_start_matches('\u{feff}')
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
     };
-    json!({"status":if normalize(source) == normalize(&extracted) {"matches"} else {"differs"}})
+    let source = normalize(source);
+    if source.is_empty() {
+        return json!({"status":"unavailable","reason":"No source text could be extracted for comparison"});
+    }
+    let Ok(extracted) = extracted else {
+        return json!({"status":"unavailable","reason":"Selectable PDF text could not be extracted"});
+    };
+    json!({"status":if source == normalize(&extracted) {"matches"} else {"differs"}})
+}
+
+pub(crate) fn compare_docx_to_pdf(docx: &[u8], pdf: &[u8]) -> Value {
+    let mut check = match crate::document_extract::extract("source.docx", docx) {
+        Ok(source) if source.len() > 200_000 || source.trim().is_empty() => {
+            compare_plain_text(source.as_bytes(), Err(String::new()))
+        }
+        Ok(source) => compare_plain_text(source.as_bytes(), crate::pdf_extract::extract(pdf)),
+        Err(_) => json!({"status":"unavailable","reason":"DOCX text could not be extracted"}),
+    };
+    check["scope"] = json!("docx_extract");
+    check
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // A lost response can be retried without saving the same PDF a second time.
@@ -75,11 +91,7 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, kind: ConversionKind) -> 
                 ),
                 ConversionKind::Docx => {
                     let pdf = crate::document_convert::docx_to_pdf(&bytes)?;
-                    let mut check = match crate::document_extract::extract("source.docx", &bytes) {
-                        Ok(source) => compare_plain_text(source.as_bytes(), crate::pdf_extract::extract(&pdf)),
-                        Err(_) => json!({"status":"unavailable","reason":"DOCX text could not be extracted"}),
-                    };
-                    check["scope"] = json!("docx_extract");
+                    let check = compare_docx_to_pdf(&bytes, &pdf);
                     (pdf, check)
                 }
                 ConversionKind::PlainText => {
@@ -177,6 +189,10 @@ mod tests {
 
     #[test]
     fn plain_text_comparison_reports_differences_and_unavailable_extraction() {
+        assert_eq!(
+            compare_plain_text(b" ", Ok(String::new()))["status"],
+            "unavailable"
+        );
         assert_eq!(
             compare_plain_text("Avery\nMünchen".as_bytes(), Ok("Avery  München".into()))["status"],
             "matches"

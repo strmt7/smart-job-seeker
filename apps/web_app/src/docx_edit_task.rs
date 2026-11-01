@@ -2,7 +2,7 @@
 use serde_json::{json, Value};
 use std::sync::Mutex;
 use waypoint_domain::sha256_hex;
-type EditedFiles = (Option<Vec<u8>>, Vec<u8>);
+type EditedFiles = (Option<Vec<u8>>, Vec<u8>, Value);
 struct Task {
     id: String,
     document_id: String,
@@ -120,7 +120,11 @@ pub fn start_batch(
             if pdf.len() > 10 * 1024 * 1024 {
                 return Err("Exported PDF exceeds 10 MiB".into());
             }
-            Ok((edited, pdf))
+            let text_check = edited.as_ref().map_or_else(
+                || json!({"status":"not_checked","reason":"Direct PDF edits do not have a converted DOCX to compare"}),
+                |docx| crate::convert_task::compare_docx_to_pdf(docx, &pdf),
+            );
+            Ok((edited, pdf, text_check))
         })
         .unwrap_or_else(|_| Err("Template editing stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
@@ -151,7 +155,7 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
             *tasks = None;
             Ok(output)
         }
-        Ok((docx, pdf)) => {
+        Ok((docx, pdf, text_check)) => {
             let current = match ws.document_content(&task.document_id) {
                 Ok(Some(value)) => value,
                 Ok(None) => {
@@ -163,7 +167,7 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                     return Ok(output);
                 }
                 Err(error) => {
-                    task.result = Some(Ok((docx, pdf)));
+                    task.result = Some(Ok((docx, pdf, text_check)));
                     return Err(format!("Could not read template; retry status: {error}"));
                 }
             };
@@ -179,7 +183,7 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                 let current_context = match job_context_digest(ws, job) {
                     Ok(context) => context,
                     Err(error) => {
-                        task.result = Some(Ok((docx, pdf)));
+                        task.result = Some(Ok((docx, pdf, text_check)));
                         return Err(format!(
                             "Could not verify job context; retry status: {error}"
                         ));
@@ -226,8 +230,7 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                             job_id,
                             &task.name,
                             &current,
-                            docx.as_deref(),
-                            &pdf,
+                            (docx.as_deref(), &pdf, &text_check),
                             &task.edits,
                         )
                     });
@@ -235,13 +238,13 @@ pub fn poll(id: &str, ws: &waypoint_workspace::Workspace) -> Result<Value, Strin
                     let record_error = record.and_then(Result::err);
                     let output = terminal(
                         id,
-                        json!({"status":"complete","docx_id":docx_id,"docx_name":docx_id.as_ref().map(|_| docx_name),"pdf_id":pdf_id,"pdf_name":pdf_name,"record_saved":record_saved,"record_error":record_error}),
+                        json!({"status":"complete","docx_id":docx_id,"docx_name":docx_id.as_ref().map(|_| docx_name),"pdf_id":pdf_id,"pdf_name":pdf_name,"record_saved":record_saved,"record_error":record_error,"text_check":text_check}),
                     )?;
                     *tasks = None;
                     Ok(output)
                 }
                 Err(error) => {
-                    task.result = Some(Ok((docx, pdf)));
+                    task.result = Some(Ok((docx, pdf, text_check)));
                     Err(format!(
                         "Could not save edited files; retry status: {error}"
                     ))
@@ -256,10 +259,10 @@ fn record_edit(
     job_id: &str,
     name: &str,
     original: &[u8],
-    docx: Option<&[u8]>,
-    pdf: &[u8],
+    output: (Option<&[u8]>, &[u8], &Value),
     edits: &[(String, String)],
 ) -> Result<(), String> {
+    let (docx, pdf, text_check) = output;
     let job = waypoint_domain::JobIdentityId::new(job_id).map_err(|e| e.to_string())?;
     let mut record =
         crate::attempt_record::AttemptRecord::start(ws, &job, &crate::random_id()?, crate::now())?
@@ -269,7 +272,7 @@ fn record_edit(
         .map(|bytes| record.material("edited-template.docx", bytes))
         .transpose()?;
     let pdf_name = record.material("edited-template.pdf", pdf)?;
-    record.event(json!({"type":"template_edited","time":crate::now(),"original":original_name,"docx":docx_name,"pdf":pdf_name,"original_sha256":sha256_hex(original),"pdf_sha256":sha256_hex(pdf),"edits":edits,"note":"Reviewed template edit; no application was submitted."}))?;
+    record.event(json!({"type":"template_edited","time":crate::now(),"original":original_name,"docx":docx_name,"pdf":pdf_name,"original_sha256":sha256_hex(original),"pdf_sha256":sha256_hex(pdf),"edits":edits,"text_check":text_check,"note":"Reviewed template edit; no application was submitted."}))?;
     record.status("manual_review", crate::now())?;
     Ok(())
 }
@@ -295,11 +298,13 @@ mod tests {
             result: Some(Ok((
                 Some(b"fictional docx".to_vec()),
                 b"%PDF-fictional".to_vec(),
+                json!({"status":"differs"}),
             ))),
         });
         assert_eq!(pending().unwrap().as_deref(), Some("replay-edit"));
         let first = poll("replay-edit", &ws).unwrap();
         assert_eq!(first["status"], "complete");
+        assert_eq!(first["text_check"]["status"], "differs");
         assert_eq!(poll("replay-edit", &ws).unwrap(), first);
         assert_eq!(ws.documents().unwrap().len(), 3);
         assert!(poll("other", &ws).is_err());
@@ -341,7 +346,11 @@ mod tests {
             job_id: Some(job.as_str().into()),
             context_digest: Some(digest),
             edits: vec![("before".into(), "after".into())],
-            result: Some(Ok((None, b"%PDF-fictional".to_vec()))),
+            result: Some(Ok((
+                None,
+                b"%PDF-fictional".to_vec(),
+                json!({"status":"not_checked"}),
+            ))),
         });
         ws.save_candidate_profile(
             &json!({"document_instructions":"Use a different style"}).to_string(),
@@ -431,8 +440,11 @@ mod tests {
             job.as_str(),
             "template.docx",
             b"original",
-            Some(b"edited"),
-            b"%PDF-example",
+            (
+                Some(b"edited"),
+                b"%PDF-example",
+                &json!({"status":"differs"}),
+            ),
             &[("before".into(), "after".into())],
         )
         .unwrap();
@@ -448,6 +460,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(entry.join("events.jsonl")).unwrap()).unwrap();
         assert_eq!(event["type"], "template_edited");
         assert_eq!(event["edits"][0], json!(["before", "after"]));
+        assert_eq!(event["text_check"]["status"], "differs");
         for (key, bytes) in [
             ("original", b"original".as_slice()),
             ("docx", b"edited".as_slice()),
@@ -657,6 +670,11 @@ mod tests {
                 assert!(text.contains("Example CV"));
                 assert!(text.contains("Fictional research and qualifications."));
                 assert!(pdf.starts_with(b"%PDF-"));
+                assert!(matches!(
+                    result["text_check"]["status"].as_str(),
+                    Some("matches" | "differs" | "unavailable")
+                ));
+                println!("Edited document text comparison: {}", result["text_check"]);
                 assert_eq!(ws.document_content("source").unwrap().unwrap(), original);
                 break;
             }

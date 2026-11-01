@@ -1,0 +1,14 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const start = source.indexOf('function templateTextCheck(');
+const end = source.indexOf('\nasync function followTemplateSuggestion', start);
+assert.ok(start >= 0 && end > start);
+const context = {};
+vm.runInNewContext(source.slice(start, end), context);
+assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'matches'}}), /does not verify layout/);
+assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'differs'}}), /differs/);
+assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'unavailable'}}), /could not be compared/);
+assert.equal(context.templateTextCheck({docx_name:null,text_check:{status:'not_checked'}}), '');
+console.log('Template text comparison UI checks passed.');

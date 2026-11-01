@@ -1079,6 +1079,8 @@ A fictional Unicode text document was converted with the locally installed offic
 
 DOCX-to-PDF conversion now compares locally extracted DOCX text with selectable PDF text after whitespace normalization. The DOCX extractor covers body, header and footer text but may miss other content; repeated headers, fields and layout changes can also cause differences. A match is not a visual or ATS compatibility check. Extraction failures leave the saved PDF available and report the comparison as unavailable. Images remain outside this comparison.
 
+The same advisory comparison is now included when saving a template edit as DOCX and PDF, displayed after saving or recovering the task and included in a job-linked edit record. Direct PDF edits do not have a DOCX conversion comparison. Empty extracted source text is reported as unavailable rather than a match. A fictional edited DOCX matched with the bundled PDF runtime; a separate run with the default Python lacking the PDF package correctly reported the check unavailable. Neither check establishes visual correctness or complete content extraction.
+
 A fictional styled DOCX was converted with local runtimes and produced a comparison result; the conversion tests, simulated UI checks and web lint passed. The result panel is not persisted across reloads. No employer site or local model was used.
 
 ## Filled-field record ordering — 2026-11-01
