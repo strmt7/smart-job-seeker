@@ -177,14 +177,10 @@ pub fn check_constraints_with_remote(
             )),
             Some(true) => {}
         }
-    } else if !c.locations.is_empty() && remote != Some(true) {
+    }
+    if !c.locations.is_empty() {
         let observed = location.trim();
-        if observed.is_empty() {
-            out.push((
-                "location".into(),
-                ConstraintOutcome::Unknown("job does not state a location".into()),
-            ));
-        } else if !c
+        let listed_match = c
             .locations
             .iter()
             .filter(|allowed| !allowed.trim().is_empty())
@@ -192,8 +188,22 @@ pub fn check_constraints_with_remote(
                 observed
                     .lines()
                     .any(|candidate| candidate.trim().eq_ignore_ascii_case(allowed.trim()))
-            })
-        {
+            });
+        if remote == Some(true) {
+            // A source's remote flag and office location do not establish the
+            // jurisdictions from which this particular job can be performed.
+            out.push((
+                "location".into(),
+                ConstraintOutcome::Unknown(
+                    "remote eligibility for the requested location is not established".into(),
+                ),
+            ));
+        } else if observed.is_empty() {
+            out.push((
+                "location".into(),
+                ConstraintOutcome::Unknown("job does not state a location".into()),
+            ));
+        } else if !listed_match {
             let outcome = if remote.is_none() {
                 ConstraintOutcome::Unknown(format!("location '{location}' is outside the allowed set and remote status is not established"))
             } else {
@@ -444,6 +454,34 @@ mod tests {
     }
 
     #[test]
+    fn remote_status_does_not_prove_geographic_eligibility() {
+        for remote_only in [false, true] {
+            let constraints = CampaignConstraints {
+                remote_only,
+                locations: vec!["Germany".into()],
+                ..Default::default()
+            };
+            for location in ["", "Remote", "United States", "Germany"] {
+                let outcomes = check_constraints_with_remote(
+                    &constraints,
+                    &[],
+                    None,
+                    None,
+                    Some(true),
+                    location,
+                );
+                assert!(
+                    outcomes.iter().any(|(name, value)| name == "location"
+                        && matches!(value, ConstraintOutcome::Unknown(_))),
+                    "{location:?}"
+                );
+                assert!(!outcomes.iter().any(|(name, value)| name == "location"
+                    && matches!(value, ConstraintOutcome::Pass | ConstraintOutcome::Fail(_))));
+            }
+        }
+    }
+
+    #[test]
     fn location_constraints_accept_any_stated_location() {
         let constraints = CampaignConstraints {
             locations: vec!["San Francisco, CA".into()],
@@ -483,7 +521,10 @@ mod tests {
         let result = check_constraints(&constraints, &[], None, None, false, " Geneva ");
         assert!(matches!(&result[..], [(name, ConstraintOutcome::Fail(_))] if name == "location"));
         assert!(check_constraints(&constraints, &[], None, None, false, " zurich ").is_empty());
-        assert!(check_constraints(&constraints, &[], None, None, true, "").is_empty());
+        assert!(matches!(
+            check_constraints(&constraints, &[], None, None, true, "")[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
     }
 
     #[test]

@@ -40,6 +40,24 @@ fn fetcher_all() -> StaticFetcher {
 }
 
 #[test]
+fn ranked_remote_role_keeps_location_eligibility_unknown() {
+    let mut ws = Workspace::in_memory().unwrap();
+    ws.test_insert_job("remote-fixture", "Engineer", "Example");
+    let constraints = CampaignConstraints {
+        remote_only: true,
+        locations: vec!["Germany".into()],
+        ..Default::default()
+    };
+    let ranked = ws.ranked(&constraints, &[], 100).unwrap();
+    assert_eq!(ranked.strict.len(), 1);
+    assert!(ranked.strict[0]
+        .unknown_constraints
+        .iter()
+        .any(|reason| reason
+            .contains("remote eligibility for the requested location is not established")));
+}
+
+#[test]
 fn lever_secondary_location_can_satisfy_location_filter() {
     let mut ws = Workspace::in_memory().unwrap();
     let payload = r#"[{"id":"fixture-locations","text":"Engineer","hostedUrl":"https://jobs.lever.co/spotify/fixture-locations","workplaceType":"on-site","categories":{"location":"New York, NY","allLocations":["New York, NY","San Francisco, CA"]}}]"#;
