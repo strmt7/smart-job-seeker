@@ -1830,6 +1830,54 @@ impl CdpDriver {
         Ok((!text.is_empty() && text.len() <= 500).then_some(text))
     }
 
+    /// Find nearby rendered text for an otherwise unnamed textarea. This is
+    /// advisory context, not an accessible association or permission to fill.
+    fn rendered_unassociated_question(&mut self, node: u64) -> Result<Option<String>, DriverError> {
+        if !self.control_visibility_and_path(node)?.0 {
+            return Ok(None);
+        }
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Field disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || !(this instanceof HTMLTextAreaElement)) return null;
+            let branch = this;
+            for (let depth = 0; depth < 4; depth++) {
+                const parent = branch.parentElement;
+                if (!parent || ['FORM','FIELDSET','SECTION','BODY'].includes(parent.tagName) || parent.children.length > 20) return null;
+                const controls = parent.querySelectorAll('input:not([type="hidden" i]),textarea,select,button,[contenteditable="true"]');
+                if (controls.length !== 1 || controls[0] !== this) return null;
+                const candidates = [];
+                for (const sibling of parent.children) {
+                    if (sibling === branch || !sibling.getClientRects().length) continue;
+                    const style = getComputedStyle(sibling);
+                    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || sibling.getAttribute('aria-hidden') === 'true') continue;
+                    const value = (sibling.innerText || '').trim().replace(/\s+/g,' ');
+                    if (value) candidates.push(value);
+                }
+                if (candidates.length === 1 && candidates[0].length <= 500) return candidates[0];
+                if (candidates.length > 1) return null;
+                branch = parent;
+            }
+            return null;
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty() && text.len() <= 500)
+            .map(str::to_owned))
+    }
+
     fn open_visible_shadow_host(&mut self, node: u64) -> Result<bool, DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Ok(false);
@@ -2208,6 +2256,7 @@ impl CdpDriver {
         let mut labels: HashMap<String, String> = HashMap::new();
         let mut wrapping_labels: HashMap<u64, String> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
+        let mut radio_form_owners: HashMap<u64, u64> = HashMap::new();
         type GroupContext = (String, Option<String>, Option<u64>, bool);
         let mut field_containers: HashMap<u64, Vec<GroupContext>> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
@@ -2450,6 +2499,31 @@ impl CdpDriver {
                                     .or_insert_with(|| label_text.clone());
                             }
                             return false;
+                        }
+                        true
+                    });
+                }
+            }
+            if tag == "form" {
+                if let Some(form_id) = node.get("nodeId").and_then(Value::as_u64) {
+                    walk(node, false, &mut |child, _| {
+                        let child_tag = child.get("nodeName").and_then(Value::as_str).unwrap_or("");
+                        if child_tag.eq_ignore_ascii_case("form")
+                            && child.get("nodeId").and_then(Value::as_u64) != Some(form_id)
+                        {
+                            return false;
+                        }
+                        if child_tag.eq_ignore_ascii_case("input") {
+                            let attrs = attributes(child);
+                            if attrs
+                                .get("type")
+                                .is_some_and(|value| value.eq_ignore_ascii_case("radio"))
+                                && !attrs.contains_key("form")
+                            {
+                                if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                    radio_form_owners.insert(id, form_id);
+                                }
+                            }
                         }
                         true
                     });
@@ -2881,6 +2955,7 @@ impl CdpDriver {
 
         let mut radio_groups: HashMap<(u64, String), usize> = HashMap::new();
         let mut checked_section_headings: HashMap<u64, Option<String>> = HashMap::new();
+        let mut unassociated_question_count = 0usize;
         for control in controls {
             let selector = selector_for(&control);
             let selector = if hidden_selectors.contains(&selector)
@@ -2935,6 +3010,24 @@ impl CdpDriver {
             if referenced_label.as_ref().is_some_and(Option::is_none) {
                 walls.push("a field has an unresolved or ambiguous accessible label".into());
             }
+            let has_usable_label = referenced_label
+                .as_ref()
+                .and_then(Option::as_deref)
+                .is_some_and(|value| !value.trim().is_empty())
+                || control
+                    .attrs
+                    .get("aria-label")
+                    .is_some_and(|value| !value.trim().is_empty())
+                || labels
+                    .get(&id)
+                    .is_some_and(|value| !value.trim().is_empty())
+                || wrapping_labels
+                    .get(&control.node_id)
+                    .is_some_and(|value| !value.trim().is_empty())
+                || control
+                    .attrs
+                    .get("placeholder")
+                    .is_some_and(|value| !value.trim().is_empty());
             let mut label = referenced_label
                 .flatten()
                 .or_else(|| control.attrs.get("aria-label").cloned())
@@ -2950,6 +3043,23 @@ impl CdpDriver {
                     }
                 })
                 .unwrap_or_else(|| "unlabelled field".into());
+            let unassociated_textarea = control.tag == "textarea" && !has_usable_label;
+            if unassociated_textarea && unassociated_question_count < 16 {
+                unassociated_question_count += 1;
+                if let Ok(Some(context)) = self.with_review_timeout(|driver| {
+                    driver.rendered_unassociated_question(control.node_id)
+                }) {
+                    label = format!("Possible question (review): {context}");
+                }
+            }
+            if unassociated_textarea && label.trim().is_empty() {
+                label = control
+                    .attrs
+                    .get("name")
+                    .filter(|name| !name.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| "unlabelled field".into());
+            }
             if input_type != "radio" {
                 if let Some(groups) = field_containers.get(&control.node_id) {
                     if groups.len() > 8 {
@@ -3054,7 +3164,8 @@ impl CdpDriver {
                 }
                 continue;
             }
-            let sensitive = is_sensitive_label(&label) || input_type == "password";
+            let sensitive =
+                unassociated_textarea || is_sensitive_label(&label) || input_type == "password";
             if input_type == "radio" {
                 if let (Some((fieldset_id, legend, group_ref)), Some(name)) = (
                     radio_containers.get(&control.node_id),
@@ -3109,6 +3220,38 @@ impl CdpDriver {
                             },
                             required,
                             sensitive: sensitive || is_sensitive_label(&group_label),
+                            editing_mode: None,
+                            max_length_utf16: None,
+                            autocomplete: None,
+                        });
+                    }
+                    continue;
+                }
+                if let (Some(form_id), Some(name)) = (
+                    radio_form_owners.get(&control.node_id),
+                    control
+                        .attrs
+                        .get("name")
+                        .filter(|name| !name.is_empty() && name.len() <= 512),
+                ) {
+                    let key = (*form_id, name.clone());
+                    if let Some(index) = radio_groups.get(&key).copied() {
+                        let field: &mut waypoint_applications::form_mapping::FormField =
+                            &mut fields[index];
+                        if let FormFieldType::Radio { options } = &mut field.field_type {
+                            options.push(label);
+                        }
+                        field.required |= required;
+                    } else {
+                        radio_groups.insert(key, fields.len());
+                        fields.push(FormField {
+                            selector,
+                            label: format!("Unlabelled radio group: {name}"),
+                            field_type: FormFieldType::Radio {
+                                options: vec![label],
+                            },
+                            required,
+                            sensitive: true,
                             editing_mode: None,
                             max_length_utf16: None,
                             autocomplete: None,

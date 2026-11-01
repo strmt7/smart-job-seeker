@@ -2721,6 +2721,67 @@ mod tests {
 
     #[test]
     #[ignore = "read-only inspection of a public application page"]
+    fn live_public_application_preview_is_read_only() {
+        let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL")
+            .expect("set the public application URL");
+        let model =
+            std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL").expect("set the local model name");
+        assert_eq!(
+            crate::resident_model().unwrap().as_deref(),
+            Some(model.as_str())
+        );
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            parsed.origin().ascii_serialization().as_str(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        assert!(!live.schema.fields.is_empty(), "no fields detected");
+        let mut llm =
+            waypoint_inference::ollama::OllamaInference::new("http://127.0.0.1:11434", model)
+                .unwrap()
+                .with_resident_context();
+        let preview = suggest_for_live_form(live.clone(), &mut llm, &json!({"full_name":"Avery Example", "first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123", "city":"Example City", "linkedin":"https://example.invalid/avery"})).unwrap();
+        for field in &preview.schema.fields {
+            let value = preview
+                .suggestions
+                .iter()
+                .find(|mapping| mapping.field_selector == field.selector)
+                .map(|mapping| &mapping.value);
+            let kind = match &field.field_type {
+                FormFieldType::Select { options } => format!("select ({} options)", options.len()),
+                FormFieldType::Radio { options } => format!("radio ({} options)", options.len()),
+                FormFieldType::MultiSelect { options } => {
+                    format!("multi-select ({} options)", options.len())
+                }
+                other => format!("{other:?}"),
+            };
+            println!(
+                "field={:?} required={} sensitive={} type={:?} suggested={:?}",
+                field.label,
+                field.required,
+                field.sensitive || preview.model_review_selectors.contains(&field.selector),
+                kind,
+                value
+            );
+            assert!(
+                !(field.sensitive || preview.model_review_selectors.contains(&field.selector))
+                    || value.is_none(),
+                "sensitive field received a suggestion"
+            );
+        }
+        println!("walls={:?} manual={:?}", live.walls, preview.manual_review);
+        assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "read-only inspection of a public application page"]
     fn live_workable_custom_choice_inventory_is_read_only() {
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         driver

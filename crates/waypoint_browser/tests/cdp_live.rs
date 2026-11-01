@@ -748,6 +748,98 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn unassociated_questions_are_advisory_and_never_auto_filled() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_unassociated_questions.html"))
+        .unwrap();
+    let find = |name: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|field| field.selector.contains(name))
+            .unwrap()
+    };
+    assert!(find("salary")
+        .label
+        .contains("What is your expected compensation?"));
+    assert!(find("salary").sensitive);
+    assert!(find("project")
+        .label
+        .contains("Describe a relevant project."));
+    assert!(find("project").sensitive);
+    assert_eq!(find("ambiguous").label, "ambiguous");
+    assert!(find("ambiguous").sensitive);
+    assert_eq!(find("hidden-context").label, "hidden-context");
+    assert!(find("hidden-context").sensitive);
+    assert!(find("empty-label")
+        .label
+        .contains("What is your availability?"));
+    assert!(find("empty-label").sensitive);
+    assert_eq!(find("labelled").label, "Explicit question");
+    assert!(!find("labelled").sensitive);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
+fn unlabelled_radio_groups_are_deduplicated_but_require_manual_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_unlabelled_radios.html"))
+        .unwrap();
+    assert!(
+        !live
+            .walls
+            .iter()
+            .any(|wall| wall == "ambiguous form controls need manual review"),
+        "{:?}",
+        live.walls
+    );
+    let groups: Vec<_> = live
+        .schema
+        .fields
+        .iter()
+        .filter(|field| matches!(field.field_type, FormFieldType::Radio { .. }))
+        .collect();
+    assert_eq!(groups.len(), 2);
+    for group in groups {
+        assert!(group.sensitive && group.required);
+        assert!(group.label.starts_with("Unlabelled radio group:"));
+        assert_eq!(
+            group.field_type,
+            FormFieldType::Radio {
+                options: vec!["Yes".into(), "No".into()]
+            }
+        );
+    }
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+    let other = driver
+        .open(&file_url("form_unlabelled_radios_multiple.html"))
+        .unwrap();
+    assert_eq!(
+        other
+            .schema
+            .fields
+            .iter()
+            .filter(|field| matches!(field.field_type, FormFieldType::Radio { .. }))
+            .count(),
+        2
+    );
+    assert!(other
+        .walls
+        .iter()
+        .any(|wall| wall == "ambiguous form controls need manual review"));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn scroll_choice_reveals_and_selects_later_option() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver
