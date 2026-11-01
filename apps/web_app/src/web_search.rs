@@ -135,7 +135,7 @@ pub(crate) fn fetch(url: &Url) -> Result<String, FetchError> {
     }
     if response.status == 403 {
         return Err(FetchError {
-            message: "Provider refused JSON search (HTTP 403)".into(),
+            message: "Provider refused the search (HTTP 403). JSON search may be disabled or access restricted; check the provider configuration or choose another provider.".into(),
             stop_batch: true,
         });
     }
@@ -445,6 +445,32 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn forbidden_provider_stops_batch_and_explains_possible_configuration() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        });
+        let url = request_url(
+            &format!("http://127.0.0.1:{}/", addr.port()),
+            "fictional role",
+        )
+        .unwrap();
+        let error = fetch(&url).err().expect("403 must be reported");
+        worker.join().unwrap();
+        assert!(error.stop_batch);
+        assert!(error.message.contains("JSON search may be disabled"));
+        assert!(error.message.contains("access restricted"));
+    }
     #[test]
     #[ignore = "requires live Wiby network access"]
     fn live_wiby_search_returns_unverified_candidates() {
