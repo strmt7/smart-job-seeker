@@ -917,8 +917,19 @@ pub(crate) fn preference_coverage(assessment: &Value) -> &'static str {
     }) {
         return "possible_conflict";
     }
+    let instruction_coverage = match (
+        assessment["source_coverage"]["instructions_used_chars"].as_u64(),
+        assessment["source_coverage"]["instructions_total_chars"].as_u64(),
+    ) {
+        (Some(used), Some(total)) if used == total => Some(total),
+        _ => None,
+    };
     if audit["status"] == "no_instructions" {
-        return "not_requested";
+        return if instruction_coverage == Some(0) {
+            "not_requested"
+        } else {
+            "needs_review"
+        };
     }
     let clean_audit = audit["status"] == "completed"
         && audit["instructions_truncated"] == false
@@ -935,6 +946,7 @@ pub(crate) fn preference_coverage(assessment: &Value) -> &'static str {
     let total = preferences.len() as u64;
     if clean_audit
         && complete_listing_coverage(assessment)
+        && instruction_coverage.is_some_and(|total| total > 0)
         && total > 0
         && preferences.iter().all(|item| item["status"] == "supported")
         && comparison["status"] == "completed"
@@ -2382,8 +2394,11 @@ mod tests {
 
     #[test]
     fn preference_coverage_marks_missing_unknown_and_conflicting_conditions() {
-        let mut assessment = json!({"source_coverage":{"description_present":true,"listing_used_chars":100,"listing_total_chars":100},"preference_audit":{"status":"completed","instructions_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"preference_comparison":{"status":"completed","selected":1,"total":1,"listing_truncated":false},"rubric":[{"source":"preference","status":"supported"}]});
+        let mut assessment = json!({"source_coverage":{"description_present":true,"listing_used_chars":100,"listing_total_chars":100,"instructions_used_chars":10,"instructions_total_chars":10},"preference_audit":{"status":"completed","instructions_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"preference_comparison":{"status":"completed","selected":1,"total":1,"listing_truncated":false},"rubric":[{"source":"preference","status":"supported"}]});
         assert_eq!(preference_coverage(&assessment), "included");
+        assessment["source_coverage"]["instructions_total_chars"] = json!(11);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["source_coverage"]["instructions_total_chars"] = json!(10);
         assessment["source_coverage"]["description_present"] = json!(false);
         assert_eq!(preference_coverage(&assessment), "needs_review");
         assessment["source_coverage"]["description_present"] = json!(true);
@@ -2403,6 +2418,9 @@ mod tests {
         assessment["rubric"] = json!([]);
         assert_eq!(preference_coverage(&assessment), "needs_review");
         assessment["preference_audit"]["status"] = json!("no_instructions");
+        assert_eq!(preference_coverage(&assessment), "needs_review");
+        assessment["source_coverage"]["instructions_total_chars"] = json!(0);
+        assessment["source_coverage"]["instructions_used_chars"] = json!(0);
         assert_eq!(preference_coverage(&assessment), "not_requested");
     }
 
@@ -2448,7 +2466,7 @@ mod tests {
             assess_with_source(&mut Fixture, &[], "Remote only", listing, Some(listing)).unwrap();
         assert_eq!(result["preference_audit"]["added"], 1);
         assert_eq!(result["preference_coverage"], "needs_review");
-        result["source_coverage"] = json!({"description_present":true,"listing_used_chars":listing.chars().count(),"listing_total_chars":listing.chars().count()});
+        result["source_coverage"] = json!({"description_present":true,"listing_used_chars":listing.chars().count(),"listing_total_chars":listing.chars().count(),"instructions_used_chars":11,"instructions_total_chars":11});
         assert_eq!(preference_coverage(&result), "included");
         assert_eq!(result["rubric"][1]["source"], "preference");
         assert_eq!(result["rubric"][1]["status"], "supported");

@@ -761,15 +761,17 @@ fn read_fit_with_context(
                 if !assessment.is_object() {
                     return Err("Stored assessment is invalid".into());
                 }
-                let coverage =
-                    if assessment["preference_audit"].is_null() && instructions.trim().is_empty() {
-                        "not_requested"
-                    } else {
-                        fit_task::preference_coverage(&assessment)
-                    };
-                assessment["preference_coverage"] = json!(coverage);
                 assessment["source_coverage"] =
                     fit_source_coverage(ws, job_id, &listing, instructions)?;
+                let coverage = if assessment["preference_audit"].is_null()
+                    && instructions.trim().is_empty()
+                    && assessment["source_coverage"]["instructions_total_chars"] == 0
+                {
+                    "not_requested"
+                } else {
+                    fit_task::preference_coverage(&assessment)
+                };
+                assessment["preference_coverage"] = json!(coverage);
                 assessment["requirement_coverage"] =
                     json!(fit_task::requirement_coverage(&assessment));
                 Ok(
