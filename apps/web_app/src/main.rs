@@ -10614,7 +10614,7 @@ mod tests {
             stream.read_to_string(&mut response).unwrap();
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
         };
-        let experience = json!({"stage":"enter_information","control":"text","platform":"lever","observation":"value_changed","response":"verify_value_again","outcome":"did_not_help","note":"Check the preceding section"});
+        let experience = json!({"stage":"enter_information","control":"text","platform":"workable","observation":"value_changed","response":"verify_value_again","outcome":"did_not_help","note":"Check the preceding section"});
         assert!(send(
             "/api/form-experiences/save",
             json!({"experience":experience})
@@ -10633,7 +10633,7 @@ mod tests {
         );
         let related = send(
             "/api/form-experiences/related",
-            json!({"stage":"enter_information","control":"text","platform":"lever"}),
+            json!({"stage":"enter_information","control":"text","platform":"workable"}),
         );
         assert_eq!(related["experiences"][0]["id"], saved["id"]);
         assert_eq!(related["experiences"][0]["same_platform"], true);
@@ -10674,7 +10674,7 @@ mod tests {
         assert_eq!(disabled["revision"], 4);
         assert!(send(
             "/api/form-experiences/related",
-            json!({"stage":"enter_information","control":"text","platform":"lever"})
+            json!({"stage":"enter_information","control":"text","platform":"workable"})
         )["experiences"]
             .as_array()
             .unwrap()
@@ -10698,7 +10698,7 @@ mod tests {
             .is_empty());
         assert!(send(
             "/api/form-experiences/related",
-            json!({"stage":"enter_information","control":"text","platform":"lever"})
+            json!({"stage":"enter_information","control":"text","platform":"workable"})
         )["experiences"]
             .as_array()
             .unwrap()

@@ -83,6 +83,7 @@ pub enum Platform {
     Lever,
     Ashby,
     Workday,
+    Workable,
     Other,
 }
 

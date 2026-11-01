@@ -250,6 +250,7 @@ fn observed_platform(origin: &str) -> Option<waypoint_workspace::form_experience
         "boards.greenhouse.io" | "job-boards.greenhouse.io" => Some(Platform::Greenhouse),
         "jobs.lever.co" => Some(Platform::Lever),
         "jobs.ashbyhq.com" => Some(Platform::Ashby),
+        "apply.workable.com" => Some(Platform::Workable),
         _ if host.ends_with(".myworkdayjobs.com") => Some(Platform::Workday),
         _ => None,
     }
@@ -864,6 +865,14 @@ mod tests {
             None
         );
         assert_eq!(observed_platform("http://jobs.lever.co"), None);
+        assert_eq!(
+            observed_platform("https://apply.workable.com"),
+            Some(Platform::Workable)
+        );
+        assert_eq!(
+            observed_platform("https://apply.workable.com.attacker.invalid"),
+            None
+        );
         let field = |field_type| FormField {
             selector: "#fixture".into(),
             label: "Fixture".into(),
@@ -928,6 +937,17 @@ mod tests {
         assert!(relevant_experiences(&unrelated, &items)
             .iter()
             .all(|value| !value.same_platform));
+        let mut workable_schema = schema.clone();
+        workable_schema.origin = "https://apply.workable.com".into();
+        let mut workable_lesson = item(8, Control::Text, Platform::Workable, 1);
+        workable_lesson.experience.observation = Observation::ValidationError;
+        items.push(workable_lesson);
+        let workable_selected = relevant_experiences(&workable_schema, &items);
+        assert_eq!(
+            workable_selected[0].experience.platform,
+            Some(Platform::Workable)
+        );
+        assert!(workable_selected[0].same_platform);
         let mut full: Vec<_> = (0..500)
             .map(|i| {
                 item(
