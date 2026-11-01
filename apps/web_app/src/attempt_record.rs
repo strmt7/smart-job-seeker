@@ -821,7 +821,12 @@ pub fn answer_history(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Res
         };
         if !matches!(
             value["type"].as_str(),
-            Some("fields_requested" | "fill_commands_verified" | "fill_incomplete")
+            Some(
+                "fields_inspected"
+                    | "fields_requested"
+                    | "fill_commands_verified"
+                    | "fill_incomplete"
+            )
         ) {
             unreadable += 1;
             continue;
@@ -1170,6 +1175,30 @@ impl AttemptRecord {
             .map_err(|e| e.to_string())?;
         Ok(format!("answers/{name}"))
     }
+    /// Record the observed questions without recording values from the page.
+    pub fn inspected_fields(
+        &mut self,
+        fields: &[waypoint_applications::form_mapping::FormField],
+        timestamp: i64,
+    ) -> Result<(), String> {
+        let mut kept = Vec::new();
+        let mut bytes = 0usize;
+        for field in fields.iter().take(200) {
+            let value = json!({"selector":field.selector,"question":field.label,"field_type":field.field_type,"required":field.required,"sensitive":field.sensitive});
+            let size = serde_json::to_vec(&value)
+                .map_err(|_| "Cannot encode inspected question")?
+                .len();
+            if bytes.saturating_add(size) > 220 * 1024 {
+                break;
+            }
+            bytes += size;
+            kept.push(value);
+        }
+        let omitted = fields.len().saturating_sub(kept.len());
+        let value = json!({"type":"fields_inspected","time":timestamp,"fields":kept,"omitted":omitted,"note":"Observed questions only; existing field values are not recorded."});
+        let path = self.requested_answers(&value)?;
+        self.event(json!({"type":"fields_inspected","time":timestamp,"answer_file":path,"omitted":omitted}))
+    }
     /// Preserve a separate outcome alongside the event that points to it.
     pub fn answer_outcome(&mut self, mut value: Value) -> Result<(), String> {
         let path = self.requested_answers(&value)?;
@@ -1431,10 +1460,14 @@ pub fn capture_inspection(
     record: &mut AttemptRecord,
     origin: &str,
     reasons: &[String],
+    fields: &[waypoint_applications::form_mapping::FormField],
     screenshot: Option<&str>,
     timestamp: i64,
 ) -> Result<(), String> {
     record_initial_inspection(record, origin, reasons, screenshot, timestamp)?;
+    if let Err(error) = record.inspected_fields(fields, timestamp) {
+        return Err(record_capture_failure(record, error, timestamp));
+    }
     if let Err(error) = capture_page(driver, record, timestamp) {
         return Err(record_capture_failure(record, error, timestamp));
     }
@@ -1651,6 +1684,8 @@ mod tests {
         let mut record = AttemptRecord::start(&ws, &job, "answer-fixture", 2)
             .unwrap()
             .unwrap();
+        let field: waypoint_applications::form_mapping::FormField = serde_json::from_value(json!({"selector":"#name","label":"Name","field_type":"text","required":true,"sensitive":false})).unwrap();
+        record.inspected_fields(&vec![field; 201], 3).unwrap();
         let requested = json!({"type":"fields_requested","fields":[{"question":"Name","value":{"text":"Fictional Candidate"}}]});
         let path = record.requested_answers(&requested).unwrap();
         record
@@ -1661,11 +1696,23 @@ mod tests {
         fs::write(record.dir.join("answers").join("9999.json"), b"invalid").unwrap();
         let history = answer_history(&ws, &job, "answer-fixture").unwrap();
         assert_eq!(history["available"], true);
-        assert_eq!(history["items"].as_array().unwrap().len(), 2);
-        assert_eq!(history["items"][0]["data"], requested);
+        assert_eq!(history["items"].as_array().unwrap().len(), 3);
+        assert_eq!(history["items"][0]["data"]["type"], "fields_inspected");
         assert_eq!(
-            history["items"][1]["data"]["answer_file"],
-            history["items"][0]["file"]
+            history["items"][0]["data"]["fields"]
+                .as_array()
+                .unwrap()
+                .len(),
+            200
+        );
+        assert_eq!(history["items"][0]["data"]["omitted"], 1);
+        assert!(!history["items"][0]["data"]
+            .to_string()
+            .contains("Fictional Candidate"));
+        assert_eq!(history["items"][1]["data"], requested);
+        assert_eq!(
+            history["items"][2]["data"]["answer_file"],
+            history["items"][1]["file"]
         );
         assert_eq!(history["unreadable"], 1);
         assert!(answer_history(&ws, &job, "../invalid").is_err());
@@ -2161,7 +2208,16 @@ mod tests {
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         driver.open(&url).unwrap();
         let viewport = driver.screenshot_base64().unwrap();
-        capture_inspection(&mut driver, &mut record, "file://", &[], Some(&viewport), 2).unwrap();
+        capture_inspection(
+            &mut driver,
+            &mut record,
+            "file://",
+            &[],
+            &[],
+            Some(&viewport),
+            2,
+        )
+        .unwrap();
         let events = fs::read_to_string(record.dir.join("events.jsonl")).unwrap();
         let entries: Vec<Value> = events
             .lines()

@@ -3719,6 +3719,7 @@ fn serve(
                     record,
                     &preview.schema.origin,
                     &preview.manual_review,
+                    &preview.fields_for_review(),
                     screenshot.as_deref(),
                     now(),
                 ) {
@@ -4365,6 +4366,7 @@ fn serve(
                             record,
                             &current.preview.schema.origin,
                             &current.preview.manual_review,
+                            &current.preview.fields_for_review(),
                             screenshot.as_deref(),
                             now(),
                         ) {

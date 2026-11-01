@@ -10,6 +10,7 @@ const context = {element};
 vm.runInNewContext(source.slice(start, end), context);
 const panel = element('div');
 context.renderAttemptAnswers(panel, {available:true, unreadable:1, truncated:false, items:[
+  {file:'answers/0000.json', data:{type:'fields_inspected',fields:[{question:'Work authorization',required:true,sensitive:true}],omitted:2}},
   {file:'answers/0001.json', data:{type:'fields_requested', fields:[{question:'Name',value:{text:'Fictional Candidate'}}]}},
   {file:'answers/0002.json', data:{type:'fill_incomplete',answer_file:'answers/0001.json',completed_commands:[{label:'Name'}]}}
 ]});
@@ -23,3 +24,6 @@ assert.match(text, /1 unreadable/);
 context.renderAttemptAnswers(panel, {available:false,items:[]});
 assert.ok(panel.children.some(item => item.text.includes('older attempt')));
 console.log('Answer history UI checks passed.');
+
+assert.match(text, /Work authorization · required · sensitive or review required/);
+assert.match(text, /2 questions were omitted/);
