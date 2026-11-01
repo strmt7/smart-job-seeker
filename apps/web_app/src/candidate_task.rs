@@ -1079,6 +1079,50 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a local browser and requires a resource-gated resident model"]
+    fn live_model_checks_contacts_in_shared_page_context() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/listing-email-text.html");
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(url.as_str()).unwrap();
+        let mut email = email_link_candidates(&browser.page_links().unwrap());
+        let (text, _) = browser.page_text_bounded(32_000).unwrap();
+        add_page_text_contacts(
+            &mut email,
+            &json!({"page_text_status":"captured","page_text":text}),
+        );
+        let name = crate::resident_model().unwrap().unwrap();
+        let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+            .unwrap()
+            .with_resident_context();
+        let mut llm =
+            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let result =
+            crate::contact_advice::classify(&mut llm, email["contacts"].as_array().unwrap())
+                .unwrap();
+        println!("Fictional shared-page contact advice: {result}");
+        assert!(result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |item| item["address"] == "careers@example.org" && item["purpose"] == "application"
+            ));
+        assert!(result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |item| item["address"] == "accessibility@example.org" && item["purpose"] == "other"
+            ));
+        assert!(browser
+            .trace
+            .iter()
+            .all(|event| !event.contains("click") && !event.contains("submitted")));
+    }
+
+    #[test]
     #[ignore = "starts a local browser against a fictional listing"]
     fn listing_email_links_are_read_without_opening_them() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

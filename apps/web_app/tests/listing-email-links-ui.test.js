@@ -5,9 +5,9 @@ const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf('function showListingEmailLinks(');
 const end = source.indexOf('\nfunction ', start);
 assert.ok(start >= 0 && end > start);
-function element(tag, text = '') { return {tag,text,children:[],append(...items){this.children.push(...items)},addEventListener(_type,handler){this.handler=handler}}; }
-const calls=[];
-const context={element,showEmailDraft:(...args)=>calls.push(args)};
+function element(tag, text = '') { return {tag,text,children:[],isConnected:true,append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items},addEventListener(_type,handler){this.handler=handler}}; }
+const calls=[],requests=[],storage=new Map();
+const context={element,showEmailDraft:(...args)=>calls.push(args),setTimeout:fn=>fn(),sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},api:async(path,body)=>{requests.push([path,body]);if(path.endsWith('pending'))return {active:false};if(path.endsWith('start'))return {task_id:'fixture-task'};return {status:'complete',job_id:'fixture',advice:{items:[{address:'jobs@example.org',purpose:'application',evidence:'To apply, email jobs@example.org'}]}};}};
 vm.runInNewContext(source.slice(start,end),context);
 const panel=element('div'),job={id:'fixture'};
 context.showListingEmailLinks(panel,{matches_current_url:false,extraction_provenance:{matches_current_listing:false},email_links:{status:'captured',contacts:[{address:'jobs@example.org',label:'Page text',page_text_excerpt:'To apply, email jobs@example.org'}],omitted:1,text_status:'truncated'}},job);
@@ -24,4 +24,4 @@ assert.equal(calls.length,1);
 assert.equal(calls[0][0],job);
 assert.equal(calls[0][1],null);
 assert.equal(calls[0][2],'jobs@example.org');
-console.log('Listing email link UI checks passed.');
+(async()=>{const suggest=panel.children.find(item=>item.text==='Suggest contact purposes with local AI');await suggest.handler();assert.deepEqual(requests.map(item=>item[0]),['/api/listing-contacts/pending','/api/listing-contacts/start','/api/listing-contacts/status']);const advice=panel.children.find(item=>item.children.some(child=>child.text?.includes('Local AI suggestions')));assert.ok(advice.children.some(item=>item.text.includes('May be intended')));assert.ok(advice.children.some(item=>item.text.includes('Source quote')));assert.equal(calls.length,1);console.log('Listing email link UI checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

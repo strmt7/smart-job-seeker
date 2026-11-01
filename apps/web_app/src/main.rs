@@ -6,6 +6,7 @@ pub mod application_email;
 mod ats_check;
 mod attempt_record;
 mod candidate_task;
+mod contact_advice;
 mod control_rank;
 mod control_vision;
 mod convert_task;
@@ -2068,6 +2069,24 @@ fn serve(
                 "200 OK",
                 json!({"salary_evidence":evidence.as_ref().map(|v| &v["salary_evidence"]),"posting_date_evidence":evidence.as_ref().map(|v| &v["posting_date_evidence"]),"valid_through_evidence":evidence.as_ref().map(|v| &v["valid_through_evidence"]),"captured_at":captured_at,"matches_current_url":matches_current_url,"extraction_provenance":provenance,"email_links":email_links}),
             );
+        }
+        "/api/listing-contacts/pending" => {
+            json_reply(stream, "200 OK", contact_advice::pending()?);
+        }
+        "/api/listing-contacts/start" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let (contacts, digest) = contact_advice::inputs(ws, &job)?;
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task = random_id()?;
+            contact_advice::start(task.clone(), job.as_str().into(), digest, model, contacts)?;
+            json_reply(stream, "200 OK", json!({"task_id":task}));
+        }
+        "/api/listing-contacts/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", contact_advice::poll(id, ws)?);
         }
         "/api/listing-inspect/discard" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
