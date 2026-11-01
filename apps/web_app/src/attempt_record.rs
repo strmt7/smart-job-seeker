@@ -1178,6 +1178,7 @@ impl AttemptRecord {
     /// Record the observed questions without recording values from the page.
     pub fn inspected_fields(
         &mut self,
+        origin: &str,
         fields: &[waypoint_applications::form_mapping::FormField],
         timestamp: i64,
     ) -> Result<(), String> {
@@ -1195,7 +1196,7 @@ impl AttemptRecord {
             kept.push(value);
         }
         let omitted = fields.len().saturating_sub(kept.len());
-        let value = json!({"type":"fields_inspected","time":timestamp,"fields":kept,"omitted":omitted,"note":"Observed questions only; existing field values are not recorded."});
+        let value = json!({"type":"fields_inspected","time":timestamp,"origin":origin,"fields":kept,"omitted":omitted,"note":"Observed questions only; existing field values are not recorded."});
         let path = self.requested_answers(&value)?;
         self.event(json!({"type":"fields_inspected","time":timestamp,"answer_file":path,"omitted":omitted}))
     }
@@ -1480,7 +1481,7 @@ fn record_inspection_evidence(
     timestamp: i64,
 ) -> Result<(), String> {
     // Preserve either artifact even if writing the other one fails.
-    let questions = record.inspected_fields(fields, timestamp);
+    let questions = record.inspected_fields(origin, fields, timestamp);
     let page = record_initial_inspection(record, origin, reasons, screenshot, timestamp);
     match (questions, page) {
         (Ok(()), Ok(())) => Ok(()),
@@ -1705,7 +1706,9 @@ mod tests {
             .unwrap()
             .unwrap();
         let field: waypoint_applications::form_mapping::FormField = serde_json::from_value(json!({"selector":"#name","label":"Name","field_type":"text","required":true,"sensitive":false})).unwrap();
-        record.inspected_fields(&vec![field; 201], 3).unwrap();
+        record
+            .inspected_fields("https://example.invalid", &vec![field; 201], 3)
+            .unwrap();
         let requested = json!({"type":"fields_requested","fields":[{"question":"Name","value":{"text":"Fictional Candidate"}}]});
         let path = record.requested_answers(&requested).unwrap();
         record
@@ -1718,6 +1721,10 @@ mod tests {
         assert_eq!(history["available"], true);
         assert_eq!(history["items"].as_array().unwrap().len(), 3);
         assert_eq!(history["items"][0]["data"]["type"], "fields_inspected");
+        assert_eq!(
+            history["items"][0]["data"]["origin"],
+            "https://example.invalid"
+        );
         assert_eq!(
             history["items"][0]["data"]["fields"]
                 .as_array()
