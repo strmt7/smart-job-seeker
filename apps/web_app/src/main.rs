@@ -132,6 +132,25 @@ fn current_attachment_groups(
     groups
 }
 
+fn capture_field_label(
+    schema: &waypoint_applications::form_mapping::FormSchema,
+    selector: &str,
+) -> Option<String> {
+    let mut matches = schema
+        .fields
+        .iter()
+        .filter(|field| field.selector == selector);
+    let first = matches.next()?;
+    if matches.next().is_some()
+        || first.label.trim().is_empty()
+        || first.label.len() > 500
+        || first.label.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(first.label.clone())
+}
+
 fn staged_file_matches(path: &std::path::Path, expected_sha256: &str) -> bool {
     use std::io::Read;
     let Ok(file) = std::fs::File::open(path) else {
@@ -4638,9 +4657,10 @@ fn serve(
                     current.preview.manual_review.push(reason.into());
                 }
             }
+            let field_label = capture_field_label(&current.preview.schema, selector);
             let saved = current.record.as_mut().is_some_and(|record| {
                 let original = if freshness != "same" { record.screenshot_with_name(&before).map(Some) } else { Ok(None) };
-                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"screenshot":format!("screenshots/{name}")})))).is_ok()
+                original.and_then(|original| record.screenshot_with_name(&screenshot).and_then(|name| record.event(json!({"type":"visual_focus_capture","time":now(),"selector":selector,"field_label":field_label,"value_retained":check.selected_retained && freshness == "same","visual_freshness":freshness,"before_screenshot":original.map(|name| format!("screenshots/{name}")),"verified_count":check.verified,"unverified_count":check.unverified,"failed_fields":check.failed_labels,"screenshot":format!("screenshots/{name}")})))).is_ok()
             });
             json_reply(
                 stream,
@@ -4757,9 +4777,12 @@ fn serve(
                 )?;
                 return Err(error);
             }
+            let field_label = target
+                .as_ref()
+                .and_then(|(selector, _)| capture_field_label(&current.preview.schema, selector));
             let record_saved = current.record.as_mut().is_some_and(|record| {
                 record.screenshot_with_name(&screenshot).and_then(|name| {
-                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"segment":segment,"half":half,"clip":if target.is_none() { json!({"x":x,"y":y,"width":clip_width,"height":clip_height}) } else { Value::Null },"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"omitted_labels":omitted_labels,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
+                    record.event(json!({"type":"visual_capture","time":now(),"task_id":task_id,"target_selector":target.as_ref().map(|(selector, _)| selector),"field_label":field_label,"segment":segment,"half":half,"clip":if target.is_none() { json!({"x":x,"y":y,"width":clip_width,"height":clip_height}) } else { Value::Null },"segments":if target.is_some() { 1 } else { total },"coverage_complete":coverage_complete,"comparisons_truncated":comparisons_truncated,"omitted_labels":omitted_labels,"page_signature":signature.as_str(),"screenshot":format!("screenshots/{name}"),"result_file":format!("visual-result-{task_id}.json")}))
                 }).is_ok()
             });
             json_reply(
@@ -5851,15 +5874,20 @@ fn serve(
                 current.id.clone(),
                 document_sha256,
             ));
+            let field_label = capture_field_label(&current.preview.schema, selector);
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name,"attachment_name":name}))?;
                 let screenshot = current
                     .driver
                     .screenshot_base64()
                     .map_err(|e| e.to_string());
-                if let Err(error) =
-                    attempt_record::attachment_viewport(record, selector, screenshot, now())
-                {
+                if let Err(error) = attempt_record::attachment_viewport(
+                    record,
+                    selector,
+                    field_label.as_deref(),
+                    screenshot,
+                    now(),
+                ) {
                     let _ = record.event(json!({"type":"attachment_viewport_unavailable","time":now(),"selector":selector,"error":error}));
                     ws.mark_manual_review(
                         &current.job_id,
@@ -6541,6 +6569,24 @@ fn serve_loop(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn screenshot_field_label_requires_a_unique_usable_schema_field() {
+        use waypoint_applications::form_mapping::{FormField, FormSchema};
+        let field: FormField = serde_json::from_value(json!({"selector":"#resume","label":"Resume","field_type":"file","required":true,"sensitive":false})).unwrap();
+        let mut schema = FormSchema {
+            origin: "https://example.invalid".into(),
+            fields: vec![field.clone()],
+            multi_step: false,
+            steps: 1,
+        };
+        assert_eq!(
+            super::capture_field_label(&schema, "#resume").as_deref(),
+            Some("Resume")
+        );
+        schema.fields.push(field);
+        assert!(super::capture_field_label(&schema, "#resume").is_none());
+        assert!(super::capture_field_label(&schema, "#missing").is_none());
+    }
     #[test]
     fn staged_attachment_digest_detects_same_size_changes_and_missing_files() {
         let dir = tempfile::tempdir().unwrap();

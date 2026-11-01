@@ -954,8 +954,15 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
         let timestamp = value["time"]
             .as_i64()
             .filter(|time| (1..=253_402_300_799).contains(time));
+        let label = value["field_label"].as_str().filter(|label| {
+            !label.trim().is_empty() && label.len() <= 500 && !label.chars().any(char::is_control)
+        });
+        let mut context = json!({"type":kind,"time":timestamp});
+        if let Some(label) = label {
+            context["field_label"] = json!(label);
+        }
         // Later events may record that a previously captured page changed.
-        contexts.insert(name.to_owned(), json!({"type":kind,"time":timestamp}));
+        contexts.insert(name.to_owned(), context);
     }
     (
         Value::Object(contexts),
@@ -1178,12 +1185,13 @@ fn source_only_text(metadata: Option<&[u8]>) -> (&'static str, Option<String>, O
 pub fn attachment_viewport(
     record: &mut AttemptRecord,
     selector: &str,
+    field_label: Option<&str>,
     image: Result<String, String>,
     timestamp: i64,
 ) -> Result<(), String> {
     let image = image.map_err(|_| "Post-attachment screenshot unavailable")?;
     let name = record.screenshot_with_name(&image)?;
-    record.event(json!({"type":"attachment_viewport","time":timestamp,"selector":selector,"screenshot":format!("screenshots/{name}")}))
+    record.event(json!({"type":"attachment_viewport","time":timestamp,"selector":selector,"field_label":field_label,"screenshot":format!("screenshots/{name}")}))
 }
 
 impl AttemptRecord {
@@ -1991,7 +1999,7 @@ mod tests {
             .unwrap();
         record.event(json!({"type":"page_capture_segment","time":124,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"page_capture_changed","time":125,"screenshot":"screenshots/0002.png"})).unwrap();
-        record.event(json!({"type":"attachment_viewport","time":126,"screenshot":"screenshots/0025.png"})).unwrap();
+        record.event(json!({"type":"attachment_viewport","time":126,"field_label":"Resume","screenshot":"screenshots/0025.png"})).unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
         assert_eq!(first["items"].as_array().unwrap().len(), 24);
         assert_eq!(first["next_after"], 24);
@@ -2013,6 +2021,7 @@ mod tests {
             second["contexts"]["0025.png"]["type"],
             "attachment_viewport"
         );
+        assert_eq!(second["contexts"]["0025.png"]["field_label"], "Resume");
         let image = screenshot_image(&ws, &job, "screens-fixture", "0001.png").unwrap();
         assert_eq!(
             STANDARD
@@ -2842,17 +2851,27 @@ mod tests {
             dir: root.path().into(),
             sequence: 0,
         };
-        let error = attachment_viewport(&mut record, "#resume", Err("fixture failure".into()), 1)
-            .unwrap_err();
+        let error = attachment_viewport(
+            &mut record,
+            "#resume",
+            Some("Resume"),
+            Err("fixture failure".into()),
+            1,
+        )
+        .unwrap_err();
         assert!(error.contains("screenshot unavailable"));
         assert!(!root.path().join("events.jsonl").exists());
         let image = STANDARD.encode(b"\x89PNG\r\n\x1a\nfictional");
-        assert!(attachment_viewport(&mut record, "#resume", Ok(image.clone()), 1).is_err());
+        assert!(
+            attachment_viewport(&mut record, "#resume", Some("Resume"), Ok(image.clone()), 1)
+                .is_err()
+        );
         fs::create_dir(root.path().join("screenshots")).unwrap();
-        attachment_viewport(&mut record, "#resume", Ok(image), 2).unwrap();
+        attachment_viewport(&mut record, "#resume", Some("Resume"), Ok(image), 2).unwrap();
         let event: Value =
             serde_json::from_slice(&fs::read(root.path().join("events.jsonl")).unwrap()).unwrap();
         assert_eq!(event["type"], "attachment_viewport");
+        assert_eq!(event["field_label"], "Resume");
         assert!(root
             .path()
             .join(event["screenshot"].as_str().unwrap())
