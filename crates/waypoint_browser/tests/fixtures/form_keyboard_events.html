@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><body>
+<form onsubmit="document.querySelector('#submitted').textContent='SUBMITTED';return false">
+  <label for="name">Name</label><input id="name">
+  <label for="redirect">Redirecting field</label><input id="redirect">
+  <label for="other">Other field</label><input id="other">
+  <output id="events"></output><output id="submitted">NOT SUBMITTED</output>
+  <button type="submit">Submit</button>
+</form>
+<script>
+const events = document.querySelector('#events');
+document.querySelector('#name').addEventListener('keydown', event => {
+  if (event.key.length === 1 && !event.ctrlKey) events.textContent += event.key;
+});
+document.querySelector('#redirect').addEventListener('keydown', event => {
+  if (event.key === 'x') document.querySelector('#other').focus();
+});
+</script>
+</body></html>

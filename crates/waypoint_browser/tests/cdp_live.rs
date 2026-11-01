@@ -747,6 +747,33 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches one browser against a fictional keyboard fixture"]
+fn text_entry_emits_keys_and_stops_when_focus_moves() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_keyboard_events.html")).unwrap();
+    let fill = |selector: &str, value: &str| BrowserCommand::Fill {
+        selector: selector.into(),
+        value: PacketValue::Text(value.into()),
+    };
+    let sample = "Abcdefghijklmnopqrstuvwxyz 0123456789";
+    let started = std::time::Instant::now();
+    driver.execute(&fill("#name", sample)).unwrap();
+    let elapsed = started.elapsed();
+    driver.verify_text_value("#name", sample).unwrap();
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains(sample), "missing keyboard events: {text}");
+    println!(
+        "fictional keyboard entry: {} characters in {:?}",
+        sample.len(),
+        elapsed
+    );
+    assert!(driver.execute(&fill("#redirect", "xyz")).is_err());
+    driver.verify_text_value("#other", "").unwrap();
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("NOT SUBMITTED"), "{text}");
+}
+
+#[test]
 #[ignore = "launches one browser against a local fixture without submitting"]
 fn text_fill_checks_that_the_site_retains_the_complete_value() {
     let mut driver = CdpDriver::launch(vec![]).expect("launch browser");

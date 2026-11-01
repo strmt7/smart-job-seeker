@@ -2673,6 +2673,32 @@ impl CdpDriver {
                                 .map_err(derr)?;
                         }
                     }
+                } else if !t.is_empty()
+                    && t.len() <= 64
+                    && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b' ')
+                {
+                    // Short, simple text can use individual key events. For
+                    // other text retain Chromium's Unicode-aware insertion.
+                    for character in t.chars() {
+                        let (code, key_code, modifiers) = if character == ' ' {
+                            ("Space".to_string(), 32, 0)
+                        } else if character.is_ascii_digit() {
+                            (format!("Digit{character}"), character as u32, 0)
+                        } else {
+                            (
+                                format!("Key{}", character.to_ascii_uppercase()),
+                                character.to_ascii_uppercase() as u32,
+                                if character.is_ascii_uppercase() { 8 } else { 0 },
+                            )
+                        };
+                        let key = character.to_string();
+                        self.ensure_text_focus(node, object)?;
+                        self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":key,"code":code,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
+                        self.ensure_text_focus(node, object)?;
+                        self.cdp.call("Input.dispatchKeyEvent", json!({"type":"char","key":key,"code":code,"text":key,"unmodifiedText":key,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
+                        self.ensure_text_focus(node, object)?;
+                        self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":key,"code":code,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
+                    }
                 } else {
                     self.cdp
                         .call("Input.insertText", json!({ "text": t }))
