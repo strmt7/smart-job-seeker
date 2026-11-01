@@ -2035,6 +2035,7 @@ fn serve(
                 .job(&id)
                 .map_err(|e| e.to_string())?
                 .ok_or("Job not found")?;
+            let description = ws.job_description(&id).map_err(|e| e.to_string())?;
             let metadata = match ws.job_source_only(&id).map_err(|e| e.to_string())? {
                 Some(source) => Some(source),
                 None => ws.job_capture_metadata(&id).map_err(|e| e.to_string())?,
@@ -2051,7 +2052,7 @@ fn serve(
                     let matches_current_url = source_url
                         .zip(job.canonical_url.as_deref().filter(|url| !url.is_empty()))
                         .map(|(source, current)| source == current);
-                    let current = json!({"title":job.title,"employer":job.employer,"location":job.location,"description":ws.job_description(&id).map_err(|e| e.to_string())?,"requisition_id":job.requisition_id,"remote":job.remote});
+                    let current = json!({"title":job.title,"employer":job.employer,"location":job.location,"description":description,"requisition_id":job.requisition_id,"remote":job.remote});
                     let provenance = candidate_task::extraction_provenance(&capture, &current);
                     let email_links = candidate_task::captured_email_links(&capture);
                     (
@@ -2064,6 +2065,8 @@ fn serve(
                 } else {
                     (None, None, None, None, None)
                 };
+            let email_links =
+                candidate_task::listing_email_contacts(email_links, description.as_deref());
             json_reply(
                 stream,
                 "200 OK",
@@ -6261,6 +6264,34 @@ mod tests {
             let error = serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap_err();
             assert!(error.contains("changed"));
         }
+    }
+    #[test]
+    fn saved_description_contacts_endpoint_without_capture() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/job","title":"Engineer","employer":"Example","description":"Apply to jobs@example.org"}), 1).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"id":added["id"]}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /api/listing-salary-evidence HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(
+            result["email_links"]["contacts"][0]["source"],
+            "saved_listing"
+        );
+        assert_eq!(
+            result["email_links"]["contacts"][0]["address"],
+            "jobs@example.org"
+        );
+        assert!(result["matches_current_url"].is_null());
     }
     #[cfg(windows)]
     #[test]

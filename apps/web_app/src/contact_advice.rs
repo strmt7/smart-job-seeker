@@ -21,15 +21,20 @@ pub fn inputs(ws: &Workspace, id: &JobIdentityId) -> Result<(Vec<Value>, String)
         .map_err(|e| e.to_string())?
         .ok_or("Job not found")?;
     let metadata = match ws.job_source_only(id).map_err(|e| e.to_string())? {
-        Some(source) => source,
-        None => ws
-            .job_capture_metadata(id)
-            .map_err(|e| e.to_string())?
-            .ok_or("No saved listing source")?,
+        Some(source) => Some(source),
+        None => ws.job_capture_metadata(id).map_err(|e| e.to_string())?,
     };
-    let capture: Value =
-        serde_json::from_slice(&metadata).map_err(|_| "Saved listing metadata is invalid")?;
-    let contacts = crate::candidate_task::captured_email_links(&capture)
+    let capture = metadata
+        .as_ref()
+        .map(|data| {
+            serde_json::from_slice::<Value>(data).map_err(|_| "Saved listing metadata is invalid")
+        })
+        .transpose()?;
+    let description = ws.job_description(id).map_err(|e| e.to_string())?;
+    let captured = capture
+        .as_ref()
+        .and_then(crate::candidate_task::captured_email_links);
+    let contacts = crate::candidate_task::listing_email_contacts(captured, description.as_deref())
         .ok_or("The saved listing has no contact inventory")?;
     if contacts["status"] != "captured" {
         return Err("The listing contacts could not be inspected".into());
@@ -39,7 +44,7 @@ pub fn inputs(ws: &Workspace, id: &JobIdentityId) -> Result<(Vec<Value>, String)
         .filter(|items| !items.is_empty() && items.len() <= 8)
         .ok_or("No captured email contacts to assess")?
         .clone();
-    let digest = Sha256Digest::of(&json!({"job":id.as_str(),"title":job.title,"employer":job.employer,"url":job.canonical_url,"source":waypoint_domain::sha256_hex(&metadata)}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"job":id.as_str(),"title":job.title,"employer":job.employer,"url":job.canonical_url,"source":metadata.as_ref().map(|data| waypoint_domain::sha256_hex(data)),"description":description}).to_string()).as_str().to_owned();
     Ok((contacts, digest))
 }
 
@@ -289,6 +294,17 @@ mod tests {
             json!({"address":"access@example.org","label":"Accessibility","page_text_excerpt":"For accessibility contact access@example.org."}),
         ]
     }
+    #[test]
+    fn advice_accepts_saved_description_without_page_capture() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = crate::manual_job::add(&mut ws, &json!({"url":"https://example.invalid/role","title":"Engineer","employer":"Example","description":"Apply to jobs@example.org"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let (contacts, digest) = inputs(&ws, &id).unwrap();
+        assert_eq!(contacts[0]["source"], "saved_listing");
+        assert_eq!(contacts[0]["address"], "jobs@example.org");
+        assert!(!digest.is_empty());
+    }
+
     #[test]
     fn advice_requires_all_ids_and_address_bound_source_quotes() {
         let good = json!({"items":[{"id":1,"purpose":"application","evidence":"Send applications to jobs@example.org"},{"id":2,"purpose":"other","evidence":"accessibility contact access@example.org"}]});

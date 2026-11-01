@@ -106,6 +106,10 @@ fn add_page_text_contacts(email: &mut Value, metadata: &Value) {
         return;
     };
     email["status"] = json!("captured");
+    add_contacts_from_text(email, text, "page_text");
+}
+
+fn add_contacts_from_text(email: &mut Value, text: &str, source: &str) {
     let mut omitted = email["omitted"].as_u64().unwrap_or(0);
     let Some(contacts) = email["contacts"].as_array_mut() else {
         return;
@@ -174,14 +178,25 @@ fn add_page_text_contacts(email: &mut Value, metadata: &Value) {
             .iter_mut()
             .find(|item| item["address"].as_str() == Some(address.as_str()))
         {
-            existing["page_text_excerpt"] = json!(excerpt);
+            if existing["page_text_excerpt"]
+                .as_str()
+                .is_none_or(str::is_empty)
+            {
+                existing["page_text_excerpt"] = json!(excerpt);
+                existing["excerpt_source"] = json!(source);
+            }
             continue;
         }
         if contacts.len() >= 8 {
             omitted += 1;
             continue;
         }
-        contacts.push(json!({"address":address,"label":"Page text","source":"page_text","page_text_excerpt":excerpt}));
+        let label = if source == "saved_listing" {
+            "Saved job description"
+        } else {
+            "Page text"
+        };
+        contacts.push(json!({"address":address,"label":label,"source":source,"page_text_excerpt":excerpt,"excerpt_source":source}));
     }
     email["omitted"] = json!(omitted);
 }
@@ -207,16 +222,47 @@ pub fn captured_email_links(capture: &Value) -> Option<Value> {
         };
         let source = item["source"]
             .as_str()
-            .filter(|value| matches!(*value, "link" | "page_text"))
+            .filter(|value| matches!(*value, "link" | "page_text" | "saved_listing"))
             .unwrap_or("link");
         let excerpt = item["page_text_excerpt"]
             .as_str()
             .map(|value| bounded(value, 350));
-        contacts.push(json!({"address":address,"label":bounded(item["label"].as_str().unwrap_or(""),200),"source":source,"page_text_excerpt":excerpt}));
+        let excerpt_source = item["excerpt_source"]
+            .as_str()
+            .filter(|value| matches!(*value, "page_text" | "saved_listing"))
+            .unwrap_or("page_text");
+        contacts.push(json!({"address":address,"label":bounded(item["label"].as_str().unwrap_or(""),200),"source":source,"page_text_excerpt":excerpt,"excerpt_source":excerpt_source}));
     }
     Some(
         json!({"status":"captured","contacts":contacts,"omitted":source.get("omitted").and_then(Value::as_u64).unwrap_or(0),"link_limit_reached":source.get("link_limit_reached").and_then(Value::as_bool).unwrap_or(true),"link_status":source.get("link_status").and_then(Value::as_str).unwrap_or("captured"),"text_status":source.get("text_status").and_then(Value::as_str).unwrap_or("unavailable")}),
     )
+}
+
+/// Combine captured contacts with the saved listing description. The latter
+/// may be user supplied or board supplied and is not a fresh page observation.
+pub fn listing_email_contacts(captured: Option<Value>, description: Option<&str>) -> Option<Value> {
+    let text = description.filter(|text| !text.trim().is_empty());
+    if captured.is_none() && text.is_none() {
+        return None;
+    }
+    let mut email = captured.unwrap_or_else(|| json!({"status":"unavailable","contacts":[],"omitted":0,"link_status":"unavailable","text_status":"unavailable","link_limit_reached":false}));
+    if email["status"] != "captured" {
+        email["link_status"] = json!("unavailable");
+        email["text_status"] = json!("unavailable");
+    }
+    if let Some(text) = text {
+        let end = text.floor_char_boundary(text.len().min(32_000));
+        email["listing_text_status"] = json!(if end < text.len() {
+            "truncated"
+        } else {
+            "captured"
+        });
+        email["status"] = json!("captured");
+        add_contacts_from_text(&mut email, &text[..end], "saved_listing");
+    } else {
+        email["listing_text_status"] = json!("unavailable");
+    }
+    Some(email)
 }
 
 /// Bind source provenance to the values that can be saved for this listing.
@@ -905,6 +951,28 @@ pub fn complete(id: &str, value: Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_description_contacts_keep_source_and_existing_evidence() {
+        assert!(listing_email_contacts(None, None).is_none());
+        let found = listing_email_contacts(None, Some("Apply: jobs@example.org")).unwrap();
+        assert_eq!(found["contacts"][0]["source"], "saved_listing");
+        assert_eq!(found["contacts"][0]["excerpt_source"], "saved_listing");
+        assert_eq!(found["text_status"], "unavailable");
+        let existing = json!({"status":"captured","contacts":[{"address":"jobs@example.org","page_text_excerpt":"Original page evidence","excerpt_source":"page_text"}],"omitted":0});
+        let merged =
+            listing_email_contacts(Some(existing), Some("Apply: jobs@example.org")).unwrap();
+        assert_eq!(merged["contacts"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            merged["contacts"][0]["page_text_excerpt"],
+            "Original page evidence"
+        );
+        let long = format!("{}é", "a".repeat(31_999));
+        assert_eq!(
+            listing_email_contacts(None, Some(&long)).unwrap()["listing_text_status"],
+            "truncated"
+        );
+    }
+
     #[test]
     fn listing_tile_plan_limits_work_and_exposes_incomplete_coverage() {
         let (tiles, complete) = super::listing_tiles(3000.0, 2400.0);
