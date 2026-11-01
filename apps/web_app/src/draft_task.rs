@@ -49,6 +49,59 @@ pub(crate) fn extract_template(
         Ok((crate::document_extract::extract(name, bytes)?, None))
     }
 }
+// At most one nonblank, nonselectable page is transcribed for style guidance.
+pub(crate) fn scanned_template<F>(
+    bytes: &[u8],
+    mut transcribe: F,
+) -> Result<(String, Option<Value>, Value), String>
+where
+    F: FnMut(&[u8], usize) -> Result<Value, String>,
+{
+    let (selectable, coverage, page) = match crate::pdf_extract::extract_with_coverage(bytes) {
+        Ok((text, coverage)) => {
+            let empty = coverage["pages_without_selectable_text"]
+                .as_array()
+                .ok_or("PDF page coverage unavailable")?;
+            let blank = coverage["structurally_blank_pages"]
+                .as_array()
+                .ok_or("PDF page coverage unavailable")?;
+            let page = empty
+                .iter()
+                .find(|page| !blank.contains(page))
+                .and_then(Value::as_u64)
+                .ok_or("No scanned template page was found")?;
+            (text, Some(coverage), (page - 1) as usize)
+        }
+        Err(error) if error == "PDF extractor returned invalid text" || error == "PDF extraction failed: No selectable text was found; scanned PDFs need OCR" => (String::new(), None, 0),
+        Err(error) => return Err(error),
+    };
+    let result = transcribe(bytes, page)?;
+    let text = result["text"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 12_000)
+        .ok_or("Invalid template transcription")?;
+    let pages = result["pages"]
+        .as_u64()
+        .filter(|n| (1..=30).contains(n))
+        .ok_or("Invalid template page count")?;
+    if result["page"].as_u64() != Some(page as u64) || page as u64 >= pages {
+        return Err("Transcribed template page does not match".into());
+    }
+    let uncertain = result["uncertain"]
+        .as_bool()
+        .ok_or("Template transcription uncertainty unavailable")?;
+    let combined = if selectable.is_empty() {
+        text.to_owned()
+    } else {
+        format!("{text}\n{selectable}")
+    };
+    Ok((
+        combined,
+        coverage,
+        json!({"page": page + 1, "pages": pages, "uncertain": uncertain, "text": text, "other_pages_not_transcribed": pages - 1}),
+    ))
+}
+
 pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let lease = {
         let mut task = TASK.lock().map_err(|_| "Draft state unavailable")?;
@@ -69,9 +122,53 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
-            let (template, template_coverage) = match &input.template {
-                Some((name, bytes)) => extract_template(name, bytes)?,
-                None => (String::new(), None),
+            let (template, template_coverage, template_vision) = match &input.template {
+                Some((name, bytes)) => match extract_template(name, bytes) {
+                    Ok((text, coverage)) => (text, coverage, None),
+                    Err(error)
+                        if name
+                            .rsplit_once('.')
+                            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
+                            && (error.to_ascii_lowercase().contains("no selectable text")
+                                || error == "PDF extractor returned invalid text") =>
+                    {
+                        let addr = "127.0.0.1:11434"
+                            .parse()
+                            .map_err(|_| "Invalid local runtime address")?;
+                        let (text, coverage, vision) = scanned_template(bytes, |bytes, page| {
+                            crate::pdf_transcribe::transcribe(
+                                bytes,
+                                page,
+                                "full",
+                                crate::pdf_extract::render_page,
+                                |image| {
+                                    if crate::resident_model()?.as_deref() != Some(model.as_str()) {
+                                        return Err(
+                                            "Resident model changed during template transcription"
+                                                .into(),
+                                        );
+                                    }
+                                    let output = crate::visual_review::generate_vision(
+                                        addr,
+                                        &model,
+                                        image,
+                                        crate::pdf_transcribe::TRANSCRIBE_PROMPT,
+                                    )?;
+                                    if crate::resident_model()?.as_deref() != Some(model.as_str()) {
+                                        return Err(
+                                            "Resident model changed during template transcription"
+                                                .into(),
+                                        );
+                                    }
+                                    Ok(output)
+                                },
+                            )
+                        })?;
+                        (text, coverage, Some(vision))
+                    }
+                    Err(error) => return Err(error),
+                },
+                None => (String::new(), None, None),
             };
             let template: String = template.chars().take(8000).collect();
             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -84,6 +181,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             );
             let mut draft = generate_with_selection(&mut llm, &input, &template)?;
             draft["template_pdf_coverage"] = json!(template_coverage);
+            draft["template_vision"] = json!(template_vision);
             Ok(draft)
         })
         .unwrap_or_else(|_| Err("Drafting stopped unexpectedly".into()));

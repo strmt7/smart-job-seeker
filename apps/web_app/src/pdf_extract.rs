@@ -517,6 +517,35 @@ mod tests {
         assert_eq!(model_coverage.unwrap(), coverage);
         assert!(crate::document_extract::extract("fictional.pdf", partial).is_err());
         assert!(crate::draft_task::extract_template("fictional.pdf", partial).is_err());
+        let (template, draft_coverage, vision) = crate::draft_task::scanned_template(partial, |_, page| {
+            assert_eq!(page, 1);
+            Ok(serde_json::json!({"page":1,"pages":2,"text":"Fictional scanned page", "uncertain":true}))
+        }).unwrap();
+        assert!(template.contains("Fictional scanned page"));
+        assert!(template.contains(&text));
+        assert_eq!(draft_coverage.unwrap(), coverage);
+        assert_eq!(vision["page"], 2);
+        assert_eq!(vision["other_pages_not_transcribed"], 1);
+        let scanned = include_bytes!("../tests/fictional-scanned-cv.pdf");
+        let (template, coverage, vision) =
+            crate::draft_task::scanned_template(scanned, |bytes, page| {
+                assert_eq!(page, 0);
+                crate::pdf_transcribe::transcribe(
+                    bytes,
+                    page,
+                    "full",
+                    super::render_page,
+                    |image| {
+                        assert!(!image.is_empty());
+                        Ok(serde_json::json!({"text":"Fictional template", "uncertain":false}))
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(template, "Fictional template");
+        assert!(coverage.is_none());
+        assert_eq!(vision["page"], 1);
+
         let complete = include_bytes!("../tests/fictional-document-overlap.pdf");
         let (_, complete_coverage) = super::extract_with_coverage(complete).unwrap();
         assert_eq!(

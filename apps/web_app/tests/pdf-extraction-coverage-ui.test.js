@@ -17,3 +17,4 @@ assert.match(notice({pages:1,pages_without_selectable_text:[],pages_with_images_
 assert.match(notice({pages:1,pages_without_selectable_text:[],pages_with_unknown_image_inventory:[1]}),/could not be checked/);
 
 assert.ok(source.includes("pdfExtractionCoverageNotice(draft.template_pdf_coverage)"));
+assert.ok(source.includes("Review scanned template transcription"));
