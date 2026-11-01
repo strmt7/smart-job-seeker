@@ -8123,12 +8123,25 @@ mod tests {
                 value: PacketValue::Text("fictional@example.invalid".into()),
             })
             .unwrap();
-        let preview = form_preview::suggest_without_model(
+        let mut preview = form_preview::suggest_without_model(
             live,
             &json!({"first_name":"Fictional","email":"fictional@example.invalid"}),
             "fixture",
         )
         .unwrap();
+        preview.suggestions.retain(|mapping| {
+            mapping.field_selector != selector && mapping.field_selector != other
+        });
+        preview.suggestions.extend([
+            waypoint_applications::form_mapping::ProposedMapping {
+                field_selector: selector.clone(),
+                value: PacketValue::Text("Fictional".into()),
+            },
+            waypoint_applications::form_mapping::ProposedMapping {
+                field_selector: other.clone(),
+                value: PacketValue::Text("fictional@example.invalid".into()),
+            },
+        ]);
         let mut session = Some(ReviewSession {
             id: "fixture-session".into(),
             job_id: JobIdentityId::new("fixture-job").unwrap(),
@@ -8179,6 +8192,11 @@ mod tests {
         .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        {
+            let current = session.as_mut().unwrap();
+            form_preview::verify_filled_field(&mut current.driver, &current.preview, &selector)
+                .expect("Fixture must start with a verifiable reviewed answer");
+        }
         for (step, (selected, allowed)) in [
             ("#other", false),
             (selector.as_str(), true),
@@ -8244,7 +8262,16 @@ mod tests {
             client.read_to_string(&mut response).unwrap();
             assert!(response.contains("200 OK") && response.contains("\"screenshot\""));
             if step == 1 {
-                assert!(response.contains("\"value_retained\":true"));
+                let response_body: Value =
+                    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+                assert!(
+                    response.contains("\"value_retained\":true"),
+                    "freshness={}, verified={}, unverified={}, failed={}",
+                    response_body["visual_freshness"],
+                    response_body["verified_count"],
+                    response_body["unverified_count"],
+                    response_body["failed_fields"]
+                );
                 assert!(response.contains("\"visual_freshness\":\"same\""));
             }
             if step == 2 {
