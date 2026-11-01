@@ -5947,17 +5947,13 @@ fn serve(
                     JobIdentityId::new(result["job_id"].as_str().ok_or("missing draft job")?)
                         .map_err(|e| e.to_string())?;
                 let kind = result["kind"].as_str().ok_or("missing draft type")?;
-                if draft_context_digest(ws, &job_id, kind).ok().as_deref()
-                    != result["digest"].as_str()
-                {
-                    result = json!({"status":"failed","error":"The job, qualifications, profile or template changed while drafting; draft again"});
-                } else {
-                    let bytes =
-                        serde_json::to_vec(&result).map_err(|_| "Could not serialize draft")?;
-                    result["saved"] = json!(ws
-                        .save_generated_draft(id, &job_id, kind, now(), &bytes)
-                        .is_ok());
-                }
+                let current = draft_context_digest(ws, &job_id, kind).ok().as_deref()
+                    == result["digest"].as_str();
+                let bytes = serde_json::to_vec(&result).map_err(|_| "Could not serialize draft")?;
+                result["saved"] = json!(ws
+                    .save_generated_draft(id, &job_id, kind, now(), &bytes)
+                    .is_ok());
+                result["current"] = json!(current);
             }
             json_reply(stream, "200 OK", result);
         }
@@ -7163,6 +7159,22 @@ mod tests {
             )["current"],
             false
         );
+        draft_task::set_completed_fixture("late-draft", result.clone());
+        let late = request(
+            &mut ws,
+            "/api/draft/status",
+            json!({"task_id":"late-draft"}),
+        );
+        assert_eq!(late["status"], "complete");
+        assert_eq!(late["current"], false);
+        assert_eq!(late["saved"], true);
+        let reopened = request(
+            &mut ws,
+            "/api/draft/read",
+            json!({"id":id.as_str(),"draft_id":"late-draft"}),
+        );
+        assert_eq!(reopened["current"], false);
+        assert_eq!(reopened["result"], result);
     }
 
     #[test]
