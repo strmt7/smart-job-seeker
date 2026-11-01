@@ -78,6 +78,40 @@ fn aria_required_tokens_are_case_insensitive() {
 }
 
 #[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn radio_group_required_is_inherited_by_its_options() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_radio_group_required.html"))
+        .unwrap();
+    let workplace = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Workplace")
+        .unwrap();
+    assert!(workplace.required);
+    let unlabelled = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label.contains("unlabelled"))
+        .unwrap();
+    assert!(unlabelled.required);
+    assert!(unlabelled.sensitive);
+    let optional = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Optional")
+        .unwrap();
+    assert!(!optional.required);
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser and opens a nonexistent fictional file"]
 fn failed_navigation_does_not_return_an_inspected_form() {
     let missing = format!("waypoint-nonexistent-{}.html", std::process::id());

@@ -2517,6 +2517,7 @@ impl CdpDriver {
         let mut wrapping_label_nodes: HashMap<u64, u64> = HashMap::new();
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
         let mut radio_form_owners: HashMap<u64, u64> = HashMap::new();
+        let mut radio_group_required: HashMap<u64, bool> = HashMap::new();
         type GroupContext = (String, Option<String>, Option<u64>, bool);
         let mut field_containers: HashMap<u64, Vec<GroupContext>> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
@@ -2871,6 +2872,29 @@ impl CdpDriver {
             let radio_group = attrs
                 .get("role")
                 .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"));
+            if radio_group {
+                let required = attrs
+                    .get("aria-required")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+                // Outer groups are visited before inner ones, so the nearest
+                // radiogroup determines the requirement for nested controls.
+                walk(node, false, &mut |child, _| {
+                    let child_attrs = attributes(child);
+                    if child
+                        .get("nodeName")
+                        .and_then(Value::as_str)
+                        .is_some_and(|tag| tag.eq_ignore_ascii_case("input"))
+                        && child_attrs
+                            .get("type")
+                            .is_some_and(|kind| kind.eq_ignore_ascii_case("radio"))
+                    {
+                        if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                            radio_group_required.insert(id, required);
+                        }
+                    }
+                    true
+                });
+            }
             if named_field_group || radio_group {
                 let mut implicit_heading = None;
                 let mut ambiguous_heading = false;
@@ -3536,7 +3560,11 @@ impl CdpDriver {
                 || control
                     .attrs
                     .get("aria-required")
-                    .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+                    .is_some_and(|v| v.eq_ignore_ascii_case("true"))
+                || radio_group_required
+                    .get(&control.node_id)
+                    .copied()
+                    .unwrap_or(false);
             if control.attrs.contains_key("disabled")
                 || control.attrs.contains_key("readonly")
                 || control
