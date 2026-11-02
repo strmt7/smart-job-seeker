@@ -607,25 +607,27 @@ function showFormPreview(job,result){setWorkspaceView('applications');
    radioPanel.replaceChildren();
    if(!inventory.groups.length)radioPanel.append(element('p','No visible custom radio groups were detected by this check.','footnote'));
    for(const group of inventory.groups){
-    const section=element('section','','choice-review-item');section.append(element('strong',group.label));const list=element('ul','');
-    for(const option of group.options || []){
-     const row=element('li',`${option.label} — ${option.checked===true?'reported selected':option.checked===false?'reported not selected':'selection unknown'}${option.disabled?' (disabled)':''}`);
-     const check=element('button','Check option with local vision'),feedback=element('span','','review-label');check.type='button';
-     check.disabled=inventory.incomplete||group.incomplete||option.disabled||!group.options.every(item=>item.checked===false);
+    const section=element('section','','choice-review-item');section.append(element('strong',group.label));
+    const addVisualCheck=(container,option)=>{
+     const groupReview=option===null,label=groupReview?group.label:option.label,rank=groupReview?'custom-radio-group':'custom-radio-option';
+     const check=element('button',groupReview?'Check question with local vision':'Check option with local vision'),feedback=element('span','','review-label');check.type='button';
+     check.disabled=inventory.incomplete||group.incomplete||(!groupReview&&(option.disabled||!group.options.every(item=>item.checked===false)));
      check.addEventListener('click',async()=>{
-      if(check.disabled)return;check.disabled=true;feedback.textContent='Checking option…';
+      if(check.disabled)return;check.disabled=true;feedback.textContent='Checking with local vision…';
       try{
        let pending;try{pending=JSON.parse(sessionStorage.getItem('waypoint-radio-vision')||'null');}catch{pending=null;}
-       if(pending&&(pending.session!==result.session_id||pending.selector!==group.selector||pending.option!==option.label))throw new Error('Another radio visual check is pending');
-       if(!pending){const active=await api('/api/form/control-vision-pending',{});if(active.active)throw new Error('Another visual check is pending');const started=await api('/api/form/custom-radio-option-vision-start',{session_id:result.session_id,selector:group.selector,option:option.label,snapshot_digest:inventory.snapshot_digest});pending={task:started.task_id,session:result.session_id,selector:group.selector,option:option.label};sessionStorage.setItem('waypoint-radio-vision',JSON.stringify(pending));}
+       if(pending&&(pending.session!==result.session_id||pending.selector!==group.selector||pending.label!==label||pending.rank!==rank))throw new Error('Another radio visual check is pending');
+       if(!pending){const active=await api('/api/form/control-vision-pending',{});if(active.active)throw new Error('Another visual check is pending');const body={session_id:result.session_id,selector:group.selector,snapshot_digest:inventory.snapshot_digest};if(!groupReview)body.option=label;const started=await api(groupReview?'/api/form/custom-radio-group-vision-start':'/api/form/custom-radio-option-vision-start',body);pending={task:started.task_id,session:result.session_id,selector:group.selector,label,rank};sessionStorage.setItem('waypoint-radio-vision',JSON.stringify(pending));}
        let visual;for(let attempt=0;attempt<180;attempt++){visual=await api('/api/form/control-vision-status',{task_id:pending.task});if(visual.status!=='running')break;await new Promise(resolve=>setTimeout(resolve,700));}
        if(visual?.status==='running')throw new Error('The visual check is still running; retry to recover its result');
        sessionStorage.removeItem('waypoint-radio-vision');
-       if(visual?.status!=='complete'||visual.rank_task_id!=='custom-radio-option'||visual.session_id!==result.session_id||visual.label!==option.label)throw new Error(visual?.error||'The visual result does not match this option');
-       feedback.textContent=visual.comparison==='label_observed'&&visual.capture_saved===true&&visual.result_saved===true?'Local vision observed this option; selection still requires manual review.':'Visual review was uncertain or could not be recorded; inspect manually.';
+       if(visual?.status!=='complete'||visual.rank_task_id!==rank||visual.session_id!==result.session_id||visual.label!==label)throw new Error(visual?.error||'The visual result does not match this control');
+       feedback.textContent=visual.comparison==='label_observed'&&visual.capture_saved===true&&visual.result_saved===true?`Local vision observed this ${groupReview?'question':'option'}; selection still requires manual review.`:'Visual review was uncertain or could not be recorded; inspect manually.';
       }catch(error){feedback.textContent=`Visual check needs review: ${error.message}`;}finally{check.disabled=false;}
-     });row.append(check,feedback);list.append(row);
-    }
+     });container.append(check,feedback);
+    };
+    const questionReview=element('div','');addVisualCheck(questionReview,null);section.append(questionReview);
+    const list=element('ul','');for(const option of group.options || []){const row=element('li',`${option.label} — ${option.checked===true?'reported selected':option.checked===false?'reported not selected':'selection unknown'}${option.disabled?' (disabled)':''}`);addVisualCheck(row,option);list.append(row);}
     section.append(list);if(group.incomplete)section.append(element('p','Some options or states could not be inspected.','review-label'));radioPanel.append(section);
    }
    if(inventory.incomplete)radioPanel.append(element('p','Some page scopes or groups could not be inspected.','review-label'));

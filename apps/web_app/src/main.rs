@@ -4675,16 +4675,24 @@ fn serve(
                 json!({"groups":inventory.groups,"incomplete":inventory.incomplete,"snapshot_digest":digest}),
             );
         }
-        "/api/form/custom-radio-option-vision-start" => {
+        "/api/form/custom-radio-option-vision-start"
+        | "/api/form/custom-radio-group-vision-start" => {
+            let option_review = path == "/api/form/custom-radio-option-vision-start";
             let id = body["session_id"].as_str().ok_or("missing session")?;
             let selector = body["selector"]
                 .as_str()
                 .filter(|s| !s.is_empty() && s.len() <= 4096)
                 .ok_or("Invalid radio selector")?;
-            let option = body["option"]
-                .as_str()
-                .filter(|s| !s.is_empty() && s.len() <= 200 && *s == s.trim())
-                .ok_or("Invalid radio option")?;
+            let option = if option_review {
+                Some(
+                    body["option"]
+                        .as_str()
+                        .filter(|s| !s.is_empty() && s.len() <= 200 && *s == s.trim())
+                        .ok_or("Invalid radio option")?,
+                )
+            } else {
+                None
+            };
             let expected = body["snapshot_digest"]
                 .as_str()
                 .filter(|s| s.len() == 64)
@@ -4702,28 +4710,53 @@ fn serve(
                 .iter()
                 .filter(|group| group.selector == selector)
                 .collect();
-            if inventory.incomplete
-                || groups.len() != 1
-                || groups[0].incomplete
-                || groups[0]
+            if inventory.incomplete || groups.len() != 1 || groups[0].incomplete {
+                return Err("Radio group is unavailable or incomplete".into());
+            }
+            let label = if let Some(option) = option {
+                if groups[0]
                     .options
                     .iter()
                     .any(|item| item.checked != Some(false))
-                || groups[0]
-                    .options
-                    .iter()
-                    .filter(|item| item.label == option && !item.disabled)
-                    .count()
-                    != 1
-            {
-                return Err("Radio option is unavailable, ambiguous, or already selected".into());
-            }
+                    || groups[0]
+                        .options
+                        .iter()
+                        .filter(|item| item.label == option && !item.disabled)
+                        .count()
+                        != 1
+                {
+                    return Err(
+                        "Radio option is unavailable, ambiguous, or already selected".into(),
+                    );
+                }
+                option.to_owned()
+            } else {
+                let label = &groups[0].label;
+                if label == "Unlabelled radio group"
+                    || inventory
+                        .groups
+                        .iter()
+                        .filter(|group| {
+                            control_vision::normalize_choice_label(&group.label)
+                                == control_vision::normalize_choice_label(label)
+                        })
+                        .count()
+                        != 1
+                {
+                    return Err("Radio question is unlabelled or ambiguous".into());
+                }
+                label.clone()
+            };
             let image = current
                 .driver
                 .with_review_timeout(|driver| {
-                    driver.screenshot_custom_radio_option(selector, option)
+                    if option_review {
+                        driver.screenshot_custom_radio_option(selector, &label)
+                    } else {
+                        driver.screenshot_custom_radio_question(selector)
+                    }
                 })
-                .map_err(|error| format!("Could not capture the radio option: {error}"))?;
+                .map_err(|error| format!("Could not capture the radio control: {error}"))?;
             if custom_radio_snapshot(&mut current.driver)?.1 != digest {
                 return Err("The page changed during capture; inspect radio groups again".into());
             }
@@ -4736,7 +4769,12 @@ fn serve(
             if let Err(error) = control_vision::start(control_vision::Request {
                 id: task_id.clone(),
                 session: current.id.clone(),
-                rank_task: "custom-radio-option".into(),
+                rank_task: if option_review {
+                    "custom-radio-option"
+                } else {
+                    "custom-radio-group"
+                }
+                .into(),
                 control_index: 0,
                 job_id: current.job_id.as_str().into(),
                 pending_revision: revision,
@@ -4744,7 +4782,7 @@ fn serve(
                 selector: selector.into(),
                 digest,
                 image: image.clone(),
-                label: option.into(),
+                label,
                 ambiguous: false,
                 capture_saved,
                 choice: true,
@@ -5594,7 +5632,10 @@ fn serve(
                     current.created = Instant::now();
                     if result["status"] == "complete" {
                         let choice = result["choice"] == true;
-                        let radio = result["rank_task_id"] == "custom-radio-option";
+                        let radio = matches!(
+                            result["rank_task_id"].as_str(),
+                            Some("custom-radio-option" | "custom-radio-group")
+                        );
                         let current_snapshot = if radio {
                             custom_radio_snapshot(&mut current.driver).map(|(_, digest)| digest)
                         } else if choice {
@@ -5607,7 +5648,9 @@ fn serve(
                             current
                                 .driver
                                 .with_review_timeout(|driver| {
-                                    if radio {
+                                    if result["rank_task_id"] == "custom-radio-group" {
+                                        driver.screenshot_custom_radio_question(selector)
+                                    } else if radio {
                                         driver.screenshot_custom_radio_option(
                                             selector,
                                             result["label"].as_str().unwrap_or(""),

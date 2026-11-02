@@ -2957,6 +2957,42 @@ mod tests {
             .screenshot_custom_radio_option(&selector, "Remote")
             .unwrap();
         let job_id = session.as_ref().unwrap().job_id.clone();
+        let question_image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_custom_radio_question(&selector)
+            .unwrap();
+        let revision =
+            crate::control_vision::begin_pending(&ws, &job_id, "radio-question", 1).unwrap();
+        crate::control_vision::set_radio_group_fixture(
+            "radio-question",
+            "fixture-session",
+            job_id.as_str(),
+            revision,
+            (&selector, &digest, &question_image, "Working arrangement"),
+        );
+        let question_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let question_port = question_listener.local_addr().unwrap().port();
+        let body = json!({"task_id":"radio-question"}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", question_port)).unwrap();
+        write!(client,"POST /api/form/control-vision-status HTTP/1.1\r\nHost: 127.0.0.1:{question_port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = question_listener.accept().unwrap();
+        crate::serve(
+            &mut server,
+            &mut ws,
+            &mut session,
+            "fixture-token",
+            question_port,
+        )
+        .unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let question: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(question["comparison"], "label_observed");
+        assert_eq!(question["rank_task_id"], "custom-radio-group");
         let revision =
             crate::control_vision::begin_pending(&ws, &job_id, "radio-visual", 1).unwrap();
         crate::control_vision::set_radio_option_fixture(

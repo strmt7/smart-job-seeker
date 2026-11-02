@@ -768,6 +768,58 @@ impl CdpDriver {
         ))
     }
 
+    /// Capture a uniquely referenced visible question label when possible.
+    /// Otherwise capture the bounded group context for manual/visual review.
+    pub fn screenshot_custom_radio_question(
+        &mut self,
+        selector: &str,
+    ) -> Result<String, DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Radio group disappeared".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Radio group disappeared".into()))?;
+        let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'radiogroup') return null;
+            const refs=this.getAttribute('aria-labelledby'); if (refs===null) return this;
+            const ids=refs.trim().split(/\s+/).filter(Boolean); if(ids.length!==1 || refs.length>256) return null;
+            const labels=this.getRootNode().querySelectorAll('#'+CSS.escape(ids[0])); return labels.length===1 ? labels[0] : null;
+        }"#,"returnByValue":false}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let found = found.map_err(derr)?;
+        released.map_err(derr)?;
+        let label = found
+            .pointer("/result/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DriverError("Radio question label is unavailable or ambiguous".into())
+            })?;
+        let requested = self.cdp.call("DOM.requestNode", json!({"objectId":label}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":label}));
+        let requested = requested.map_err(derr)?;
+        released.map_err(derr)?;
+        let label_node = requested
+            .get("nodeId")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(|| DriverError("Radio question label disappeared".into()))?;
+        if label_node == node {
+            self.screenshot_node(node, true, false)
+        } else {
+            self.screenshot_node(label_node, false, true)
+        }
+    }
+
     /// Capture the option before a caller seeks independent visual review.
     pub fn screenshot_custom_radio_option(
         &mut self,

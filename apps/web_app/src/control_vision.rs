@@ -78,6 +78,18 @@ pub(crate) fn set_radio_option_fixture(
 }
 
 #[cfg(test)]
+pub(crate) fn set_radio_group_fixture(
+    id: &str,
+    session: &str,
+    job: &str,
+    revision: i64,
+    capture: (&str, &str, &str, &str),
+) {
+    set_choice_fixture(id, session, job, revision, capture, true);
+    TASK.lock().unwrap().as_mut().unwrap().rank_task = "custom-radio-group".into();
+}
+
+#[cfg(test)]
 pub(crate) fn set_selected_fixture(
     id: &str,
     session: &str,
@@ -323,7 +335,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
             json!({"status":"failed","session_id":task.session,"job_id":task.job_id,"pending_revision":task.pending_revision,"error":error})
         }
         Some(Ok(items)) => {
-            json!({"status":"complete","session_id":task.session,"rank_task_id":task.rank_task,"control_index":task.control_index,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":if task.rank_task == "custom-choice" { choice_label_comparison(&task.label,task.ambiguous,items) } else { comparison(&task.label,task.ambiguous,items) },"choice":task.choice})
+            json!({"status":"complete","session_id":task.session,"rank_task_id":task.rank_task,"control_index":task.control_index,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":if task.rank_task == "custom-choice" || task.rank_task == "custom-radio-group" { choice_label_comparison(&task.label,task.ambiguous,items) } else { comparison(&task.label,task.ambiguous,items) },"choice":task.choice})
         }
     })
 }
