@@ -505,7 +505,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile_fit_instructions(&profile)?;
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v51","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v52","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
