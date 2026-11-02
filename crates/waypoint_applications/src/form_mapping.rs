@@ -66,31 +66,12 @@ pub struct FormSchema {
 impl FormSchema {
     /// Deterministic schema identity used in approval grants.
     pub fn schema_hash_input(&self) -> String {
-        let mut parts = vec![
-            self.origin.clone(),
-            self.multi_step.to_string(),
-            self.steps.to_string(),
-        ];
-        for f in &self.fields {
-            parts.push(format!(
-                "{}|{}|{:?}|{}|{}|{:?}|{:?}|{:?}",
-                f.selector,
-                f.label,
-                f.field_type,
-                f.required,
-                f.sensitive,
-                f.autocomplete,
-                f.max_length_utf16,
-                f.editing_mode
-            ));
-            if let Some(pattern) = &f.pattern {
-                parts.push(format!("pattern|{pattern:?}"));
-            }
-            if let Some(minimum) = f.min_length_utf16 {
-                parts.push(format!("min_length_utf16|{minimum}"));
-            }
-        }
-        parts.join("\n")
+        // JSON escapes separators and preserves field boundaries. The version
+        // prefix also invalidates approvals created with the old encoding.
+        format!(
+            "form-schema-v2:{}",
+            serde_json::to_string(self).expect("form schemas contain only serializable values")
+        )
     }
 }
 
@@ -607,6 +588,13 @@ mod tests {
         let mut changed_mode = a.clone();
         changed_mode.fields[0].editing_mode = Some(EditingMode::RichText);
         assert_ne!(a.schema_hash_input(), changed_mode.schema_hash_input());
+        let mut first = a.clone();
+        first.fields[0].selector = "#field|extra".into();
+        first.fields[0].label = "Name".into();
+        let mut second = a.clone();
+        second.fields[0].selector = "#field".into();
+        second.fields[0].label = "extra|Name".into();
+        assert_ne!(first.schema_hash_input(), second.schema_hash_input());
         let old = serde_json::json!({"selector":"#answer","label":"Answer","field_type":"text_area","required":false,"sensitive":false});
         let restored: FormField = serde_json::from_value(old).unwrap();
         assert_eq!(restored.editing_mode, None);

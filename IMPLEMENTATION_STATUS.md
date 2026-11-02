@@ -22,6 +22,8 @@
 
 ## Document context feedback — 2026-11-02
 
+- Form-bound approvals now use a versioned, structured schema encoding rather than separator-joined field text. This distinguishes selectors and labels containing separators, and invalidates old form-bound approvals so they must be reviewed again. Form mapping tests passed (10), web form preview tests passed (26; 42 ignored), and Windows web Clippy passed. Browser and real-site behavior were not tested in this change.
+
 - Profile mapping now reports required non-profile controls, including files, checkboxes, dates, and multi-selects, for separate review when no suggestion is present. This notice is not a claim about what the website has already filled. Fictional suggestion tests passed (48 passed, 20 ignored) and Windows web Clippy passed; no live browser or model test was run.
 
 - Duration evidence checks also recognize hyphenated quantity-unit adjectives such as “three-year” and “3-year”, including compound number words. Focused fictional document and answer tests and Windows web Clippy passed; live model tests were not run. This remains a limited numeric guard, not a semantic proof of experience.
