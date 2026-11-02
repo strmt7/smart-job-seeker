@@ -2886,3 +2886,20 @@ preference followed by a conflicting instruction. The experimental test is
 resource-gated and ignored by default; it fails on that false abstention. It
 is not wired into production choice advice, and does not resolve the earlier
 instruction-only failure. The model was unloaded after the experiment.
+
+### Choice model comparison and GPU reserve (2026-11-02)
+
+The resource-gated fictional choice evaluations accept an installed model via
+`WAYPOINT_CHOICE_EVAL_MODEL`; qwen3.5:9b remains the default. The fixed GPU
+startup headroom is now 1.625 GiB plus 20% of model file size, down 256 MiB;
+the system-RAM threshold remains unchanged. These estimates are snapshots, not
+reservations. The threshold boundary test passed.
+
+On the nine-case adversarial set, gemma4:12b-it-qat (7,151,003,754 bytes,
+SHA-256 38044be4f923e5a55264ed7df4eaac2676651a905f735197c504045140c02bd3)
+passed 7/9, with one wrong option and one unexpected abstention. The prior
+qwen3.5:9b run passed 8/9 on the same set with one wrong option. Both chose
+an option from an instruction-only answer. These are single development-set
+runs, not general model rankings; no peak-memory measurement was taken. Gemma
+was unloaded afterward. Before the reserve change its startup had been refused
+with 9,881 MiB GPU free versus 10,104 MiB required.
