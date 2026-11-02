@@ -299,6 +299,29 @@ fn reviewed_link_matches(
 const PRIOR_FIELDS_REVIEW: &str = "Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection";
 const PRIOR_MISSING_FIELDS_REVIEW: &str = "a custom control needs manual review: An earlier inspection found fields that disappeared while scrolling. Review the entire application; this inspection may still be incomplete.";
 const PRIOR_CHOICES_REVIEW: &str = "Custom choices from an earlier inspection cannot be rechecked here; verify them in the application before submitting";
+const PRIOR_CAPTURE_REVIEW: &str =
+    "An earlier application capture was incomplete; the application record may be missing evidence";
+
+fn mark_prior_capture_for_review(
+    preview: &mut form_preview::FormPreview,
+    previous_review: &[String],
+) {
+    let incomplete = previous_review.iter().any(|reason| {
+        reason == PRIOR_CAPTURE_REVIEW
+            || reason.starts_with("Inspection evidence incomplete:")
+            || reason.starts_with("The previous section could not be fully captured before navigation:")
+            || reason == "The previous section could not be captured because the application record is unavailable"
+            || reason == "Attempt screenshot capture was incomplete"
+    });
+    if incomplete
+        && !preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == PRIOR_CAPTURE_REVIEW)
+    {
+        preview.manual_review.push(PRIOR_CAPTURE_REVIEW.into());
+    }
+}
 
 fn mark_prior_choices_for_review(
     preview: &mut form_preview::FormPreview,
@@ -508,6 +531,7 @@ pub fn start(
                     preview.manual_review.push(form_preview::POST_CHOICE_VISUAL_REQUIRED.into());
                 }
                 mark_prior_fills_for_review(&mut preview, &session.completed_selectors, &session.preview.manual_review);
+                mark_prior_capture_for_review(&mut preview, &session.preview.manual_review);
                 // A rescan can follow manual navigation too. Selectors and
                 // their verified choices belong to the old inspection even
                 // when the page happens to reuse the same selector.
@@ -673,6 +697,39 @@ mod tests {
         mark_prior_choices_for_review(&mut preview, &mut choices, &previous);
         mark_prior_choices_for_review(&mut preview, &mut choices, &previous);
         assert_eq!(preview.manual_review, vec![PRIOR_CHOICES_REVIEW]);
+    }
+
+    #[test]
+    fn incomplete_capture_remains_visible_across_inspections() {
+        let mut preview = form_preview::FormPreview {
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: true,
+                steps: 2,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        for failure in [
+            "Inspection evidence incomplete: write failed",
+            "The previous section could not be fully captured before navigation: timed out",
+            "The previous section could not be captured because the application record is unavailable",
+            "Attempt screenshot capture was incomplete",
+        ] {
+            preview.manual_review.clear();
+            mark_prior_capture_for_review(&mut preview, &[failure.into()]);
+            assert_eq!(preview.manual_review, vec![PRIOR_CAPTURE_REVIEW]);
+            let previous = preview.manual_review.clone();
+            preview.manual_review.clear();
+            mark_prior_capture_for_review(&mut preview, &previous);
+            mark_prior_capture_for_review(&mut preview, &previous);
+            assert_eq!(preview.manual_review, vec![PRIOR_CAPTURE_REVIEW]);
+        }
+        preview.manual_review.clear();
+        mark_prior_capture_for_review(&mut preview, &["unrelated review".into()]);
+        assert!(preview.manual_review.is_empty());
     }
 
     #[test]
