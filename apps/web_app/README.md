@@ -16,6 +16,8 @@ Use `./apps/web_app/scripts/build-windows.ps1 -Test` to run the web-app tests or
 
 To run a specific ignored integration test, use `-Test -Ignored -TestFilter <test-name>`. Inspect its prerequisites first: ignored tests can start local browsers, access the network or require installed tools.
 
+When no explicit, managed or bundled PDF runtime is available, PDF operations check up to four Python executables on `PATH` for the packages needed by that operation. Each check is time- and memory-bounded. If none passes, the first candidate is used to report its diagnostic. Package discovery does not guarantee the packages will import or work; use **Check PDF tools** in settings for a fuller check.
+
 For development tests, use `./apps/web_app/scripts/build-windows.ps1 -Test`; add `-TestFilter <name>` to run one test. The helper configures the same OpenSSL environment for tests as for builds.
 
 Start the resulting executable to open the local browser workspace. On Windows, use the notification-area menu to reopen the workspace or exit; double-click the icon to reopen it. The Windows default build uses SQLCipher for the workspace database with a key protected by the current Windows account's DPAPI. When an existing plaintext workspace is migrated, the original database is deliberately retained and the interface reports that it remains on disk; protect it as private data. Application-record folders remain readable as requested. The prototype does not send applications from its interface.

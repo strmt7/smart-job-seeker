@@ -19,7 +19,7 @@ fn is_store_alias_directory(path: &std::path::Path, local_app_data: &std::path::
     ))
 }
 
-pub fn python_path() -> Option<PathBuf> {
+fn configured_python() -> Option<PathBuf> {
     let mut paths = Vec::new();
     if let Some(p) = std::env::var_os("WAYPOINT_PDF_PYTHON") {
         paths.push(PathBuf::from(p));
@@ -34,6 +34,11 @@ pub fn python_path() -> Option<PathBuf> {
             paths.push(dir.join("dependencies/python/python.exe"));
         }
     }
+    paths.into_iter().find(|path| path.is_file())
+}
+
+fn path_pythons() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
     if let Some(env) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&env) {
             if std::env::var_os("LOCALAPPDATA")
@@ -41,10 +46,49 @@ pub fn python_path() -> Option<PathBuf> {
             {
                 continue;
             }
-            paths.push(dir.join("python.exe"));
+            let path = dir.join("python.exe");
+            if path.is_file() && !paths.contains(&path) {
+                paths.push(path);
+            }
         }
     }
-    paths.into_iter().find(|path| path.is_file())
+    paths
+}
+
+pub fn python_path() -> Option<PathBuf> {
+    configured_python().or_else(|| path_pythons().into_iter().next())
+}
+
+// Probe only automatic PATH candidates. Explicit, managed and bundled runtimes
+// retain their established precedence and failures remain visible. The first
+// candidate is retained as a fallback so missing-package diagnostics survive.
+#[cfg(any(windows, test))]
+fn choose_path_python(
+    paths: Vec<PathBuf>,
+    mut supports: impl FnMut(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
+    let fallback = paths.first().cloned();
+    paths
+        .into_iter()
+        .take(4)
+        .find(|path| supports(path))
+        .or(fallback)
+}
+
+#[cfg(windows)]
+fn worker_python(modules: &str) -> Option<PathBuf> {
+    configured_python().or_else(|| choose_path_python(path_pythons(), |path| {
+        let mut command = Command::new(path);
+        command.args(["-I", "-c", "import importlib.util,sys; sys.exit(0 if all(importlib.util.find_spec(n) is not None for n in sys.argv[1:]) else 1)"]);
+        command.args(modules.split(','));
+        crate::pdf_job::run(&command, None, 128 * 1024 * 1024, 2, 0)
+            .is_ok_and(|result| result.success)
+    }))
+}
+
+#[cfg(not(windows))]
+fn worker_python(_modules: &str) -> Option<PathBuf> {
+    python_path()
 }
 
 #[cfg(test)]
@@ -61,6 +105,29 @@ mod discovery_tests {
             &base.join("Programs/Python/Python312"),
             base
         ));
+    }
+    #[test]
+    fn path_selection_prefers_supported_runtime_with_a_bounded_fallback() {
+        let paths: Vec<_> = (0..6)
+            .map(|n| PathBuf::from(format!("python-{n}")))
+            .collect();
+        let mut calls = Vec::new();
+        let selected = choose_path_python(paths.clone(), |path| {
+            calls.push(path.to_owned());
+            path == std::path::Path::new("python-2")
+        });
+        assert_eq!(selected, Some(paths[2].clone()));
+        assert_eq!(calls.len(), 3);
+        let mut count = 0;
+        assert_eq!(
+            choose_path_python(paths.clone(), |_| {
+                count += 1;
+                false
+            }),
+            Some(paths[0].clone())
+        );
+        assert_eq!(count, 4);
+        assert!(choose_path_python(Vec::new(), |_| true).is_none());
     }
 }
 
@@ -89,6 +156,7 @@ fn run(
     argument: Option<&str>,
     limit: u64,
     pdf_input: bool,
+    modules: &str,
 ) -> Result<Vec<u8>, String> {
     let _lease = acquire()?;
     if bytes.is_empty()
@@ -97,7 +165,7 @@ fn run(
     {
         return Err("Invalid or oversized document".into());
     }
-    let python = python_path()
+    let python = worker_python(modules)
         .ok_or("PDF operations need a local Python runtime; configure WAYPOINT_PDF_PYTHON")?;
     let mut command = Command::new(python);
     command.args(["-I", "-c", script]);
@@ -201,6 +269,7 @@ fn extract_coverage_inner(
         allow_empty.then_some("allow-empty"),
         2_600_000,
         true,
+        "pypdf",
     )?;
     let result: serde_json::Value =
         serde_json::from_slice(&data).map_err(|_| "PDF extractor returned invalid data")?;
@@ -326,6 +395,7 @@ fn render_page_inner(bytes: &[u8], page: usize, region: &str) -> Result<serde_js
         Some(&argument),
         4 * 1024 * 1024,
         true,
+        "pypdf,pypdfium2,PIL",
     )?;
     serde_json::from_slice(&data).map_err(|_| "PDF renderer returned invalid data".into())
 }
@@ -355,6 +425,7 @@ pub fn edit(bytes: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String> 
         None,
         10 * 1024 * 1024,
         true,
+        "pypdf,pypdfium2,PIL",
     )
 }
 
@@ -366,6 +437,7 @@ pub fn image_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
         None,
         10 * 1024 * 1024,
         false,
+        "PIL",
     )
 }
 
@@ -378,7 +450,15 @@ except Exception as error:
  print("PDF dependency check failed: " + str(error)[:400])
  sys.exit(1)
 "#;
-    let result = run(b"probe", b"", script, None, 4096, false)?;
+    let result = run(
+        b"probe",
+        b"",
+        script,
+        None,
+        4096,
+        false,
+        "pypdf,pypdfium2,PIL",
+    )?;
     serde_json::from_slice(&result).map_err(|_| "PDF dependency check returned invalid data".into())
 }
 
