@@ -4418,3 +4418,45 @@ fn required_custom_radio_group_is_reported_for_manual_review() {
         .iter()
         .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
 }
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn custom_radio_inventory_reports_page_state_without_changing_it() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_radio_required.html"))
+        .unwrap();
+    let inventory = driver.page_custom_radio_groups().unwrap();
+    assert_eq!(inventory.groups.len(), 1);
+    let group = &inventory.groups[0];
+    assert_eq!(group.label, "Work arrangement");
+    assert_eq!(group.options.len(), 2);
+    assert_eq!(group.options[0].label, "On site");
+    assert_eq!(group.options[0].checked, Some(false));
+    assert_eq!(group.options[1].label, "Remote");
+    assert_eq!(group.options[1].checked, Some(true));
+    assert!(group.options[1].disabled);
+    assert!(!group.incomplete);
+    assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+        && !entry.contains("clicked")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn custom_radio_inventory_marks_ambiguous_states_incomplete() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_radio_ambiguous.html"))
+        .unwrap();
+    let inventory = driver.page_custom_radio_groups().unwrap();
+    let group = &inventory.groups[0];
+    assert_eq!(group.label, "Unlabelled radio group");
+    assert!(group.incomplete);
+    assert_eq!(group.options.len(), 3);
+    assert_eq!(group.options[2].checked, None);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}

@@ -4646,6 +4646,18 @@ fn serve(
                 json!({"choices":choices.choices,"incomplete":choices.incomplete,"snapshot_digest":digest,"can_open":can_open,"pending_selected":pending_selected}),
             );
         }
+        "/api/form/custom-radio-groups" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let inventory = current
+                .driver
+                .page_custom_radio_groups()
+                .map_err(|error| error.to_string())?;
+            json_reply(stream, "200 OK", json!(inventory));
+        }
         "/api/form/custom-choice-advice-pending" => {
             json_reply(stream, "200 OK", choice_advice::pending()?);
         }

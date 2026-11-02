@@ -151,6 +151,28 @@ pub struct CustomChoices {
     pub incomplete: bool,
 }
 
+/// A read-only snapshot of a custom ARIA radio group. State is reported by
+/// the page and must not be treated as independently verified.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomRadioGroup {
+    pub label: String,
+    pub options: Vec<CustomRadioOption>,
+    pub incomplete: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomRadioOption {
+    pub label: String,
+    pub checked: Option<bool>,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomRadioGroups {
+    pub groups: Vec<CustomRadioGroup>,
+    pub incomplete: bool,
+}
+
 enum ClickGuard<'a> {
     Ordinary,
     NonSubmit,
@@ -594,6 +616,120 @@ impl CdpDriver {
             controls,
             incomplete,
         })
+    }
+
+    /// Inspect custom radio groups without focusing or activating them.
+    pub fn page_custom_radio_groups(&mut self) -> Result<CustomRadioGroups, DriverError> {
+        self.with_review_timeout(|driver| driver.page_custom_radio_groups_inner())
+    }
+
+    fn page_custom_radio_groups_inner(&mut self) -> Result<CustomRadioGroups, DriverError> {
+        let root = self.document()?;
+        let mut nodes = Vec::new();
+        let mut incomplete = false;
+        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
+            let attrs = attributes(node);
+            let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+            if !hidden
+                && (tag.eq_ignore_ascii_case("iframe")
+                    || node
+                        .get("shadowRoots")
+                        .and_then(Value::as_array)
+                        .is_some_and(|r| !r.is_empty()))
+            {
+                incomplete = true;
+            }
+            if !hidden
+                && attrs
+                    .get("role")
+                    .is_some_and(|r| r.eq_ignore_ascii_case("radiogroup"))
+            {
+                if nodes.len() >= 30 {
+                    incomplete = true;
+                    return true;
+                }
+                if let Some(id) = node.get("nodeId").and_then(Value::as_u64) {
+                    nodes.push(id);
+                } else {
+                    incomplete = true;
+                }
+            }
+            true
+        });
+        let mut groups = Vec::new();
+        let started = Instant::now();
+        for node in nodes {
+            if started.elapsed() > Duration::from_secs(4) {
+                incomplete = true;
+                break;
+            }
+            let visible = match self.control_visibility_and_path(node) {
+                Ok((v, _, _, _, _)) => v,
+                Err(_) => {
+                    incomplete = true;
+                    continue;
+                }
+            };
+            if !visible {
+                continue;
+            }
+            let resolved = match self.cdp.call("DOM.resolveNode", json!({"nodeId":node})) {
+                Ok(v) => v,
+                Err(_) => {
+                    incomplete = true;
+                    continue;
+                }
+            };
+            let Some(object) = resolved.pointer("/object/objectId").and_then(Value::as_str) else {
+                incomplete = true;
+                continue;
+            };
+            let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+                if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'radiogroup') return null;
+                const root=this.getRootNode();
+                const name = element => {
+                    const refs=element.getAttribute('aria-labelledby');
+                    if (refs !== null) {
+                        const ids=refs.trim().split(/\s+/).filter(Boolean); if (!ids.length || ids.length>16 || refs.length>512) return '';
+                        const parts=[]; for (const id of ids) { const found=root.querySelectorAll('#'+CSS.escape(id)); if(found.length!==1) return ''; parts.push(found[0].textContent || ''); } return parts.join(' ').trim().replace(/\s+/g,' ');
+                    }
+                    return (element.hasAttribute('aria-label') ? element.getAttribute('aria-label') : (element.innerText || '')).trim().replace(/\s+/g,' ');
+                };
+                const all=this.querySelectorAll('[role="radio"]'); if (!all.length) return null;
+                let incomplete=all.length>30; const options=[];
+                for (const item of Array.from(all).slice(0,30)) {
+                    if (item.closest('[role="radiogroup"]') !== this || item.tagName === 'INPUT') { incomplete=true; continue; }
+                    const label=name(item), state=(item.getAttribute('aria-checked') || '').toLowerCase();
+                    const visible=item.getClientRects().length>0 && getComputedStyle(item).visibility==='visible' && !item.closest('[hidden], [aria-hidden="true" i]');
+                    if (!visible || !label || label.length>200) { incomplete=true; continue; }
+                    if (state!=='true' && state!=='false') incomplete=true;
+                    options.push({label,checked:state==='true'?true:state==='false'?false:null,disabled:!!item.closest('[aria-disabled="true" i]')});
+                }
+                if (options.filter(option => option.checked === true).length > 1 || new Set(options.map(option => option.label.toLowerCase())).size !== options.length) incomplete=true;
+                let label=(this.hasAttribute('aria-label') || this.hasAttribute('aria-labelledby')) ? name(this) : ''; if(!label || label.length>200) {label='Unlabelled radio group'; incomplete=true;}
+                return {label,options,incomplete};
+            }"#,"returnByValue":true}));
+            let released = self
+                .cdp
+                .call("Runtime.releaseObject", json!({"objectId":object}));
+            let result = result.map_err(derr)?;
+            released.map_err(derr)?;
+            if result.get("exceptionDetails").is_some() {
+                incomplete = true;
+                continue;
+            }
+            let Some(value) = result
+                .pointer("/result/value")
+                .filter(|value| value.is_object())
+            else {
+                continue;
+            };
+            match serde_json::from_value::<CustomRadioGroup>(value.clone()) {
+                Ok(group) => groups.push(group),
+                Err(_) => incomplete = true,
+            }
+        }
+        Ok(CustomRadioGroups { groups, incomplete })
     }
 
     /// Read rendered ARIA comboboxes and their currently rendered options.
