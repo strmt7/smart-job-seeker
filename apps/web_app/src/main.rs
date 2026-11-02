@@ -2652,13 +2652,30 @@ fn serve(
             waypoint_workspace::default_registry()
                 .check_public_route(&job.source, waypoint_policy::Operation::Read)
                 .map_err(|e| e.to_string())?;
-            let url = job.canonical_url.ok_or("Job has no URL")?;
+            let listing_url = job.canonical_url.ok_or("Job has no URL")?;
+            let source_route = body["source_application"].as_bool().unwrap_or(false);
+            let (url, binding) = if source_route {
+                let routes = ws.job_application_routes().map_err(|e| e.to_string())?;
+                let url = routes
+                    .get(job_id.as_str())
+                    .cloned()
+                    .ok_or("Source application link is unavailable; refresh the listing")?;
+                (url, Some((job.source.clone(), listing_url)))
+            } else {
+                (listing_url, None)
+            };
             if !url.starts_with("https://") || !waypoint_connectors::is_public_host_url(&url) {
                 return Err("Application URL is not a public HTTPS URL".into());
             }
             let id = random_id()?;
             let allow_external = body["allow_external"].as_bool().unwrap_or(false);
-            application_check::start(id.clone(), job_id.as_str().to_owned(), url, allow_external)?;
+            application_check::start_bound(
+                id.clone(),
+                job_id.as_str().to_owned(),
+                url,
+                allow_external,
+                binding,
+            )?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/application-check/pending" => {
@@ -2678,9 +2695,23 @@ fn serve(
                 Some((job_id, checked_url, result, review)) => {
                     let job_id = JobIdentityId::new(&job_id).map_err(|e| e.to_string())?;
                     let job = ws.job(&job_id).map_err(|e| e.to_string())?;
+                    let binding = application_check::route_binding(id)?;
+                    let routes = if binding.is_some() {
+                        Some(ws.job_application_routes().map_err(|e| e.to_string())?)
+                    } else {
+                        None
+                    };
                     let current = result != application_check::STALE_CHECK
-                        && job.as_ref().is_some_and(|job| {
-                            job.canonical_url.as_deref() == Some(checked_url.as_str())
+                        && job.as_ref().is_some_and(|job| match &binding {
+                            Some((source, listing)) => {
+                                job.source == *source
+                                    && job.canonical_url.as_deref() == Some(listing.as_str())
+                                    && routes
+                                        .as_ref()
+                                        .and_then(|routes| routes.get(job_id.as_str()))
+                                        == Some(&checked_url)
+                            }
+                            None => job.canonical_url.as_deref() == Some(checked_url.as_str()),
                         });
                     let message = if current {
                         result
@@ -2701,7 +2732,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","result":message,"checked_url":checked_url,"current":current,"contacts":contacts}),
+                        json!({"status":"complete","result":message,"checked_url":checked_url,"current":current,"contacts":contacts,"source_route":binding.is_some(),"listing_url":binding.as_ref().map(|(_, listing)| listing)}),
                     );
                 }
                 None => json_reply(stream, "200 OK", json!({"status":"running"})),

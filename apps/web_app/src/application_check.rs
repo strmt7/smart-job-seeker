@@ -10,12 +10,20 @@ struct Task {
     id: String,
     job_id: String,
     url: String,
+    route_binding: Option<(String, String)>,
     receiver: mpsc::Receiver<(String, bool, Vec<Value>)>,
     result: Option<(String, bool, Vec<Value>)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Retain only the most recently saved result for a lost response retry.
-type CompletedCheck = (String, String, String, String, Vec<Value>);
+type CompletedCheck = (
+    String,
+    String,
+    String,
+    String,
+    Vec<Value>,
+    Option<(String, String)>,
+);
 static COMPLETED: Mutex<Option<CompletedCheck>> = Mutex::new(None);
 pub const STALE_CHECK: &str =
     "The listing changed during the application check; inspect its current URL again.";
@@ -476,7 +484,18 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
         .map(|task| (task.id.clone(), task.job_id.clone())))
 }
 
+#[cfg(test)]
 pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> Result<(), String> {
+    start_bound(id, job_id, url, allow_external, None)
+}
+
+pub fn start_bound(
+    id: String,
+    job_id: String,
+    url: String,
+    allow_external: bool,
+    route_binding: Option<(String, String)>,
+) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Application check unavailable")?;
     if task.is_some() {
         return Err("An application check is already active or awaiting its result".into());
@@ -693,6 +712,7 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
         id,
         job_id,
         url: inspected_url,
+        route_binding,
         receiver,
         result: None,
     });
@@ -707,8 +727,8 @@ pub fn poll(id: &str) -> Result<Option<(String, String, String, bool)>, String> 
             .map_err(|_| "Application check unavailable")?;
         return completed
             .as_ref()
-            .filter(|(task_id, _, _, _, _)| task_id == id)
-            .map(|(_, job_id, url, result, _)| {
+            .filter(|(task_id, _, _, _, _, _)| task_id == id)
+            .map(|(_, job_id, url, result, _, _)| {
                 Some((job_id.clone(), url.clone(), result.clone(), false))
             })
             .ok_or_else(|| "Application check not found".into());
@@ -748,8 +768,22 @@ pub fn contacts(id: &str) -> Result<Vec<Value>, String> {
         .lock()
         .map_err(|_| "Application check unavailable")?
         .as_ref()
-        .filter(|(task_id, _, _, _, _)| task_id == id)
-        .map(|(_, _, _, _, contacts)| contacts.clone())
+        .filter(|(task_id, _, _, _, _, _)| task_id == id)
+        .map(|(_, _, _, _, contacts, _)| contacts.clone())
+        .ok_or_else(|| "Application check not found".into())
+}
+
+pub fn route_binding(id: &str) -> Result<Option<(String, String)>, String> {
+    let task = TASK.lock().map_err(|_| "Application check unavailable")?;
+    if let Some(current) = task.as_ref().filter(|task| task.id == id) {
+        return Ok(current.route_binding.clone());
+    }
+    COMPLETED
+        .lock()
+        .map_err(|_| "Application check unavailable")?
+        .as_ref()
+        .filter(|(task_id, _, _, _, _, _)| task_id == id)
+        .map(|(_, _, _, _, _, binding)| binding.clone())
         .ok_or_else(|| "Application check not found".into())
 }
 
@@ -770,9 +804,9 @@ pub fn invalidate(id: &str) -> Result<(), String> {
     let mut completed = COMPLETED
         .lock()
         .map_err(|_| "Application check unavailable")?;
-    let (_, _, _, message, contacts) = completed
+    let (_, _, _, message, contacts, _) = completed
         .as_mut()
-        .filter(|(task_id, _, _, _, _)| task_id == id)
+        .filter(|(task_id, _, _, _, _, _)| task_id == id)
         .ok_or("Application check not found")?;
     *message = STALE_CHECK.into();
     contacts.clear();
@@ -788,7 +822,7 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
             .map_err(|_| "Application check unavailable")?;
         return if completed
             .as_ref()
-            .is_some_and(|(task_id, _, _, _, _)| task_id == id)
+            .is_some_and(|(task_id, _, _, _, _, _)| task_id == id)
         {
             Ok(())
         } else {
@@ -807,6 +841,7 @@ pub fn acknowledge(id: &str) -> Result<(), String> {
         current.url.clone(),
         result.clone(),
         contacts.clone(),
+        current.route_binding.clone(),
     ));
     *task = None;
     Ok(())
@@ -850,7 +885,10 @@ mod tests {
         let url = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed public URL");
         let address = url::Url::parse(&url).expect("valid URL");
         assert_eq!(address.scheme(), "https");
-        assert_eq!(address.host_str(), Some("job-boards.greenhouse.io"));
+        assert!(matches!(
+            address.host_str(),
+            Some("job-boards.greenhouse.io" | "jobs.ashbyhq.com")
+        ));
         let parsed = waypoint_net::parse_url(&url).expect("valid HTTPS URL");
         waypoint_net::resolve_public(&parsed).expect("public destination");
         {
@@ -1472,6 +1510,7 @@ mod tests {
             id: "fictional-interrupted-check".into(),
             job_id: "fictional-job".into(),
             url: "https://example.org/job".into(),
+            route_binding: None,
             receiver,
             result: None,
         });
@@ -1510,6 +1549,7 @@ mod tests {
             id: "contact-check".into(),
             job_id: job["id"].as_str().unwrap().into(),
             url: "https://example.org/job".into(),
+            route_binding: None,
             receiver,
             result: Some((
                 "Unverified contact".into(),
@@ -1536,6 +1576,61 @@ mod tests {
     }
 
     #[test]
+    fn source_route_check_is_bound_to_listing_and_route_on_replay() {
+        use std::io::{Read, Write};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let target = [waypoint_workspace::DiscoveryTarget::new("ashby", "ashby")];
+        let board = "https://api.ashbyhq.com/posting-api/job-board/ashby";
+        let listing = "https://jobs.ashbyhq.com/ashby/fixture";
+        let route = "https://jobs.ashbyhq.com/ashby/fixture/application";
+        let payload = |application: &str| {
+            format!(
+                r#"{{"jobs":[{{"id":"fixture","title":"Role","jobUrl":"{listing}","applyUrl":"{application}"}}]}}"#
+            )
+        };
+        let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &payload(route));
+        assert_eq!(ws.discover(&target, &fetcher, 1).inserted, 1);
+        let job = ws.jobs().unwrap().remove(0);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "source-check".into(),
+            job_id: job.id.as_str().into(),
+            url: route.into(),
+            route_binding: Some(("ashby".into(), listing.into())),
+            receiver,
+            result: Some(("Fictional inspection".into(), true, vec![])),
+        });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for attempt in 0..3 {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = serde_json::json!({"task_id":"source-check"}).to_string();
+            write!(client,"POST /api/application-check/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut None, "fixture", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let result: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(result["source_route"], true);
+            assert_eq!(result["listing_url"], listing);
+            assert_eq!(result["current"], attempt == 0);
+            if attempt == 0 {
+                let fetcher = waypoint_workspace::StaticFetcher::default().route(
+                    board,
+                    &payload("https://jobs.ashbyhq.com/ashby/fixture/new"),
+                );
+                ws.discover(&target, &fetcher, 2);
+            } else if attempt == 1 {
+                ws.discover(&target, &fetcher, 3);
+            }
+        }
+    }
+
+    #[test]
     fn changed_listing_is_reported_stale_on_status_and_replay() {
         use std::io::{Read, Write};
         let _guard = TASK_TEST_LOCK.lock().unwrap();
@@ -1548,6 +1643,7 @@ mod tests {
             id: "stale-check".into(),
             job_id,
             url: "https://example.org/old".into(),
+            route_binding: None,
             receiver,
             result: Some((
                 "3 fields detected on old page".into(),
