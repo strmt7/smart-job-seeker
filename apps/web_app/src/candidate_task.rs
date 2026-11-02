@@ -2315,6 +2315,7 @@ mod tests {
     fn failed_save_retains_inspection_and_success_response_can_be_retried() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
+        let _email_guard = crate::email_worker::TEST_LOCK.lock().unwrap();
         let (_tx, rx) = mpsc::channel();
         *TASK.lock().unwrap() = Some(Task {
             id: "save-retry".into(),

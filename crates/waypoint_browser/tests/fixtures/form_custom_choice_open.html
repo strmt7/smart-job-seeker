@@ -1,7 +1,8 @@
 <!doctype html><html lang="en"><body>
 <form onsubmit="document.querySelector('#status').textContent='SUBMITTED';return false">
   <label for="name">Name</label><input id="name">
-  <button type="button" role="combobox" aria-label="Location" aria-expanded="false" aria-controls="locations" onclick="this.setAttribute('aria-expanded','true');document.querySelector('#locations').style.display='block'">Choose location</button>
+  <label for="location-trigger">Location</label>
+  <button id="location-trigger" type="button" role="combobox" aria-label="Location" aria-expanded="false" aria-controls="locations" onclick="this.setAttribute('aria-expanded','true');document.querySelector('#locations').style.display='block'">Choose location</button>
   <div id="locations" role="listbox" style="display:none"><div role="option" onclick="document.querySelector('[aria-label=Location]').textContent=this.textContent">Berlin</div><div role="option" onclick="document.querySelector('[aria-label=Location]').textContent=this.textContent">Lisbon</div><div role="option">Rome</div><div role="option">Duplicate</div><div role="option">Duplicate</div><button type="submit" role="option">Send</button><div role="option" onmouseenter="const duplicate=document.createElement('div');duplicate.setAttribute('role','option');duplicate.textContent='Hover duplicate';this.parentElement.append(duplicate)">Hover duplicate</div><button type="button" role="option" onmouseenter="this.type='submit'">Changing action</button></div>
   <button type="submit" role="combobox" aria-label="Danger" aria-expanded="false" aria-controls="danger-list">Send</button>
   <div id="danger-list" role="listbox" style="display:none"><div role="option">Never</div></div>

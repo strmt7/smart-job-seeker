@@ -1,3 +1,10 @@
+## Local choice workflow qualification — 2026-11-02
+
+- Added an opt-in, resource-gated browser test that exercises a reviewed custom choice with the local vision model on fictional forms. Its setup completes duplicate indexing before requesting actions. The ordinary fixture-backed workflow also passes.
+- Initially `qwen3.5:9b` confirmed `Location`, but after scrolling a separate fictional choice reported `Choose city` instead of its visible `City` label, leaving review pending. A larger capture did not help. After clarifying that the model should look beside or above the control and distinguish its label from values, two runs confirmed both labels and finished the post-scroll review. These are narrow fixture observations, not evidence of general reliability. The model was unloaded afterward; no employer was contacted and no application was submitted.
+- A separate resource-gated run on independent fictional controls read `Job location`, the `Berlin` option and selected value, and a later `Sydney` option. It does not cover arbitrary layouts or employer websites.
+- The web-app suite passed serially and in a subsequent parallel run (515 passed, 274 ignored each). Two earlier parallel runs failed because a concurrent email-worker test held the global busy state while a listing-inspection test expected an idle worker. Those two tests now share a test-only lock; the production busy check is unchanged.
+
 ## Retaining search attribution with listings — 2026-11-01
 
 - Selected search results now retain bounded provider-reported engine names and dates across selection recovery. New listing inspections carry that context into the first securely saved listing capture or source-only record, and the listing review displays it as unverified search attribution. The comparison uses the requested search-result URL rather than assuming a redirect is the same listing. Search queries and snippets are not included. Existing captures are not overwritten, so later search reports may not be retained; the inspection reports that outcome. A size-limit omission is reported when that capture is readable.

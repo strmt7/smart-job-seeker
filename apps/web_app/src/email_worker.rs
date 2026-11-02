@@ -12,6 +12,8 @@ struct Task {
     record: Option<(JobIdentityId, String)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Reconciliation must wait for any live or uncollected worker result.
 pub fn busy() -> bool {
@@ -143,6 +145,7 @@ mod tests {
     use waypoint_domain::ApplicationState;
     #[test]
     fn worker_reserves_before_transport_and_records_one_outcome() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let directory = tempfile::tempdir().unwrap();
         let mut ws = Workspace::open(directory.path()).unwrap();
         let job = JobIdentityId::new("worker-fixture").unwrap();

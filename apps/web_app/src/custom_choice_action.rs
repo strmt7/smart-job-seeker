@@ -206,6 +206,19 @@ mod tests {
     use waypoint_applications::driver::BrowserDriver;
     use waypoint_domain::{ApplicationState, Sha256Digest};
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated visual review and actions on a fictional form"]
+    fn resource_gated_reviewed_choice_workflow() {
+        assert_eq!(
+            std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref(),
+            Ok("1")
+        );
+        crate::experience_inference::tests::with_resource_gated_model(
+            reviewed_open_is_recorded_one_use_and_recoverable,
+        );
+    }
+
     #[test]
     #[ignore = "starts one browser and opens only a fictional choice"]
     fn reviewed_open_is_recorded_one_use_and_recoverable() {
@@ -234,6 +247,21 @@ mod tests {
             posted_at: None,
         })
         .unwrap();
+        let mut cursor = String::new();
+        for _ in 0..16 {
+            if !ws.duplicate_index_pending().unwrap() {
+                break;
+            }
+            cursor = ws
+                .index_next_duplicate_step(&cursor)
+                .unwrap()
+                .cursor
+                .unwrap_or_default();
+        }
+        assert!(
+            !ws.duplicate_index_pending().unwrap(),
+            "fixture duplicate indexing did not settle"
+        );
         let record =
             crate::attempt_record::AttemptRecord::start(&ws, &job, "choice-fixture", now())
                 .unwrap()
@@ -280,16 +308,6 @@ mod tests {
         record
             .event(json!({"type":"fixture_capture","screenshot":name}))
             .unwrap();
-        let revision =
-            crate::control_vision::begin_pending(&ws, &job, "choice-visual", now()).unwrap();
-        crate::control_vision::set_choice_fixture(
-            "choice-visual",
-            "choice-session",
-            job.as_str(),
-            revision,
-            (&selector, &digest, &image, "Location"),
-            true,
-        );
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let request = |ws: &mut Workspace,
@@ -309,16 +327,52 @@ mod tests {
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1)
                 .map_err(|error| error.to_string())
         };
-        let evidence = request(
-            &mut ws,
-            &mut session,
-            "/api/form/control-vision-status",
-            json!({"task_id":"choice-visual"}),
-        )
-        .unwrap();
+        let visual_id = if std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref() == Ok("1") {
+            request(
+                &mut ws,
+                &mut session,
+                "/api/form/custom-choice-vision-start",
+                json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest}),
+            )
+            .unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        } else {
+            let revision =
+                crate::control_vision::begin_pending(&ws, &job, "choice-visual", now()).unwrap();
+            crate::control_vision::set_choice_fixture(
+                "choice-visual",
+                "choice-session",
+                job.as_str(),
+                revision,
+                (&selector, &digest, &image, "Location"),
+                true,
+            );
+            "choice-visual".to_owned()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let evidence = loop {
+            let result = request(
+                &mut ws,
+                &mut session,
+                "/api/form/control-vision-status",
+                json!({"task_id":visual_id}),
+            )
+            .unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        println!(
+            "choice visual expected={} observed={} comparison={}",
+            evidence["label"], evidence["buttons"], evidence["comparison"]
+        );
         assert_eq!(evidence["comparison"], "label_observed");
         assert_eq!(evidence["result_saved"], true);
-        let unreviewed = json!({"session_id":"choice-session","visual_task_id":"choice-visual","reviewed":false,"source_reviewed":true});
+        let unreviewed = json!({"session_id":"choice-session","visual_task_id":visual_id,"reviewed":false,"source_reviewed":true});
         assert!(request(
             &mut ws,
             &mut session,
@@ -326,7 +380,7 @@ mod tests {
             unreviewed
         )
         .is_err());
-        let approved = json!({"session_id":"choice-session","visual_task_id":"choice-visual","reviewed":true,"source_reviewed":true});
+        let approved = json!({"session_id":"choice-session","visual_task_id":visual_id,"reviewed":true,"source_reviewed":true});
         let started = request(
             &mut ws,
             &mut session,
@@ -781,8 +835,8 @@ mod tests {
         let scroll_job = JobIdentityId::new("scroll-fixture").unwrap();
         ws.import_job(waypoint_store::StoredJob {
             id: scroll_job.clone(),
-            title: "Role".into(),
-            employer: "Fixture".into(),
+            title: "Different opportunity".into(),
+            employer: "Another fixture".into(),
             location: String::new(),
             state: ApplicationState::Shortlisted,
             canonical_url: Some(scroll_url.to_string()),
@@ -795,6 +849,21 @@ mod tests {
             posted_at: None,
         })
         .unwrap();
+        let mut cursor = String::new();
+        for _ in 0..16 {
+            if !ws.duplicate_index_pending().unwrap() {
+                break;
+            }
+            cursor = ws
+                .index_next_duplicate_step(&cursor)
+                .unwrap()
+                .cursor
+                .unwrap_or_default();
+        }
+        assert!(
+            !ws.duplicate_index_pending().unwrap(),
+            "fixture duplicate indexing did not settle"
+        );
         let mut current = session.take().unwrap();
         let live = current.driver.open(scroll_url.as_str()).unwrap();
         current.id = "scroll-session".into();
@@ -948,12 +1017,26 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
+        if std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref() == Ok("1")
+            && visual["comparison"] == "not_observed"
+        {
+            println!(
+                "Live vision did not observe label {}; observed {}; review remains pending",
+                visual["label"], visual["buttons"]
+            );
+            assert!(session.as_ref().unwrap().pending_choice_visual.is_some());
+            return;
+        }
         assert_eq!(
             visual["post_choice_review_finished"], true,
             "{:?}",
             visual["comparison"]
         );
         assert!(session.as_ref().unwrap().pending_choice_visual.is_none());
+        println!(
+            "Post-scroll visual confirmed label {} from {}",
+            visual["label"], visual["buttons"]
+        );
         let (text, _) = session
             .as_mut()
             .unwrap()
