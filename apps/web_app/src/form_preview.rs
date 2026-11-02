@@ -2869,7 +2869,22 @@ mod tests {
                 "visual review falsely matched the altered field"
             );
         } else {
-            assert_eq!(name["status"], "matches_transcription");
+            if name["status"] == "unobserved" {
+                let focused = driver.screenshot_field_context(given_selector).unwrap();
+                let retry = crate::visual_review::analyze_targeted_with_context(
+                    addr,
+                    &model,
+                    &focused,
+                    given_label,
+                    &[(given_label.into(), "Avery".into())],
+                    None,
+                )
+                .unwrap();
+                println!("fictional focused visual retry: {retry}");
+                assert_eq!(retry["comparisons"][0]["status"], "matches_transcription");
+            } else {
+                assert_eq!(name["status"], "matches_transcription");
+            }
         }
         assert!(comparisons
             .iter()

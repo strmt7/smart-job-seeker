@@ -868,7 +868,7 @@ fn analyze_with_context(
     Ok(compare(&observed, expected))
 }
 
-fn analyze_targeted_with_context(
+pub(crate) fn analyze_targeted_with_context(
     addr: std::net::SocketAddr,
     model: &str,
     image: &str,
