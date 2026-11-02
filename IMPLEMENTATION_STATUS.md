@@ -1,3 +1,7 @@
+## Listing not-found review — 2026-11-02
+
+- Listing inspection now also flags an early, adjacent `Page not found | 404`-style title as a possible not-found page. This remains a manual-review signal, not proof that a vacancy is closed; other wording, languages and page layouts can be missed, and unusual job descriptions can still trigger a false positive. Fictional cases for both title orders and a non-adjacent technical description passed; the candidate-inspection group passed (45 passed, 21 ignored) and Windows web Clippy passed. No live site was inspected for this change.
+
 ## Local model identity check — 2026-11-02
 
 - A draft task now snapshots the verified resident model identity before template processing and binds both scanned-template visual transcription and structured drafting to it. A replacement with the same model name but a different digest is rejected before either guarded phase. Fictional prebound-identity tests passed for both guards; the drafting unit group passed (16 passed, 8 ignored) and Windows lint passed. The complete visual-to-text path was not run with a live model; approximately 14.86 GiB of system RAM was available at the initial snapshot, below the conservative startup estimate for the installed 6.15 GiB model. Checks cannot exclude transient changes that revert between observations.

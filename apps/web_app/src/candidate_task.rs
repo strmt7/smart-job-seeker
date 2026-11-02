@@ -1701,14 +1701,33 @@ fn require_readable_listing(walls: &[String], text: &str) -> Result<(), String> 
         let nearby = words[index + 1..words.len().min(index + 24)]
             .join(" ")
             .to_lowercase();
-        if [
-            "page not found",
-            "page was not found",
-            "we couldn't find what you're looking for",
-            "we could not find what you are looking for",
-        ]
-        .iter()
-        .any(|phrase| nearby.starts_with(phrase))
+        // Error-page titles also commonly put the explanation before the
+        // status, e.g. "Page not found | 404". Restrict this reverse order to
+        // the beginning of the page and require the phrases to be adjacent.
+        let preceding = words[index.saturating_sub(6)..index]
+            .join(" ")
+            .to_lowercase();
+        let preceding = preceding.trim_end_matches(|c: char| !c.is_alphanumeric());
+        let reverse_title = index < 16
+            && ["page not found", "page was not found"]
+                .iter()
+                .any(|phrase| {
+                    preceding.strip_suffix(phrase).is_some_and(|before| {
+                        before
+                            .chars()
+                            .next_back()
+                            .is_none_or(|c| !c.is_alphanumeric())
+                    })
+                });
+        if reverse_title
+            || [
+                "page not found",
+                "page was not found",
+                "we couldn't find what you're looking for",
+                "we could not find what you are looking for",
+            ]
+            .iter()
+            .any(|phrase| nearby.starts_with(phrase))
         {
             return Err("The page appears to be a not-found page despite a successful response; it may have moved or been removed. Review the original link manually".into());
         }
@@ -2430,6 +2449,16 @@ mod tests {
         assert!(error.contains("may have moved or been removed"));
         assert!(!error.contains("closed"));
         assert!(require_readable_listing(&[], "Engineer role 404. Build systems that return a page not found response for missing files.").is_ok());
+        for text in ["Page not found | 404", "Careers Page was not found - 404"] {
+            let error = require_readable_listing(&[], text).unwrap_err();
+            assert!(error.contains("may have moved or been removed"));
+            assert!(!error.contains("closed"));
+        }
+        assert!(require_readable_listing(
+            &[],
+            "Engineer role: handle page not found responses from service 404"
+        )
+        .is_ok());
         assert!(
             require_readable_listing(&[], "The page was not found. Browse current openings.")
                 .is_ok()
