@@ -273,21 +273,31 @@ pub fn select_experience_hints(mut matches: Vec<ExperienceMatch>) -> Vec<Experie
     let mut selected: Vec<ExperienceMatch> = Vec::new();
     // Keep one contradictory pair when available. A failed report should not
     // disappear behind several newer, different observations.
-    'pairs: for item in &matches {
+    for item in &matches {
         let opposite = match item.experience.outcome {
             Outcome::Helped => Outcome::DidNotHelp,
             Outcome::DidNotHelp => Outcome::Helped,
             Outcome::Unknown => continue,
         };
-        for other in &matches {
-            if item.experience.observation == other.experience.observation
+        let conflicting = |other: &&ExperienceMatch| {
+            item.experience.observation == other.experience.observation
                 && item.experience.response == other.experience.response
                 && other.experience.outcome == opposite
-            {
-                selected.push(item.clone());
-                selected.push(other.clone());
-                break 'pairs;
-            }
+        };
+        // Prefer a contradiction within a known platform. A different
+        // platform can still provide useful context if no such pair exists.
+        let same_known_platform = item.experience.platform.filter(|p| *p != Platform::Other);
+        let other = matches
+            .iter()
+            .filter(conflicting)
+            .find(|other| {
+                same_known_platform.is_some() && other.experience.platform == same_known_platform
+            })
+            .or_else(|| matches.iter().find(conflicting));
+        if let Some(other) = other {
+            selected.push(item.clone());
+            selected.push(other.clone());
+            break;
         }
     }
     for item in &matches {
@@ -580,6 +590,43 @@ mod tests {
         assert!(selected
             .iter()
             .any(|item| !item.same_platform && item.experience.outcome == Outcome::DidNotHelp));
+    }
+
+    #[test]
+    fn contradictory_pair_prefers_the_same_known_platform() {
+        let make = |id: u64, platform: Platform, outcome: Outcome, observed_at: i64| {
+            let mut experience = lesson();
+            experience.platform = Some(platform);
+            experience.outcome = outcome;
+            experience.observed_at = observed_at;
+            ExperienceMatch {
+                id: format!("{id:032x}"),
+                revision: 1,
+                same_platform: platform == Platform::Lever,
+                experience,
+            }
+        };
+        let mut items = vec![
+            make(1, Platform::Lever, Outcome::Helped, 100),
+            make(2, Platform::Lever, Outcome::DidNotHelp, 1),
+            make(3, Platform::Ashby, Outcome::DidNotHelp, 99),
+        ];
+        for i in 4..=8 {
+            let mut item = make(i, Platform::Lever, Outcome::Unknown, i as i64 + 10);
+            item.experience.observation = match i {
+                4 => Observation::AmbiguousLabel,
+                5 => Observation::ValidationError,
+                6 => Observation::HiddenControl,
+                7 => Observation::UnexpectedNavigation,
+                _ => Observation::ValueChanged,
+            };
+            items.push(item);
+        }
+        let selected = select_experience_hints(items);
+        assert!(selected.iter().any(|item| item.id == format!("{:032x}", 1)));
+        assert!(selected.iter().any(|item| item.id == format!("{:032x}", 2)));
+        assert!(selected.iter().any(|item| !item.same_platform));
+        assert!(selected.len() <= 5);
     }
 
     #[test]
