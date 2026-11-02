@@ -1007,6 +1007,17 @@ mod tests {
                 }
             };
             if let Some(page) = page {
+                if let Some(path) = std::env::var_os("WAYPOINT_LIVE_CHECK_SCREENSHOT") {
+                    use std::io::Write;
+                    let image = browser.screenshot_base64().expect("read-only screenshot");
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(path)
+                        .expect("new screenshot capture");
+                    file.write_all(image.as_bytes())
+                        .expect("write screenshot capture");
+                }
                 let changed_path = browser
                     .current_url()
                     .ok()
@@ -1048,6 +1059,7 @@ mod tests {
             );
         }
     }
+
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn browser_start_errors_distinguish_missing_browser_without_exposing_details() {

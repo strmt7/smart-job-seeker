@@ -5366,7 +5366,7 @@ impl CdpDriver {
                 const control = node.closest('label')?.control;
                 return !!control && control.matches('button:not([type="button"]), input[type="submit" i], input[type="image" i]');
             };
-            if (guard.kind !== 'ordinary' && unsafeTarget(this)) return false;
+            if (guard.kind !== 'ordinary' && unsafeTarget(this)) return 'unsafe';
             if (guard.kind === 'combobox' && ((this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'false')) return false;
             if (guard.kind === 'radio') {
                 const root=this.getRootNode(), groups=root.querySelectorAll(guard.group_selector), group=this.closest('[role="radiogroup"]');
@@ -5405,7 +5405,7 @@ impl CdpDriver {
                 const root = current.getRootNode();
                 const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(px, py) : null;
                 if (!hit || (hit !== current && !current.contains(hit))) return false;
-                if (guard.kind !== 'ordinary' && unsafeTarget(hit)) return false;
+                if (guard.kind !== 'ordinary' && unsafeTarget(hit)) return 'unsafe';
                 if (root.nodeType === 11 && root.host) { current = root.host; continue; }
                 if (view === view.top) return true;
                 const frame = view.frameElement;
@@ -5423,6 +5423,11 @@ impl CdpDriver {
             .call("Runtime.releaseObject", json!({"objectId":object}));
         let checked = checked.map_err(derr)?;
         released.map_err(derr)?;
+        if checked.pointer("/result/value").and_then(Value::as_str) == Some("unsafe") {
+            return Err(DriverError(
+                "Click target could submit or navigate; review it manually".into(),
+            ));
+        }
         if checked.get("exceptionDetails").is_some()
             || checked.pointer("/result/value").and_then(Value::as_bool) != Some(true)
         {

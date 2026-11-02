@@ -2295,6 +2295,17 @@ the challenge and hidden-control signals are true positives. No candidate data
 was entered and no application was submitted. Two other search results were
 stale: one led to a closed-job page and one returned HTTP 404.
 
+### Guarded cookie-control diagnosis (2026-11-02)
+
+A read-only screenshot of that form showed a cookie-consent dialog. An attempted
+guarded click on its visually identified decline button was refused because the
+button had no explicit type; the dialog remained visible and no applicant data
+was entered or submitted. A local fixture confirms that implicit and explicit
+submit controls remain blocked. The browser now reports that such a target
+could submit or navigate instead of incorrectly calling it hidden or covered.
+The screenshot diagnostic is opt-in and writes only to a new user-selected
+local file. Dismissing this real dialog and resuming its form remain unverified.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and

@@ -2027,13 +2027,14 @@ fn generic_click_refuses_native_submit_controls_regardless_of_label() {
         "#submit-wrapper",
         "#submit-label",
     ] {
+        let error = driver
+            .execute(&BrowserCommand::Click {
+                selector: selector.into(),
+            })
+            .expect_err("generic click must reject submit controls");
         assert!(
-            driver
-                .execute(&BrowserCommand::Click {
-                    selector: selector.into()
-                })
-                .is_err(),
-            "generic click accepted {selector}"
+            error.0.contains("could submit or navigate"),
+            "{selector}: {error:?}"
         );
     }
     let (text, _) = driver.page_text_bounded(2000).unwrap();
