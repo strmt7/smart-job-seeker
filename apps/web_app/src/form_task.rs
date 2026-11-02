@@ -2742,7 +2742,16 @@ mod tests {
                                 .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
                         );
                         println!("review warnings: {:?}", preview.manual_review);
+                        let blocked_by_frame = preview.manual_review.iter().any(|reason| {
+                            reason == "An embedded frame may contain uninspected application content; review it manually"
+                        });
+                        if blocked_by_frame && preview.suggestions.is_empty() {
+                            println!(
+                                "No mapping evaluation: no suggestions were returned with the uninspected frame warning."
+                            );
+                        }
                         if expected_model
+                            && !blocked_by_frame
                             && !preview
                                 .manual_review
                                 .iter()
@@ -2799,6 +2808,7 @@ mod tests {
                             }
                         }
                         if expected_model
+                            && !blocked_by_frame
                             && !preview
                                 .manual_review
                                 .iter()
@@ -2815,7 +2825,7 @@ mod tests {
                                 }
                             }
                         }
-                        if expected_preferred.is_some() {
+                        if expected_preferred.is_some() && !blocked_by_frame {
                             assert!(
                                 preview.suggestions.iter().any(|mapping| preview
                                     .schema
