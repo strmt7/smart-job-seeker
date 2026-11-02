@@ -2396,6 +2396,16 @@ On the same public résumé, ten shortening attempts and three equal-width
 substitutions still failed the existing text, bounds or visual checks. No real
 edit was accepted; these results do not establish a general success rate.
 
+Further investigation of the first page found that concatenating decodable
+text-show operations did not reproduce every PDFium text selection: of 696
+unique six-character selections without line breaks, 203 occurred exactly once
+in that concatenation and 493 did not occur. Five unique six-character samples
+crossing exactly two PDFium text objects were all absent or ambiguous in the
+concatenation. This is a diagnostic on one page, not a benchmark. Matching
+across operators alone therefore cannot safely replace the existing checks;
+the mapping between rendered characters and source operators needs further
+investigation.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the
