@@ -22,6 +22,8 @@
 
 ## Form experience budget — 2026-11-03
 
+- When the full lesson context exceeds the form-mapping budget, the agent now first omits optional user notes and retains the categorical lessons if they fit. If even those cannot fit, it sends the current-page prompt alone. Omitted-note counts reflect the reduced request. Fictional experience tests passed (7 passed, 7 ignored) and Windows web Clippy passed; an initial compile failed due to an outdated test call and passed after correction. No live model or employer was used.
+
 - Form mapping now checks the full prompt after adding advisory experiences. If those optional lessons would exceed the existing 8,000-byte request limit, it sends the current-page prompt without lessons and does not report the lessons as used. Focused experience and suggestion tests and Windows web Clippy passed. This does not measure whether lessons improve model accuracy; live model and employer-site tests were not run for this change.
 
 ## Local-model form check — 2026-11-03
