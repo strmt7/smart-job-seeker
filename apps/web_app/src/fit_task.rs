@@ -1838,6 +1838,159 @@ fn duration_mentions(text: &str) -> usize {
         .count()
 }
 
+/// Recognize a single, unambiguous English whole-number duration. This is
+/// only a guard against a supported judgment, never positive evidence.
+fn simple_duration_months(text: &str, candidate: bool) -> Option<u64> {
+    let lower = text.to_lowercase();
+    if duration_mentions(&lower) != 1
+        || lower.contains(['-', '–', '—', '/', '½'])
+        || lower
+            .as_bytes()
+            .windows(3)
+            .any(|w| w[0].is_ascii_digit() && matches!(w[1], b'.' | b',') && w[2].is_ascii_digit())
+    {
+        return None;
+    }
+    let disallowed = if candidate {
+        [
+            "at least",
+            "more than",
+            "greater than",
+            "over ",
+            "over\u{00a0}",
+            "longer than",
+            "+",
+            "minimum",
+            "or more",
+            "and counting",
+            "approximately",
+            "about ",
+            "around ",
+            "nearly ",
+        ]
+        .as_slice()
+    } else {
+        [
+            "up to",
+            "at most",
+            "less than",
+            "fewer than",
+            "no greater than",
+            "no longer than",
+            "under ",
+            "no more than",
+            "maximum",
+            "or less",
+            "between",
+        ]
+        .as_slice()
+    };
+    if disallowed.iter().any(|marker| lower.contains(marker)) {
+        return None;
+    }
+    let words: Vec<_> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    for (index, unit) in words.iter().enumerate() {
+        let multiplier = match *unit {
+            "year" | "years" | "yr" | "yrs" => 12u64,
+            "month" | "months" | "mo" | "mos" => 1,
+            _ => continue,
+        };
+        let number = *words.get(index.checked_sub(1)?)?;
+        if index >= 2
+            && matches!(
+                words[index - 2],
+                "twenty"
+                    | "thirty"
+                    | "forty"
+                    | "fifty"
+                    | "sixty"
+                    | "seventy"
+                    | "eighty"
+                    | "ninety"
+                    | "hundred"
+            )
+        {
+            return None;
+        }
+        if words.get(index + 1).is_some_and(|word| {
+            matches!(
+                *word,
+                "ago" | "old" | "after" | "before" | "later" | "earlier"
+            )
+        }) {
+            return None;
+        }
+        let value = match number {
+            "zero" => 0,
+            "one" | "a" | "an" => 1,
+            "two" => 2,
+            "three" => 3,
+            "four" => 4,
+            "five" => 5,
+            "six" => 6,
+            "seven" => 7,
+            "eight" => 8,
+            "nine" => 9,
+            "ten" => 10,
+            "eleven" => 11,
+            "twelve" => 12,
+            "thirteen" => 13,
+            "fourteen" => 14,
+            "fifteen" => 15,
+            "sixteen" => 16,
+            "seventeen" => 17,
+            "eighteen" => 18,
+            "nineteen" => 19,
+            "twenty" => 20,
+            _ => number.parse::<u64>().ok()?,
+        };
+        return (value <= 100).then(|| value * multiplier);
+    }
+    None
+}
+
+fn insufficient_stated_duration(excerpt: &str, fact: &str, context: &str) -> bool {
+    let lower = context.to_lowercase();
+    let quote = excerpt.to_lowercase();
+    let Some(position) = lower.find(&quote) else {
+        return false;
+    };
+    let before = lower[..position].trim_end();
+    let after = lower[position + quote.len()..].trim_start();
+    if before.ends_with(['-', '–', '—', '/'])
+        || before.ends_with(" to")
+        || after.starts_with("to ")
+        || after.starts_with(['-', '–', '—', '/'])
+    {
+        return false;
+    }
+    if [
+        "up to",
+        "at most",
+        "less than",
+        "fewer than",
+        "no greater than",
+        "no longer than",
+        "under ",
+        "no more than",
+        "maximum",
+        "or less",
+        "between",
+        "no minimum",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        return false;
+    }
+    simple_duration_months(excerpt, false)
+        .zip(simple_duration_months(fact, true))
+        .is_some_and(|(required, stated)| stated < required)
+}
+
 /// Reassess cited qualifications without showing the original judgment. A
 /// second model call is not proof of correctness; disagreements and failures
 /// are downgraded to unknown instead of being counted as supported or opposed.
@@ -1878,6 +2031,29 @@ fn check_qualification_judgments_with_source(
     let mut embedded_term_review = 0;
     let mut duration_review = 0;
     for item in criteria.iter_mut() {
+        let insufficient_duration = item["source"] == "listing"
+            && item["status"] == "supported"
+            && item["excerpt"]
+                .as_str()
+                .zip(
+                    item["fact_index"]
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .and_then(|n| n.checked_sub(1))
+                        .and_then(|i| facts.get(i)),
+                )
+                .is_some_and(|(excerpt, fact)| {
+                    verification_text
+                        .and_then(|source| unique_requirement_context(source, excerpt))
+                        .is_some_and(|context| insufficient_stated_duration(excerpt, fact, context))
+                });
+        if insufficient_duration {
+            item["status"] = json!("unknown");
+            item["fact_index"] = Value::Null;
+            item["explanation"] = json!("The cited fact states less experience than this requirement; other experience may exist, so review it manually.");
+            duration_review += 1;
+            continue;
+        }
         let multiple_durations = item["source"] == "listing"
             && matches!(item["status"].as_str(), Some("supported" | "contradicted"))
             && item["excerpt"].as_str().is_some_and(|excerpt| {
@@ -4157,7 +4333,7 @@ mod tests {
                 ))
             }
         }
-        let facts = vec!["Used SQL for one year".to_owned()];
+        let facts = vec!["Used SQL for six years".to_owned()];
         let listing = "Requires five years of SQL";
         let original = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of SQL","importance":"required","status":"supported","fact_index":1,"explanation":"SQL experience"}]});
         let initial = validate(original.clone(), &facts, "", listing).unwrap();
@@ -4213,6 +4389,58 @@ mod tests {
         assert_eq!(duration_mentions("fifteen years Java, 2 yrs Python"), 2);
         assert_eq!(duration_mentions("5 Jahre Java, 18 Monate Python"), 2);
         assert_eq!(duration_mentions("an engineer with Python experience"), 0);
+        assert_eq!(simple_duration_months("five years of SQL", false), Some(60));
+        assert_eq!(
+            simple_duration_months("used SQL for 18 months", true),
+            Some(18)
+        );
+        assert_eq!(
+            simple_duration_months("at least one year of SQL", true),
+            None
+        );
+        assert_eq!(
+            simple_duration_months("up to five years of SQL", false),
+            None
+        );
+        assert_eq!(simple_duration_months("1.5 years of SQL", true), None);
+        assert_eq!(simple_duration_months("five years ago", true), None);
+        assert_eq!(
+            simple_duration_months("twenty one years of SQL", true),
+            None
+        );
+        assert!(insufficient_stated_duration(
+            "five years of SQL",
+            "Used SQL for one year",
+            "Required: five years of SQL."
+        ));
+        assert!(!insufficient_stated_duration(
+            "five years of SQL",
+            "Used SQL for one year",
+            "Accepts up to five years of SQL."
+        ));
+        assert!(!insufficient_stated_duration(
+            "five years of SQL",
+            "Used SQL for six years",
+            "Required: five years of SQL."
+        ));
+        assert!(!insufficient_stated_duration(
+            "five years of SQL",
+            "Used SQL for four years",
+            "Required: three to five years of SQL."
+        ));
+        assert!(!insufficient_stated_duration(
+            "5 years of SQL",
+            "Used SQL for four years",
+            "Required: 3-5 years of SQL."
+        ));
+        let short_fact = vec!["Used SQL for one year".to_owned()];
+        let required = "Required: five years of SQL.";
+        let wrong = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Model support"}]});
+        let initial = validate(wrong.clone(), &short_fact, "", required).unwrap();
+        let (_, checked) =
+            check_qualification_judgments(&mut NoCalls, wrong, initial, &short_fact, "", required);
+        assert_eq!(checked["rubric"][0]["status"], "unknown");
+        assert_eq!(checked["qualification_check"]["duration_review"], 1);
         let facts = vec!["Seven years Java and three years Python".to_owned()];
         let listing = "Required: five years Python experience.";
         let value = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years Python experience","importance":"required","status":"supported","fact_index":1,"explanation":"Experience"}]});
@@ -4559,6 +4787,36 @@ mod tests {
         assert_eq!(result["qualification_check"]["status"], "completed");
         assert_eq!(result["rubric"][0]["status"], "unknown");
         assert_eq!(result["rubric"][1]["status"], "supported");
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_duration_guard_rejects_a_shorter_cited_fact() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let facts = vec![
+            "Used SQL for one year".to_owned(),
+            "Used Python for six years".to_owned(),
+        ];
+        let listing = "Required: five years of SQL; five years of Python.";
+        let value = json!({"summary":"fixture","criteria":[
+            {"source":"listing","excerpt":"five years of SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Model support"},
+            {"source":"listing","excerpt":"five years of Python","importance":"required","status":"supported","fact_index":2,"explanation":"Model support"}
+        ]});
+        let initial = validate(value.clone(), &facts, "", listing).unwrap();
+        let (_, checked) =
+            check_qualification_judgments(&mut model, value, initial, &facts, "", listing);
+        assert_eq!(checked["rubric"][0]["status"], "unknown");
+        assert_eq!(checked["qualification_check"]["duration_review"], 1);
+        assert_eq!(checked["qualification_check"]["status"], "completed");
+        assert_eq!(checked["rubric"][1]["status"], "supported");
     }
 
     #[test]
