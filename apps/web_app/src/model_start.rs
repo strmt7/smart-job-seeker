@@ -58,25 +58,40 @@ pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Re
     Ok(())
 }
 
-#[cfg(any(windows, test))]
-pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
+pub(crate) fn local_inventory_entry<'a>(tags: &'a Value, model: &str) -> Result<&'a Value, String> {
     let models = tags["models"]
         .as_array()
         .filter(|items| items.len() <= 1000)
         .ok_or("Installed model inventory is unavailable or too large")?;
-    let matching: Vec<_> = models
+    let mut matches = models
         .iter()
-        .filter(|item| item["name"].as_str() == Some(model))
-        .collect();
-    if matching.len() != 1 {
+        .filter(|item| item["name"].as_str() == Some(model));
+    let entry = matches
+        .next()
+        .ok_or("The selected model is not uniquely present in the installed inventory")?;
+    if matches.next().is_some() {
         return Err("The selected model is not uniquely present in the installed inventory".into());
     }
+    let remote_marker = |name: &str| match entry.get(name) {
+        None | Some(Value::Null) => false,
+        Some(Value::String(value)) => !value.trim().is_empty(),
+        Some(_) => true,
+    };
     if model.to_ascii_lowercase().contains("cloud")
-        || matching[0]["details"]["format"].as_str() != Some("gguf")
+        || entry["details"]["format"].as_str() != Some("gguf")
+        || remote_marker("remote_model")
+        || remote_marker("remote_host")
     {
-        return Err("Only installed local GGUF models are supported for startup".into());
+        return Err(
+            "Only installed local GGUF models without remote forwarding are supported".into(),
+        );
     }
-    matching[0]["size"]
+    Ok(entry)
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
+    local_inventory_entry(tags, model)?["size"]
         .as_u64()
         .filter(|size| *size >= GIB && *size <= MAX_MODEL_BYTES)
         .ok_or_else(|| {
@@ -129,10 +144,13 @@ fn run(model: &str) -> Result<Value, String> {
         }
         serde_json::from_slice(&bytes).map_err(|_| "Invalid local runtime response".into())
     };
-    if let Some(existing) = existing_model(&get("/api/ps")?, model)? {
+    let ps = get("/api/ps")?;
+    let tags = get("/api/tags")?;
+    if let Some(existing) = existing_model(&ps, model)? {
+        crate::verify_local_model_binding(&ps, &tags, model)?;
         return Ok(existing);
     }
-    let size = installed_size(&get("/api/tags")?, model)?;
+    let size = installed_size(&tags, model)?;
     let mut system = sysinfo::System::new().map_err(|_| "System memory could not be sampled")?;
     system.refresh_memory();
     resource_gate(
@@ -140,9 +158,13 @@ fn run(model: &str) -> Result<Value, String> {
         system.available_memory(),
         &crate::gpu_resources::sample(),
     )?;
-    if let Some(existing) = existing_model(&get("/api/ps")?, model)? {
+    let ps = get("/api/ps")?;
+    if let Some(existing) = existing_model(&ps, model)? {
+        crate::verify_local_model_binding(&ps, &get("/api/tags")?, model)?;
         return Ok(existing);
     }
+    // Recheck the alias after the resource sample, immediately before startup.
+    installed_size(&get("/api/tags")?, model)?;
     let request = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Could not prepare local model request")?;
     let (status, bytes) = http_request(addr, "POST", "/api/generate", Some(&request), 120_000)
         .map_err(|_| "Model startup did not return; check the model status before trying again")?;
@@ -155,6 +177,7 @@ fn run(model: &str) -> Result<Value, String> {
         return Err("Model startup was not confirmed; check status before trying again".into());
     }
     let status = get("/api/ps").map_err(|_| "Model startup could not be verified; a model may remain loaded. Check local model status before retrying")?;
+    crate::verify_local_model_binding(&status, &get("/api/tags")?, model)?;
     verify_started_model(&status, model)
 }
 #[cfg(not(windows))]
@@ -356,6 +379,17 @@ mod tests {
             "fixture-cloud"
         )
         .is_err());
+        for marker in [
+            json!({"remote_model":"provider/model"}),
+            json!({"remote_host":"https://example.invalid"}),
+            json!({"remote_host":true}),
+        ] {
+            let mut tags = one.clone();
+            for (key, value) in marker.as_object().unwrap() {
+                tags["models"][0][key] = value.clone();
+            }
+            assert!(installed_size(&tags, "fixture").is_err());
+        }
         assert!(installed_size(
             &json!({"models":[{"name":"remote-alias","size":GIB,"details":{"format":""}}]}),
             "remote-alias"

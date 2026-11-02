@@ -1872,7 +1872,29 @@ fn resident_model_status_at(addr: std::net::SocketAddr) -> Result<Value, String>
         return Err(format!("Ollama returned HTTP {status}"));
     }
     let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid Ollama response")?;
-    model_diagnostics(&data)
+    let status = model_diagnostics(&data)?;
+    if let Some(name) = status["model"].as_str() {
+        let (code, tags) = http_request(addr, "GET", "/api/tags", None, 3000)?;
+        if code != 200 {
+            return Err(format!("Ollama model inventory returned HTTP {code}"));
+        }
+        let tags: Value =
+            serde_json::from_slice(&tags).map_err(|_| "invalid Ollama model inventory")?;
+        verify_local_model_binding(&data, &tags, name)?;
+    }
+    Ok(status)
+}
+
+fn verify_local_model_binding(ps: &Value, tags: &Value, name: &str) -> Result<(), String> {
+    let entry = model_start::local_inventory_entry(tags, name)?;
+    let resident_digest = ps["models"][0]["digest"]
+        .as_str()
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or("Resident model digest is unavailable")?;
+    if entry["digest"].as_str() != Some(resident_digest) {
+        return Err("Resident model does not match the installed local model inventory".into());
+    }
+    Ok(())
 }
 
 fn installed_model_inventory(data: &Value) -> Result<Value, String> {
@@ -11736,19 +11758,21 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let worker = std::thread::spawn(move || {
+            let report = |name: &str, digest: &str| json!({"models":[{"name":name,"size":10,"size_vram":10,"context_length":4096,"digest":digest}]});
+            let tags = |name: &str, digest: &str| json!({"models":[{"name":name,"digest":digest,"details":{"format":"gguf"}}]});
+            let first = "a".repeat(64);
+            let second = "b".repeat(64);
             let replies = [
-                json!({"models":[{"name":"first","size":10,"size_vram":10,"context_length":4096}]}),
-                json!({"capabilities":["vision"]}),
-                json!({"models":[{"name":"second","size":10,"size_vram":10,"context_length":4096}]}),
+                ("GET /api/ps ", report("first", &first)),
+                ("GET /api/tags ", tags("first", &first)),
+                ("POST /api/show ", json!({"capabilities":["vision"]})),
+                ("GET /api/ps ", report("second", &second)),
+                ("GET /api/tags ", tags("second", &second)),
             ];
-            for (index, body) in replies.into_iter().enumerate() {
+            for (expected, body) in replies {
                 let (mut stream, _) = listener.accept().unwrap();
                 let (request, _) = read_capability_fixture_request(&mut stream);
-                assert!(request.starts_with(if index == 1 {
-                    "POST /api/show "
-                } else {
-                    "GET /api/ps "
-                }));
+                assert!(request.starts_with(expected), "{request}");
                 let body = body.to_string();
                 write!(
                     stream,
@@ -11768,30 +11792,26 @@ mod tests {
     #[test]
     fn model_capability_requires_a_stable_reported_digest() {
         for (before, after, expected) in [
-            (Some("a".repeat(64)), Some("a".repeat(64)), json!(true)),
-            (Some("a".repeat(64)), Some("b".repeat(64)), Value::Null),
-            (None, None, Value::Null),
+            ("a".repeat(64), "a".repeat(64), json!(true)),
+            ("a".repeat(64), "b".repeat(64), Value::Null),
         ] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let addr = listener.local_addr().unwrap();
             let worker = std::thread::spawn(move || {
-                let report = |digest: Option<String>| json!({"models":[{"name":"local","size":10,"size_vram":10,"context_length":4096,"digest":digest}]});
-                for (index, body) in [
-                    report(before),
-                    json!({"capabilities":["vision"]}),
-                    report(after),
-                ]
-                .into_iter()
-                .enumerate()
-                {
+                let report = |digest: &str| json!({"models":[{"name":"local","size":10,"size_vram":10,"context_length":4096,"digest":digest}]});
+                let tags = |digest: &str| json!({"models":[{"name":"local","digest":digest,"details":{"format":"gguf"}}]});
+                let replies = [
+                    ("GET /api/ps ", report(&before)),
+                    ("GET /api/tags ", tags(&before)),
+                    ("POST /api/show ", json!({"capabilities":["vision"]})),
+                    ("GET /api/ps ", report(&after)),
+                    ("GET /api/tags ", tags(&after)),
+                ];
+                for (expected_path, body) in replies {
                     let (mut stream, _) = listener.accept().unwrap();
                     let (request, body_bytes) = read_capability_fixture_request(&mut stream);
-                    assert!(request.starts_with(if index == 1 {
-                        "POST /api/show "
-                    } else {
-                        "GET /api/ps "
-                    }));
-                    if index == 1 {
+                    assert!(request.starts_with(expected_path), "{request}");
+                    if expected_path == "POST /api/show " {
                         assert_eq!(
                             serde_json::from_slice::<Value>(&body_bytes).unwrap(),
                             json!({"model":"local"})
@@ -11811,6 +11831,73 @@ mod tests {
             worker.join().unwrap();
             assert_eq!(result["vision"], expected);
         }
+    }
+
+    #[test]
+    fn resident_status_rejects_remote_inventory_alias_over_http() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let digest = "a".repeat(64);
+            let replies = [
+                (
+                    "GET /api/ps ",
+                    json!({"models":[{"name":"alias","size":10,"size_vram":10,"digest":digest}]}),
+                ),
+                (
+                    "GET /api/tags ",
+                    json!({"models":[{"name":"alias","digest":digest,"remote_host":"https://example.invalid","details":{"format":"gguf"}}]}),
+                ),
+            ];
+            for (expected, body) in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let (request, _) = read_capability_fixture_request(&mut stream);
+                assert!(request.starts_with(expected), "{request}");
+                let body = body.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        assert!(resident_model_status_at(address)
+            .unwrap_err()
+            .contains("without remote forwarding"));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn resident_model_binding_rejects_remote_aliases_and_changed_digests() {
+        let digest = "a".repeat(64);
+        let ps = json!({"models":[{"name":"alias","digest":digest}]});
+        let good = json!({"models":[{"name":"alias","digest":digest,"details":{"format":"gguf"}}]});
+        assert!(verify_local_model_binding(&ps, &good, "alias").is_ok());
+        for marker in [
+            json!({"remote_model":"provider/model"}),
+            json!({"remote_host":"https://example.invalid"}),
+            json!({"remote_model":true}),
+        ] {
+            let mut bad = good.clone();
+            for (key, value) in marker.as_object().unwrap() {
+                bad["models"][0][key] = value.clone();
+            }
+            assert!(verify_local_model_binding(&ps, &bad, "alias").is_err());
+        }
+        let mut changed = good.clone();
+        changed["models"][0]["digest"] = json!("b".repeat(64));
+        assert!(verify_local_model_binding(&ps, &changed, "alias").is_err());
+        let mut unknown = ps.clone();
+        unknown["models"][0]["digest"] = Value::Null;
+        assert!(verify_local_model_binding(&unknown, &good, "alias").is_err());
+        let mut duplicate = good.clone();
+        duplicate["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(good["models"][0].clone());
+        assert!(verify_local_model_binding(&ps, &duplicate, "alias").is_err());
     }
 
     #[test]
