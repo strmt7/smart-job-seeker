@@ -3583,6 +3583,29 @@ fn staged_form_is_inspected_until_the_schema_settles() {
 }
 
 #[test]
+#[ignore = "launches a real browser against a fictional partially rendered form"]
+fn initially_nonempty_form_is_rechecked_for_later_fields() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_initial_partial_loading.html"))
+        .unwrap();
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "First name"));
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Last name"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a local browser against a fictional changing form"]
 fn disappearing_loading_field_requires_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

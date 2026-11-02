@@ -2035,3 +2035,16 @@ the disappearance rather than stating simply that none were detected. A unit
 test covers field growth, loss and recovery, and a fictional local browser
 fixture reproduces loss during loading. This does not establish the cause of the
 varying Workable observations or detect changes outside the loading window.
+
+### Initially partial forms (2026-11-02)
+
+The browser now takes a second snapshot after a short 350 ms wait even when
+the first snapshot contains fields. If the schema changes, it continues within
+the existing bounded loading loop and preserves field-loss review reasons.
+This adds at least one DOM inspection to these navigations and does not detect
+fields that appear after the snapshot is judged stable. A fictional local form
+that adds a field shortly after load, the staged-loading fixture and the
+disappearing-field fixture passed. One subsequent read-only Workable diagnostic
+still produced inconsistent separate observations: the first found no fields,
+while the application check reported possible CAPTCHA, required custom and
+hidden-control obstacles. It required manual review and did not fill or submit.

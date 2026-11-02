@@ -5591,26 +5591,30 @@ impl BrowserDriver for CdpDriver {
             }
         }
         let mut result = self.inspect_with_retry()?;
-        // Client-rendered forms may appear in stages. If the initial inspection
-        // is empty, allow a later nonempty schema one further observation to
-        // settle, while retaining any previously observed review walls.
+        // Client-rendered forms may start with fields and add more immediately
+        // after load. Recheck even a nonempty first snapshot, then allow a
+        // changing schema to settle within the same bounded loading window.
         let dynamic_deadline = Instant::now() + Duration::from_secs(3);
-        if result.schema.fields.is_empty() {
-            for _ in 0..3 {
-                if Instant::now() >= dynamic_deadline {
-                    break;
-                }
-                self.cdp.pump(
-                    Duration::from_millis(750)
-                        .min(dynamic_deadline.saturating_duration_since(Instant::now())),
-                );
-                let mut next = self.inspect_with_retry()?;
-                let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
-                retain_loading_observations(result, &mut next);
-                result = next;
-                if stable {
-                    break;
-                }
+        let initial_nonempty = !result.schema.fields.is_empty();
+        for observation in 0..3 {
+            if Instant::now() >= dynamic_deadline {
+                break;
+            }
+            let delay = if observation == 0 && initial_nonempty {
+                350
+            } else {
+                750
+            };
+            self.cdp.pump(
+                Duration::from_millis(delay)
+                    .min(dynamic_deadline.saturating_duration_since(Instant::now())),
+            );
+            let mut next = self.inspect_with_retry()?;
+            let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
+            retain_loading_observations(result, &mut next);
+            result = next;
+            if stable {
+                break;
             }
         }
         // A same-document route has no new loader or HTTP response. For an
