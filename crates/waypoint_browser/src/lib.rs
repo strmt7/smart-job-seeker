@@ -1529,6 +1529,13 @@ impl CdpDriver {
         Ok(self.cdp.observed_non_read_requests())
     }
 
+    fn stop_if_non_read_request_observed(&self, before: u64) -> Result<(), DriverError> {
+        if self.cdp.observed_non_read_requests() > before {
+            return Err(DriverError("A non-GET/HEAD request was observed during filling; text entry stopped. Its purpose and delivery are unknown".into()));
+        }
+        Ok(())
+    }
+
     /// Capture the current viewport for the candidate's review.
     pub fn screenshot_base64(&mut self) -> Result<String, DriverError> {
         let result = self
@@ -4899,6 +4906,8 @@ impl CdpDriver {
                         "Rich text has too many lines; review it manually".into(),
                     ));
                 }
+                // Observation is partial and cannot prevent a page from sending data.
+                let network_before = self.observed_non_read_requests()?;
                 // Focus the control and insert text through Chromium input.
                 // Input.insertText does not reproduce physical keystroke events.
                 // Replace existing content instead of appending to it.
@@ -4925,9 +4934,11 @@ impl CdpDriver {
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Backspace","code":"Backspace","windowsVirtualKeyCode":8})).map_err(derr)?;
                 self.ensure_text_focus(node, object)?;
+                self.stop_if_non_read_request_observed(network_before)?;
                 if rich {
                     for (index, line) in t.split('\n').enumerate() {
                         self.ensure_text_focus(node, object)?;
+                        self.stop_if_non_read_request_observed(network_before)?;
                         if index > 0 {
                             self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"modifiers":8})).map_err(derr)?;
                             self.ensure_text_focus(node, object)?;
@@ -4937,6 +4948,7 @@ impl CdpDriver {
                         if !line.is_empty() {
                             for segment in text_segments(line) {
                                 self.ensure_text_focus(node, object)?;
+                                self.stop_if_non_read_request_observed(network_before)?;
                                 self.cdp
                                     .call("Input.insertText", json!({"text":segment}))
                                     .map_err(derr)?;
@@ -4954,6 +4966,7 @@ impl CdpDriver {
                             .ok_or_else(|| DriverError("Unsupported keyboard character".into()))?;
                         let key = character.to_string();
                         self.ensure_text_focus(node, object)?;
+                        self.stop_if_non_read_request_observed(network_before)?;
                         self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":key,"code":code,"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
                         self.ensure_text_focus(node, object)?;
                         self.cdp.call("Input.dispatchKeyEvent", json!({"type":"char","key":key,"code":code,"text":key,"unmodifiedText":unmodified.to_string(),"windowsVirtualKeyCode":key_code,"modifiers":modifiers})).map_err(derr)?;
@@ -4963,6 +4976,7 @@ impl CdpDriver {
                 } else {
                     for segment in text_segments(t) {
                         self.ensure_text_focus(node, object)?;
+                        self.stop_if_non_read_request_observed(network_before)?;
                         self.cdp
                             .call("Input.insertText", json!({ "text": segment }))
                             .map_err(derr)?;
@@ -4972,6 +4986,7 @@ impl CdpDriver {
                 // move focus, or display an overlay. Do not report a completed
                 // fill until the same field is still visible and focused.
                 self.ensure_text_focus(node, object)?;
+                self.stop_if_non_read_request_observed(network_before)?;
                 let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
                 if retained.get("exceptionDetails").is_some()
                     || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)

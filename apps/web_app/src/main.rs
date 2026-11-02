@@ -13412,7 +13412,7 @@ mod tests {
                             let _ = tx.send(());
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                         } else {
-                            let page = "<!doctype html><label for='given'>First name</label><input id='given' autocomplete='given-name' oninput=\"fetch('/fixture',{method:'POST',body:'fictional'})\"><label for='family'>Last name</label><input id='family' autocomplete='family-name'>";
+                            let page = "<!doctype html><label for='given'>First name</label><input id='given' autocomplete='given-name' oninput=\"let x=new XMLHttpRequest();x.open('POST','/fixture',false);x.send('fictional')\"><label for='family'>Last name</label><input id='family' autocomplete='family-name'>";
                             let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", page.len(), page);
                         }
                     }
@@ -13447,7 +13447,7 @@ mod tests {
         })
         .unwrap();
         ws.index_next_duplicate_job("").unwrap();
-        let profile = json!({"first_name":"A", "last_name":"B"});
+        let profile = json!({"first_name":"ABCD", "last_name":"B"});
         ws.save_candidate_profile(&profile.to_string()).unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
@@ -13456,7 +13456,7 @@ mod tests {
             suggestions: vec![
                 ProposedMapping {
                     field_selector: "#given".into(),
-                    value: PacketValue::Text("A".into()),
+                    value: PacketValue::Text("ABCD".into()),
                 },
                 ProposedMapping {
                     field_selector: "#family".into(),
@@ -13507,7 +13507,12 @@ mod tests {
         let error = result.expect_err("fill should stop after observing the request");
         assert!(error.contains("non-GET/HEAD request"), "{error}");
         let current = session.as_mut().unwrap();
-        assert_eq!(current.completed_selectors, vec!["#given"]);
+        assert!(current.completed_selectors.is_empty());
+        let partial = current.driver.text_value_snapshot("#given").unwrap().value;
+        assert!(
+            !partial.is_empty() && "ABCD".starts_with(&partial) && partial.len() < 4,
+            "{partial}"
+        );
         assert_eq!(
             current.driver.text_value_snapshot("#family").unwrap().value,
             ""

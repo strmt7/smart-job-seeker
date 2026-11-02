@@ -2228,12 +2228,15 @@ fn observes_non_read_request_triggered_by_field_input() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver.open(&format!("http://127.0.0.1:{port}/")).unwrap();
     let before = driver.observed_non_read_requests().unwrap();
-    driver
-        .execute(&BrowserCommand::Fill {
-            selector: "#name".into(),
-            value: PacketValue::Text("A".into()),
-        })
-        .unwrap();
+    if let Err(error) = driver.execute(&BrowserCommand::Fill {
+        selector: "#name".into(),
+        value: PacketValue::Text("A".into()),
+    }) {
+        assert!(
+            error.to_string().contains("non-GET/HEAD request"),
+            "{error}"
+        );
+    }
     rx.recv_timeout(Duration::from_secs(5))
         .expect("fictional POST did not reach loopback server");
     let deadline = Instant::now() + Duration::from_secs(5);
