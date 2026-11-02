@@ -2829,6 +2829,55 @@ fn numeric_minimum_without_cited_number(preference: &str, quote: &str) -> bool {
         && !quote.bytes().any(|byte| byte.is_ascii_digit())
 }
 
+// Compare only directly adjacent integer + time-unit pairs. This does not
+// establish that the cited amount refers to the same benefit or condition.
+// Ambiguous formats and cross-unit conversions remain for manual review.
+fn numeric_time_minimum_requires_review(preference: &str, quote: &str) -> bool {
+    fn amounts(text: &str) -> Vec<(u64, &'static str)> {
+        let words: Vec<_> = text.split_whitespace().collect();
+        words
+            .windows(2)
+            .filter_map(|pair| {
+                if !pair[0].bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                let number = pair[0].parse::<u64>().ok()?;
+                let unit = pair[1]
+                    .trim_matches(|c: char| !c.is_alphabetic())
+                    .to_ascii_lowercase();
+                let unit = match unit.as_str() {
+                    "hour" | "hours" => "hour",
+                    "day" | "days" => "day",
+                    "week" | "weeks" => "week",
+                    "month" | "months" => "month",
+                    "year" | "years" => "year",
+                    _ => return None,
+                };
+                Some((number, unit))
+            })
+            .collect()
+    }
+    let lower = preference.to_ascii_lowercase();
+    if !["at least", "minimum", "no less than", "not less than"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        return false;
+    }
+    let target = amounts(preference);
+    if target.len() != 1 {
+        return false;
+    }
+    let found = amounts(quote);
+    let quote_lower = quote.to_ascii_lowercase();
+    found.len() != 1
+        || found[0].1 != target[0].1
+        || found[0].0 < target[0].0
+        || ["up to", "at most", "maximum", "no more than"]
+            .iter()
+            .any(|marker| quote_lower.contains(marker))
+}
+
 fn compare_preferences_with_source(
     model: &mut dyn Inference,
     mut original: Value,
@@ -2992,6 +3041,10 @@ fn compare_preferences_with_source(
             && quote
                 .as_str()
                 .is_some_and(|text| numeric_minimum_without_cited_number(preference, text));
+        let numeric_time_review = status == "supported"
+            && quote
+                .as_str()
+                .is_some_and(|text| numeric_time_minimum_requires_review(preference, text));
         // A statement that information is unstated is not evidence of the
         // opposite. This is a limited English-language guard, not semantic validation.
         let absent_information = matches!(status, "supported" | "contradicted")
@@ -3014,6 +3067,7 @@ fn compare_preferences_with_source(
             || ambiguous_quote
             || numerical_review
             || missing_numeric_evidence
+            || numeric_time_review
             || absent_information;
         if needs_review || status == "unknown" {
             if let (Some(source), Some(text)) = (verification_text, quote.as_str()) {
@@ -3034,6 +3088,8 @@ fn compare_preferences_with_source(
                 "A numeric interval in or near the cited text crosses the preference's stated number; check the bounds and units manually.".to_owned()
             } else if missing_numeric_evidence {
                 "The cited text does not include a numeric amount for this minimum; check the full listing and any conditions manually.".to_owned()
+            } else if numeric_time_review {
+                "The cited time amount does not clearly establish this minimum; review the amount, units and conditions manually.".to_owned()
             } else if absent_information {
                 "The cited text says information is not stated; review the preference manually.".to_owned()
             } else if status == "unknown" {
@@ -8692,6 +8748,91 @@ mod tests {
             "No more than 30 hours",
             "Flexible hours"
         ));
+    }
+
+    #[test]
+    fn minimum_time_evidence_requires_a_sufficient_matching_unit() {
+        assert!(numeric_time_minimum_requires_review(
+            "At least 30 days leave",
+            "In 2026, unlimited leave"
+        ));
+        assert!(numeric_time_minimum_requires_review(
+            "At least 30 days leave",
+            "25 days leave"
+        ));
+        assert!(numeric_time_minimum_requires_review(
+            "At least 30 days leave",
+            "5 weeks leave"
+        ));
+        assert!(numeric_time_minimum_requires_review(
+            "At least 30 days leave",
+            "Up to 35 days leave"
+        ));
+        assert!(numeric_time_minimum_requires_review(
+            "At least 30 days leave",
+            "20 days leave and 10 days holiday"
+        ));
+        assert!(!numeric_time_minimum_requires_review(
+            "At least 30 days leave",
+            "32 days leave"
+        ));
+        assert!(!numeric_time_minimum_requires_review(
+            "No more than 30 hours",
+            "20 hours"
+        ));
+    }
+
+    #[test]
+    fn unsupported_time_minimum_does_not_inflate_preference_score() {
+        struct Fixture(&'static str);
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                Ok((
+                    json!({"items":[{"id":1,"status":"supported","quote":self.0,"explanation":"Fixture judgment"}]}),
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let preference = "At least 30 days of leave";
+        for listing in [
+            "25 days of leave",
+            "In 2026, unlimited leave",
+            "5 weeks of leave",
+            "Up to 35 days of leave",
+        ] {
+            let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+            let fallback = validate(raw.clone(), &[], preference, listing).unwrap();
+            let result = compare_preferences(
+                &mut Fixture(listing),
+                raw,
+                fallback,
+                &[],
+                preference,
+                listing,
+            );
+            assert_eq!(result["rubric"][0]["status"], "unknown", "{listing}");
+            assert_eq!(
+                result["score_range"],
+                json!({"lower":0,"upper":100}),
+                "{listing}"
+            );
+            assert!(
+                result["evidence"].as_array().unwrap().is_empty(),
+                "{listing}"
+            );
+        }
     }
 
     #[test]
