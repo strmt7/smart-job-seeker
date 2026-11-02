@@ -428,7 +428,7 @@ async function followDiscovery(id){
  try{for(;;){const result=await api('/api/discover/status',{task_id:id});if(Array.isArray(result.history)){renderDiscoveryHistory(result.history);if(result.history.length!==rendered){rendered=result.history.length;await refresh();}}
   progress.textContent=`Boards processed: ${result.processed ?? 0} of ${result.total ?? '?'}`;
   if(result.status==='failed'){sessionStorage.removeItem('waypoint-discovery');sessionStorage.setItem('waypoint-discovery-seen',id);throw new Error(result.error || 'Discovery failed');}
-  if(result.status==='complete'){sessionStorage.removeItem('waypoint-discovery');sessionStorage.setItem('waypoint-discovery-seen',id);progress.textContent=result.stopped_reason==='rate_limited'?`Stopped after ${result.processed} of ${result.total} boards because a provider returned HTTP 429. Remaining boards were not checked.`:result.cancelled?`Stopped after ${result.processed} of ${result.total} boards.`:`Finished ${result.processed} of ${result.total} boards.`;break;}
+  if(result.status==='complete'){sessionStorage.removeItem('waypoint-discovery');sessionStorage.setItem('waypoint-discovery-seen',id);const skipped=Number.isSafeInteger(result.skipped)?result.skipped:0;progress.textContent=`${result.cancelled?'Stopped':'Finished'} after ${result.processed ?? 0} of ${result.total ?? '?'} boards were processed.${skipped?` ${skipped} not attempted because their provider returned HTTP 429.`:''}`;break;}
   await new Promise(resolve=>setTimeout(resolve,1000));
  }}catch(e){notify(e.message);if(e.message==='Discovery run not found')sessionStorage.removeItem('waypoint-discovery');if(sessionStorage.getItem('waypoint-discovery'))resume.hidden=false;}finally{discoveryFollowing=false;cancel.hidden=true;}
 }

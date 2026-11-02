@@ -17,12 +17,14 @@ struct Task {
     cancel: Arc<AtomicBool>,
     total: usize,
     processed: usize,
+    skipped: usize,
     history: Vec<Value>,
     listing: Option<(String, String)>,
 }
 enum Message {
     Board(DiscoveryTarget, String, Result<String, FetchFailure>),
-    Done(Option<&'static str>),
+    Skipped(DiscoveryTarget),
+    Done,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -137,31 +139,37 @@ fn start_with_fetcher(
         cancel,
         total,
         processed: 0,
+        skipped: 0,
         history: Vec::new(),
         listing,
     });
     drop(task);
     std::thread::spawn(move || {
         let registry = waypoint_workspace::default_registry();
-        let mut stopped = None;
+        let mut limited_sources = std::collections::HashSet::new();
         for target in targets {
             if worker_cancel.load(Ordering::Acquire) {
                 break;
+            }
+            if limited_sources.contains(&target.source) {
+                if !send_bounded(&tx, Message::Skipped(target), &worker_cancel) {
+                    return;
+                }
+                continue;
             }
             match waypoint_connectors::discovery_plan(&registry, &target.source, &target.board) {
                 Ok(plan) => {
                     let result = fetcher.get(&plan.url);
                     let rate_limited = matches!(&result, Err(FetchFailure::Network(message)) if message == "http 429");
+                    if rate_limited {
+                        limited_sources.insert(target.source.clone());
+                    }
                     if !send_bounded(
                         &tx,
                         Message::Board(target, plan.url, result),
                         &worker_cancel,
                     ) {
                         return;
-                    }
-                    if rate_limited {
-                        stopped = Some("rate_limited");
-                        break;
                     }
                 }
                 Err(e) => {
@@ -176,7 +184,7 @@ fn start_with_fetcher(
                 }
             }
         }
-        let _ = send_bounded(&tx, Message::Done(stopped), &AtomicBool::new(false));
+        let _ = send_bounded(&tx, Message::Done, &AtomicBool::new(false));
     });
     Ok(())
 }
@@ -214,6 +222,8 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
     };
     match task.rx.try_recv() {
         Ok(Message::Board(target, url, result)) => {
+            let rate_limited =
+                matches!(&result, Err(FetchFailure::Network(message)) if message == "http 429");
             let listing_check = task.listing.as_ref().map(|(job_id, checked_url)| {
                 let still_current = waypoint_domain::JobIdentityId::new(job_id)
                     .ok()
@@ -244,33 +254,46 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
             };
             let outcome = ws.discover(std::slice::from_ref(&target), &fetcher, crate::now());
             task.processed += 1;
-            let report = json!({"source":target.source,"board":target.board,"summary":outcome.summary(),"coverage":outcome.coverage,"has_more":more,"listing_check":listing_check});
+            let summary = if rate_limited {
+                format!("{} Provider returned HTTP 429; further boards from this provider will be skipped.", outcome.summary())
+            } else {
+                outcome.summary()
+            };
+            let report = json!({"source":target.source,"board":target.board,"summary":summary,"coverage":outcome.coverage,"has_more":more,"listing_check":listing_check});
             task.history.push(report.clone());
             Ok(
-                json!({"status":"running","source":report["source"],"board":report["board"],"processed":task.processed,"total":task.total,"summary":report["summary"],"coverage":report["coverage"],"has_more":more,"history":task.history}),
+                json!({"status":"running","source":report["source"],"board":report["board"],"processed":task.processed,"skipped":task.skipped,"total":task.total,"summary":report["summary"],"coverage":report["coverage"],"has_more":more,"history":task.history}),
             )
         }
-        Ok(Message::Done(stopped)) => {
+        Ok(Message::Skipped(target)) => {
+            task.processed += 1;
+            task.skipped += 1;
+            task.history.push(json!({"source":target.source,"board":target.board,"summary":"Not attempted: this provider returned HTTP 429 earlier in this run.","skipped":"rate_limited"}));
+            Ok(
+                json!({"status":"running","processed":task.processed,"skipped":task.skipped,"total":task.total,"history":task.history}),
+            )
+        }
+        Ok(Message::Done) => {
             let processed = task.processed;
             let total = task.total;
             let cancelled = task.cancel.load(Ordering::Acquire);
-            let result = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"stopped_reason":stopped,"history":task.history});
+            let result = json!({"status":"complete","processed":processed,"skipped":task.skipped,"total":total,"cancelled":cancelled,"history":task.history});
             *COMPLETED.lock().map_err(|_| "Discovery task unavailable")? =
                 Some((id.to_owned(), result.clone()));
             *tasks = None;
             Ok(result)
         }
         Err(TryRecvError::Empty) => Ok(
-            json!({"status":"running","processed":task.processed,"total":task.total,"history":task.history}),
+            json!({"status":"running","processed":task.processed,"skipped":task.skipped,"total":task.total,"history":task.history}),
         ),
         Err(TryRecvError::Disconnected) => {
             let cancelled = task.cancel.load(Ordering::Acquire);
             let processed = task.processed;
             let total = task.total;
             let result = if cancelled {
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"history":task.history})
+                json!({"status":"complete","processed":processed,"skipped":task.skipped,"total":total,"cancelled":true,"history":task.history})
             } else {
-                json!({"status":"failed","processed":processed,"total":total,"history":task.history,"error":"Discovery worker stopped before completion"})
+                json!({"status":"failed","processed":processed,"skipped":task.skipped,"total":total,"history":task.history,"error":"Discovery worker stopped before completion"})
             };
             *COMPLETED.lock().map_err(|_| "Discovery task unavailable")? =
                 Some((id.to_owned(), result.clone()));
@@ -306,13 +329,17 @@ pub fn cancel(id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn rate_limit_stops_remaining_boards_and_reports_coverage() {
+    fn rate_limit_skips_same_source_and_continues_other_providers() {
         use std::sync::atomic::AtomicUsize;
         struct RateLimited(Arc<AtomicUsize>);
         impl Fetcher for RateLimited {
-            fn get(&self, _: &str) -> Result<String, FetchFailure> {
+            fn get(&self, url: &str) -> Result<String, FetchFailure> {
                 self.0.fetch_add(1, Ordering::Relaxed);
-                Err(FetchFailure::Network("http 429".into()))
+                if url.contains("greenhouse") {
+                    Err(FetchFailure::Network("http 429".into()))
+                } else {
+                    Ok("[]".into())
+                }
             }
         }
         let calls = Arc::new(AtomicUsize::new(0));
@@ -320,7 +347,8 @@ mod tests {
             "rate-limit".into(),
             vec![
                 DiscoveryTarget::new("greenhouse", "one"),
-                DiscoveryTarget::new("lever", "two"),
+                DiscoveryTarget::new("greenhouse", "two"),
+                DiscoveryTarget::new("lever", "three"),
             ],
             Arc::new(RateLimited(calls.clone())),
             None,
@@ -332,11 +360,12 @@ mod tests {
         loop {
             let result = poll("rate-limit", &mut ws).unwrap();
             if result["status"] == "complete" {
-                assert_eq!(result["stopped_reason"], "rate_limited");
-                assert_eq!(result["processed"], 1);
-                assert_eq!(result["total"], 2);
-                assert_eq!(result["history"].as_array().unwrap().len(), 1);
-                assert_eq!(calls.load(Ordering::Relaxed), 1);
+                assert_eq!(result["processed"], 3);
+                assert_eq!(result["skipped"], 1);
+                assert_eq!(result["total"], 3);
+                assert_eq!(result["history"][1]["skipped"], "rate_limited");
+                assert_eq!(result["history"][2]["source"], "lever");
+                assert_eq!(calls.load(Ordering::Relaxed), 2);
                 break;
             }
             assert!(Instant::now() < deadline);
@@ -523,6 +552,7 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 2,
             processed: 1,
+            skipped: 0,
             history: vec![json!({"source":"greenhouse","board":"fixture","summary":"1 saved"})],
             listing: None,
         });
