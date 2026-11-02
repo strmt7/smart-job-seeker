@@ -411,6 +411,89 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
+    fn resource_gated_multilingual_third_party_contacts() {
+        use waypoint_applications::form_mapping::{
+            FormField, FormFieldType, FormSchema, PacketValue,
+        };
+        with_resource_gated_model(|| {
+            let model = crate::resident_model()
+                .unwrap()
+                .expect("eligible resident model");
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let rows = [
+                ("#applicant-de", "E-Mail der bewerbenden Person"),
+                ("#reference-de", "E-Mail der Referenzperson"),
+                ("#applicant-fr", "Adresse e-mail du candidat"),
+                (
+                    "#reference-fr",
+                    "Adresse e-mail de la personne de référence",
+                ),
+                ("#applicant-es", "Correo electrónico del candidato"),
+                (
+                    "#reference-es",
+                    "Correo electrónico de la persona de referencia",
+                ),
+            ];
+            let schema = FormSchema {
+                origin: "https://example.invalid".into(),
+                multi_step: false,
+                steps: 1,
+                fields: rows
+                    .iter()
+                    .map(|(selector, label)| FormField {
+                        selector: (*selector).into(),
+                        label: (*label).into(),
+                        field_type: FormFieldType::Email,
+                        required: false,
+                        sensitive: false,
+                        editing_mode: None,
+                        max_length_utf16: None,
+                        min_length_utf16: None,
+                        pattern: None,
+                        autocomplete: Some("email".into()),
+                    })
+                    .collect(),
+            };
+            let (mappings, warnings, _) = crate::suggestions::suggest_with_review(
+                &mut llm,
+                &schema,
+                &serde_json::json!({"email":"avery@example.invalid"}),
+            )
+            .unwrap();
+            println!(
+                "suggested: {:?}; warnings: {:?}",
+                mappings
+                    .iter()
+                    .map(|item| &item.field_selector)
+                    .collect::<Vec<_>>(),
+                warnings
+            );
+            assert!(
+                mappings
+                    .iter()
+                    .all(|item| item.field_selector.starts_with("#applicant-")
+                        && item.value == PacketValue::Text("avery@example.invalid".into())),
+                "third-party or incorrect mapping"
+            );
+            for selector in ["#applicant-de", "#applicant-fr", "#applicant-es"] {
+                assert!(
+                    mappings.iter().any(|item| item.field_selector == selector),
+                    "missing applicant mapping {selector}"
+                );
+            }
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
     fn resource_gated_repeated_contact_fields() {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::PacketValue;

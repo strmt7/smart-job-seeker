@@ -201,6 +201,12 @@ fn names_third_party(label: &str) -> bool {
                 | "manager"
                 | "supervisor"
                 | "recruiter"
+                | "referenzperson"
+                | "referenzpersonen"
+                | "référence"
+                | "références"
+                | "referencia"
+                | "referencias"
         )
     }) || words
         .windows(2)
@@ -1830,6 +1836,17 @@ mod tests {
             ("Current manager phone", "phone", "tel"),
             ("Referee full name", "full_name", "name"),
             ("Emergency contact first name", "first_name", "given-name"),
+            ("E-Mail der Referenzperson", "email", "email"),
+            (
+                "Adresse e-mail de la personne de référence",
+                "email",
+                "email",
+            ),
+            (
+                "Correo electrónico de la persona de referencia",
+                "email",
+                "email",
+            ),
         ] {
             schema.fields[0].label = label.into();
             schema.fields[0].autocomplete = Some(hint.into());
