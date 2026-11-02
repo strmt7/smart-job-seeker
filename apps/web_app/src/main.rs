@@ -1827,8 +1827,8 @@ fn check_inference_memory() -> Result<(), String> {
     inference_memory_gate(system.available_memory(), system.total_memory())
 }
 
-/// Only use one already-resident model that Ollama reports as fully GPU
-/// resident and within the existing 16 GiB budget. This check is a snapshot,
+/// Only use one already-resident model within the reported GPU and CPU budgets.
+/// This check is a snapshot,
 /// not a reservation; Ollama can change its state after it is read.
 fn resident_model_identity() -> Result<Option<resident_inference::ResidentIdentity>, String> {
     #[cfg(windows)]
@@ -1861,7 +1861,10 @@ fn form_model_from_status(status: &Value) -> Result<Option<String>, String> {
         Some("multiple_models") => {
             Err("Multiple models are resident; use one eligible model".into())
         }
-        Some("not_fully_gpu") => Err("The resident model is not fully GPU-resident".into()),
+        Some("not_fully_gpu") => Err(
+            "The resident model exceeds the allowed system-memory offload or has no GPU allocation"
+                .into(),
+        ),
         Some("over_budget") => Err("The resident model exceeds the GPU memory budget".into()),
         _ => Err("Resident model status is incomplete or unavailable".into()),
     }
@@ -1960,7 +1963,7 @@ fn model_diagnostics(data: &Value) -> Result<Value, String> {
         .ok_or("Ollama did not report resident models")?;
     if let Some(name) = eligible {
         return Ok(
-            json!({"model":name,"model_digest":models[0]["digest"].as_str().filter(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())),"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"],"context_length":models[0]["context_length"].as_u64()}),
+            json!({"model":name,"model_digest":models[0]["digest"].as_str().filter(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())),"state":"ready","reported_bytes":models[0]["size"],"reported_vram_bytes":models[0]["size_vram"],"reported_cpu_bytes":models[0]["size"].as_u64().unwrap_or(0).saturating_sub(models[0]["size_vram"].as_u64().unwrap_or(0)),"context_length":models[0]["context_length"].as_u64()}),
         );
     }
     let state = if models.is_empty() {
@@ -2037,9 +2040,7 @@ fn eligible_resident_model(data: &Value) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let model = &models[0];
-    let size = model["size"].as_u64().unwrap_or(0);
-    let vram = model["size_vram"].as_u64().unwrap_or(0);
-    if size == 0 || vram != size || vram > 16 * 1024 * 1024 * 1024 {
+    if waypoint_inference::ollama::bounded_resident_allocation(model).is_err() {
         return Ok(None);
     }
     Ok(model["name"]
@@ -2681,7 +2682,7 @@ fn serve(
                 .into());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             duplicate_search::start(task_id.clone(), model, input)?;
@@ -2732,7 +2733,7 @@ fn serve(
                 .map_err(|e| e.to_string())?;
             let input = duplicate_inputs(ws, &a, &b)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             duplicate_compare::start(task_id.clone(), model, input)?;
@@ -3228,7 +3229,7 @@ fn serve(
                 .map_err(|e| e.to_string())?;
             let (contacts, digest) = contact_advice::inputs(ws, &job)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task = random_id()?;
             contact_advice::start(task.clone(), job.as_str().into(), digest, model, contacts)?;
@@ -3556,7 +3557,7 @@ fn serve(
             }
             let model_status = resident_model_status()?;
             let model = model_status["model"].as_str().map(str::to_owned).ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             let job = ws
@@ -3736,7 +3737,7 @@ fn serve(
                 return Err("Add qualifications or search instructions first".into());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let id = random_id()?;
             search_planner::start(id.clone(), model, facts, instructions, digest, protected)?;
@@ -4112,7 +4113,7 @@ fn serve(
                 .map_err(|error| error.to_string())?;
             let input = email_answer_inputs(ws, &id)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             answer_task::start(task_id.clone(), model, input)?;
@@ -4188,7 +4189,7 @@ fn serve(
             let before = body["before"].as_str().ok_or("missing passage")?;
             let input = template_suggestion_inputs(ws, id, &job, before)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             template_suggest::start(task_id.clone(), model, input)?;
@@ -4348,7 +4349,7 @@ fn serve(
                 .map_err(|e| e.to_string())?
                 .ok_or("Document not found")?;
             let model = resident_model()?
-                .ok_or("No single fully GPU-resident local vision model is available")?;
+                .ok_or("No single local vision model is available within the GPU and system-memory budgets")?;
             let task_id = random_id()?;
             pdf_transcribe::start(
                 task_id.clone(),
@@ -4414,7 +4415,7 @@ fn serve(
                 .map_err(|e| e.to_string())?
                 .ok_or("Document not found")?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             // Visual model output is advisory, including when every page is processed.
@@ -5114,7 +5115,7 @@ fn serve(
                 return Err("The page changed during capture; inspect radio groups again".into());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"custom_radio_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory radio option crop; no control was clicked."}))).is_ok());
@@ -5197,7 +5198,7 @@ fn serve(
                 return Ok(());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             choice_advice::start(choice_advice::Request {
@@ -5268,7 +5269,7 @@ fn serve(
                 return Ok(());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             choice_advice::start(choice_advice::Request {
@@ -5428,7 +5429,7 @@ fn serve(
                 return Err("The page changed during capture; inspect choices again".into());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"custom_choice_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory choice crop; no control was clicked."}))).is_ok());
@@ -5767,7 +5768,7 @@ fn serve(
             let (controls, digest, context) =
                 control_rank::snapshot_with_context(&mut current.driver)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             control_rank::start(
@@ -6045,7 +6046,7 @@ fn serve(
                 return Err("The page changed during capture; inspect it again".into());
             }
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"control_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory crop; no control was clicked."}))).is_ok());
@@ -6290,7 +6291,7 @@ fn serve(
                 .ok_or("Form session expired")?;
             let (context, links, snapshot_digest) = link_rank::snapshot(&mut current.driver)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             link_rank::start(
@@ -6682,7 +6683,7 @@ fn serve(
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let segment = body["segment"].as_u64().unwrap_or(0);
             if segment > 5 {
@@ -7061,7 +7062,7 @@ fn serve(
             check_answer_page(current)?;
             let input = answer_inputs(ws, current, selector)?;
             let model = resident_model()?.ok_or(
-                "No single fully GPU-resident Ollama model is available within the 16 GiB budget",
+                "No single Ollama model is available within the GPU and system-memory budgets",
             )?;
             let task_id = random_id()?;
             answer_task::start(task_id.clone(), model, input)?;
@@ -11704,9 +11705,18 @@ mod tests {
             eligible_resident_model(&at_limit).unwrap().as_deref(),
             Some("local")
         );
+        let partial = json!({"models":[{"name":"local","size":18u64*1024*1024*1024,"size_vram":16u64*1024*1024*1024}]});
+        assert_eq!(
+            eligible_resident_model(&partial).unwrap().as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            model_diagnostics(&partial).unwrap()["reported_cpu_bytes"],
+            2u64 * 1024 * 1024 * 1024
+        );
         for bad in [
             json!({"models":[]}),
-            json!({"models":[{"name":"m","size":10,"size_vram":9}]}),
+            json!({"models":[{"name":"m","size":3u64*1024*1024*1024+1,"size_vram":1024u64*1024*1024}]}),
             json!({"models":[{"name":"m","size":17_179_869_185u64,"size_vram":17_179_869_185u64}]}),
             json!({"models":[{},{}]}),
         ] {
@@ -11717,7 +11727,7 @@ mod tests {
             (json!({"models":[]}), "no_model"),
             (json!({"models":[{},{}]}), "multiple_models"),
             (
-                json!({"models":[{"name":"m","size":10,"size_vram":9}]}),
+                json!({"models":[{"name":"m","size":3u64*1024*1024*1024+1,"size_vram":1024u64*1024*1024}]}),
                 "not_fully_gpu",
             ),
             (

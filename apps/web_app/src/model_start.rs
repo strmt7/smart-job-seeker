@@ -47,8 +47,10 @@ pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Re
         .checked_mul(6)
         .and_then(|n| n.checked_add(4))
         .map(|n| n / 5)
-        // Estimated overhead, not a guarantee of model or driver allocation.
+        // Estimated overhead and at most 2 GiB of model offload. The runtime
+        // decides the actual split, which is checked after loading.
         .and_then(|n| n.checked_add(GIB / 2))
+        .map(|n| n.saturating_sub(2 * GIB).max(GIB))
         .ok_or("Invalid model size")?;
     if free < needed_gpu {
         return Err(format!(
@@ -125,7 +127,7 @@ fn verify_started_model(ps: &Value, requested: &str) -> Result<Value, String> {
     })?;
     if state["model"].as_str() != Some(requested) || state["context_length"].as_u64() != Some(4096)
     {
-        return Err("The requested model was not reported as the single fully GPU-resident model with the requested 4096 context; a model may remain loaded. Check local model status before retrying".into());
+        return Err("The requested model was not reported as the single model within the GPU and system-memory budgets with the requested 4096 context; a model may remain loaded. Check local model status before retrying".into());
     }
     Ok(
         json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":4096,"already_running":false}),
@@ -351,7 +353,7 @@ mod tests {
         let gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":5*GIB}]});
         assert!(resource_gate(6 * GIB, 20 * GIB, &gpu).is_ok());
         assert!(resource_gate(0, 20 * GIB, &gpu).is_err());
-        assert!(resource_gate(9 * GIB, 20 * GIB, &gpu).is_err());
+        assert!(resource_gate(9 * GIB, 20 * GIB, &gpu).is_ok());
         let spacious = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":GIB}]});
         assert!(resource_gate(9 * GIB, 20 * GIB, &spacious).is_ok());
         assert!(resource_gate(10 * GIB, 20 * GIB, &spacious).is_ok());
@@ -361,7 +363,8 @@ mod tests {
         let at_free = |free| json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":16*GIB-free}]});
         assert!(resource_gate(12 * GIB, 22 * GIB, &larger_gpu).is_ok());
         assert!(resource_gate(12 * GIB + 1, 21 * GIB, &larger_gpu).is_err());
-        assert!(resource_gate(13 * GIB, 23 * GIB, &at_free(16 * GIB)).is_err());
+        assert!(resource_gate(13 * GIB, 23 * GIB, &at_free(16 * GIB)).is_ok());
+        assert!(resource_gate(16 * GIB, 26 * GIB, &at_free(16 * GIB)).is_err());
         let model_1285 = 12 * GIB + 85 * GIB / 100;
         assert!(resource_gate(model_1285, 23 * GIB, &at_free(16 * GIB)).is_ok());
         assert!(resource_gate(model_1285, 20 * GIB, &at_free(16 * GIB)).is_err());
@@ -373,9 +376,9 @@ mod tests {
         );
         assert!(resource_gate(6 * GIB, 16 * GIB - 1, &gpu).is_err());
         assert!(resource_gate(6 * GIB, 16 * GIB, &gpu).is_ok());
-        let gpu_error = resource_gate(9 * GIB, 20 * GIB, &gpu).unwrap_err();
+        let gpu_error = resource_gate(11 * GIB, 21 * GIB, &gpu).unwrap_err();
         assert!(gpu_error.contains("11264 MiB free") && gpu_error.contains("MiB required"));
-        let required_gpu = (6 * GIB * 6).div_ceil(5) + GIB / 2;
+        let required_gpu = (6 * GIB * 6).div_ceil(5) + GIB / 2 - 2 * GIB;
         let at_boundary = |free| json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":16*GIB-free}]});
         assert!(resource_gate(6 * GIB, 20 * GIB, &at_boundary(required_gpu)).is_ok());
         assert!(resource_gate(6 * GIB, 20 * GIB, &at_boundary(required_gpu - 1)).is_err());
@@ -388,6 +391,76 @@ mod tests {
         .is_err());
         assert!(resource_gate(6*GIB, 20*GIB, &json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":10,"used_bytes":11}]})).is_err());
     }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads one installed model with partial GPU offload after resource preflight"]
+    fn live_partial_gpu_model_is_usable_with_memory_guard() {
+        use waypoint_inference::Inference;
+        let addr = "127.0.0.1:11434".parse().unwrap();
+        let (status, ps) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        assert_eq!(status, 200);
+        assert!(serde_json::from_slice::<Value>(&ps).unwrap()["models"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let (_, tags) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/tags", None, 3000).unwrap();
+        let tags: Value = serde_json::from_slice(&tags).unwrap();
+        let name = "qwen3.5:9b";
+        let size = installed_size(&tags, name).unwrap();
+        let mut system = sysinfo::System::new().unwrap();
+        system.refresh_memory();
+        resource_gate(
+            size,
+            system.available_memory(),
+            &crate::gpu_resources::sample(),
+        )
+        .unwrap();
+        struct Unload;
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                let request = json!({"model":"qwen3.5:9b","keep_alive":0}).to_string();
+                let _ = waypoint_inference::ollama::http_request(
+                    "127.0.0.1:11434".parse().unwrap(),
+                    "POST",
+                    "/api/generate",
+                    Some(request.as_bytes()),
+                    10_000,
+                );
+            }
+        }
+        let _unload = Unload;
+        let request = json!({"model":name,"prompt":"","stream":false,"keep_alive":"2m","options":{"num_ctx":4096,"num_gpu":30,"num_thread":2,"num_batch":128}}).to_string();
+        assert_eq!(
+            guarded_start_request(addr, request.as_bytes(), &crate::check_inference_memory)
+                .unwrap()
+                .0,
+            200
+        );
+        let (_, ps) =
+            waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
+        let ps: Value = serde_json::from_slice(&ps).unwrap();
+        let (gpu, cpu) =
+            waypoint_inference::ollama::bounded_resident_allocation(&ps["models"][0]).unwrap();
+        println!("Reported model allocation: GPU {gpu} bytes, system memory {cpu} bytes");
+        assert!(cpu > 0, "runtime did not report partial offload");
+        assert_eq!(crate::resident_model().unwrap().as_deref(), Some(name));
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", name)
+            .unwrap()
+            .with_resident_context();
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            name.into(),
+            crate::resident_model_identity,
+        );
+        let result = llm
+            .generate_structured("test", "Return JSON with ok set to true.", 32)
+            .unwrap()
+            .0;
+        assert_eq!(result["ok"], true);
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "requires no resident model, adequate memory and an installed local model"]

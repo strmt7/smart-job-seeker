@@ -11,5 +11,7 @@ assert.match(format({...base,vision:true}), /Vision reported/);
 assert.match(format({...base,vision:false}), /Vision not reported/);
 assert.match(format({...base,vision:null}), /could not be confirmed/);
 assert.match(format({...base,context_length:null}), /context unavailable/);
+assert.match(format({...base,reported_cpu_bytes:536870912}), /0\.50 GiB estimated model offload/);
+assert.match(format({model:null,state:'not_fully_gpu'}), /system-memory offload limit/);
 assert.match(format({model:null,state:'no_model'}), /no loaded model/);
 console.log('Model status UI checks passed.');

@@ -368,7 +368,7 @@ impl Inference for OllamaInference {
 }
 
 /// Query the local runtime immediately before generation. Refuse missing,
-/// ambiguous, offloaded, oversized, or contextless resident models.
+/// ambiguous, over-budget, or contextless resident models.
 pub fn resident_context(addr: SocketAddr, model: &str) -> Result<u32, String> {
     if addr.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) {
         return Err("runtime must use literal IPv4 loopback".into());
@@ -382,6 +382,24 @@ pub fn resident_context(addr: SocketAddr, model: &str) -> Result<u32, String> {
     resident_context_from_ps(&value, model)
 }
 
+/// Validate the runtime's reported allocation; this is not a memory reservation.
+pub fn bounded_resident_allocation(model: &Value) -> Result<(u64, u64), String> {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let size = model["size"]
+        .as_u64()
+        .filter(|size| *size > 0)
+        .ok_or("resident model size unavailable")?;
+    let gpu = model["size_vram"]
+        .as_u64()
+        .filter(|gpu| *gpu > 0 && *gpu <= size)
+        .ok_or("resident GPU allocation unavailable")?;
+    let cpu = size - gpu;
+    if gpu > 16 * GIB || cpu > 2 * GIB {
+        return Err("resident model allocation exceeds the GPU or system memory budget".into());
+    }
+    Ok((gpu, cpu))
+}
+
 fn resident_context_from_ps(value: &Value, model: &str) -> Result<u32, String> {
     let models = value["models"]
         .as_array()
@@ -389,13 +407,7 @@ fn resident_context_from_ps(value: &Value, model: &str) -> Result<u32, String> {
     if models.len() != 1 || models[0]["name"].as_str() != Some(model) {
         return Err("eligible resident model changed".into());
     }
-    let size = models[0]["size"]
-        .as_u64()
-        .filter(|size| *size > 0 && *size <= 16 * 1024 * 1024 * 1024)
-        .ok_or("resident model size unavailable or over budget")?;
-    if models[0]["size_vram"].as_u64() != Some(size) {
-        return Err("resident model is not fully GPU-resident".into());
-    }
+    bounded_resident_allocation(&models[0])?;
     let context = models[0]["context_length"]
         .as_u64()
         .filter(|n| (1024..=131_072).contains(n))
@@ -826,10 +838,13 @@ mod tests {
         assert_eq!(resident_context_from_ps(&valid, "local").unwrap(), 4096);
         let at_limit = serde_json::json!({"models":[{"name":"local","size":16u64*1024*1024*1024,"size_vram":16u64*1024*1024*1024,"context_length":4096}]});
         assert_eq!(resident_context_from_ps(&at_limit, "local").unwrap(), 4096);
+        let partial = serde_json::json!({"models":[{"name":"local","size":18u64*1024*1024*1024,"size_vram":16u64*1024*1024*1024,"context_length":4096}]});
+        assert_eq!(resident_context_from_ps(&partial, "local").unwrap(), 4096);
         for invalid in [
             serde_json::json!({"models":[]}),
             serde_json::json!({"models":[{"name":"other","size":1000,"size_vram":1000,"context_length":4096}]}),
-            serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":999,"context_length":4096}]}),
+            serde_json::json!({"models":[{"name":"local","size":3u64*1024*1024*1024+1,"size_vram":1024u64*1024*1024,"context_length":4096}]}),
+            serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":0,"context_length":4096}]}),
             serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000}]}),
             serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096},{"name":"other"}]}),
             serde_json::json!({"models":[{"name":"local","size":16u64*1024*1024*1024+1,"size_vram":16u64*1024*1024*1024+1,"context_length":4096}]}),
