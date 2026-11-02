@@ -2,4 +2,6 @@
 <label for="code">Fictional reference</label>
 <input id="code" type="text" pattern="[A-Z]{2}-[0-9]{3}">
 <label for="email">Email</label><input id="email" type="email" oninput="document.getElementById('code').setCustomValidity(this.value ? 'Fictional private detail' : '')">
+<label for="length">Short text</label><textarea id="length" minlength="2" maxlength="4">ok</textarea>
+<label for="dynamic">Changing format</label><input id="dynamic" value="old" onfocus="this.pattern='[0-9]+'">
 </form></body></html>

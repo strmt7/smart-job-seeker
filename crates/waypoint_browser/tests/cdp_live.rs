@@ -254,6 +254,7 @@ fn native_validation_reports_failure_without_exposing_input() {
     let error = driver.execute(&fill("#code", "AB-12")).unwrap_err().0;
     assert!(error.contains("required format"), "{error}");
     assert!(!error.contains("AB-12"));
+    assert_eq!(driver.text_value_snapshot("#code").unwrap().value, "");
     driver.execute(&fill("#code", "AB-123")).unwrap();
     let error = driver
         .execute(&fill("#email", "fictional-at-example"))
@@ -261,13 +262,20 @@ fn native_validation_reports_failure_without_exposing_input() {
         .0;
     assert!(error.contains("expected type"), "{error}");
     assert!(!error.contains("fictional-at-example"));
+    assert_eq!(driver.text_value_snapshot("#email").unwrap().value, "");
+    for value in ["x", "abcde", "😀😀x"] {
+        assert!(driver.execute(&fill("#length", value)).is_err());
+        assert_eq!(driver.text_value_snapshot("#length").unwrap().value, "ok");
+    }
+    assert!(driver.execute(&fill("#dynamic", "letters")).is_err());
+    assert_eq!(driver.text_value_snapshot("#dynamic").unwrap().value, "old");
+    driver
+        .execute(&fill("#email", "fictional@example.test"))
+        .unwrap();
     let changed = driver.verify_text_value("#code", "AB-123").unwrap_err().0;
     assert!(changed.contains("custom validation error"), "{changed}");
     assert!(!changed.contains("Fictional private detail"));
     assert!(!changed.contains("AB-123"));
-    driver
-        .execute(&fill("#email", "fictional@example.test"))
-        .unwrap();
     assert!(driver
         .trace
         .iter()

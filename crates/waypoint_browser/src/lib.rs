@@ -4740,6 +4740,36 @@ impl CdpDriver {
         Ok(())
     }
 
+    /// Native constraints can change after inspection or on focus. Evaluate a
+    /// candidate without dispatching input events to the employer's page.
+    fn check_text_candidate(&mut self, object: &str, candidate: &str) -> Result<(), DriverError> {
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(value) {
+            if (!this.isConnected) return 'unknown';
+            if (!(this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement)) return 'ok';
+            if (this instanceof HTMLInputElement && this.type === 'number') return 'ok';
+            const probe = this.cloneNode(false);
+            probe.value = value;
+            if (probe.value !== value) return 'input';
+            if (probe.maxLength >= 0 && value.length > probe.maxLength) return 'long';
+            if (value.length > 0 && probe.minLength >= 0 && value.length < probe.minLength) return 'short';
+            if (probe.validity.valueMissing) return 'missing';
+            if (probe.validity.typeMismatch) return 'type';
+            if (probe.validity.patternMismatch) return 'pattern';
+            return 'ok';
+        }"#,"arguments":[{"value":candidate}],"returnByValue":true})).map_err(derr)?;
+        let reason = match result.pointer("/result/value").and_then(Value::as_str) {
+            Some("ok") if result.get("exceptionDetails").is_none() => return Ok(()),
+            Some("missing") => "a value is required",
+            Some("type") => "the value does not match the expected type",
+            Some("pattern") => "the value does not match the required format",
+            Some("short") => "the value is too short",
+            Some("long") => "the value is too long",
+            Some("input") => "the browser cannot preserve the value",
+            _ => "the field constraints could not be checked",
+        };
+        Err(DriverError(format!("Text field needs review: {reason}")))
+    }
+
     fn ensure_text_focus(&mut self, node: u64, object: &str) -> Result<(), DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Err(DriverError(
@@ -4836,6 +4866,7 @@ impl CdpDriver {
                     ));
                 }
                 self.check_number_candidate(object, t)?;
+                self.check_text_candidate(object, t)?;
                 let rich = if t.contains('\n') {
                     let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return ['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox'; }","returnByValue":true})).map_err(derr)?;
                     if result.get("exceptionDetails").is_some() {
@@ -4878,6 +4909,7 @@ impl CdpDriver {
                 }
                 // Focus handlers may change min, max or step.
                 self.check_number_candidate(object, t)?;
+                self.check_text_candidate(object, t)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.ensure_text_focus(node, object)?;
