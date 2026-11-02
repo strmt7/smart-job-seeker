@@ -47,7 +47,8 @@ pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Re
         .checked_mul(6)
         .and_then(|n| n.checked_add(4))
         .map(|n| n / 5)
-        .and_then(|n| n.checked_add(2 * GIB))
+        // Keep 1.875 GiB of fixed GPU headroom on top of the 20% model overhead.
+        .and_then(|n| n.checked_add(15 * GIB / 8))
         .ok_or("Invalid model size")?;
     if free < needed_gpu {
         return Err(format!(
@@ -316,7 +317,11 @@ mod tests {
         assert!(resource_gate(6 * GIB, 16 * GIB - 1, &gpu).is_err());
         assert!(resource_gate(6 * GIB, 16 * GIB, &gpu).is_ok());
         let gpu_error = resource_gate(8 * GIB, 20 * GIB, &gpu).unwrap_err();
-        assert!(gpu_error.contains("11264 MiB free") && gpu_error.contains("11879 MiB required"));
+        assert!(gpu_error.contains("11264 MiB free") && gpu_error.contains("11751 MiB required"));
+        let required_gpu = (6 * GIB * 6).div_ceil(5) + 15 * GIB / 8;
+        let at_boundary = |free| json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":16*GIB-free}]});
+        assert!(resource_gate(6 * GIB, 20 * GIB, &at_boundary(required_gpu)).is_ok());
+        assert!(resource_gate(6 * GIB, 20 * GIB, &at_boundary(required_gpu - 1)).is_err());
         assert!(resource_gate(6 * GIB, 20 * GIB, &json!({"state":"unavailable"})).is_err());
         assert!(resource_gate(
             6 * GIB,

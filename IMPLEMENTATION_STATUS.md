@@ -2801,3 +2801,20 @@ pass, but this change has not been qualified with the live model. A separate
 live custom-choice attempt stopped before loading a model because the resource
 gate observed 9,572 MiB GPU memory free against its 9,605 MiB minimum. The
 previous natural-language custom-choice abstention therefore remains unresolved.
+
+### Local choice verification and GPU headroom (2026-11-02)
+
+The startup estimate retains a full model-sized system allocation plus 10 GiB
+of available RAM, and the GPU estimate retains 20% model-size overhead plus
+1.875 GiB fixed headroom (128 MiB less than before). These are snapshots, not
+reservations, and are not proof that other applications cannot increase usage.
+A boundary test checks the revised GPU threshold.
+
+With qwen3.5:9b, the fictional preference example initially abstained in the
+consistency review. After clarifying that an explicit preference can support a
+selection, a ten-case choice evaluation passed 10/10: two deterministic exact
+matches and eight model cases, including negation and uncertainty. A separate
+fictional browser workflow passed with live vision and choice advice. The model
+was unloaded after each run. These small, development-set observations are not
+a held-out reliability or resource-peak measurement; broader evaluation remains
+necessary. One intervening model start was refused by the unchanged RAM gate.
