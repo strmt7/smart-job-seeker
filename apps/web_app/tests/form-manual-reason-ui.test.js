@@ -22,4 +22,17 @@ const input = {fields:[phone],model_review_selectors:['#phone'],manual_review:['
 assert.equal(JSON.stringify(reasons(input)),JSON.stringify(['Other review reason']));
 assert.equal(reasons({...input,model_review_selectors:[]}).length,2);
 assert.equal(reasons({...input,fields:[]}).length,2);
+const groupedLine=source.split('\n').find(value=>value.startsWith('function appendFormReviewReasons('));
+const node=(tag,text='')=>({tag,text,children:[],append(...items){this.children.push(...items);}});
+const grouping=vm.runInNewContext(`(${groupedLine})`,{element:(tag,text)=>node(tag,text),document:{createElement:tag=>node(tag)}});
+const panel=node('div');
+const custom=['One','Two','Three','Four'].map(label=>`a required custom control needs manual review: ${label}`);
+grouping(panel,[custom[0],'captcha present',...custom.slice(1),'other warning']);
+assert.equal(panel.children[0].tag,'details');
+assert.match(panel.children[0].children[0].text,/4 custom-control warnings/);
+assert.deepEqual(panel.children[0].children.slice(1).map(item=>item.text),custom);
+assert.equal(panel.children[1].text,'captcha present');
+assert.equal(panel.children[2].text,'other warning');
+const short=node('div');grouping(short,custom.slice(0,3));assert.equal(short.children.length,3);assert.ok(short.children.every(item=>item.tag==='p'));
+assert.ok(source.includes('appendFormReviewReasons(panel,visibleFormReviewReasons(result))'));
 console.log('Manual field reason checks passed.');
