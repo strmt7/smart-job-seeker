@@ -2117,3 +2117,11 @@ email fields for review. The test did not fill fields or submit. The model was
 unloaded after the test; free system memory sampled afterward was about 19.6 GiB.
 This single mapping check does not establish visual verification or performance
 on real applications.
+
+The same fictional multilingual browser test was subsequently extended through
+reviewed prefill and a local visual pass. In two qwen3.5:9b runs, it filled all
+three applicant fields, left the three reference fields empty, and visually
+transcribed the applicant values correctly. The second run also asserted that
+the visual observations reported each reference field empty. DOM checks agreed;
+no application was submitted. These are two runs of one fixture, not a general
+accuracy measurement.

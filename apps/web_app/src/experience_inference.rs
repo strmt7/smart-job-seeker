@@ -798,6 +798,10 @@ pub(crate) mod tests {
     fn resource_gated_multilingual_third_party_contacts() {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::PacketValue;
+        use waypoint_domain::{
+            ApplicationState, ApprovalGrant, GrantId, GrantOperation, IntentId, JobIdentityId,
+            Sha256Digest,
+        };
         with_resource_gated_model(|| {
             let model = crate::resident_model()
                 .unwrap()
@@ -815,25 +819,24 @@ pub(crate) mod tests {
                 .canonicalize()
                 .unwrap();
             let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-            let form = browser
-                .open(url::Url::from_file_path(fixture).unwrap().as_str())
-                .unwrap();
+            let url = url::Url::from_file_path(fixture).unwrap().to_string();
+            let form = browser.open(&url).unwrap();
             assert!(form.walls.is_empty(), "{:?}", form.walls);
-            let schema = form.schema;
-            assert_eq!(schema.fields.len(), 6);
-            let (mappings, warnings, _) = crate::suggestions::suggest_with_review(
+            assert_eq!(form.schema.fields.len(), 6);
+            let preview = crate::form_preview::suggest_for_live_form(
+                form,
                 &mut llm,
-                &schema,
                 &serde_json::json!({"email":"avery@example.invalid"}),
             )
             .unwrap();
+            let mappings = &preview.suggestions;
             println!(
                 "suggested: {:?}; warnings: {:?}",
                 mappings
                     .iter()
                     .map(|item| &item.field_selector)
                     .collect::<Vec<_>>(),
-                warnings
+                preview.manual_review
             );
             assert!(
                 mappings
@@ -848,10 +851,106 @@ pub(crate) mod tests {
                     "missing applicant mapping {selector}"
                 );
             }
+            let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+            let job_id = JobIdentityId::new("multilingual-contacts").unwrap();
+            ws.import_job(waypoint_store::StoredJob {
+                id: job_id.clone(),
+                title: "Fictional role".into(),
+                employer: "Fixture".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some(url.clone()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            })
+            .unwrap();
+            let intent = IntentId::new("fictional-intent").unwrap();
+            let packet = Sha256Digest::of("fictional profile");
+            let mut grant = ApprovalGrant {
+                id: GrantId::new("fictional-grant").unwrap(),
+                intent_id: intent.clone(),
+                bound_payload_sha256: Sha256Digest::of(&serde_json::to_string(mappings).unwrap()),
+                profile_revision: 1,
+                packet_sha256: packet.clone(),
+                form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+                destination_origin: preview.schema.origin.clone(),
+                operation: GrantOperation::Prefill,
+                nonce: "fictional".into(),
+                explicit_user_gesture: true,
+                consumed: false,
+                expired: false,
+            };
+            let mut completed = Vec::new();
+            assert_eq!(
+                crate::form_preview::apply_reviewed_text_fields(
+                    &mut ws,
+                    &job_id,
+                    &mut browser,
+                    &url,
+                    &preview,
+                    &mut grant,
+                    crate::form_preview::FillContext {
+                        intent: &intent,
+                        packet_digest: &packet,
+                        source_reviewed: true,
+                        timestamp: 1,
+                        completed: &mut completed
+                    },
+                )
+                .unwrap(),
+                3
+            );
+            for selector in ["#applicant-de", "#applicant-fr", "#applicant-es"] {
+                browser
+                    .verify_text_value(selector, "avery@example.invalid")
+                    .unwrap();
+            }
+            for selector in ["#reference-de", "#reference-fr", "#reference-es"] {
+                browser.verify_text_value(selector, "").unwrap();
+            }
+            let expected: Vec<_> = preview
+                .schema
+                .fields
+                .iter()
+                .filter(|field| field.selector.starts_with("#applicant-"))
+                .map(|field| (field.label.clone(), "avery@example.invalid".to_string()))
+                .collect();
+            let visual = crate::visual_review::analyze(
+                "127.0.0.1:11434".parse().unwrap(),
+                "qwen3.5:9b",
+                &browser.screenshot_base64().unwrap(),
+                &expected,
+            )
+            .unwrap();
+            println!("fictional multilingual visual review: {visual}");
+            assert_eq!(visual["comparisons"].as_array().unwrap().len(), 3);
+            assert!(visual["comparisons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["status"] == "matches_transcription"));
+            let observations = visual["observations"].as_array().unwrap();
+            for label in [
+                "E-Mail der Referenzperson",
+                "Adresse e-mail de la personne de référence",
+                "Correo electrónico de la persona de referencia",
+            ] {
+                assert!(
+                    observations
+                        .iter()
+                        .any(|item| item["label"] == label && item["visible_value"] == ""),
+                    "missing empty reference field: {label}"
+                );
+            }
             assert!(browser
                 .trace
                 .iter()
-                .all(|event| !event.contains("typed") && !event.contains("submitted")));
+                .all(|event| !event.contains("submitted")));
         });
     }
 
