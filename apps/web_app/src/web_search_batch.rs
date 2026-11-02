@@ -1089,6 +1089,54 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "sends three fictional search phrases to the public Wiby API"]
+    fn live_wiby_batch_of_planner_style_phrases() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        start(
+            "public-query-evaluation".into(),
+            "https://wiby.me/".into(),
+            vec![
+                "microscopy technician careers".into(),
+                "remote rust jobs".into(),
+                "payroll accountant careers".into(),
+            ],
+            1,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(65);
+        let mut pages = 0;
+        loop {
+            let result = poll("public-query-evaluation", pages).unwrap();
+            if result["status"] == "complete" {
+                println!("coverage: {}", result["coverage"]);
+                break;
+            }
+            assert_ne!(result["status"], "failed", "{result}");
+            if result.get("query").is_some() {
+                println!(
+                    "query={:?} reported={} retained={} error={}",
+                    result["query"],
+                    result["data"]["results_reported"],
+                    result["data"]["results"].as_array().map_or(0, Vec::len),
+                    result["error"].is_string()
+                );
+                if let Some(items) = result["data"]["results"].as_array() {
+                    for item in items.iter().take(10) {
+                        println!(
+                            "candidate: {} {}",
+                            item["title"].as_str().unwrap_or(""),
+                            item["url"].as_str().unwrap_or("")
+                        );
+                    }
+                }
+                pages += 1;
+            }
+            assert!(Instant::now() < deadline, "public search did not finish");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    #[test]
     fn batch_visits_each_phrase_before_deeper_pages() {
         let _lock = TEST_LOCK.lock().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
