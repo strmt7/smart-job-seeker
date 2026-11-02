@@ -2773,6 +2773,115 @@ mod tests {
         assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
     }
 
+    #[test]
+    #[ignore = "starts one browser on a fictional local address form without submitting"]
+    fn browser_fills_only_the_explicit_third_address_line() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_domain::{
+            ApplicationState, ApprovalGrant, GrantId, GrantOperation, IntentId, JobIdentityId,
+            Sha256Digest,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("address.html");
+        std::fs::write(&path, r#"<!doctype html><html><body><form onsubmit="document.getElementById('status').textContent='SUBMITTED';return false"><label for="line1">Address line 1</label><input id="line1" autocomplete="address-line1"><label for="line2">Address line 2</label><input id="line2" autocomplete="address-line2"><label for="line3">Address line 3</label><input id="line3" autocomplete="address-line3"><button type="submit">Submit</button><output id="status">NOT SUBMITTED</output></form></body></html>"#).unwrap();
+        let url = url::Url::from_file_path(path.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = crate::form_preview::suggest_without_model(
+            live,
+            &json!({"address_line3":"Building B"}),
+            "No model",
+        )
+        .unwrap();
+        assert_eq!(preview.suggestions.len(), 1);
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("third-line-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("third-line-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("third-line-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut completed = Vec::new();
+        let count = crate::form_preview::apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &preview,
+            &mut grant,
+            crate::form_preview::FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(grant.consumed);
+        let line3 = preview
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.label == "Address line 3")
+            .unwrap();
+        assert_eq!(preview.suggestions[0].field_selector, line3.selector);
+        driver
+            .verify_text_value(&line3.selector, "Building B")
+            .unwrap();
+        for label in ["Address line 1", "Address line 2"] {
+            let field = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.label == label)
+                .unwrap();
+            assert_eq!(
+                driver.text_value_snapshot(&field.selector).unwrap().value,
+                ""
+            );
+        }
+        assert!(driver
+            .page_text_bounded(2000)
+            .unwrap()
+            .0
+            .contains("NOT SUBMITTED"));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "loads a local model and opens a fictional split-address form"]
