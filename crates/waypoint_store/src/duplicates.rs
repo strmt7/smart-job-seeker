@@ -1382,6 +1382,107 @@ mod tests {
     }
 
     #[test]
+    fn unicode_location_recheck_resumes_and_preserves_decisions() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!(
+                "fictional-unicode-recheck-{}-{nonce}.db",
+                std::process::id()
+            ));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(path.clone());
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..46] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute_batch(r#"INSERT INTO jobs(id,title,employer,location,state) VALUES
+            ('a','Senior Data Scientist – ZÜRICH, SCHWEIZ, EUROPA','Example Labs','Zürich, Schweiz, Europa','"discovered"'),
+            ('b','Senior Data Scientist','Example Labs','Zürich, Schweiz, Europa','"discovered"'),
+            ('c','Senior Data Scientist','Example Labs','Zürich, Schweiz, Europa','"discovered"');
+            INSERT INTO job_employer_indexed(job_id) SELECT id FROM jobs;
+            INSERT INTO job_employer_tokens(job_id,token) SELECT id,'example' FROM jobs;
+            INSERT INTO job_employer_tokens(job_id,token) SELECT id,'labs' FROM jobs;
+            INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES('a','c',50,'prior decision','different');"#).unwrap();
+        let store = Store::migrate(conn).unwrap();
+        store.conn.execute_batch("CREATE TRIGGER fail_unicode_recheck BEFORE INSERT ON job_employer_tokens BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(store.index_next_duplicate_step("").is_err());
+        let cursor: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='duplicate_unicode_location_cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(cursor.is_empty());
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_unicode_recheck;")
+            .unwrap();
+        assert_eq!(
+            store
+                .index_next_duplicate_step("")
+                .unwrap()
+                .cursor
+                .as_deref(),
+            Some("a")
+        );
+        drop(store);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        assert_eq!(
+            store
+                .index_next_duplicate_step("")
+                .unwrap()
+                .cursor
+                .as_deref(),
+            Some("b")
+        );
+        for _ in 0..10 {
+            if !store.duplicate_index_pending().unwrap() {
+                break;
+            }
+            store.index_next_duplicate_step("").unwrap();
+        }
+        assert!(!store.duplicate_index_pending().unwrap());
+        let pairs = store.possible_duplicates().unwrap();
+        assert!(pairs
+            .iter()
+            .any(|pair| pair.job_a == "a" && pair.job_b == "b" && pair.status == "pending"));
+        let prior: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM possible_duplicates WHERE job_a='a' AND job_b='c'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(prior, "different");
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn engineering_title_variants_are_rechecked_without_merging() {
         assert_eq!(
             title_score("Software Engineering", "Software Engineer"),

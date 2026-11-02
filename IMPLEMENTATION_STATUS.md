@@ -11,6 +11,8 @@
 
 ## Unicode location duplicate review — 2026-11-02
 
+- A disk-backed SQLCipher fixture now also checks that an injected index write failure rolls back the Unicode recheck cursor, that reopening the database resumes at the next record, and that a prior `different` decision survives. The first test assertion incorrectly used an API that intentionally excludes `different` pairs; checking the stored decision directly passed. This is a small fictional fixture, not a large-database performance measurement.
+
 - Duplicate candidate comparison now recognizes an explicit location suffix when Unicode lowercase matches despite case differences, such as `ZÜRICH` and `Zürich`. A new migration schedules existing jobs for a resumable recheck in pages of at most 64 records; candidates remain pending for user review and are never merged automatically. This is Unicode lowercase, not locale-specific case folding or transliteration: a Turkish dotted-I counterexample remains unmatched. Fictional migration, duplicate-hold and bounded-page tests passed, as did the encrypted store suite (100 passed, 4 ignored before the additional bounded-page test), SQLCipher store Clippy and a web profile-restart test. No large-database timing or memory benchmark was run.
 
 ## Local model identity check — 2026-11-02
