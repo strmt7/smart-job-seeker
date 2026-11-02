@@ -4392,3 +4392,29 @@ fn a_changed_page_voids_the_approval_against_a_real_site() {
     );
     assert!(ws.grant(&id).unwrap().unwrap().expired);
 }
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn required_custom_radio_group_is_reported_for_manual_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_custom_radio_required.html"))
+        .unwrap();
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a required custom control needs manual review: Work arrangement"));
+    assert!(!live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("Hidden group") || wall.contains("Native schedule")));
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Native schedule" && field.required));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}

@@ -3043,10 +3043,37 @@ impl CdpDriver {
             {
                 wall_flags.push("a required hidden control needs manual review".into());
             }
+            // ARIA puts the required state on the radiogroup, not normally
+            // on each option. Native radio inputs have their own mapping;
+            // custom radio descendants still require explicit review.
+            let required_custom_radio_group = required_custom
+                && attrs
+                    .get("role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("radiogroup"))
+                && {
+                    let mut custom_radio = false;
+                    walk(node, false, &mut |child, _| {
+                        let child_attrs = attributes(child);
+                        let child_tag = child.get("nodeName").and_then(Value::as_str).unwrap_or("");
+                        if child_attrs
+                            .get("role")
+                            .is_some_and(|role| role.eq_ignore_ascii_case("radio"))
+                            && !(child_tag.eq_ignore_ascii_case("input")
+                                && child_attrs
+                                    .get("type")
+                                    .is_some_and(|kind| kind.eq_ignore_ascii_case("radio")))
+                        {
+                            custom_radio = true;
+                        }
+                        true
+                    });
+                    custom_radio
+                };
             // Custom ARIA controls are not handled by the native-field driver.
             // Do not silently omit a required question on an otherwise readable form.
             if !hidden
                 && (dynamic_choice
+                    || required_custom_radio_group
                     || required_custom
                         && !plain_editor
                         && (attrs.get("contenteditable").is_some_and(|value| {
