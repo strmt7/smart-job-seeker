@@ -89,7 +89,13 @@ assert fallback.returncode == 0, fallback.stdout.decode(errors="replace") + fall
 assert b"selected-span stream fallback" in fallback.stderr
 assert PdfReader(io.BytesIO(fallback.stdout)).pages[0].extract_text() == "PrefixAlphaBetSuffix"
 assert text_object_colours(fallback.stdout) == text_object_colours(base64.b64decode(styled_source))
-# Expansion is deliberately refused for multi-object edits.
+# More, narrower glyphs may fit inside the original bounds across objects.
+payload = json.dumps({"pdf": fixture(b"(WWW) Tj (MMM) Tj"), "before": "WWWMMM", "after": "WWWiiiii"}).encode()
+result = subprocess.run([sys.executable, "-c", program], input=payload,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
+assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "WWWiiiii"
+# Expansions that do not fit remain subject to the geometry check.
 payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBetaLong"})
 result = subprocess.run([sys.executable, "-c", program], input=payload, text=True,
                         capture_output=True, timeout=30, check=False)

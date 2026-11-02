@@ -36,7 +36,7 @@ try:
     def edit_adjacent_objects(document, page_index, original_text, before, after):
         # Only consecutive text objects whose character order is exactly
         # represented by PDFium are eligible. Preserve untouched edge text.
-        if not after or len(after) > len(before):
+        if not after:
             return None
         page = document[page_index]
         textpage = page.get_textpage()
@@ -80,7 +80,10 @@ try:
         remaining = after
         for index, (address, text) in enumerate(groups):
             available = len(remaining) - (len(groups) - index - 1)
-            size = min(len(text), available)
+            # The last object may need more characters when the replacement
+            # uses narrower glyphs. Post-edit bounds and rendering still decide
+            # whether it actually fits.
+            size = available if index == len(groups) - 1 else min(len(text), available)
             if size <= 0:
                 return None
             part, remaining = remaining[:size], remaining[size:]
