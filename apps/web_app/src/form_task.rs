@@ -266,7 +266,13 @@ pub fn pending() -> Result<Option<(String, String)>, String> {
 fn observed_platform(origin: &str) -> Option<waypoint_workspace::form_experience::Platform> {
     use waypoint_workspace::form_experience::Platform;
     let parsed = url::Url::parse(origin).ok()?;
-    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
+    // A recognized hostname on a nonstandard port is a different origin and
+    // does not establish that the form uses the provider's normal service.
+    if parsed.scheme() != "https"
+        || parsed.port().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
         return None;
     }
     let host = parsed.host_str()?;
@@ -1252,6 +1258,11 @@ mod tests {
             None
         );
         assert_eq!(observed_platform("http://jobs.lever.co"), None);
+        assert_eq!(observed_platform("https://jobs.lever.co:8443"), None);
+        assert_eq!(
+            observed_platform("https://jobs.lever.co:443"),
+            Some(Platform::Lever)
+        );
         assert_eq!(
             observed_platform("https://apply.workable.com"),
             Some(Platform::Workable)
@@ -1334,6 +1345,11 @@ mod tests {
         assert!(relevant_experiences(&unrelated, &items)
             .iter()
             .all(|value| !value.same_platform));
+        let mut alternate_port = schema.clone();
+        alternate_port.origin = "https://jobs.lever.co:8443".into();
+        let selected = relevant_experiences(&alternate_port, &items);
+        assert!(!selected.is_empty());
+        assert!(selected.iter().all(|value| !value.same_platform));
         let mut embedded = schema.clone();
         embedded.fields[0].selector = "waypoint-frame:12:34:input[name=given]".into();
         let mixed = relevant_experiences(&embedded, &items);
@@ -1555,6 +1571,78 @@ mod tests {
                 && m.value == PacketValue::Text("avery@example.invalid".into())));
             assert!(mappings.iter().any(|m| m.field_selector == "#country"
                 && m.value == PacketValue::Text("Germany".into())));
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the resource gate using fictional fields"]
+    fn local_model_handles_lessons_on_unestablished_port() {
+        use waypoint_applications::form_mapping::{
+            FormField, FormFieldType, FormSchema, PacketValue,
+        };
+        use waypoint_workspace::form_experience::{
+            Control, Experience, ExperienceMatch, Observation, Outcome, Platform, Response, Stage,
+        };
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let schema = FormSchema {
+                origin: "https://jobs.lever.co:8443".into(),
+                fields: vec![FormField {
+                    selector: "#email".into(),
+                    label: "Your email address".into(),
+                    field_type: FormFieldType::Email,
+                    required: true,
+                    sensitive: false,
+                    editing_mode: None,
+                    max_length_utf16: None,
+                    min_length_utf16: None,
+                    pattern: None,
+                    autocomplete: None,
+                }],
+                multi_step: false,
+                steps: 1,
+            };
+            let lesson = ExperienceMatch {
+                id: "00000000000000000000000000000001".into(),
+                revision: 1,
+                same_platform: false,
+                experience: Experience {
+                    version: 1,
+                    reviewed: true,
+                    enabled: true,
+                    observed_at: 1,
+                    platform: Some(Platform::Lever),
+                    stage: Stage::EnterInformation,
+                    control: Control::Text,
+                    observation: Observation::AmbiguousLabel,
+                    response: Response::InspectContext,
+                    outcome: Outcome::Unknown,
+                    note: None,
+                    use_note_in_model: false,
+                },
+            };
+            let selected = relevant_experiences(&schema, &[lesson]);
+            assert_eq!(selected.len(), 1);
+            assert!(!selected[0].same_platform);
+            let name = crate::resident_model().unwrap().unwrap();
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut llm =
+                crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+            let mut experienced =
+                crate::experience_inference::ExperienceInference::new(&mut llm, &selected);
+            let (mappings, _, _) = crate::suggestions::suggest_with_review(
+                &mut experienced,
+                &schema,
+                &serde_json::json!({"email":"fictional@example.invalid"}),
+            )
+            .unwrap();
+            assert!(experienced.attempted_with_hints());
+            assert!(mappings
+                .iter()
+                .any(|mapping| mapping.field_selector == "#email"
+                    && mapping.value == PacketValue::Text("fictional@example.invalid".into())));
         });
     }
 
