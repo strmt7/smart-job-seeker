@@ -938,6 +938,30 @@ impl Store {
         Ok(())
     }
 
+    /// Refresh only the observation timestamp if the saved listing still matches
+    /// the caller's snapshot and its retained description has not changed.
+    pub fn refresh_job_observation(
+        &self,
+        job: &StoredJob,
+        description: &str,
+        observed_at: i64,
+    ) -> Result<bool, rusqlite::Error> {
+        if observed_at <= 0
+            || job
+                .last_seen
+                .as_deref()
+                .and_then(|value| value.parse::<i64>().ok())
+                .is_some_and(|previous| previous >= observed_at)
+        {
+            return Ok(false);
+        }
+        let changed = self.conn.execute(
+            "UPDATE jobs SET last_seen=?1 WHERE id=?2 AND title=?3 AND employer=?4 AND location=?5 AND canonical_url IS ?6 AND content_hash IS ?7 AND last_seen IS ?8 AND remote=?9 AND source=?10 AND requisition_id IS ?11 AND EXISTS (SELECT 1 FROM job_descriptions WHERE job_id=jobs.id AND content=?12)",
+            params![observed_at.to_string(), job.id.as_str(), job.title, job.employer, job.location, job.canonical_url, job.content_hash, job.last_seen, job.remote as i64, job.source, job.requisition_id, description],
+        )?;
+        Ok(changed == 1)
+    }
+
     /// Replace a source-reported route only while its listing URL is current.
     pub fn set_job_application_route(
         &self,

@@ -128,7 +128,41 @@ fn add_with_observation(
                 .add_requisition_and_refresh(&existing)
                 .map_err(|e| e.to_string())?;
         }
-        return Ok(json!({"id":id,"existing":true,"requisition_added":identifier_added}));
+        let mut observation_refreshed = false;
+        if let Some(observed) =
+            observed_at.filter(|observed| *observed > 0 && *observed <= timestamp)
+        {
+            let current = ws
+                .job(&key)
+                .map_err(|e| e.to_string())?
+                .ok_or("Saved job not found")?;
+            let saved_description = ws.job_description(&key).map_err(|e| e.to_string())?;
+            let clean_structured = body["extraction"] == "structured"
+                && match body.get("extraction_warnings") {
+                    None | Some(Value::Null) => true,
+                    Some(Value::Array(warnings)) => warnings.is_empty(),
+                    _ => false,
+                };
+            // Truncated descriptions cannot establish the identity of the full listing.
+            if clean_structured
+                && !description.is_empty()
+                && description.len() < 29_996
+                && saved_description.as_deref() == Some(description)
+                && current.canonical_url.as_deref() == Some(url.as_str())
+                && current.title == title
+                && current.employer == employer
+                && current.location == location
+                && body["remote"].as_bool() == Some(current.remote)
+                && current.requisition_id.as_deref().unwrap_or("") == requisition_id
+            {
+                observation_refreshed = ws
+                    .refresh_job_observation(&current, description, observed)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        return Ok(
+            json!({"id":id,"existing":true,"requisition_added":identifier_added,"observation_refreshed":observation_refreshed}),
+        );
     }
     if let Some(id) = ws.resolve_alias(&url).map_err(|e| e.to_string())? {
         let key = JobIdentityId::new(&id).map_err(|e| e.to_string())?;
@@ -189,6 +223,59 @@ mod tests {
             let id = JobIdentityId::new(saved["id"].as_str().unwrap()).unwrap();
             assert_eq!(ws.job(&id).unwrap().unwrap().last_seen, None);
         }
+    }
+
+    #[test]
+    fn reinspection_refreshes_only_matching_complete_saved_listings() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let mut data = json!({"url":"https://example.org/job","title":"Engineer","employer":"Example","location":"Berlin","description":"Fictional duties.","remote":false});
+        let result = add(&mut ws, &data, 100).unwrap();
+        let id = JobIdentityId::new(result["id"].as_str().unwrap()).unwrap();
+        data["extraction"] = json!("structured");
+        assert_eq!(
+            add_inspected(&mut ws, &data, 300, Some(200)).unwrap()["observation_refreshed"],
+            true
+        );
+        assert_eq!(
+            ws.job(&id).unwrap().unwrap().last_seen.as_deref(),
+            Some("200")
+        );
+        assert_eq!(
+            add_inspected(&mut ws, &data, 300, Some(150)).unwrap()["observation_refreshed"],
+            false
+        );
+        data["description"] = json!("Changed duties.");
+        assert_eq!(
+            add_inspected(&mut ws, &data, 300, Some(250)).unwrap()["observation_refreshed"],
+            false
+        );
+        data["description"] = json!("Fictional duties.");
+        data["extraction_warnings"] = json!(["Incomplete listing"]);
+        assert_eq!(
+            add_inspected(&mut ws, &data, 300, Some(250)).unwrap()["observation_refreshed"],
+            false
+        );
+        data["extraction_warnings"] = json!([]);
+        data["extraction"] = json!("local_model");
+        assert_eq!(
+            add_inspected(&mut ws, &data, 300, Some(250)).unwrap()["observation_refreshed"],
+            false
+        );
+        assert_eq!(
+            ws.job(&id).unwrap().unwrap().last_seen.as_deref(),
+            Some("200")
+        );
+        let snapshot = ws.job(&id).unwrap().unwrap();
+        ws.replace_reviewed_description(
+            &id,
+            Some("Fictional duties."),
+            "changed concurrently",
+            "300",
+        )
+        .unwrap();
+        assert!(!ws
+            .refresh_job_observation(&snapshot, "Fictional duties.", 250)
+            .unwrap());
     }
 
     #[test]

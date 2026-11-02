@@ -783,6 +783,18 @@ impl Workspace {
         Ok(())
     }
 
+    /// Refresh a listing observation only if the saved snapshot is unchanged.
+    pub fn refresh_job_observation(
+        &self,
+        job: &StoredJob,
+        description: &str,
+        observed_at: i64,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .refresh_job_observation(job, description, observed_at)?)
+    }
+
     pub fn possible_duplicates(
         &self,
     ) -> Result<Vec<waypoint_store::duplicates::PossibleDuplicate>, WorkspaceError> {

@@ -2944,3 +2944,15 @@ and the observation-boundary test passed. Existing saved timestamps are not
 retrospectively corrected, and inspecting an already-saved listing does not
 yet refresh its observation timestamp. Recent observation is not proof that a
 role is still open.
+
+### Re-inspection observation refresh (2026-11-02)
+
+A re-inspected saved listing can now refresh its observation timestamp when a
+complete structured extraction matches the saved URL, identity, location,
+remote flag, requisition and nonempty untruncated description. The update uses
+a conditional database write so concurrent listing or description changes do
+not get overwritten. Older observations, changed or incomplete listings,
+model-only extraction and aliases do not refresh this way. The inspection
+interface reports whether a refresh happened. Nine intake tests, focused
+queue UI checks and web-app Clippy passed. A recent observation still does not
+prove a vacancy is open, and earlier legacy timestamps are not corrected.
