@@ -7,6 +7,7 @@ struct Task {
     id: String,
     session: String,
     digest: String,
+    radio: bool,
     result: Option<Result<Value, String>>,
     finished: Option<std::time::Instant>,
 }
@@ -19,9 +20,41 @@ pub(crate) fn set_fixture(id: &str, session: &str, digest: &str) {
         id: id.into(),
         session: session.into(),
         digest: digest.into(),
+        radio: false,
         result: Some(Ok(json!({"option":"Berlin","evidence":"Berlin"}))),
         finished: Some(std::time::Instant::now()),
     });
+}
+
+#[cfg(test)]
+pub(crate) fn set_radio_fixture(id: &str, session: &str, digest: &str) {
+    set_fixture(id, session, digest);
+    if let Some(task) = TASK.lock().unwrap().as_mut() {
+        task.radio = true;
+        task.result = Some(Ok(json!({"option":"Remote","evidence":"Remote"})));
+    }
+}
+
+/// Resolve only a unique, complete option label supplied directly by the user.
+pub fn exact_advice(answer: &str, options: &[String]) -> Result<Option<Value>, String> {
+    if answer.trim().is_empty() || answer.len() > 600 || options.is_empty() || options.len() > 30 {
+        return Err("Answer or option list is outside the supported bounds".into());
+    }
+    let normalized = |text: &str| {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let matches: Vec<_> = options
+        .iter()
+        .filter(|option| normalized(option) == normalized(answer))
+        .collect();
+    match matches.as_slice() {
+        [option] => Ok(Some(json!({"option":option,"evidence":answer.trim()}))),
+        [] => Ok(None),
+        _ => Err("Suggested option is ambiguous".into()),
+    }
 }
 
 fn suggest(
@@ -39,6 +72,15 @@ fn suggest(
     {
         return Err("Question, answer or option list is outside the supported bounds".into());
     }
+    if let Some(exact) = exact_advice(answer, options)? {
+        return Ok(exact);
+    }
+    let normalized = |text: &str| {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
     let indexed: Vec<_> = options
         .iter()
         .enumerate()
@@ -69,12 +111,6 @@ fn suggest(
     if evidence.trim().is_empty() || !answer.contains(evidence) {
         return Err("Choice advice is not grounded in the supplied answer".into());
     }
-    let normalized = |text: &str| {
-        text.split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_lowercase()
-    };
     if options
         .iter()
         .filter(|option| normalized(option) == normalized(&options[index]))
@@ -86,15 +122,28 @@ fn suggest(
     Ok(json!({"option":options[index],"evidence":evidence}))
 }
 
-pub fn start(
-    id: String,
-    session: String,
-    digest: String,
-    model: String,
-    question: String,
-    answer: String,
-    options: Vec<String>,
-) -> Result<(), String> {
+pub struct Request {
+    pub id: String,
+    pub session: String,
+    pub digest: String,
+    pub model: String,
+    pub question: String,
+    pub answer: String,
+    pub options: Vec<String>,
+    pub radio: bool,
+}
+
+pub fn start(request: Request) -> Result<(), String> {
+    let Request {
+        id,
+        session,
+        digest,
+        model,
+        question,
+        answer,
+        options,
+        radio,
+    } = request;
     let lease = crate::doc_suggest::lease()?;
     let mut task = TASK.lock().map_err(|_| "Choice advice unavailable")?;
     if task
@@ -111,6 +160,7 @@ pub fn start(
         id: id.clone(),
         session,
         digest,
+        radio,
         result: None,
         finished: None,
     });
@@ -182,7 +232,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     Ok(match &task.result {
         None => json!({"status":"running","session_id":task.session}),
         Some(Ok(advice)) => {
-            json!({"status":"complete","session_id":task.session,"snapshot_digest":task.digest,"advice":advice})
+            json!({"status":"complete","session_id":task.session,"snapshot_digest":task.digest,"radio":task.radio,"advice":advice})
         }
         Some(Err(error)) => json!({"status":"failed","session_id":task.session,"error":error}),
     })
@@ -265,9 +315,89 @@ mod tests {
             ))
         }
     }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated local model for fictional radio advice"]
+    fn resource_gated_radio_advice_examples() {
+        struct Recorder<T> {
+            inner: T,
+            last: Option<Value>,
+        }
+        impl<T: Inference> Inference for Recorder<T> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let result = self.inner.generate_structured(task, prompt, max)?;
+                self.last = Some(result.0.clone());
+                Ok(result)
+            }
+        }
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let model = crate::resident_model().unwrap().expect("resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+                .unwrap()
+                .with_resident_context();
+            let llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let mut llm = Recorder {
+                inner: llm,
+                last: None,
+            };
+            let choices = vec!["Yes".into(), "No".into()];
+            for (answer, expected) in [
+                ("Yes", Some("Yes")),
+                ("No", Some("No")),
+                ("I am authorized to work in this country.", Some("Yes")),
+                ("I am not authorized to work in this country.", Some("No")),
+                (
+                    "I do not know if I am authorized to work in this country.",
+                    None,
+                ),
+            ] {
+                llm.last = None;
+                let result = suggest(
+                    &mut llm,
+                    "Are you authorized to work in this country?",
+                    answer,
+                    &choices,
+                );
+                println!(
+                    "fictional radio advice answer={answer:?} model={:?} result={result:?}",
+                    llm.last
+                );
+                if let Ok(advice) = result {
+                    assert_eq!(
+                        advice["option"].as_str(),
+                        expected,
+                        "an incorrect suggestion must not be accepted"
+                    );
+                }
+            }
+        });
+    }
+
     #[test]
     fn advice_requires_exact_answer_support_and_an_unambiguous_option() {
         let choices = vec!["Berlin".into(), "Lisbon".into()];
+        let exact = suggest(&mut Fake(json!({})), "City", " berlin ", &choices).unwrap();
+        assert_eq!(exact["option"], "Berlin");
+        assert_eq!(exact["evidence"], "berlin");
+        assert!(suggest(
+            &mut Fake(json!({})),
+            "City",
+            "Berlin",
+            &["Berlin".into(), " berlin ".into()]
+        )
+        .is_err());
         let result = suggest(
             &mut Fake(json!({"index":0,"evidence":"Berlin"})),
             "City",

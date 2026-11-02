@@ -628,7 +628,23 @@ function showFormPreview(job,result){setWorkspaceView('applications');
     };
     const questionReview=element('div','');addVisualCheck(questionReview,null);section.append(questionReview);
     const list=element('ul','');for(const option of group.options || []){const row=element('li',`${option.label} — ${option.checked===true?'reported selected':option.checked===false?'reported not selected':'selection unknown'}${option.disabled?' (disabled)':''}`);addVisualCheck(row,option);list.append(row);}
-    section.append(list);if(group.incomplete)section.append(element('p','Some options or states could not be inspected.','review-label'));radioPanel.append(section);
+    section.append(list);if(group.incomplete)section.append(element('p','Some options or states could not be inspected.','review-label'));
+    const answerLabel=element('label','Your answer for this question'),answer=element('input',''),suggest=element('button','Suggest an option with local AI'),advice=element('div','','review-label');answer.type='text';answer.maxLength=600;answer.autocomplete='off';suggest.type='button';suggest.disabled=inventory.incomplete||group.incomplete;answerLabel.append(answer);section.append(answerLabel,suggest,advice);
+    answer.addEventListener('input',()=>advice.replaceChildren());
+    suggest.addEventListener('click',async()=>{
+     const requested=answer.value || '';if(!requested.trim()){advice.replaceChildren(element('p','Enter your answer first.'));return;}suggest.disabled=true;advice.replaceChildren(element('p','Checking the available options locally…'));
+     try{
+      let pending,response;try{pending=JSON.parse(sessionStorage.getItem('waypoint-choice-advice')||'null');}catch{pending=null;}let recovered=!!pending;
+      if(!pending){const active=await api('/api/form/custom-choice-advice-pending',{});if(active.active){pending={task:active.task_id,session:active.session_id};recovered=true;}else{const started=await api('/api/form/custom-radio-advice-start',{session_id:result.session_id,selector:group.selector,snapshot_digest:inventory.snapshot_digest,answer:requested});if(started.status==='complete')response=started;else pending={task:started.task_id,session:result.session_id};}if(pending)sessionStorage.setItem('waypoint-choice-advice',JSON.stringify(pending));}
+      if(!response){for(let attempt=0;attempt<180;attempt++){response=await api('/api/form/custom-choice-advice-status',{task_id:pending.task});if(response.status!=='running')break;await new Promise(resolve=>setTimeout(resolve,700));}if(response?.status==='running')throw new Error('The suggestion is still running; retry to recover it');sessionStorage.removeItem('waypoint-choice-advice');}
+      if(recovered)throw new Error('A previous request was recovered; request advice again for the current answer');
+      if(answer.value!==requested)throw new Error('Your answer changed; request advice again');
+      if(response?.status!=='complete'||response.session_id!==result.session_id||response.radio!==true)throw new Error(response?.error||'Radio advice is unavailable');
+      const option=response.advice?.option;if(option===null){advice.replaceChildren(element('p','No available option could be suggested from this answer.'));return;}
+      if(typeof option!=='string'||!group.options.some(item=>item.label===option&&!item.disabled)||typeof response.advice?.evidence!=='string'||!response.advice.evidence.trim()||!requested.includes(response.advice.evidence))throw new Error('Invalid option advice');
+      advice.replaceChildren(element('p',`Suggested option: ${option}`),element('p',`Based on your answer: ${requested}`),element('p','Suggestions can be wrong. Visually check the question and option and review the selection manually.'));
+     }catch(error){advice.replaceChildren(element('p',`Suggestion needs review: ${error.message}`));}finally{suggest.disabled=inventory.incomplete||group.incomplete;}
+    });radioPanel.append(section);
    }
    if(inventory.incomplete)radioPanel.append(element('p','Some page scopes or groups could not be inspected.','review-label'));
    radioPanel.append(element('p','These are page-reported states. Review and change them in the visible browser.','footnote'));

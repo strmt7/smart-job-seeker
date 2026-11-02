@@ -3127,6 +3127,51 @@ mod tests {
                 .unwrap_err();
             assert!(error.contains(expected), "{error}");
         }
+        for (task_id, digest, expected_status) in [
+            (
+                "radio-advice-fresh",
+                result["snapshot_digest"].as_str().unwrap().to_owned(),
+                "complete",
+            ),
+            ("radio-advice-stale", "0".repeat(64), "failed"),
+        ] {
+            crate::choice_advice::set_radio_fixture(task_id, "fixture-session", &digest);
+            let body = json!({"task_id":task_id}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/custom-choice-advice-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let advice: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(advice["status"], expected_status);
+            if expected_status == "complete" {
+                assert_eq!(advice["radio"], true);
+            }
+        }
+        let body = json!({"session_id":"fixture-session","selector":selector,"answer":"On site","snapshot_digest":result["snapshot_digest"]}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/form/custom-radio-advice-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let exact: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(exact["method"], "exact");
+        assert_eq!(exact["advice"]["option"], "On site");
+        let body = json!({"session_id":"fixture-session","selector":selector,"answer":"Remote","snapshot_digest":"0".repeat(64)}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/form/custom-radio-advice-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        assert!(
+            crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port)
+                .unwrap_err()
+                .contains("page changed")
+        );
         assert!(session
             .as_ref()
             .unwrap()

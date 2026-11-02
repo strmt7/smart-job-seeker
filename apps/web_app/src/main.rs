@@ -4838,15 +4838,87 @@ fn serve(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
             let task_id = random_id()?;
-            choice_advice::start(
-                task_id.clone(),
-                current.id.clone(),
+            choice_advice::start(choice_advice::Request {
+                id: task_id.clone(),
+                session: current.id.clone(),
                 digest,
                 model,
-                matches[0].label.clone(),
-                answer.to_owned(),
-                matches[0].options.clone(),
+                question: matches[0].label.clone(),
+                answer: answer.to_owned(),
+                options: matches[0].options.clone(),
+                radio: false,
+            })?;
+            current.created = Instant::now();
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/form/custom-radio-advice-start" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"]
+                .as_str()
+                .filter(|value| !value.is_empty() && value.len() <= 4096)
+                .ok_or("Invalid radio selector")?;
+            let answer = body["answer"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty() && value.len() <= 600)
+                .ok_or("Provide an answer of at most 600 bytes")?;
+            let expected = body["snapshot_digest"]
+                .as_str()
+                .filter(|value| value.len() == 64)
+                .ok_or("Missing radio snapshot")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let (inventory, digest) = custom_radio_snapshot(&mut current.driver)?;
+            if digest != expected {
+                return Err("The page changed; inspect radio groups again".into());
+            }
+            let groups: Vec<_> = inventory
+                .groups
+                .iter()
+                .filter(|group| group.selector == selector)
+                .collect();
+            if inventory.incomplete
+                || groups.len() != 1
+                || groups[0].incomplete
+                || groups[0].label == "Unlabelled radio group"
+            {
+                return Err(
+                    "Radio question is unavailable or incomplete; review it manually".into(),
+                );
+            }
+            let options: Vec<_> = groups[0]
+                .options
+                .iter()
+                .filter(|option| !option.disabled)
+                .map(|option| option.label.clone())
+                .collect();
+            if options.is_empty() {
+                return Err("No available radio options were found".into());
+            }
+            if let Some(advice) = choice_advice::exact_advice(answer, &options)? {
+                current.created = Instant::now();
+                json_reply(
+                    stream,
+                    "200 OK",
+                    json!({"status":"complete","session_id":current.id,"radio":true,"advice":advice,"method":"exact"}),
+                );
+                return Ok(());
+            }
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;
+            let task_id = random_id()?;
+            choice_advice::start(choice_advice::Request {
+                id: task_id.clone(),
+                session: current.id.clone(),
+                digest,
+                model,
+                question: groups[0].label.clone(),
+                answer: answer.to_owned(),
+                options,
+                radio: true,
+            })?;
             current.created = Instant::now();
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
@@ -4859,13 +4931,19 @@ fn serve(
                         && s.created.elapsed() <= s.ttl
                 }) {
                     current.created = Instant::now();
-                    if result["status"] == "complete"
-                        && custom_choice_snapshot(&mut current.driver)
-                            .ok()
-                            .map(|(_, digest)| digest)
-                            != result["snapshot_digest"].as_str().map(str::to_owned)
-                    {
-                        result = json!({"status":"failed","session_id":current.id,"error":"The page changed; inspect the choice again"});
+                    if result["status"] == "complete" {
+                        let fresh_digest = if result["radio"] == true {
+                            custom_radio_snapshot(&mut current.driver)
+                                .ok()
+                                .map(|(_, digest)| digest)
+                        } else {
+                            custom_choice_snapshot(&mut current.driver)
+                                .ok()
+                                .map(|(_, digest)| digest)
+                        };
+                        if fresh_digest != result["snapshot_digest"].as_str().map(str::to_owned) {
+                            result = json!({"status":"failed","session_id":current.id,"error":"The page changed; inspect the choice again"});
+                        }
                     }
                 } else if result["status"] == "complete" {
                     result = json!({"status":"failed","session_id":result["session_id"],"error":"The review session ended or changed"});
