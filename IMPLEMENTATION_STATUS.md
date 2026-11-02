@@ -2138,3 +2138,16 @@ fields needing review. No real-site filling or visual verification was tested.
 A separate search result redirected to its employer's board with a closed-job
 message, illustrating why search snippets alone cannot establish freshness.
 The local model was unloaded; these observations are not a general success rate.
+
+### Same-site listing redirects (2026-11-02)
+
+Read-only application checks now report when the initial listing redirects to
+a different path on the same origin, without disclosing the destination query.
+This is an advisory to verify the destination, not a closed-job determination.
+On one public Greenhouse listing independently observed to show a closed-job
+message, the browser check reported the path change and required manual review.
+A fictional URL test covers unchanged paths, external origins and query privacy;
+the focused test and web Clippy passed. No application was submitted.
+The form-review worker also stops automatic link-following after this kind of
+redirect and carries the same notice into review; a fictional driver test
+checks that it stays on the redirected page without exposing the query.

@@ -152,6 +152,13 @@ fn open_application_page(
             .push("The listing redirected to another site; continue manually".into());
         return Ok((live, None));
     }
+    if original.scheme() == "https" {
+        if let Some(warning) =
+            crate::application_check::same_origin_path_redirect_notice(&original, &reached)
+        {
+            return Ok((live, Some(warning.into())));
+        }
+    }
     // A file upload is evidence that this may already be an application form.
     // Keep the current page for user review rather than navigating away from it;
     // this is not proof that the page accepts applications.
@@ -2385,6 +2392,23 @@ mod tests {
         let (form, _) =
             open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
         assert!(!form.walls.is_empty());
+    }
+
+    #[test]
+    fn form_worker_reports_same_site_redirect_before_following_links() {
+        let mut driver = FakeDriver {
+            current: String::new(),
+            links: vec!["/other/apply".into()],
+            opened: vec![],
+            redirect: Some("https://jobs.example.org/board?token=private".into()),
+            direct_upload: false,
+        };
+        let (_, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert_eq!(driver.opened, ["https://jobs.example.org/role"]);
+        let warning = warning.unwrap();
+        assert!(warning.contains("different page"));
+        assert!(!warning.contains("private"));
     }
 
     #[test]

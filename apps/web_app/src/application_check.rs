@@ -394,6 +394,15 @@ fn eligible_external_redirect(original: &str, current: &str, allow_external: boo
             == Some(current)
 }
 
+pub(crate) fn same_origin_path_redirect_notice(
+    original: &Url,
+    reached: &Url,
+) -> Option<&'static str> {
+    (original.origin() == reached.origin() && original.path() != reached.path()).then_some(
+        "The listing redirected to a different page on the same site; verify the original listing and destination.",
+    )
+}
+
 /// Bounded, unverified contacts from the initially inspected listing.
 fn email_contact_inventory(
     links: Option<&[waypoint_applications::driver::PageLink]>,
@@ -568,7 +577,11 @@ pub fn start_bound(
             ensure_inspected_page(&mut browser, &current)?;
             let mut followed = false;
             let mut link_warning = None;
-            let redirect_warning = redirected_external.then_some("The listing redirected to an external destination before inspection; review its identity and the original listing.");
+            let redirect_warning = if redirected_external {
+                Some("The listing redirected to an external destination before inspection; review its identity and the original listing.")
+            } else {
+                same_origin_path_redirect_notice(&original, &reached)
+            };
             let mut inspected_url = if redirected_external {
                 displayable_inspected_url(&current, &current)
             } else {
@@ -927,6 +940,19 @@ mod tests {
     }
 
     #[test]
+    fn same_site_path_redirect_is_reported_without_exposing_query() {
+        let original = url::Url::parse("https://jobs.example.org/jobs/123").unwrap();
+        let changed = url::Url::parse("https://jobs.example.org/jobs?token=private").unwrap();
+        let notice = super::same_origin_path_redirect_notice(&original, &changed).unwrap();
+        assert!(notice.contains("different page"));
+        assert!(!notice.contains("private"));
+        let same_path = url::Url::parse("https://jobs.example.org/jobs/123?source=board").unwrap();
+        assert!(super::same_origin_path_redirect_notice(&original, &same_path).is_none());
+        let external = url::Url::parse("https://other.example.org/jobs").unwrap();
+        assert!(super::same_origin_path_redirect_notice(&original, &external).is_none());
+    }
+
+    #[test]
     #[ignore = "read-only live browser check; requires a reviewed public URL"]
     fn live_public_application_check_reports_result() {
         let _guard = TASK_TEST_LOCK.lock().unwrap();
@@ -954,6 +980,12 @@ mod tests {
                 }
             };
             if let Some(page) = page {
+                let changed_path = browser
+                    .current_url()
+                    .ok()
+                    .and_then(|current| url::Url::parse(&current).ok())
+                    .is_some_and(|current| current.path() != address.path());
+                println!("Initial inspection changed URL path: {changed_path}");
                 println!("Observed review reasons: {}", page.walls.len());
                 println!("Observed fields: {}", page.schema.fields.len());
                 let choices = browser
