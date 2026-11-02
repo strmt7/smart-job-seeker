@@ -477,6 +477,14 @@ pub(crate) fn same_origin_path_redirect_notice(
     )
 }
 
+/// A followed application URL can redirect to a different role or generic
+/// page on the same host. A form at that destination does not prove identity.
+fn application_path_redirect_notice(original: &Url, reached: &Url) -> Option<&'static str> {
+    (original.origin() == reached.origin() && original.path() != reached.path()).then_some(
+        "The application link redirected to a different page on the same site; verify the role and destination.",
+    )
+}
+
 /// Bounded, unverified contacts from an inspected page.
 fn email_contact_inventory(
     links: Option<&[waypoint_applications::driver::PageLink]>,
@@ -664,6 +672,7 @@ pub fn start_bound(
             ensure_inspected_page(&mut browser, &current)?;
             let mut followed = false;
             let mut link_warning = None;
+            let mut application_redirect_warning = None;
             let redirect_warning = if redirected_external {
                 Some("The listing redirected to an external destination before inspection; review its identity and the original listing.")
             } else {
@@ -725,10 +734,14 @@ pub fn start_bound(
                     let final_url = browser
                         .current_url()
                         .map_err(|_| "The application destination could not be checked.")?;
-                    let final_origin = Url::parse(&final_url).map_err(|e| e.to_string())?.origin();
+                    let final_parsed = Url::parse(&final_url).map_err(|e| e.to_string())?;
+                    let final_origin = final_parsed.origin();
                     if final_origin != destination_origin {
                         return Ok(("The application link redirected to another site; review the destination manually.".into(), true));
                     }
+                    let requested = Url::parse(&destination).map_err(|e| e.to_string())?;
+                    application_redirect_warning =
+                        application_path_redirect_notice(&requested, &final_parsed);
                     inspected_url = displayable_inspected_url(&destination, &final_url);
                     current = final_url;
                     if page.walls.is_empty() {
@@ -818,6 +831,10 @@ pub fn start_bound(
                 message.push(' ');
                 message.push_str(warning);
             }
+            if let Some(warning) = application_redirect_warning {
+                message.push(' ');
+                message.push_str(warning);
+            }
             if page.walls.is_empty() {
                 match inspect_page_with_local_vision(&mut browser) {
                     Ok(advice) => {
@@ -846,7 +863,10 @@ pub fn start_bound(
             if page_text_fingerprint.1 {
                 message.push_str(" The text freshness check covered only the first 32,000 bytes; later content may have changed.");
             }
-            Ok((report_inspected_page(message, inspected_url), review))
+            Ok((
+                report_inspected_page(message, inspected_url),
+                review || redirect_warning.is_some() || application_redirect_warning.is_some(),
+            ))
         })();
         if result.is_err() {
             contacts.clear();
@@ -2232,6 +2252,21 @@ mod tests {
             false
         )
         .is_none());
+    }
+
+    #[test]
+    fn followed_application_path_change_requires_role_review() {
+        let requested = url::Url::parse("https://jobs.example.org/role/apply").unwrap();
+        let changed = url::Url::parse("https://jobs.example.org/other/apply").unwrap();
+        let same = url::Url::parse("https://jobs.example.org/role/apply#details").unwrap();
+        let external = url::Url::parse("https://different.example.org/role/apply").unwrap();
+        assert!(
+            super::application_path_redirect_notice(&requested, &changed)
+                .unwrap()
+                .contains("verify the role")
+        );
+        assert!(super::application_path_redirect_notice(&requested, &same).is_none());
+        assert!(super::application_path_redirect_notice(&requested, &external).is_none());
     }
 
     #[test]
