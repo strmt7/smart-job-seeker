@@ -981,13 +981,34 @@ fn missing_required_warnings(schema: &FormSchema, mappings: &[ProposedMapping]) 
                     .any(|mapping| mapping.field_selector == field.selector)
         })
         .count();
-    if count == 0 {
-        Vec::new()
-    } else {
-        vec![format!(
+    let other_count = schema
+        .fields
+        .iter()
+        .filter(|field| {
+            field.required
+                && !matches!(
+                    field.field_type,
+                    FormFieldType::Text
+                        | FormFieldType::Email
+                        | FormFieldType::TextArea
+                        | FormFieldType::Select { .. }
+                        | FormFieldType::Radio { .. }
+                )
+                && !mappings
+                    .iter()
+                    .any(|mapping| mapping.field_selector == field.selector)
+        })
+        .count();
+    let mut warnings = Vec::new();
+    if count > 0 {
+        warnings.push(format!(
             "{count} required field(s) have no suggestion and need manual review"
-        )]
+        ));
     }
+    if other_count > 0 {
+        warnings.push(format!("{other_count} required field(s), such as attachments, dates or checkboxes, are not covered by these profile suggestions. Review them separately."));
+    }
+    warnings
 }
 
 /// Resolve non-exact values using only a concrete option on the page.
@@ -4108,6 +4129,37 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("6 required field(s)")));
+    }
+
+    #[test]
+    fn required_controls_outside_profile_suggestions_are_reported() {
+        let mut schema = form();
+        schema.fields = [
+            FormFieldType::File,
+            FormFieldType::Checkbox,
+            FormFieldType::Date,
+            FormFieldType::MultiSelect { options: vec![] },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, field_type)| FormField {
+            selector: format!("#other-{index}"),
+            label: "Required".into(),
+            field_type,
+            required: true,
+            sensitive: index == 1,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        })
+        .collect();
+        let warnings = missing_required_warnings(&schema, &[]);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("4 required field(s)"));
+        schema.fields[0].required = false;
+        assert!(missing_required_warnings(&schema, &[])[0].contains("3 required field(s)"));
     }
 
     #[test]

@@ -22,6 +22,8 @@
 
 ## Document context feedback — 2026-11-02
 
+- Profile mapping now reports required non-profile controls, including files, checkboxes, dates, and multi-selects, for separate review when no suggestion is present. This notice is not a claim about what the website has already filled. Fictional suggestion tests passed (48 passed, 20 ignored) and Windows web Clippy passed; no live browser or model test was run.
+
 - Duration evidence checks also recognize hyphenated quantity-unit adjectives such as “three-year” and “3-year”, including compound number words. Focused fictional document and answer tests and Windows web Clippy passed; live model tests were not run. This remains a limited numeric guard, not a semantic proof of experience.
 
 - The shared document and answer evidence guard now recognizes common English number words in durations and compares their units, including simple digit/word equivalents. Compound or hyphenated number phrases are compared conservatively as phrases; a mismatch downgrades a model-supported claim to uncertain. This is not semantic verification, does not cover every language or numeric expression, and equivalent compound spellings may require review. Focused fictional document and answer tests and Windows web Clippy passed; live model tests were not run.
