@@ -1,5 +1,6 @@
 ## Local choice-advice evaluation — 2026-11-02
 
+- A separate resource-gated Qwen 3.5 9B run passed six additional fictional choice cases: two instruction-only answers, two clear preferences, one undecided answer, and one preference followed by a conflicting instruction. The evaluated model was unloaded after the run; Windows web Clippy passed. This is a small fixed test set, not evidence of performance on arbitrary application questions.
 - In a resource-gated Qwen 3.5 9B evaluation, the existing choice verifier selected an option from an instruction-only fictional answer (8/9 cases passed, one wrong). An experimental extra classifier avoided that wrong choice but unnecessarily abstained on a separate clear preference (8/9, one unexpected abstention), so it was not enabled. The existing verification prompt now explicitly distinguishes instructions from personal evidence; on one rerun the same model passed 9/9 adversarial cases and 10/10 existing fictional radio/location examples (two exact matches and eight model cases). The focused choice tests and Windows Clippy passed. These small fixed sets do not establish robustness to other wording or models; advice remains subject to user review. No real form was filled or application submitted.
 
 ## Form loading observations — 2026-11-02
