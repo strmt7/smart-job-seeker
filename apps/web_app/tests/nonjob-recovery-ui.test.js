@@ -21,3 +21,6 @@ console.log('Review-only recovery checks passed.');
 
 const closed=node('article');context.showReviewOnlyRecovery(closed,{url:'https://example.org/listing'},{review_only:true,job:{title:'Fictional Engineer',employer:'Example',possible_closure_evidence:'This fictional vacancy has expired.'}});
 assert.ok(closed.children.some(item=>/Possible closure wording.*expired.*Verify/.test(item.textContent)));
+const failed=node('article');context.showReviewOnlyRecovery(failed,{url:'https://example.org/listing'},{review_only:true,job:{title:'Fictional Engineer',employer:'Example',extraction_warnings:['Local AI could not complete the closure check; verify availability on the original page.',null]}});
+assert.ok(failed.children.some(item=>/could not complete the closure check/.test(item.textContent)));
+assert.ok(failed.children.some(item=>/unverified/.test(item.textContent)));

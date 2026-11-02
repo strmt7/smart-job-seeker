@@ -1,3 +1,8 @@
+## Listing closure review — 2026-11-02
+
+- In an isolated workspace, a wider-web search found a public listing previously captured with explicit expiry wording. Waypoint's Qwen 3.5 9B inspection returned an uncertain classification and displayed no closure excerpt. No job was saved and no application was submitted. This single live observation demonstrates that the advisory can miss closure wording; the cause has not yet been established and no absence of a warning establishes that a role is open.
+- Review-only results now display the extraction warnings returned by the inspection, including a failed closure check. Fictional interface checks cover warning display; they do not establish live model accuracy.
+
 ## Listing not-found review — 2026-11-02
 
 - A read-only public Greenhouse application-page check on 2026-11-02 reached the [DoorDash Electrical Engineer listing](https://job-boards.greenhouse.io/doordashusa/jobs/7729872). The isolated Crawl4AI provider `0.9.5+flitzzip.portable2` returned HTTP 200 with the expected title and 17,784 bytes of extracted Markdown; native receipt `target/greenhouse-research-7382aaf1515e472e813b8f2b56891272.json`, SHA-256 `aa6ac22cb692d1e7d607d454f4437755a7ed24333507f114fbc5f8724f64df26`. Waypoint's read-only browser fixture detected eight standard fields (seven required), eleven custom choices with incomplete option inventories, an uninspected frame, a required hidden control and a CAPTCHA. Those custom controls and the challenge need manual review; this observation does not establish that the role is open or that an application could be completed. No values were entered and no application was submitted.
