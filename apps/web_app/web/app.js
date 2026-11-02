@@ -634,6 +634,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
     if(review.observation_limit_reached===true && !targeted){reviewPanel.append(element('p',half===null?'This segment reached the observation limit; inspecting its two halves. Fields at the split may be missed, so inspect the live page manually.':'This half reached the observation limit; additional fields may have been missed. Inspect the live page manually.','review-label'));await refresh().catch(()=>{});if(half===null){queue.push({segment,half:0},{segment,half:1});continue;}}
     segmentComparisons.push(...review.comparisons);observations.push(...review.observations);
     if(!review.observations.length)reviewPanel.append(element('p','No fields transcribed from this segment.','review-label'));
+    if(review.observations.length)reviewPanel.append(element('p','Unverified model transcriptions; these can include placeholder text or unrelated page content.','review-label'));
     for(const item of review.observations)reviewPanel.append(element('p',`${item.label}: ${item.visible_value}`));
    }
    if(completedTasks.length>1){

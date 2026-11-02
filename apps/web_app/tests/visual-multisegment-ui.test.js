@@ -15,7 +15,9 @@ async function run(secondDom='matches',fresh='same',finalChange=false,finalUnava
  return messages.join('\n');
 }
 (async()=>{
- assert.match(await run(),/Email: transcription and live value match reviewed answer/);
+ const reviewed=await run();
+ assert.match(reviewed,/Unverified model transcriptions; these can include placeholder text or unrelated page content/);
+ assert.match(reviewed,/Email: transcription and live value match reviewed answer/);
  assert.match(await run('unconfirmed'),/Email: live field value not confirmed/);
  assert.match(await run('matches','changed'),/Email: capture changed or freshness could not be confirmed/);
  assert.match(await run('matches','same',true),/Email: capture changed or freshness could not be confirmed/);
