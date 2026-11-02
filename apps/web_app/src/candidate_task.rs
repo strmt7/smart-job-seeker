@@ -688,6 +688,9 @@ fn parse_structured(
             .map(|value| value.to_string())
             .unwrap_or_default()
     };
+    let mut location_incomplete = job["jobLocation"]
+        .as_array()
+        .is_some_and(|list| list.len() > 20);
     let locations = match job["jobLocation"].as_array() {
         Some(list) => list.iter().take(20).collect::<Vec<_>>(),
         None => vec![&job["jobLocation"]],
@@ -695,8 +698,8 @@ fn parse_structured(
     let mut extracted = Vec::new();
     for place in locations {
         let address = &place["address"];
-        let text = if let Some(text) = address.as_str() {
-            bounded(text, 200)
+        let raw_location = if let Some(text) = address.as_str() {
+            text.to_owned()
         } else {
             let parts: Vec<&str> = ["addressLocality", "addressRegion", "addressCountry"]
                 .iter()
@@ -707,8 +710,12 @@ fn parse_structured(
                 })
                 .filter(|s| !s.trim().is_empty())
                 .collect();
-            bounded(&parts.join(", "), 200)
+            parts.join(", ")
         };
+        let text = bounded(&raw_location, 200);
+        if text.len() < raw_location.trim().len() || (!place.is_null() && text.is_empty()) {
+            location_incomplete = true;
+        }
         if !text.is_empty()
             && !extracted
                 .iter()
@@ -722,6 +729,12 @@ fn parse_structured(
         .is_some_and(|v| v.eq_ignore_ascii_case("TELECOMMUTE"));
     if remote {
         let requirements = &job["applicantLocationRequirements"];
+        if requirements
+            .as_array()
+            .is_some_and(|items| items.len() > 20)
+        {
+            location_incomplete = true;
+        }
         let regions: Vec<&Value> = match requirements.as_array() {
             Some(items) => items.iter().take(20).collect(),
             None => vec![requirements],
@@ -729,7 +742,11 @@ fn parse_structured(
         let mut names = Vec::new();
         for region in regions {
             if let Some(name) = region.as_str().or_else(|| region["name"].as_str()) {
-                let name = bounded(name, 100);
+                let raw_name = name;
+                let name = bounded(raw_name, 100);
+                if name.len() < raw_name.trim().len() || name.is_empty() {
+                    location_incomplete = true;
+                }
                 if !name.is_empty()
                     && !names
                         .iter()
@@ -737,13 +754,23 @@ fn parse_structured(
                 {
                     names.push(name);
                 }
+            } else if !region.is_null() {
+                location_incomplete = true;
             }
         }
         if !names.is_empty() {
             extracted.push(format!("Applicant location: {}", names.join(", ")));
         }
     }
-    let location = bounded(&extracted.join("; "), 200);
+    let joined_locations = extracted.join("; ");
+    let mut location = bounded(&joined_locations, 200);
+    if location.len() < joined_locations.len() {
+        location_incomplete = true;
+    }
+    if location_incomplete {
+        // A partial list cannot establish that an omitted location is excluded.
+        location.clear();
+    }
     let salary = job
         .get("baseSalary")
         .filter(|value| !value.is_null())
@@ -758,9 +785,11 @@ fn parse_structured(
     };
     let posting_date = date("datePosted");
     let valid_through = date("validThrough");
-    Ok(Some(
-        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"requisition_id":requisition_id,"extraction":"structured","salary_evidence":salary,"posting_date_evidence":posting_date,"valid_through_evidence":valid_through}),
-    ))
+    let mut result = json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"remote":remote,"requisition_id":requisition_id,"extraction":"structured","salary_evidence":salary,"posting_date_evidence":posting_date,"valid_through_evidence":valid_through});
+    if location_incomplete {
+        result["extraction_warnings"] = json!(["The structured location list was incomplete or exceeded the extraction limit. Location was left unknown; review the original listing."]);
+    }
+    Ok(Some(result))
 }
 
 /// Only a single structured posting missing its identity may use the text
@@ -3687,6 +3716,51 @@ mod tests {
             "a listed location must not be excluded: {outcomes:?}"
         );
         assert_eq!(job["url"], "https://example.org/jobs/123");
+    }
+
+    #[test]
+    fn truncated_structured_locations_remain_unknown_for_constraints() {
+        let locations: Vec<Value> = (0..21)
+            .map(|i| json!({"address":{"addressLocality":format!("City{i}")}}))
+            .collect();
+        for places in [
+            json!(locations),
+            json!([{"address":"X".repeat(201)}]),
+            json!([{"address":"Berlin"},{"name":"Another office"}]),
+        ] {
+            let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"jobLocation":places}).to_string();
+            let job = parse(&[posting], "https://example.org/job")
+                .unwrap()
+                .unwrap();
+            assert_eq!(job["location"], "");
+            assert!(job["extraction_warnings"][0]
+                .as_str()
+                .unwrap()
+                .contains("Location was left unknown"));
+            let mut capture = ListingCapture {
+                metadata: json!({"source_url":"https://example.org/job"}),
+                segments: vec![],
+            };
+            attach_provenance(&mut capture, &job);
+            let saved = extraction_provenance(&capture.metadata, &job).unwrap();
+            assert_eq!(saved["warnings"][0], job["extraction_warnings"][0]);
+            let constraints = waypoint_search::CampaignConstraints {
+                locations: vec!["City20".into()],
+                ..Default::default()
+            };
+            let outcomes = waypoint_search::check_constraints_with_remote(
+                &constraints,
+                &[],
+                None,
+                None,
+                Some(false),
+                job["location"].as_str().unwrap(),
+            );
+            assert!(matches!(
+                &outcomes[..],
+                [(_, waypoint_search::ConstraintOutcome::Unknown(_))]
+            ));
+        }
     }
 
     #[test]

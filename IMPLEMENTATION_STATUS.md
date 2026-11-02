@@ -2925,3 +2925,12 @@ a matching second location could previously be excluded. A parsed fictional
 listing and all 20 search-crate tests passed, including partial-location and
 remote-eligibility unknown cases. This does not establish that a listing is
 still open or that all geographic eligibility rules are represented.
+
+### Incomplete structured locations (2026-11-02)
+
+Structured listing extraction now leaves location unknown and records a review
+warning when locations or remote applicant regions exceed extraction limits or
+contain an unsupported entry. This avoids treating a partial list as a complete
+mismatch. Fictional tests cover truncation, unsupported entries, provenance,
+normal multiple locations and remote restrictions; web-app Clippy passed.
+Previously saved listings are not automatically re-extracted.
