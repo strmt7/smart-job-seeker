@@ -641,6 +641,47 @@ pub(crate) mod tests {
                     "{name} mapped third-party email"
                 );
             }
+            // Exercise the production selector with duplicate private records
+            // and distinct permitted context, not just already-selected hints.
+            let mut noisy = vec![items[0].clone(), items[1].clone()];
+            for i in 0..6 {
+                let mut duplicate = items[0].clone();
+                duplicate.id = format!("{:032x}", 100 + i);
+                duplicate.experience.observed_at = 100 + i;
+                duplicate.experience.note = Some(format!("private context {i}"));
+                noisy.push(duplicate);
+            }
+            for i in 0..2 {
+                let mut distinct = items[1].clone();
+                distinct.id = format!("{:032x}", 200 + i);
+                distinct.experience.note = Some(format!("Review the visible context, case {i}"));
+                distinct.experience.use_note_in_model = true;
+                noisy.push(distinct);
+            }
+            let selected = crate::form_task::relevant_experiences(&schema, &noisy);
+            assert_eq!(selected.len(), 4);
+            assert_eq!(
+                selected
+                    .iter()
+                    .filter(|x| x.experience.use_note_in_model)
+                    .count(),
+                2
+            );
+            let mut diverse = ExperienceInference::new(&mut llm, &selected);
+            let (mappings, _, _) =
+                crate::suggestions::suggest_with_review(&mut diverse, &schema, &profile).unwrap();
+            let selectors: Vec<_> = mappings
+                .iter()
+                .map(|item| item.field_selector.as_str())
+                .collect();
+            println!(
+                "deduplicated lessons: {selectors:?}; note attempts: {:?}",
+                diverse.note_attempts()
+            );
+            assert!(diverse.attempted_with_hints() && diverse.conflicting_reports_attempted());
+            assert!(diverse.note_attempts().0 >= 2);
+            assert!(selectors.contains(&"#self"));
+            assert!(!selectors.contains(&"#reference") && !selectors.contains(&"#manager"));
             use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
             let field = |selector: &str, label: &str, autocomplete: Option<&str>| FormField {
                 selector: selector.into(),
