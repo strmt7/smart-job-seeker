@@ -2232,3 +2232,13 @@ The evenly spaced pool now includes the last entry as well as the first, within
 the existing limit. A focused fictional test checks the endpoints. The scoring
 version was advanced so previously cached assessments are not mistaken for
 results generated with the changed pool.
+
+### Formatted listing excerpts (2026-11-02)
+
+The listing-only recovery now recognizes paired Markdown bold delimiters while
+preserving original source bytes and rejecting ambiguous matches. In a repeat of
+the same private-input diagnostic, three excerpts previously rejected because of
+formatting were recovered and six criteria survived. The separate candidate
+evidence search was unavailable, however, so all six remained unknown and the
+score range was 0–100. This is not a successful fit judgment; improving bounded
+evidence comparison remains necessary. The model was unloaded afterwards.

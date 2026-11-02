@@ -682,14 +682,41 @@ fn isolated_listing_passages(listing: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Return original source bytes only for a unique whitespace/curly-quote match.
+/// Return original source bytes only for a unique formatting-normalized match.
 /// Other wording changes and ambiguous matches are never accepted.
 fn recover_isolated_quote(passages: &[&str], excerpt: &str) -> Option<String> {
-    fn normalized(text: &str) -> (String, Vec<(usize, usize)>) {
+    fn normalized(
+        text: &str,
+    ) -> (
+        String,
+        Vec<(usize, usize)>,
+        std::collections::HashMap<usize, bool>,
+    ) {
         let mut out = String::new();
         let mut spans = Vec::new();
         let mut whitespace: Option<(usize, usize)> = None;
+        // Models often omit Markdown strong-emphasis delimiters when copying
+        // rendered job postings. Ignore only paired delimiters on one line;
+        // keep the original byte spans for the final source-backed quote.
+        let mut delimiters = std::collections::HashMap::new();
+        let mut line_start = 0;
+        for line in text.split_inclusive('\n') {
+            let positions: Vec<_> = line.match_indices("**").map(|(i, _)| i).collect();
+            for pair in positions.as_chunks::<2>().0 {
+                let inner = &line[pair[0] + 2..pair[1]];
+                if !inner.is_empty() && inner.trim() == inner {
+                    delimiters.insert(line_start + pair[0], true);
+                    delimiters.insert(line_start + pair[0] + 1, true);
+                    delimiters.insert(line_start + pair[1], false);
+                    delimiters.insert(line_start + pair[1] + 1, false);
+                }
+            }
+            line_start += line.len();
+        }
         for (index, ch) in text.char_indices() {
+            if delimiters.contains_key(&index) {
+                continue;
+            }
             let end = index + ch.len_utf8();
             if ch.is_whitespace() {
                 if !out.is_empty() {
@@ -709,21 +736,27 @@ fn recover_isolated_quote(passages: &[&str], excerpt: &str) -> Option<String> {
             out.push(ch);
             spans.extend(std::iter::repeat_n((index, end), ch.len_utf8()));
         }
-        (out, spans)
+        (out, spans, delimiters)
     }
-    let (needle, _) = normalized(excerpt);
+    let (needle, _, _) = normalized(excerpt);
     if needle.is_empty() || needle.len() > 800 {
         return None;
     }
     let mut result = None;
     for passage in passages {
-        let (text, spans) = normalized(passage);
+        let (text, spans, delimiters) = normalized(passage);
         for (index, _) in text
             .char_indices()
             .filter(|(index, _)| text[*index..].starts_with(&needle))
         {
-            let start = spans.get(index)?.0;
-            let end = spans.get(index + needle.len() - 1)?.1;
+            let mut start = spans.get(index)?.0;
+            let mut end = spans.get(index + needle.len() - 1)?.1;
+            if start >= 2 && delimiters.get(&(start - 2)) == Some(&true) {
+                start -= 2;
+            }
+            if delimiters.get(&end) == Some(&false) {
+                end += 2;
+            }
             let original = passage.get(start..end)?;
             if original.len() > 800 || result.is_some() {
                 return None;
@@ -3380,15 +3413,20 @@ mod tests {
                 ))
             }
         }
-        let listing = "Python experience required. You don’t need a degree.";
+        let listing = "Python **experience** required. You don’t need a degree.";
         let result = assess(&mut Fixture, &[], "", listing).unwrap();
-        assert_eq!(result["isolated_recovered_quotes"], 1);
+        assert_eq!(result["isolated_recovered_quotes"], 2);
         assert_eq!(result["isolated_rejected_quotes"], 1);
         assert!(result["rubric"]
             .as_array()
             .unwrap()
             .iter()
             .any(|item| item["excerpt"] == "don’t need a degree"));
+        assert!(result["rubric"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["excerpt"] == "Python **experience**"));
         assert!(result["concerns"]
             .as_array()
             .unwrap()
@@ -3412,6 +3450,22 @@ mod tests {
             None
         );
         assert_eq!(recover_isolated_quote(&["aaa"], "aa"), None);
+        assert_eq!(
+            recover_isolated_quote(
+                &["Experience with **Python** and **Go**."],
+                "Experience with Python and Go."
+            )
+            .as_deref(),
+            Some("Experience with **Python** and **Go**.")
+        );
+        assert_eq!(
+            recover_isolated_quote(&["**Python** and Python"], "Python"),
+            None
+        );
+        assert_eq!(
+            recover_isolated_quote(&["**Python\nand Go** ready"], "Python and Go ready"),
+            None
+        );
         assert_eq!(
             recover_isolated_quote(&["Work remotely"], "Work in Europe"),
             None
