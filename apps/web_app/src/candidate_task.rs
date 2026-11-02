@@ -1677,6 +1677,7 @@ fn warn_same_site_path_redirect(job: &mut Value, original: &url::Url, reached: &
     if crate::application_check::same_origin_path_redirect_notice(original, reached).is_none() {
         return;
     }
+    job["same_site_path_redirect"] = json!(true);
     if job["extraction_warnings"].as_array().is_none() {
         job["extraction_warnings"] = json!([]);
     }
@@ -2299,6 +2300,7 @@ mod tests {
         warn_same_site_path_redirect(&mut job, &original, &reached);
         let warnings = job["extraction_warnings"].as_array().unwrap();
         assert!(warnings[0].as_str().unwrap().contains("may be different"));
+        assert_eq!(job["same_site_path_redirect"], true);
         assert!(!warnings[0].as_str().unwrap().contains("private"));
         assert_eq!(warnings[1], "Existing warning");
         let mut same = json!({});
@@ -2328,6 +2330,87 @@ mod tests {
         assert!(browser.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
             && !entry.contains("submitted")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated full inspection of a reviewed redirected public listing"]
+    fn resource_gated_live_redirected_listing_worker() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            use std::io::{Read, Write};
+            use std::net::{TcpListener, TcpStream};
+            let url =
+                std::env::var("WAYPOINT_REDIRECTED_LISTING_URL").expect("reviewed public URL");
+            let parsed = url::Url::parse(&url).unwrap();
+            assert_eq!(parsed.scheme(), "https");
+            assert_eq!(parsed.host_str(), Some("apply.workable.com"));
+            crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
+            let id = "redirected-listing-worker-diagnostic";
+            start(id.into(), url, None).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            let result = loop {
+                if let Some(result) = poll(id).unwrap() {
+                    break result;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "listing inspection timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            };
+            match result {
+                Ok(item) => {
+                    let warnings = item.job["extraction_warnings"]
+                        .as_array()
+                        .expect("warnings");
+                    assert!(warnings
+                        .first()
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| text.contains("may be different")));
+                    println!("Worker returned a listing with a first-position redirect warning; {} warnings total", warnings.len());
+                    if let Ok(expected) = std::env::var("WAYPOINT_EXPECTED_ROLE_TITLE") {
+                        println!(
+                            "Extracted title matches the previously observed search title: {}",
+                            item.job["title"]
+                                .as_str()
+                                .is_some_and(|title| title.eq_ignore_ascii_case(&expected))
+                        );
+                    }
+                }
+                Err(error) => println!("Worker stopped for review: {error}"),
+            }
+            let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"task_id":id}).to_string();
+            write!(client, "POST /api/listing-inspect/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(
+                &mut server,
+                &mut workspace,
+                &mut None,
+                "fixture-token",
+                port,
+            )
+            .unwrap();
+            drop(server);
+            let mut raw = String::new();
+            client.read_to_string(&mut raw).unwrap();
+            let response: Value =
+                serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+            if response["status"] == "complete" {
+                assert_eq!(response["review_reason"], "redirect");
+                assert!(response["saved"].is_null());
+                assert_eq!(workspace.job_count().unwrap(), 0);
+                println!(
+                    "Status endpoint retained the redirected result for review; no job was saved"
+                );
+            } else {
+                assert_eq!(response["status"], "failed");
+                assert_eq!(workspace.job_count().unwrap(), 0);
+            }
+        });
     }
 
     #[test]
@@ -2872,6 +2955,11 @@ mod tests {
                 "uncertain",
                 json!({"url":"https://example.org/article","title":"Fictional role","employer":"Example","extraction":"local_model","page_kind":"uncertain"}),
                 "uncertain",
+            ),
+            (
+                "redirected",
+                json!({"url":"https://example.org/careers","title":"Different role","employer":"Example","same_site_path_redirect":true}),
+                "redirect",
             ),
         ] {
             let (_tx, rx) = mpsc::channel();

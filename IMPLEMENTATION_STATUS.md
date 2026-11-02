@@ -2382,3 +2382,12 @@ read-only browser check confirmed the warning on one previously observed public
 job URL that redirected to its employer's careers page. A fictional test covers
 warning order and query privacy. The check does not prove that every redirect
 points to a different role, and no listing was saved or application sent.
+
+In a subsequent resource-gated worker run, the model extracted a title that
+did not match the title previously observed in the search result. The status
+endpoint would previously have saved that extraction automatically. Same-site
+path redirects are now review-only: the endpoint returns the extracted details
+for inspection without creating a job record. A repeat against that public URL
+confirmed zero saved jobs; a fictional endpoint test also checks replay. This
+conservative rule can require review for legitimate canonical redirects and
+does not by itself prove that a job is closed. The model was unloaded.
