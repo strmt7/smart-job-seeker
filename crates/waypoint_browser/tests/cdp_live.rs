@@ -833,6 +833,11 @@ fn plain_headed_containers_provide_reviewable_context() {
         .walls
         .iter()
         .any(|wall| wall.contains("section heading could not be verified")));
+    assert!(form
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#unrelated" && !field.label.contains("Navigation only")));
     let original = form.schema.schema_hash_input();
     driver
         .execute(&BrowserCommand::Click {

@@ -3168,6 +3168,8 @@ impl CdpDriver {
         let mut radio_group_required: HashMap<u64, bool> = HashMap::new();
         type GroupContext = (String, Option<String>, Option<u64>, bool, bool);
         let mut field_containers: HashMap<u64, Vec<GroupContext>> = HashMap::new();
+        let mut group_scan_budget = 50_000usize;
+        let mut group_scan_incomplete = false;
         let mut wall_flags: Vec<String> = vec![];
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
@@ -3540,6 +3542,9 @@ impl CdpDriver {
             // section even without a semantic section/fieldset element. The
             // heading is still checked for rendered visibility below.
             let headed_div = tag == "div"
+                && attrs.get("role").is_none_or(|role| {
+                    role.eq_ignore_ascii_case("group") || role.eq_ignore_ascii_case("region")
+                })
                 && node
                     .get("children")
                     .and_then(Value::as_array)
@@ -3663,37 +3668,41 @@ impl CdpDriver {
                     .and_then(Value::as_u64)
                     .filter(|_| !legend.is_empty() || group_ref.is_some() || ambiguous_heading)
                 {
-                    walk(node, false, &mut |child, _| {
-                        let child_tag = child
-                            .get("nodeName")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_ascii_lowercase();
-                        if named_field_group
-                            && (matches!(child_tag.as_str(), "input" | "textarea" | "select")
-                                || supported_editing_host(&child_tag, &attributes(child)))
-                        {
-                            if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
-                                let groups = field_containers.entry(id).or_default();
-                                if groups.len() < 9 {
-                                    groups.push((
-                                        legend.clone(),
-                                        group_ref.clone(),
-                                        implicit_heading,
-                                        ambiguous_heading,
-                                        headed_div && implicit_heading.is_some(),
-                                    ));
+                    let completed =
+                        walk_group_bounded(node, &mut group_scan_budget, &mut |child| {
+                            let child_tag = child
+                                .get("nodeName")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_ascii_lowercase();
+                            if named_field_group
+                                && (matches!(child_tag.as_str(), "input" | "textarea" | "select")
+                                    || supported_editing_host(&child_tag, &attributes(child)))
+                            {
+                                if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                    let groups = field_containers.entry(id).or_default();
+                                    if groups.len() < 9 {
+                                        groups.push((
+                                            legend.clone(),
+                                            group_ref.clone(),
+                                            implicit_heading,
+                                            ambiguous_heading,
+                                            headed_div && implicit_heading.is_some(),
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        if child_tag == "input" && (tag == "fieldset" || radio_group) {
-                            if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
-                                radio_containers
-                                    .insert(id, (fieldset_id, legend.clone(), group_ref.clone()));
+                            if child_tag == "input" && (tag == "fieldset" || radio_group) {
+                                if let Some(id) = child.get("nodeId").and_then(Value::as_u64) {
+                                    radio_containers.insert(
+                                        id,
+                                        (fieldset_id, legend.clone(), group_ref.clone()),
+                                    );
+                                }
                             }
-                        }
-                        true
-                    });
+                            true
+                        });
+                    group_scan_incomplete |= !completed;
                 }
             }
             if matches!(tag.as_str(), "script" | "style" | "noscript" | "template") {
@@ -4005,6 +4014,9 @@ impl CdpDriver {
             true
         });
         let mut fields = vec![];
+        if group_scan_incomplete {
+            wall_flags.push("Form section context exceeded the inspection budget; review the complete form manually".into());
+        }
         let mut walls = wall_flags;
         // Error references are read only for visible fields, and are resolved
         // separately from accessible names so duplicate IDs cannot be guessed.
@@ -6217,6 +6229,29 @@ fn collect_text(node: &Value, skip: bool, out: &mut String) {
     });
 }
 
+// Shared budget bounds repeated group-subtree traversal on nested forms.
+// False means some nodes were not visited and callers must report incomplete context.
+fn walk_group_bounded<F: FnMut(&Value) -> bool>(
+    node: &Value,
+    budget: &mut usize,
+    cb: &mut F,
+) -> bool {
+    let mut pending = vec![node];
+    while let Some(current) = pending.pop() {
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        if !cb(current) {
+            continue;
+        }
+        if let Some(children) = current.get("children").and_then(Value::as_array) {
+            pending.extend(children.iter().rev());
+        }
+    }
+    true
+}
+
 /// Depth-first walk; the callback returns false to skip a subtree.
 fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut F) {
     let mut pending = vec![(node, in_control)];
@@ -6534,6 +6569,25 @@ fn origin_of(url: &str) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+
+    #[test]
+    fn group_walk_shares_a_finite_budget_and_reports_incomplete() {
+        let node = json!({"nodeName":"DIV","children":[{"nodeName":"H4"},{"nodeName":"INPUT"}]});
+        let mut remaining = 4;
+        let mut visited = 0;
+        assert!(walk_group_bounded(&node, &mut remaining, &mut |_| {
+            visited += 1;
+            true
+        }));
+        assert_eq!(visited, 3);
+        assert_eq!(remaining, 1);
+        assert!(!walk_group_bounded(&node, &mut remaining, &mut |_| {
+            visited += 1;
+            true
+        }));
+        assert_eq!(remaining, 0);
+        assert_eq!(visited, 4);
+    }
 
     #[test]
     fn section_text_requires_one_semantic_id_and_skips_controls() {

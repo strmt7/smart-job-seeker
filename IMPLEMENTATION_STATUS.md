@@ -1973,3 +1973,13 @@ accuracy. A browser test run before the final `Possible section` labeling passed
 were absent; the affected headed-container and existing semantic-heading cases
 passed after the labeling change. Browser and web Clippy passed. The model was
 unloaded; no fields were filled and no application was submitted.
+
+The section-context traversal now shares a 50,000-node budget across group
+subtrees and reports incomplete context when that budget is exhausted. Plain
+div headings are inferred only when the container has no ARIA role or has a
+group/region role; unrelated roles are excluded. A fictional browser fixture
+covered the role exclusion and heading change, and a unit test checked shared
+budget exhaustion. The previously reviewed public form still exposed its
+instruction-bearing labels in a read-only check. Browser library tests and
+Clippy passed. This bounds the repeated group scan, not the browser's whole DOM
+retrieval or total memory use; no application was submitted.
