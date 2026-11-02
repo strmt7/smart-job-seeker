@@ -1293,6 +1293,15 @@ mod tests {
             && !entry.contains("submitted")));
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "starts a local browser and resource-gated vision model"]
+    fn resource_gated_visual_distinguishes_identically_labelled_sections() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_visual_distinguishes_identically_labelled_sections,
+        );
+    }
+
     #[test]
     #[ignore = "starts a local browser and requires a resource-gated vision model"]
     fn live_visual_distinguishes_identically_labelled_sections() {
