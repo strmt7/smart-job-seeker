@@ -2331,6 +2331,122 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one browser on a fictional wizard without submitting"]
+    fn offline_wizard_reinspects_each_step_and_refuses_final_submit() {
+        use waypoint_domain::GrantId;
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().join("wizard.html");
+        let html = include_str!("../tests/form-local-model-wizard.html")
+            .replace("Your given name", "First name");
+        std::fs::write(&path, html).unwrap();
+        let url = url::Url::from_file_path(path.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
+        let first = suggest_without_model(live, &profile, "No model").unwrap();
+        assert_eq!(first.suggestions.len(), 1);
+        assert_eq!(first.suggestions[0].field_selector, "#given");
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("offline-wizard-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Fictional role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("offline-wizard-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut completed = Vec::new();
+        let mut fill =
+            |driver: &mut waypoint_browser::CdpDriver, preview: &FormPreview, grant_id: &str| {
+                let mut grant = ApprovalGrant {
+                    id: GrantId::new(grant_id).unwrap(),
+                    intent_id: intent.clone(),
+                    bound_payload_sha256: Sha256Digest::of(
+                        &serde_json::to_string(&preview.suggestions).unwrap(),
+                    ),
+                    profile_revision: 1,
+                    packet_sha256: packet.clone(),
+                    form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+                    destination_origin: preview.schema.origin.clone(),
+                    operation: GrantOperation::Prefill,
+                    nonce: "fictional".into(),
+                    explicit_user_gesture: true,
+                    consumed: false,
+                    expired: false,
+                };
+                apply_reviewed_text_fields(
+                    &mut ws,
+                    &job_id,
+                    driver,
+                    &url,
+                    preview,
+                    &mut grant,
+                    FillContext {
+                        intent: &intent,
+                        packet_digest: &packet,
+                        source_reviewed: true,
+                        timestamp: 1,
+                        completed: &mut completed,
+                    },
+                )
+            };
+        assert_eq!(
+            fill(&mut driver, &first, "offline-wizard-first").unwrap(),
+            1
+        );
+        driver.verify_text_value("#given", "Avery").unwrap();
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#next".into(),
+            })
+            .unwrap();
+        let live = driver.inspect_current().unwrap();
+        assert_ne!(first.schema, live.schema);
+        assert!(fill(&mut driver, &first, "offline-wizard-stale").is_err());
+        let second = suggest_without_model(live, &profile, "No model").unwrap();
+        assert_eq!(second.suggestions.len(), 1);
+        assert_eq!(second.suggestions[0].field_selector, "#email");
+        assert!(second
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#permit" && field.sensitive));
+        assert_eq!(
+            fill(&mut driver, &second, "offline-wizard-second").unwrap(),
+            1
+        );
+        driver
+            .verify_text_value("#email", "avery@example.invalid")
+            .unwrap();
+        driver.verify_text_value("#permit", "").unwrap();
+        assert!(driver
+            .execute(&BrowserCommand::Click {
+                selector: "button[type=submit]".into()
+            })
+            .is_err());
+        assert_ne!(
+            driver
+                .read_attribute("body", "data-submitted")
+                .unwrap()
+                .as_deref(),
+            Some("yes")
+        );
+    }
+
+    #[test]
     #[ignore = "resource-gated local model and fictional multi-step form"]
     fn resource_gated_local_model_wizard() {
         let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
