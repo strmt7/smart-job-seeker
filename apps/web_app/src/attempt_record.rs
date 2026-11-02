@@ -2194,7 +2194,7 @@ fn capture_page_once(
                     Err("Page address changed during capture; inspect and capture again".into())
                 }
                 CaptureChange::FirstTile => {
-                    Err("Page changed during capture; inspect and capture again".into())
+                    Err("Page image changed during capture; this may be a blinking cursor, animation, or a real page change. Inspect the page and capture again".into())
                 }
             };
         }
@@ -3093,6 +3093,50 @@ mod tests {
         assert!(document_visual_review(&ws, &id, attempt)
             .unwrap_err()
             .contains("changed"));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and observes fictional focused-field screenshots"]
+    fn focused_text_capture_stability_probe() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{BrowserCommand, PacketValue};
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#candidate".into(),
+                value: PacketValue::Text("Fictional".into()),
+            })
+            .unwrap();
+        let (initial_width, initial_height) = driver.page_dimensions().unwrap();
+        driver
+            .screenshot_tile(
+                0.0,
+                0.0,
+                initial_width.min(2048.0),
+                initial_height.min(2000.0),
+            )
+            .unwrap();
+        let (width, height) = driver.page_dimensions().unwrap();
+        let tile = (width.min(2048.0), height.min(2000.0));
+        let mut hashes = Vec::new();
+        for _ in 0..4 {
+            let image = driver.screenshot_tile(0.0, 0.0, tile.0, tile.1).unwrap();
+            hashes.push(waypoint_domain::Sha256Digest::of(&image));
+            std::thread::sleep(std::time::Duration::from_millis(350));
+        }
+        println!(
+            "Initial dimensions: {:?}; warmed dimensions: {:?}; focused field screenshot hashes equal to first: {:?}",
+            (initial_width, initial_height), (width, height),
+            hashes
+                .iter()
+                .map(|hash| hash == &hashes[0])
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(driver.page_dimensions().unwrap(), (width, height));
     }
 
     #[test]

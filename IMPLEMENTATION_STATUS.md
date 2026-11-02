@@ -1,3 +1,8 @@
+## Screenshot-capture stability — 2026-11-02
+
+- A fictional focused-field browser probe observed a 15-pixel reported width change after an initial screenshot and, after dimensions stabilized, image differences between captures. Pixel comparison of one pair located a 1-by-15-pixel difference at the text cursor; another pair differed at the input edge. This establishes possible capture instability, not the cause of the earlier intermittent fixture failure. The app still refuses to mark a changing capture complete; its message now mentions a blinking cursor or animation as possible causes alongside a real page change.
+- The existing genuinely changing-page fixture remained incomplete as intended, and Windows web lint passed. No automatic masking or assumption that a changed screenshot is safe was added. Focused inputs and dynamic pages can still require another capture or manual review.
+
 ## Checkbox qualification evidence — 2026-11-02
 
 - Checkbox evidence no longer occupies the session's limited reusable text-draft slots, since an advisory explanation is not provenance for a boolean answer. A fictional browser-backed API test exercised current-form binding, a model-review block, returned citations and an unchanged checkbox using a fixture answer; ordinary text-draft provenance remained available. The broader fixture initially failed its exact two-screenshot-segment assertion and passed on retry; the cause is unknown. The checkbox UI test and Windows web lint passed. This is not a live-model or real-employer end-to-end check.
