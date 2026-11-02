@@ -27,6 +27,7 @@ const AUTOFILL_PROFILE_FIELDS: &[&str] = &[
     "address",
     "address_line1",
     "address_line2",
+    "address_line3",
     "city",
     "region",
     "postal_code",
@@ -177,6 +178,7 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
         "address" => matches!(plain, "address" | "streetaddress" | "homeaddress"),
         "address_line1" => matches!(plain, "addressline1" | "streetaddressline1"),
         "address_line2" => matches!(plain, "addressline2" | "streetaddressline2"),
+        "address_line3" => matches!(plain, "addressline3" | "streetaddressline3"),
         "city" => matches!(plain, "city" | "town"),
         "region" => matches!(plain, "state" | "region" | "stateorregion" | "province"),
         "postal_code" => matches!(plain, "postalcode" | "postcode" | "zipcode"),
@@ -2734,6 +2736,41 @@ mod tests {
                 .0
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn third_address_line_requires_its_explicit_profile_value() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        schema.fields[0].label = "Address line 3".into();
+        schema.fields[0].autocomplete = Some("address-line3".into());
+        let profile = json!({"address":"Combined address", "address_line2":"Apartment 6", "address_line3":"Building B"});
+        let mapped = suggest_exact(&schema, &profile).unwrap();
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].value, PacketValue::Text("Building B".into()));
+        let response =
+            json!({"mappings":[{"selector":"#candidate","profile_key":"address_line3"}]});
+        let validated = validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+            .unwrap()
+            .0;
+        assert_eq!(validated.len(), 1);
+        assert_eq!(validated[0].value, PacketValue::Text("Building B".into()));
+        for key in ["address", "address_line2"] {
+            let response = json!({"mappings":[{"selector":"#candidate","profile_key":key}]});
+            assert!(
+                validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+                    .unwrap()
+                    .0
+                    .is_empty()
+            );
+        }
+        assert!(
+            suggest_exact(&schema, &json!({"address":"Combined address"}))
+                .unwrap()
+                .is_empty()
+        );
+        schema.fields[0].autocomplete = Some("address-line2".into());
+        assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
     }
 
     #[cfg(windows)]

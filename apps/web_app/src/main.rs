@@ -381,6 +381,7 @@ const PROFILE_FIELDS: &[&str] = &[
     "address",
     "address_line1",
     "address_line2",
+    "address_line3",
     "city",
     "region",
     "postal_code",
@@ -12368,7 +12369,7 @@ mod tests {
             serde_json::from_str::<Value>(&reopened.candidate_profile().unwrap().unwrap()).unwrap()
         });
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let body = r#"{"full_name":"Avery Example","preferred_name":"Ace","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42","address":"10 Fictional Street, Apartment 6","address_line1":"10 Fictional Street","address_line2":"Apartment 6"}"#;
+        let body = r#"{"full_name":"Avery Example","preferred_name":"Ace","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42","address":"10 Fictional Street, Apartment 6","address_line1":"10 Fictional Street","address_line2":"Apartment 6","address_line3":"Building B"}"#;
         write!(stream, "POST /api/profile HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
@@ -12382,6 +12383,7 @@ mod tests {
         assert_eq!(profile["address"], "10 Fictional Street, Apartment 6");
         assert_eq!(profile["address_line1"], "10 Fictional Street");
         assert_eq!(profile["address_line2"], "Apartment 6");
+        assert_eq!(profile["address_line3"], "Building B");
     }
 
     #[test]
