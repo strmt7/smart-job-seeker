@@ -33,6 +33,15 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
         let path = format!("{}/", url.path());
         url.set_path(&path);
     }
+    if local && url.path() == "/mega/" && url.port().is_some() {
+        let mut search = url.join("search").map_err(|_| "Invalid provider path")?;
+        search
+            .query_pairs_mut()
+            .append_pair("text", query.trim())
+            .append_pair("mode", "fast")
+            .append_pair("limit", "10");
+        return Ok(search);
+    }
     if is_wiby(&url) {
         let mut search = url.join("json/").map_err(|_| "Invalid provider path")?;
         search.query_pairs_mut().append_pair("q", query.trim());
@@ -69,6 +78,13 @@ fn is_freeserp_request(url: &Url) -> bool {
         && url.path() == "/api.php"
 }
 
+fn is_local_openserp_request(url: &Url) -> bool {
+    url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port().is_some()
+        && url.path() == "/mega/search"
+}
+
 fn is_wiby(url: &Url) -> bool {
     url.scheme() == "https"
         && url.host_str() == Some("wiby.me")
@@ -93,7 +109,12 @@ pub(crate) fn page_parameter(url: &Url) -> &'static str {
 
 pub(crate) fn page_url(url: &Url, page: u8) -> Url {
     let mut result = url.clone();
-    if is_freeserp_request(url) {
+    if is_local_openserp_request(url) {
+        result.query_pairs_mut().append_pair(
+            "start",
+            &(u16::from(page.saturating_sub(1)) * 10).to_string(),
+        );
+    } else if is_freeserp_request(url) {
         result.query_pairs_mut().append_pair(
             "from",
             &(u16::from(page.saturating_sub(1)) * 10).to_string(),
@@ -111,6 +132,38 @@ pub(crate) fn parse_provider(
     url: &Url,
     excluded: &std::collections::HashSet<String>,
 ) -> Result<Value, String> {
+    if is_local_openserp_request(url) {
+        let data: Value =
+            serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
+        let entries = data["results"]
+            .as_array()
+            .ok_or("Provider returned no results array")?;
+        if entries.len() > 500 {
+            return Err("Provider returned too many results".into());
+        }
+        let mut omitted = 0usize;
+        let results: Vec<Value> = entries.iter().filter_map(|item| {
+            if item["type"] != "organic" { omitted += 1; return None; }
+            Some(json!({"url":item.get("url"),"title":item.get("title"),"content":item.get("snippet"),"engine":item.get("engine")}))
+        }).collect();
+        let failures = data
+            .pointer("/meta/engines_failed")
+            .cloned()
+            .unwrap_or(Value::Null);
+        if !failures.is_null() && !failures.is_array() {
+            return Err("Provider returned invalid engine failure metadata".into());
+        }
+        if results.is_empty() && failures.as_array().is_some_and(|items| !items.is_empty()) {
+            return Err("Local OpenSERP reported engine failures and returned no organic results; the search could not be established".into());
+        }
+        let mut parsed = parse_excluding(
+            &json!({"results":results,"unresponsive_engines":failures}).to_string(),
+            excluded,
+        )?;
+        parsed["provider"] = json!("local_openserp");
+        parsed["non_organic_omitted"] = json!(omitted);
+        return Ok(parsed);
+    }
     if is_freeserp_request(url) {
         let data: Value =
             serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
@@ -552,6 +605,58 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_openserp_search_preserves_limits_and_excludes_ads() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let size = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..size]);
+            assert!(request.starts_with("GET /mega/search?"), "{request}");
+            assert!(request.contains("start=10"), "{request}");
+            let body = json!({"meta":{"engines_failed":["bing"]},"results":[
+                {"type":"organic","url":"https://example.org/job","title":"Engineer","snippet":"Fictional role","engine":"google"},
+                {"type":"ad","url":"https://example.org/ad","title":"Advertisement"},
+                {"url":"https://example.org/unknown","title":"Untyped"}
+            ]}).to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let base = format!("http://127.0.0.1:{}/mega/", addr.port());
+        let url = page_url(&request_url(&base, "fictional role").unwrap(), 2);
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(pairs["text"], "fictional role");
+        assert_eq!(pairs["mode"], "fast");
+        assert_eq!(pairs["limit"], "10");
+        let body = fetch(&url).map_err(|e| e.message).unwrap();
+        worker.join().unwrap();
+        let result = parse_provider(&body, &url, &Default::default()).unwrap();
+        assert_eq!(result["provider"], "local_openserp");
+        assert_eq!(result["non_organic_omitted"], 2);
+        assert_eq!(result["results_reported"], 1);
+        assert_eq!(result["results"][0]["url"], "https://example.org/job");
+        assert_eq!(result["results"][0]["engines"], json!(["google"]));
+        assert_eq!(result["unresponsive_engines"], 1);
+        assert_eq!(result["unresponsive_engine_names"], json!(["bing"]));
+        assert!(parse_provider(
+            &json!({"meta":{"engines_failed":["google"]},"results":[]}).to_string(),
+            &url,
+            &Default::default()
+        )
+        .is_err());
+        assert!(parse_provider(
+            &json!({"meta":{"engines_failed":"broken"},"results":[]}).to_string(),
+            &url,
+            &Default::default()
+        )
+        .is_err());
+        assert!(!is_local_openserp_request(
+            &request_url("https://example.org/mega/", "role").unwrap()
+        ));
+    }
+
     #[test]
     fn search_text_preserves_word_boundaries_when_controls_are_removed() {
         let payload = json!({"results":[

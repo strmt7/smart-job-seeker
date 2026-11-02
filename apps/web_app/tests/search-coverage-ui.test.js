@@ -42,3 +42,5 @@ console.log('Search coverage UI checks passed.');
 
 assert.match(render({results_examined:4,possible_tracking_variants:1,unresponsive_engines:0}), /1 potentially related links kept for review/);
 assert.match(render({results_examined:4,tracking_equivalent_omitted:1,unresponsive_engines:0}), /1 links were omitted by an earlier tracking comparison/);
+
+assert.match(render({provider:'local_openserp',results_examined:1,results_reported:1,non_organic_omitted:2,unresponsive_engines:0}), /1 examined of 1 organic provider results.*2 non-organic or untyped results omitted/);
