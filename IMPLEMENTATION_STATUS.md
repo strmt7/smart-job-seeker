@@ -2058,3 +2058,12 @@ or the link inventory cannot be read, navigation is left for manual review.
 The worker also checks that the page URL has not changed during the inventory.
 Fictional driver tests cover a conflicting submit label and an ordinary link.
 This is a conservative filter, not proof that arbitrary links cannot submit.
+
+### Blank requisition identifiers (2026-11-02)
+
+Discovery identity keys now treat whitespace-only requisition identifiers as
+absent and use the listing URL instead. This avoids assigning different listings
+from the same employer the same blank-requisition key. Nonblank identifiers keep
+their original bytes to avoid silently changing existing identities. Search unit
+tests cover empty, ASCII-whitespace and nonbreaking-space identifiers and
+distinct listing URLs. Existing records are not repaired or split by this change.

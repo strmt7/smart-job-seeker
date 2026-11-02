@@ -264,7 +264,7 @@ pub fn identity_key(
     canonical_url: &str,
 ) -> String {
     match requisition_id {
-        Some(r) if !r.is_empty() => format!("{employer_namespace}::req::{r}"),
+        Some(r) if !r.trim().is_empty() => format!("{employer_namespace}::req::{r}"),
         _ => format!("{employer_namespace}::url::{canonical_url}"),
     }
 }
@@ -666,6 +666,31 @@ mod tests {
             check_constraints(&german, &[" en ".into()], None, None, false, "")[0].1,
             ConstraintOutcome::Fail(_)
         ));
+    }
+
+    #[test]
+    fn blank_requisition_ids_fall_back_to_distinct_listing_urls() {
+        let first = "https://jobs.example.org/first";
+        let second = "https://jobs.example.org/second";
+        for blank in [None, Some(""), Some(" \t\n"), Some("\u{a0}")] {
+            let a = identity_key("example", blank, first);
+            let b = identity_key("example", blank, second);
+            assert_eq!(a, format!("example::url::{first}"));
+            assert_ne!(a, b);
+            assert_eq!(
+                dedup_decision(
+                    &JobIdentityId::new(a).unwrap(),
+                    &JobIdentityId::new(b).unwrap(),
+                    Some("same"),
+                    "same"
+                ),
+                DedupDecision::DifferentJob
+            );
+        }
+        assert_eq!(
+            identity_key("example", Some(" 123 "), first),
+            "example::req:: 123 "
+        );
     }
 
     #[test]
