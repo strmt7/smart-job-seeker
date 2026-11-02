@@ -640,6 +640,13 @@ impl Workspace {
         Ok(self.store.job_application_routes()?)
     }
 
+    pub fn job_application_route(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<Option<String>, WorkspaceError> {
+        Ok(self.store.job_application_route(id)?)
+    }
+
     pub fn job_description(&self, id: &JobIdentityId) -> Result<Option<String>, WorkspaceError> {
         Ok(self.store.job_description(id)?)
     }

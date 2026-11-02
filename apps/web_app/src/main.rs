@@ -104,6 +104,7 @@ struct ReviewSession {
     inspection_task_id: String,
     inspection_pending_revision: i64,
     url: String,
+    route_binding: Option<(String, String)>,
     profile_digest: Sha256Digest,
     preview: form_preview::FormPreview,
     driver: waypoint_browser::CdpDriver,
@@ -123,6 +124,24 @@ struct ReviewSession {
     pending_choice_visual: Option<(String, String, i64, Option<String>)>,
     last_visual_freshness_key: Option<String>,
     record: Option<attempt_record::AttemptRecord>,
+}
+
+fn form_destination_current(
+    ws: &Workspace,
+    job: &waypoint_store::StoredJob,
+    url: &str,
+    binding: Option<&(String, String)>,
+) -> Result<bool, String> {
+    match binding {
+        None => Ok(job.canonical_url.as_deref() == Some(url)),
+        Some((source, listing)) => Ok(job.source == *source
+            && job.canonical_url.as_deref() == Some(listing.as_str())
+            && ws
+                .job_application_route(&job.id)
+                .map_err(|e| e.to_string())?
+                .as_deref()
+                == Some(url)),
+    }
 }
 
 fn current_attachment_groups(
@@ -1087,7 +1106,7 @@ fn answer_inputs(
     if !matches!(
         job.state,
         ApplicationState::Shortlisted | ApplicationState::Prepared
-    ) || job.canonical_url.as_deref() != Some(session.url.as_str())
+    ) || !form_destination_current(ws, &job, &session.url, session.route_binding.as_ref())?
     {
         return Err("Job changed; inspect the form again".into());
     }
@@ -4510,7 +4529,16 @@ fn serve(
             waypoint_workspace::default_registry()
                 .check_public_route(&job.source, waypoint_policy::Operation::Read)
                 .map_err(|e| e.to_string())?;
-            let url = job.canonical_url.ok_or("Job has no application URL")?;
+            let listing = job.canonical_url.ok_or("Job has no application URL")?;
+            let (url, route_binding) = if body["source_application"].as_bool() == Some(true) {
+                let route = ws
+                    .job_application_route(&id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Source application link is unavailable; refresh the listing")?;
+                (route, Some((job.source.clone(), listing)))
+            } else {
+                (listing, None)
+            };
             if !url.starts_with("https://") || !waypoint_connectors::is_public_host_url(&url) {
                 return Err("Application URL is not a public HTTPS URL".into());
             }
@@ -4530,14 +4558,14 @@ fn serve(
             interrupt_session(ws, session, "Another application was opened")?;
             let task_id = random_id()?;
             let pending_revision = form_task::begin_pending(ws, &id, &task_id, now())?;
-            if let Err(error) = form_task::start(
+            if let Err(error) = form_task::start_bound(
                 task_id.clone(),
                 id.clone(),
                 url,
                 profile,
                 model,
                 visible,
-                (pending_revision, experiences),
+                (pending_revision, experiences, route_binding),
             ) {
                 if let Err(cleanup) = form_task::finish_pending(ws, &id, &task_id, pending_revision)
                 {
@@ -4561,6 +4589,7 @@ fn serve(
                 job_id,
                 pending_revision,
                 url,
+                route_binding,
                 profile_digest,
                 visible,
                 experience_revisions,
@@ -4605,7 +4634,7 @@ fn serve(
             if !matches!(
                 job.state,
                 ApplicationState::Shortlisted | ApplicationState::Prepared
-            ) || job.canonical_url.as_deref() != Some(url.as_str())
+            ) || !form_destination_current(ws, &job, &url, route_binding.as_ref())?
             {
                 return Err("Job or destination changed; inspect again".into());
             }
@@ -4666,7 +4695,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"status":"complete","fields":preview.fields_for_review(),"model_review_selectors":preview.model_review_selectors,"repeated_label_selectors":preview.repeated_label_selectors(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"fill_attempted":false,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                json!({"status":"complete","fields":preview.fields_for_review(),"model_review_selectors":preview.model_review_selectors,"repeated_label_selectors":preview.repeated_label_selectors(),"suggestions":preview.suggestions,"manual_review":preview.manual_review,"session_id":session_id,"origin":preview.schema.origin,"expires_in_seconds":ttl.as_secs(),"visible":visible,"source_route":route_binding.is_some(),"fill_attempted":false,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
             );
             *session = Some(ReviewSession {
                 id: session_id,
@@ -4674,6 +4703,7 @@ fn serve(
                 inspection_task_id: task_id.to_owned(),
                 inspection_pending_revision: pending_revision,
                 url,
+                route_binding,
                 profile_digest,
                 preview,
                 driver,
@@ -5224,8 +5254,12 @@ fn serve(
             if !matches!(
                 job.state,
                 ApplicationState::Shortlisted | ApplicationState::Prepared
-            ) || job.canonical_url.as_deref() != Some(current.url.as_str())
-            {
+            ) || !form_destination_current(
+                ws,
+                &job,
+                &current.url,
+                current.route_binding.as_ref(),
+            )? {
                 return Err("Job or destination changed; inspect again".into());
             }
             let profile: Value = match ws.candidate_profile().map_err(|error| error.to_string())? {
@@ -6113,12 +6147,19 @@ fn serve(
                         );
                     }
                     let job = ws.job(&current.job_id).map_err(|e| e.to_string())?;
-                    let job_unchanged = job.as_ref().is_some_and(|job| {
+                    let job_unchanged = if let Some(job) = job.as_ref() {
                         matches!(
                             job.state,
                             ApplicationState::Shortlisted | ApplicationState::Prepared
-                        ) && job.canonical_url.as_deref() == Some(current.url.as_str())
-                    });
+                        ) && form_destination_current(
+                            ws,
+                            job,
+                            &current.url,
+                            current.route_binding.as_ref(),
+                        )?
+                    } else {
+                        false
+                    };
                     let profile = match ws.candidate_profile().map_err(|e| e.to_string())? {
                         Some(text) => serde_json::from_str::<Value>(&text).ok(),
                         None => Some(json!({})),
@@ -6171,7 +6212,7 @@ fn serve(
                     json_reply(
                         stream,
                         "200 OK",
-                        json!({"status":"complete","fields":current.preview.fields_for_review(),"model_review_selectors":current.preview.model_review_selectors,"repeated_label_selectors":current.preview.repeated_label_selectors(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"fill_attempted":current.fill_attempted,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
+                        json!({"status":"complete","fields":current.preview.fields_for_review(),"model_review_selectors":current.preview.model_review_selectors,"repeated_label_selectors":current.preview.repeated_label_selectors(),"suggestions":current.preview.suggestions,"manual_review":current.preview.manual_review,"session_id":current.id,"origin":current.preview.schema.origin,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed()),"visible":current.visible,"source_route":current.route_binding.is_some(),"fill_attempted":current.fill_attempted,"screenshot":screenshot,"links":links,"other_links":other_links,"other_links_available":other_links_available}),
                     );
                     *session = Some(current);
                 }
@@ -7106,7 +7147,11 @@ fn serve(
                 &current.job_id,
                 &mut current.driver,
                 &current.url,
-                (&current.preview, &replacements),
+                (
+                    &current.preview,
+                    &replacements,
+                    current.route_binding.as_ref(),
+                ),
                 &mut grant,
                 form_preview::FillContext {
                     intent: &intent,
@@ -7308,8 +7353,12 @@ fn serve(
             if !matches!(
                 job.state,
                 ApplicationState::Shortlisted | ApplicationState::Prepared
-            ) || job.canonical_url.as_deref() != Some(&current.url)
-            {
+            ) || !form_destination_current(
+                ws,
+                &job,
+                &current.url,
+                current.route_binding.as_ref(),
+            )? {
                 return Err("Job or destination changed; inspect again".into());
             }
             let live = current
@@ -7649,7 +7698,7 @@ fn serve(
                     Some(current) => {
                         let completed = (body["session_id"].as_str() == Some(current.id.as_str()))
                             .then_some(&current.completed_selectors);
-                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible,"fill_attempted":current.fill_attempted,"completed_selectors":completed})
+                        json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible,"source_route":current.route_binding.is_some(),"fill_attempted":current.fill_attempted,"completed_selectors":completed})
                     }
                     None => {
                         json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job})),"navigation":pending_navigation.map(|(task,job)| json!({"task":task,"job":job}))})
@@ -8478,6 +8527,7 @@ mod tests {
             inspection_task_id: "fixture-inspection".into(),
             inspection_pending_revision: revision,
             url,
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             preview,
             driver,
@@ -8630,6 +8680,7 @@ mod tests {
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
             url,
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             preview,
             driver,
@@ -9539,6 +9590,7 @@ mod tests {
                 inspection_task_id: "fixture".into(),
                 inspection_pending_revision: 1,
                 url: url.to_string(),
+                route_binding: None,
                 profile_digest: Sha256Digest::of("fixture"),
                 preview,
                 driver,
@@ -12232,6 +12284,51 @@ mod tests {
     }
 
     #[test]
+    fn form_destination_requires_current_source_listing_and_route() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let listing = "https://jobs.ashbyhq.com/ashby/fixture";
+        let route = "https://jobs.ashbyhq.com/ashby/fixture/application";
+        let body = format!(
+            r#"{{"jobs":[{{"id":"fixture","title":"Engineer","jobUrl":"{listing}","applyUrl":"{route}"}}]}}"#
+        );
+        let target = [waypoint_workspace::DiscoveryTarget::new("ashby", "ashby")];
+        let board = "https://api.ashbyhq.com/posting-api/job-board/ashby";
+        let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &body);
+        assert_eq!(ws.discover(&target, &fetcher, 100).inserted, 1);
+        let job = ws.jobs().unwrap().remove(0);
+        let binding = ("ashby".to_owned(), listing.to_owned());
+        assert!(form_destination_current(&ws, &job, route, Some(&binding)).unwrap());
+        assert!(!form_destination_current(
+            &ws,
+            &job,
+            "https://jobs.ashbyhq.com/ashby/other",
+            Some(&binding)
+        )
+        .unwrap());
+        assert!(!form_destination_current(
+            &ws,
+            &job,
+            route,
+            Some(&("other".into(), listing.into()))
+        )
+        .unwrap());
+        assert!(!form_destination_current(
+            &ws,
+            &job,
+            route,
+            Some(&(
+                "ashby".into(),
+                "https://jobs.ashbyhq.com/ashby/other".into()
+            ))
+        )
+        .unwrap());
+        let changed = body.replace(route, "https://jobs.ashbyhq.com/ashby/fixture/new");
+        let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &changed);
+        ws.discover(&target, &fetcher, 101);
+        assert!(!form_destination_current(&ws, &job, route, Some(&binding)).unwrap());
+    }
+
+    #[test]
     fn uploaded_bytes_can_be_downloaded() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -12425,6 +12522,7 @@ mod tests {
             inspection_task_id: "inspection".into(),
             inspection_pending_revision: 0,
             url,
+            route_binding: None,
             profile_digest: Sha256Digest::of(&profile.to_string()),
             preview,
             driver,
@@ -12883,6 +12981,7 @@ mod tests {
                 inspection_task_id: "fixture-inspection".into(),
                 inspection_pending_revision,
                 url,
+                route_binding: None,
                 profile_digest: Sha256Digest::of(&profile.to_string()),
                 preview,
                 driver,

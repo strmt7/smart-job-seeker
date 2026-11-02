@@ -196,6 +196,7 @@ pub struct Finished {
     pub job_id: JobIdentityId,
     pub pending_revision: i64,
     pub url: String,
+    pub route_binding: Option<(String, String)>,
     pub profile_digest: Sha256Digest,
     pub visible: bool,
     pub experience_revisions: Vec<(String, u64)>,
@@ -207,6 +208,7 @@ struct Task {
     job_id: JobIdentityId,
     pending_revision: i64,
     url: String,
+    route_binding: Option<(String, String)>,
     profile_digest: Sha256Digest,
     visible: bool,
     experience_revisions: Vec<(String, u64)>,
@@ -501,6 +503,7 @@ fn warn_missing_observed_fields(
     }
 }
 
+#[cfg(test)]
 pub fn start(
     id: String,
     job_id: JobIdentityId,
@@ -510,7 +513,27 @@ pub fn start(
     visible: bool,
     review: (i64, Vec<ExperienceMatch>),
 ) -> Result<(), String> {
-    let (pending_revision, experiences) = review;
+    start_bound(
+        id,
+        job_id,
+        url,
+        profile,
+        model,
+        visible,
+        (review.0, review.1, None),
+    )
+}
+
+pub fn start_bound(
+    id: String,
+    job_id: JobIdentityId,
+    url: String,
+    profile: serde_json::Value,
+    model: Result<Option<String>, String>,
+    visible: bool,
+    review: (i64, Vec<ExperienceMatch>, Option<(String, String)>),
+) -> Result<(), String> {
+    let (pending_revision, experiences, route_binding) = review;
     let (model, lease, no_model_reason) = match model {
         Ok(Some(model)) => match doc_suggest::lease() {
             Ok(lease) => (Some(model), Some(lease), String::new()),
@@ -535,6 +558,7 @@ pub fn start(
         job_id: job_id.clone(),
         pending_revision,
         url: url.clone(),
+        route_binding: route_binding.clone(),
         profile_digest: profile_digest.clone(),
         visible,
         experience_revisions: experience_revisions.clone(),
@@ -645,6 +669,7 @@ pub fn start(
             job_id,
             pending_revision,
             url,
+            route_binding,
             profile_digest,
             visible,
             experience_revisions: used_revisions,
@@ -665,6 +690,7 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
             job_id: task.job_id.clone(),
             pending_revision: task.pending_revision,
             url: task.url.clone(),
+            route_binding: task.route_binding.clone(),
             profile_digest: task.profile_digest.clone(),
             visible: task.visible,
             experience_revisions: task.experience_revisions.clone(),
@@ -686,6 +712,7 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
                 job_id: task.job_id.clone(),
                 pending_revision: task.pending_revision,
                 url: task.url.clone(),
+                route_binding: task.route_binding.clone(),
                 profile_digest: task.profile_digest.clone(),
                 visible: task.visible,
                 experience_revisions: task.experience_revisions.clone(),
@@ -1508,6 +1535,7 @@ mod tests {
             job_id: JobIdentityId::new("fixture-job").unwrap(),
             pending_revision: 0,
             url: "https://example.invalid/job".into(),
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             visible: false,
             experience_revisions: vec![],
@@ -1604,6 +1632,7 @@ mod tests {
             job_id: job_id.clone(),
             pending_revision: 0,
             url: "https://example.org/temporary".into(),
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             visible: false,
             experience_revisions: vec![],
@@ -1679,6 +1708,7 @@ mod tests {
             job_id: job_id.clone(),
             pending_revision,
             url: "https://example.org/job".into(),
+            route_binding: None,
             profile_digest: Sha256Digest::of("fictional-profile"),
             visible: false,
             experience_revisions: vec![],
@@ -2514,20 +2544,28 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preview.html");
         let url = url::Url::from_file_path(path).unwrap().to_string();
-        start(
+        start_bound(
             "inspection-fixture".into(),
             JobIdentityId::new("fixture-job").unwrap(),
             url,
             serde_json::json!({}),
             Err("fictional memory guard failure".into()),
             false,
-            (0, vec![]),
+            (
+                0,
+                vec![],
+                Some(("ashby".into(), "https://example.invalid/listing".into())),
+            ),
         )
         .unwrap();
         assert!(busy());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             if let Some(finished) = poll("inspection-fixture").unwrap() {
+                assert_eq!(
+                    finished.route_binding,
+                    Some(("ashby".into(), "https://example.invalid/listing".into()))
+                );
                 let (driver, preview) = finished.result.unwrap();
                 assert!(!preview.schema.fields.is_empty());
                 assert!(preview.suggestions.is_empty());
@@ -2544,5 +2582,49 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         assert!(!busy());
+    }
+
+    #[test]
+    #[ignore = "read-only live Ashby form inspection; requires a reviewed URL"]
+    fn source_route_live_inspection_does_not_fill_or_submit() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let route = std::env::var("WAYPOINT_LIVE_CHECK_URL").unwrap();
+        let parsed = url::Url::parse(&route).unwrap();
+        assert_eq!(parsed.scheme(), "https");
+        assert_eq!(parsed.host_str(), Some("jobs.ashbyhq.com"));
+        waypoint_net::resolve_public(&waypoint_net::parse_url(&route).unwrap()).unwrap();
+        let listing = route
+            .strip_suffix("/application")
+            .expect("listing route")
+            .to_owned();
+        start_bound(
+            "live-source-form".into(),
+            JobIdentityId::new("fictional-job").unwrap(),
+            route,
+            serde_json::json!({}),
+            Ok(None),
+            false,
+            (0, vec![], Some(("ashby".into(), listing.clone()))),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let finished = loop {
+            if let Some(done) = poll("live-source-form").unwrap() {
+                break done;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(finished.route_binding, Some(("ashby".into(), listing)));
+        let (driver, preview) = finished.result.unwrap();
+        println!(
+            "Fields: {}; suggestions: {}; review reasons: {}",
+            preview.schema.fields.len(),
+            preview.suggestions.len(),
+            preview.manual_review.len()
+        );
+        assert!(driver.trace.iter().all(|line| !line.contains("typed")
+            && !line.contains("clicked")
+            && !line.contains("submitted")));
     }
 }

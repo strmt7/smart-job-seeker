@@ -11,7 +11,7 @@ assert.equal(priorFill({fill_attempted:false}),false);
 assert.equal(priorFill({fill_attempted:true}),true);
 assert.equal(priorFill({}),true);
 
-async function exercise(failure) {
+async function exercise(failure, sourceRoute = false) {
   const calls = [], storage = new Map();
   let closed = false;
   const context = {
@@ -25,13 +25,15 @@ async function exercise(failure) {
   };
   vm.createContext(context);
   const reopen = vm.runInContext(`(${helper})`, context);
-  try { await reopen('job', 'session', () => { closed = true; }); }
+  try { await reopen('job', 'session', () => { closed = true; }, sourceRoute); }
   catch (error) { assert.equal(error.message, 'fixture failure'); }
   return {calls, storage, closed};
 }
 
 (async () => {
   const ok = await exercise(null);
+  const sourceRoute = await exercise(null, true);
+  assert.equal(sourceRoute.calls[1][1].source_application, true);
   assert.deepEqual(ok.calls, [
     ['/api/form/close', {session_id: 'session'}],
     ['/api/form/inspect-start', {id: 'job', visible: true, require_no_session: true}],

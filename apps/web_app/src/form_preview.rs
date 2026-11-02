@@ -390,7 +390,7 @@ pub fn apply_reviewed_text_fields(
         job_id,
         driver,
         url,
-        (preview, &ReviewedReplacements::new()),
+        (preview, &ReviewedReplacements::new(), None),
         grant,
         context,
     )
@@ -401,11 +401,15 @@ pub fn apply_reviewed_text_fields_with_replacements(
     job_id: &JobIdentityId,
     driver: &mut dyn BrowserDriver,
     url: &str,
-    review: (&FormPreview, &ReviewedReplacements),
+    review: (
+        &FormPreview,
+        &ReviewedReplacements,
+        Option<&(String, String)>,
+    ),
     grant: &mut ApprovalGrant,
     context: FillContext<'_>,
 ) -> Result<usize, String> {
-    let (preview, replacements) = review;
+    let (preview, replacements, route_binding) = review;
     let FillContext {
         intent,
         packet_digest,
@@ -423,7 +427,7 @@ pub fn apply_reviewed_text_fields_with_replacements(
     if !matches!(
         job.state,
         ApplicationState::Shortlisted | ApplicationState::Prepared
-    ) || job.canonical_url.as_deref() != Some(url)
+    ) || !crate::form_destination_current(ws, &job, url, route_binding)?
     {
         return Err("Job or destination changed; review again".into());
     }
@@ -962,6 +966,142 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn source_route_prefill_rechecks_binding_before_writing() {
+        struct FixtureDriver {
+            live: LiveForm,
+            written: String,
+        }
+        impl BrowserDriver for FixtureDriver {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                Ok(self.live.clone())
+            }
+            fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
+                Ok(self.live.clone())
+            }
+            fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
+                if let BrowserCommand::Fill {
+                    value: PacketValue::Text(value),
+                    ..
+                } = command
+                {
+                    self.written = value.clone();
+                    Ok(())
+                } else {
+                    Err(DriverError("unexpected command".into()))
+                }
+            }
+            fn ensure_text_replaceable(&mut self, _: &str, _: &str) -> Result<(), DriverError> {
+                Ok(())
+            }
+            fn verify_text_value(&mut self, _: &str, expected: &str) -> Result<(), DriverError> {
+                if self.written == expected {
+                    Ok(())
+                } else {
+                    Err(DriverError("mismatch".into()))
+                }
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                panic!("must not submit")
+            }
+        }
+        let listing = "https://jobs.ashbyhq.com/ashby/fixture";
+        let route = "https://jobs.ashbyhq.com/ashby/fixture/application";
+        let board = "https://api.ashbyhq.com/posting-api/job-board/ashby";
+        let body = format!(
+            r#"{{"jobs":[{{"id":"fixture","title":"Engineer","jobUrl":"{listing}","applyUrl":"{route}"}}]}}"#
+        );
+        let mut ws = Workspace::in_memory().unwrap();
+        let target = [waypoint_workspace::DiscoveryTarget::new("ashby", "ashby")];
+        let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &body);
+        ws.discover(&target, &fetcher, 100);
+        let job = ws.jobs().unwrap().remove(0);
+        ws.set_state(&job.id, ApplicationState::Shortlisted)
+            .unwrap();
+        let field = waypoint_applications::form_mapping::FormField {
+            selector: "#name".into(),
+            label: "Name".into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        let schema = FormSchema {
+            origin: "https://jobs.ashbyhq.com".into(),
+            fields: vec![field],
+            multi_step: false,
+            steps: 1,
+        };
+        let preview = FormPreview {
+            schema: schema.clone(),
+            suggestions: vec![ProposedMapping {
+                field_selector: "#name".into(),
+                value: PacketValue::Text("Fictional".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut driver = FixtureDriver {
+            live: LiveForm {
+                origin: schema.origin.clone(),
+                schema: schema.clone(),
+                walls: vec![],
+            },
+            written: String::new(),
+        };
+        let intent = IntentId::new("fixture-route").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: waypoint_domain::GrantId::new("fixture-route-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: fill_payload_digest(&preview, &ReviewedReplacements::new())
+                .unwrap(),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&schema.schema_hash_input()),
+            destination_origin: schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let binding = ("ashby".to_owned(), listing.to_owned());
+        let changed = body.replace(route, "https://jobs.ashbyhq.com/ashby/fixture/new");
+        let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &changed);
+        ws.discover(&target, &fetcher, 101);
+        let mut completed = Vec::new();
+        let mut attempt =
+            |ws: &mut Workspace, driver: &mut FixtureDriver, grant: &mut ApprovalGrant| {
+                apply_reviewed_text_fields_with_replacements(
+                    ws,
+                    &job.id,
+                    driver,
+                    route,
+                    (&preview, &ReviewedReplacements::new(), Some(&binding)),
+                    grant,
+                    FillContext {
+                        intent: &intent,
+                        packet_digest: &packet,
+                        source_reviewed: true,
+                        timestamp: 102,
+                        completed: &mut completed,
+                    },
+                )
+            };
+        assert!(attempt(&mut ws, &mut driver, &mut grant).is_err());
+        assert!(driver.written.is_empty());
+        assert!(!grant.consumed);
+        let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &body);
+        ws.discover(&target, &fetcher, 103);
+        assert_eq!(attempt(&mut ws, &mut driver, &mut grant).unwrap(), 1);
+        assert_eq!(driver.written, "Fictional");
+    }
 
     #[test]
     fn replacement_approval_binds_session_selection_and_fill_payload() {
@@ -2947,6 +3087,7 @@ mod tests {
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
             url: url.to_string(),
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             preview,
             driver,
@@ -3100,6 +3241,7 @@ mod tests {
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
             url: url.to_string(),
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             preview,
             driver,
@@ -3227,6 +3369,7 @@ mod tests {
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
             url: url.to_string(),
+            route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
             preview,
             driver,

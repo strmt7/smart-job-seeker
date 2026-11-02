@@ -964,6 +964,14 @@ impl Store {
         rows.collect()
     }
 
+    pub fn job_application_route(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<Option<String>, rusqlite::Error> {
+        use rusqlite::OptionalExtension;
+        self.conn.query_row("SELECT r.application_url FROM job_application_routes r JOIN jobs j ON j.id=r.job_id AND j.source=r.source AND j.canonical_url=r.listing_url WHERE r.job_id=?1", [id.as_str()], |row| row.get(0)).optional()
+    }
+
     /// Read one job back by identity. Additive read API used by the pipeline
     /// to make dedup decisions against what is actually stored.
     pub fn get_job(&self, id: &JobIdentityId) -> Result<Option<StoredJob>, rusqlite::Error> {
