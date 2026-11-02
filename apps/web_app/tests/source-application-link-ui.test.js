@@ -19,6 +19,15 @@ const check = {current: true, sourceRoute: true, listingUrl: job.canonical_url, 
 assert.equal(context.applicationCheckMessage(check, job, {source_application_url: check.url}), 'Fictional result');
 assert.match(context.applicationCheckMessage(check, job, {source_application_url: 'https://jobs.example/role/new'}), /out of date/);
 assert.match(context.applicationCheckMessage(check, {canonical_url: 'https://jobs.example/other'}, {source_application_url: check.url}), /out of date/);
+const selectedStart = script.indexOf('if(applicationChecks.has(job.id)){const checked=applicationChecks.get(job.id);selectedPanel.append(');
+const selectedEnd = script.indexOf('if(constraintReviewLabel(row))', selectedStart);
+assert.ok(selectedStart >= 0 && selectedEnd > selectedStart);
+for (const [route, expected] of [[check.url, 'Fictional result'], ['https://jobs.example/role/new', 'out of date']]) {
+  const panel = {children: [], append(item) { this.children.push(item); }};
+  const ctx = {applicationChecks: new Map([[job.id, check]]), job, row: {source_application_url: route}, selectedPanel: panel, element: node, routeContactActions: () => null, applicationCheckMessage: context.applicationCheckMessage};
+  vm.runInNewContext(script.slice(selectedStart, selectedEnd), ctx);
+  assert.match(panel.children[0].text, new RegExp(expected));
+}
 Promise.all([link.children[1].listeners.click(), link.children[2].listeners.click()]).then(() => {
   assert.equal(calls[0].path, '/api/application-check/start');
   assert.equal(calls[0].body.source_application, true);
