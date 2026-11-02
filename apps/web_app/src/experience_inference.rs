@@ -1018,6 +1018,10 @@ pub(crate) mod tests {
     fn resource_gated_repeated_contact_fields() {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::PacketValue;
+        use waypoint_domain::{
+            ApplicationState, ApprovalGrant, GrantId, GrantOperation, IntentId, JobIdentityId,
+            Sha256Digest,
+        };
         with_resource_gated_model(|| {
             let model = crate::resident_model()
                 .unwrap()
@@ -1032,13 +1036,13 @@ pub(crate) mod tests {
             );
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/waypoint_browser/tests/fixtures/form_repeated_text_selectors.html").canonicalize().unwrap();
             let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-            let schema = browser
-                .open(url::Url::from_file_path(path).unwrap().as_str())
-                .unwrap()
-                .schema;
+            let url = url::Url::from_file_path(path).unwrap().to_string();
+            let live = browser.open(&url).unwrap();
+            let schema = live.schema.clone();
             let profile = serde_json::json!({"email":"avery@example.invalid","phone":"2025550101"});
-            let (mappings, _, _) =
-                crate::suggestions::suggest_with_review(&mut llm, &schema, &profile).unwrap();
+            let preview =
+                crate::form_preview::suggest_for_live_form(live, &mut llm, &profile).unwrap();
+            let mappings = &preview.suggestions;
             let mut matched = Vec::new();
             for mapping in mappings {
                 let field = schema
@@ -1057,9 +1061,72 @@ pub(crate) mod tests {
             assert!(matched.contains(&"Applicant email"));
             assert!(matched.contains(&"Applicant phone"));
             println!("suggested fields: {matched:?}");
-            assert!(browser.trace.iter().all(|event| !event.contains("typed")
-                && !event.contains("clicked")
-                && !event.contains("submitted")));
+            let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+            let job_id = JobIdentityId::new("repeated-contact-fixture").unwrap();
+            ws.import_job(waypoint_store::StoredJob {
+                id: job_id.clone(),
+                title: "Fictional role".into(),
+                employer: "Fixture".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some(url.clone()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            })
+            .unwrap();
+            let intent = IntentId::new("fictional-intent").unwrap();
+            let packet = Sha256Digest::of("fictional profile");
+            let mut grant = ApprovalGrant {
+                id: GrantId::new("fictional-grant").unwrap(),
+                intent_id: intent.clone(),
+                bound_payload_sha256: Sha256Digest::of(&serde_json::to_string(mappings).unwrap()),
+                profile_revision: 1,
+                packet_sha256: packet.clone(),
+                form_schema_sha256: Sha256Digest::of(&schema.schema_hash_input()),
+                destination_origin: schema.origin.clone(),
+                operation: GrantOperation::Prefill,
+                nonce: "fictional".into(),
+                explicit_user_gesture: true,
+                consumed: false,
+                expired: false,
+            };
+            let mut completed = Vec::new();
+            assert_eq!(
+                crate::form_preview::apply_reviewed_text_fields(
+                    &mut ws,
+                    &job_id,
+                    &mut browser,
+                    &url,
+                    &preview,
+                    &mut grant,
+                    crate::form_preview::FillContext {
+                        intent: &intent,
+                        packet_digest: &packet,
+                        source_reviewed: true,
+                        timestamp: 1,
+                        completed: &mut completed
+                    }
+                )
+                .unwrap(),
+                2
+            );
+            for field in &schema.fields {
+                let value = match field.label.as_str() {
+                    "Applicant email" => "avery@example.invalid",
+                    "Applicant phone" => "2025550101",
+                    _ => "",
+                };
+                browser.verify_text_value(&field.selector, value).unwrap();
+            }
+            assert!(browser
+                .trace
+                .iter()
+                .all(|event| !event.contains("submitted")));
         });
     }
 

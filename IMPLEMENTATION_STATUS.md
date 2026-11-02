@@ -22,6 +22,8 @@
 
 ## Local-model form check — 2026-11-03
 
+- A separate resource-gated `qwen3.5:9b` fixture used repeated HTML names and IDs for applicant and reference contact fields. The model proposed the two applicant fields; the test then used the reviewed prefill path and verified both applicant values and both empty reference fields in the browser. The earlier mapping-only run and the extended fill run both passed; Windows web Clippy passed. The model unloaded afterward. This fixture does not establish behavior on real employer forms, and no application was submitted.
+
 - A resource-gated `qwen3.5:9b` test inspected a fictional local browser form containing applicant and reference email fields in German, French and Spanish. It suggested and filled all three applicant fields, left all three reference fields blank for review, and its visual transcription matched the three entered values. The browser values were checked separately. This single fixture does not establish performance on real employer sites or other languages; the test-owned model unloaded afterward. No application was sent.
 
 ## Local-model drafting check — 2026-11-03
