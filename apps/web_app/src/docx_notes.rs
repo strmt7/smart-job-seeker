@@ -9,6 +9,88 @@ const WORD_NAMESPACES: [&[u8]; 2] = [
     b"http://purl.oclc.org/ooxml/wordprocessingml/main",
 ];
 const MAX_REFERENCES: usize = 128;
+const REL_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
+
+fn note_relationships(xml: &[u8]) -> Result<[Option<String>; 2], String> {
+    let mut reader = NsReader::from_reader(xml);
+    let mut result: [Option<String>; 2] = [None, None];
+    let mut counts = [0usize; 2];
+    let mut depth = 0usize;
+    let mut root = false;
+    loop {
+        let (ns, event) = reader
+            .read_resolved_event()
+            .map_err(|_| "Malformed DOCX relationships")?;
+        let in_ns = matches!(ns, ResolveResult::Bound(value) if value.as_ref() == REL_NS);
+        if let Event::Start(e) | Event::Empty(e) = &event {
+            if depth == 0 {
+                if root || !in_ns || e.local_name().as_ref() != b"Relationships" {
+                    return Err("Invalid DOCX relationships root".into());
+                }
+                root = true;
+            } else if depth == 1 && in_ns && e.local_name().as_ref() == b"Relationship" {
+                let mut ty = None;
+                let mut target = None;
+                let mut mode = None;
+                for a in e.attributes() {
+                    let a = a.map_err(|_| "Invalid DOCX relationship attribute")?;
+                    let value = a
+                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                        .map_err(|_| "Invalid DOCX relationship value")?
+                        .into_owned();
+                    match a.key.as_ref() {
+                        b"Type" => ty = Some(value),
+                        b"Target" => target = Some(value),
+                        b"TargetMode" => mode = Some(value),
+                        _ => {}
+                    }
+                }
+                let index = match ty.as_deref() {
+                    Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" | "http://purl.oclc.org/ooxml/officeDocument/relationships/footnotes") => Some(0),
+                    Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" | "http://purl.oclc.org/ooxml/officeDocument/relationships/endnotes") => Some(1),
+                    _ => None,
+                };
+                if let Some(i) = index {
+                    counts[i] += 1;
+                    let base = url::Url::parse("https://waypoint.invalid/word/document.xml")
+                        .expect("constant URL");
+                    result[i] = target
+                        .filter(|s| !s.contains(['\\', '%', ':']) && !s.starts_with("//"))
+                        .and_then(|s| base.join(&s).ok())
+                        .filter(|u| {
+                            u.scheme() == "https"
+                                && u.host_str() == Some("waypoint.invalid")
+                                && u.query().is_none()
+                                && u.fragment().is_none()
+                                && u.username().is_empty()
+                                && u.password().is_none()
+                                && u.port().is_none()
+                        })
+                        .filter(|_| mode.as_deref().is_none_or(|m| m == "Internal"))
+                        .and_then(|u| u.path().strip_prefix('/').map(str::to_owned));
+                }
+            }
+        }
+        match event {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth = depth.checked_sub(1).ok_or("Malformed DOCX relationships")?,
+            Event::DocType(_) => {
+                return Err("DOCX relationship declarations are not supported".into())
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !root || depth != 0 {
+        return Err("Unclosed DOCX relationships".into());
+    }
+    for i in 0..2 {
+        if counts[i] != 1 {
+            result[i] = None;
+        }
+    }
+    Ok(result)
+}
 
 fn word(ns: ResolveResult<'_>) -> bool {
     matches!(ns, ResolveResult::Bound(value) if WORD_NAMESPACES.contains(&value.as_ref()))
@@ -275,13 +357,27 @@ pub(crate) fn extract(
     }
     let mut output = String::new();
     let mut unresolved = 0usize;
-    for (name, kind, ids) in [
-        (
-            "word/footnotes.xml",
-            b"footnote".as_slice(),
-            &refs.footnotes,
-        ),
-        ("word/endnotes.xml", b"endnote".as_slice(), &refs.endnotes),
+    let rel_name = "word/_rels/document.xml.rels";
+    let rel_count = (0..archive.len())
+        .filter(|&i| {
+            archive
+                .by_index_raw(i)
+                .ok()
+                .is_some_and(|entry| entry.name() == rel_name)
+        })
+        .count();
+    let targets = if rel_count == 0 || (refs.footnotes.is_empty() && refs.endnotes.is_empty()) {
+        [None, None]
+    } else if rel_count == 1 {
+        note_relationships(&crate::document_extract::read_docx_text_part(
+            archive, rel_name, &mut total,
+        )?)?
+    } else {
+        return Err("Duplicate DOCX relationship part".into());
+    };
+    for (target, kind, ids) in [
+        (&targets[0], b"footnote".as_slice(), &refs.footnotes),
+        (&targets[1], b"endnote".as_slice(), &refs.endnotes),
     ] {
         if ids.is_empty() {
             continue;
@@ -292,13 +388,17 @@ pub(crate) fn extract(
                 archive
                     .by_index_raw(i)
                     .ok()
-                    .is_some_and(|entry| entry.name() == name)
+                    .is_some_and(|entry| Some(entry.name()) == target.as_deref())
             })
             .count();
         let notes = if entries == 0 {
             HashMap::new()
         } else if entries == 1 {
-            let xml = crate::document_extract::read_docx_text_part(archive, name, &mut total)?;
+            let xml = crate::document_extract::read_docx_text_part(
+                archive,
+                target.as_deref().expect("matched target"),
+                &mut total,
+            )?;
             extract_note_part(&xml, kind, &wanted)?
         } else {
             return Err("Duplicate DOCX note part".into());
@@ -332,6 +432,21 @@ pub(crate) fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relationship_targets_are_resolved_only_when_unambiguous_and_internal() {
+        let xml = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="other/../notes/f.xml"/><Relationship Id="r2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="/custom/end.xml"/></Relationships>"#;
+        assert_eq!(
+            note_relationships(xml).unwrap(),
+            [
+                Some("word/notes/f.xml".into()),
+                Some("custom/end.xml".into())
+            ]
+        );
+        let duplicate = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="f.xml"/><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="g.xml"/><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="https://example.com/e.xml" TargetMode="External"/></Relationships>"#;
+        assert_eq!(note_relationships(duplicate).unwrap(), [None, None]);
+        assert!(note_relationships(b"<Relationships/>").is_err());
+    }
 
     #[test]
     fn ambiguous_special_and_nested_notes_are_unresolved() {

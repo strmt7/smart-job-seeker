@@ -284,8 +284,14 @@ mod tests {
             let options = zip::write::SimpleFileOptions::default();
             writer.start_file("word/document.xml", options).unwrap();
             writer.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Main text</w:t><w:footnoteReference w:id="1"/><w:footnoteReference w:id="1"/><w:endnoteReference w:id="2"/></w:r><w:del><w:r><w:footnoteReference w:id="3"/></w:r></w:del></w:p></w:body></w:document>"#).unwrap();
-            writer.start_file("word/footnotes.xml", options).unwrap();
+            writer
+                .start_file("word/_rels/document.xml.rels", options)
+                .unwrap();
+            writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="notes/custom.xml"/><Relationship Id="r2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#).unwrap();
+            writer.start_file("word/notes/custom.xml", options).unwrap();
             writer.write_all(footnotes.as_bytes()).unwrap();
+            writer.start_file("word/footnotes.xml", options).unwrap();
+            writer.write_all(br#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Unlinked decoy</w:t></w:r></w:p></w:footnote></w:footnotes>"#).unwrap();
             writer.start_file("word/endnotes.xml", options).unwrap();
             writer.write_all(br#"<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:endnote w:id="2"><w:p><w:r><w:t>Endnote qualification</w:t></w:r></w:p></w:endnote></w:endnotes>"#).unwrap();
             writer.finish().unwrap().into_inner()
