@@ -89,6 +89,87 @@ impl Store {
         transaction.commit()?;
         Ok(added == 1)
     }
+    /// Retain one complete follow-up without changing the first observation.
+    /// Both observations must identify the same requested and reached addresses.
+    pub fn save_job_capture_followup(
+        &self,
+        id: &str,
+        metadata: &[u8],
+        segments: &[Vec<u8>],
+    ) -> Result<bool, StoreError> {
+        if metadata.len() > 512 * 1024
+            || segments.is_empty()
+            || segments.len() > 5
+            || segments
+                .iter()
+                .any(|p| p.len() > 2 * 1024 * 1024 || !p.starts_with(b"\x89PNG\r\n\x1a\n"))
+            || segments.iter().map(Vec::len).sum::<usize>() > 6 * 1024 * 1024
+        {
+            return Err(invalid("Invalid or oversized listing capture"));
+        }
+        let Some(first) = self.job_capture_metadata(id)? else {
+            return Ok(false);
+        };
+        let original: serde_json::Value = serde_json::from_slice(&first).map_err(failure)?;
+        let later: serde_json::Value = serde_json::from_slice(metadata).map_err(failure)?;
+        if original["full_dimensions_captured"] != false
+            || later["full_dimensions_captured"] != true
+        {
+            return Ok(false);
+        }
+        for key in ["requested_url", "source_url"] {
+            let Some(value) = original[key].as_str().filter(|value| !value.is_empty()) else {
+                return Ok(false);
+            };
+            if later[key].as_str() != Some(value) {
+                return Ok(false);
+            }
+        }
+        let sealer = self
+            .sealer
+            .as_ref()
+            .filter(|s| s.kind() == SealerKind::Dpapi)
+            .ok_or_else(|| failure(waypoint_seal::SealError::Unavailable))?;
+        let encrypted = sealer.seal(metadata).map_err(failure)?;
+        let transaction = self.conn.unchecked_transaction()?;
+        let added = transaction.execute("INSERT INTO job_capture_followup_metadata(job_id,sealed_metadata) VALUES(?1,?2) ON CONFLICT(job_id) DO NOTHING", params![id,encrypted])?;
+        if added == 1 {
+            for (index, png) in segments.iter().enumerate() {
+                let sealed = sealer.seal(png).map_err(failure)?;
+                transaction.execute("INSERT INTO job_capture_followup_segments(job_id,sequence,sealed_png) VALUES(?1,?2,?3)", params![id,index as i64,sealed])?;
+            }
+        }
+        transaction.commit()?;
+        Ok(added == 1)
+    }
+
+    pub fn job_capture_followup(&self, id: &str) -> Result<Option<JobCapture>, StoreError> {
+        let metadata: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT sealed_metadata FROM job_capture_followup_metadata WHERE job_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(metadata) = metadata else {
+            return Ok(None);
+        };
+        let sealer = self
+            .sealer
+            .as_ref()
+            .filter(|s| s.kind() == SealerKind::Dpapi)
+            .ok_or_else(|| failure(waypoint_seal::SealError::Unavailable))?;
+        let metadata = sealer.unseal(&metadata).map_err(failure)?;
+        let mut statement = self.conn.prepare("SELECT sealed_png FROM job_capture_followup_segments WHERE job_id=?1 ORDER BY sequence")?;
+        let rows = statement.query_map([id], |row| row.get::<_, Vec<u8>>(0))?;
+        let mut segments = Vec::new();
+        for row in rows {
+            segments.push(sealer.unseal(&row?).map_err(failure)?);
+        }
+        Ok(Some((metadata, segments)))
+    }
+
     /// Read the bounded metadata without loading or decrypting screenshot segments.
     pub fn job_capture_metadata(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let metadata: Option<Vec<u8>> = self
@@ -168,6 +249,46 @@ mod tests {
                 posted_at: None,
             })
             .unwrap();
+        let mut second = store.get_job(&id).unwrap().unwrap();
+        second.id = JobIdentityId::new("followup").unwrap();
+        store.upsert_job(&second).unwrap();
+        let first = br#"{"requested_url":"https://example.test/job","source_url":"https://example.test/job","full_dimensions_captured":false}"#;
+        let complete = br#"{"requested_url":"https://example.test/job","source_url":"https://example.test/job","full_dimensions_captured":true}"#;
+        let wrong = br#"{"requested_url":"https://example.test/job","source_url":"https://example.test/other","full_dimensions_captured":true}"#;
+        assert!(!store
+            .save_job_capture_followup("followup", complete, std::slice::from_ref(&png))
+            .unwrap());
+        assert!(store
+            .save_job_capture("followup", first, std::slice::from_ref(&png))
+            .unwrap());
+        assert!(!store
+            .save_job_capture_followup("followup", wrong, std::slice::from_ref(&png))
+            .unwrap());
+        assert!(!store
+            .save_job_capture_followup("followup", first, std::slice::from_ref(&png))
+            .unwrap());
+        assert!(store
+            .save_job_capture_followup("followup", complete, std::slice::from_ref(&png))
+            .unwrap());
+        assert!(!store
+            .save_job_capture_followup("followup", complete, std::slice::from_ref(&png))
+            .unwrap());
+        assert_eq!(store.job_capture("followup").unwrap().unwrap().0, first);
+        assert_eq!(
+            store.job_capture_followup("followup").unwrap().unwrap(),
+            (complete.to_vec(), vec![png.clone()])
+        );
+        let sealed: Vec<u8> = store
+            .conn
+            .query_row(
+                "SELECT sealed_metadata FROM job_capture_followup_metadata WHERE job_id='followup'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!sealed
+            .windows(complete.len())
+            .any(|window| window == complete));
         let source_only = br#"{"source_url":"https://example.test/first","segments":0}"#;
         assert!(store.save_job_source_only("job", source_only).unwrap());
         assert!(!store.save_job_source_only("job", b"second").unwrap());

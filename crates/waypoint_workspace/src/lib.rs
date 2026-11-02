@@ -668,6 +668,24 @@ impl Workspace {
         Ok(self.store.job_capture(id.as_str())?)
     }
 
+    pub fn save_job_capture_followup(
+        &self,
+        id: &JobIdentityId,
+        metadata: &[u8],
+        segments: &[Vec<u8>],
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .save_job_capture_followup(id.as_str(), metadata, segments)?)
+    }
+
+    pub fn job_capture_followup(
+        &self,
+        id: &JobIdentityId,
+    ) -> Result<Option<waypoint_store::job_capture::JobCapture>, WorkspaceError> {
+        Ok(self.store.job_capture_followup(id.as_str())?)
+    }
+
     pub fn job_capture_metadata(
         &self,
         id: &JobIdentityId,

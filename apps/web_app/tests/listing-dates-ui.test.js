@@ -30,4 +30,6 @@ const expiredJob={saved:{existing:false},job:{extraction:'structured',valid_thro
 assert.match(inspected(expiredJob),/deadline that may have passed/);
 assert.equal(inspected({...expiredJob,saved:{existing:true}}),'');
 assert.equal(inspected({...expiredJob,job:{...expiredJob.job,extraction:'local_model'}}),'');
+assert.match(inspected({saved:{existing:false},job:{extraction:'local_model',deadline_excerpt:'21 June 2026'}}),/possible application deadline: 21 June 2026.*Verify/);
+assert.equal(inspected({saved:{existing:true},job:{extraction:'local_model',deadline_excerpt:'21 June 2026'}}),'');
 console.log('Listing date evidence UI checks passed.');

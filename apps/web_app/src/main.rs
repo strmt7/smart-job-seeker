@@ -2986,13 +2986,13 @@ fn serve(
                                 Some("captured" | "truncated")
                             );
                         if !has_source {
-                            json!({"saved":false,"complete":false,"source_saved":false,"reason":"Listing screenshot and source were unavailable"})
+                            json!({"saved":false,"complete":false,"source_saved":false,"reason":"Listing screenshot and source were unavailable","detail":candidate_task::capture_incomplete_reason(&inspected.capture.metadata)})
                         } else {
                             let metadata = serde_json::to_vec(&inspected.capture.metadata)
                                 .map_err(|e| e.to_string())?;
                             match ws.save_job_source_only(&job_id, &metadata) {
                                 Ok(saved) => {
-                                    json!({"saved":false,"complete":false,"source_saved":saved,"structured_source":if saved { inspected.capture.metadata["structured_source_status"].clone() } else { Value::Null },"reason":"Listing screenshot unavailable; source metadata retained when possible"})
+                                    json!({"saved":false,"complete":false,"source_saved":saved,"structured_source":if saved { inspected.capture.metadata["structured_source_status"].clone() } else { Value::Null },"reason":"Listing screenshot unavailable; source metadata retained when possible","detail":candidate_task::capture_incomplete_reason(&inspected.capture.metadata)})
                                 }
                                 Err(_) => {
                                     json!({"saved":false,"complete":false,"source_saved":false,"reason":"Listing screenshot unavailable and source could not be saved securely"})
@@ -3004,7 +3004,7 @@ fn serve(
                             .map_err(|e| e.to_string())?;
                         match ws.save_job_capture(&job_id, &metadata, &inspected.capture.segments) {
                             Ok(true) => {
-                                json!({"saved":true,"complete":inspected.capture.metadata["full_dimensions_captured"],"structured_source":inspected.capture.metadata["structured_source_status"]})
+                                json!({"saved":true,"complete":inspected.capture.metadata["full_dimensions_captured"],"structured_source":inspected.capture.metadata["structured_source_status"],"detail":candidate_task::capture_incomplete_reason(&inspected.capture.metadata)})
                             }
                             Ok(false) => {
                                 let existing = ws
@@ -3015,7 +3015,21 @@ fn serve(
                                         serde_json::from_slice::<Value>(&metadata).ok()
                                     })
                                     .unwrap_or(Value::Null);
-                                json!({"saved":true,"preserved_existing":true,"complete":existing["full_dimensions_captured"].as_bool().unwrap_or(false),"structured_source":existing["structured_source_status"].as_str().unwrap_or("unavailable")})
+                                let new_capture_complete =
+                                    inspected.capture.metadata["full_dimensions_captured"] == true;
+                                let followup_saved = if new_capture_complete
+                                    && existing["full_dimensions_captured"] == false
+                                {
+                                    ws.save_job_capture_followup(
+                                        &job_id,
+                                        &metadata,
+                                        &inspected.capture.segments,
+                                    )
+                                    .unwrap_or(false)
+                                } else {
+                                    false
+                                };
+                                json!({"saved":true,"preserved_existing":true,"new_capture_complete":new_capture_complete,"followup_saved":followup_saved,"complete":existing["full_dimensions_captured"].as_bool().unwrap_or(false),"structured_source":existing["structured_source_status"].as_str().unwrap_or("unavailable"),"detail":candidate_task::capture_incomplete_reason(&existing)})
                             }
                             Err(_) => {
                                 json!({"saved":false,"complete":false,"reason":"Listing capture could not be saved securely"})
@@ -3047,6 +3061,20 @@ fn serve(
                         Some("conflict" | "uncertain")
                     ) {
                         ws.mark_manual_review(&job_id, "Verify the hiring organization: the extracted employer may be a department, client, recruiter or platform", now())
+                            .map_err(|e| e.to_string())?;
+                    }
+                    if job["deadline_excerpt"]
+                        .as_str()
+                        .is_some_and(|text| !text.is_empty())
+                    {
+                        ws.mark_manual_review(&job_id, "Local AI found a possible application deadline; verify the date and its meaning on the original page", now())
+                            .map_err(|e| e.to_string())?;
+                    }
+                    if job["possible_non_job"] == true {
+                        ws.mark_manual_review(&job_id, "Local AI suggests this page may not be a job vacancy; verify it on the original page", now())
+                            .map_err(|e| e.to_string())?;
+                    } else if job["page_kind"] == "uncertain" {
+                        ws.mark_manual_review(&job_id, "Local AI could not determine whether this page is a job vacancy; verify the original page", now())
                             .map_err(|e| e.to_string())?;
                     }
                     if capture["saved"] == false || capture["complete"] == false {

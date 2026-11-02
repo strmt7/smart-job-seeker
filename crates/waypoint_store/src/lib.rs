@@ -393,6 +393,10 @@ const MIGRATIONS: &[&str] = &[
     // v43 — user-reviewed experiences are always sealed before storage.
     "CREATE TABLE form_experiences(id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>0), sealed_content BLOB);
      UPDATE meta SET value='43' WHERE key='schema_version';",
+    // v44 — retain one complete follow-up alongside the immutable first capture.
+    "CREATE TABLE job_capture_followup_metadata(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_metadata BLOB NOT NULL);
+     CREATE TABLE job_capture_followup_segments(job_id TEXT NOT NULL REFERENCES jobs(id), sequence INTEGER NOT NULL, sealed_png BLOB NOT NULL, PRIMARY KEY(job_id,sequence));
+     UPDATE meta SET value='44' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -1745,7 +1749,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "43");
+        assert_eq!(version, MIGRATIONS.len().to_string());
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM job_source_only", [], |row| row.get(0))

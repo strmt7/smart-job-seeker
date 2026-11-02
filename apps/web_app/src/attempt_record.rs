@@ -600,17 +600,27 @@ pub struct AttemptRecord {
 }
 
 // Checks presence only, not image contents or provenance.
-fn listing_capture_files(dir: &std::path::Path, value: &Value) -> &'static str {
-    if value["page_capture_available"] != true {
+fn listing_capture_files(dir: &std::path::Path, value: &Value, followup: bool) -> &'static str {
+    let (available, count_key, folder) = if followup {
+        (
+            "followup_capture_available",
+            "followup_capture_segment_count",
+            "followup-job-page",
+        )
+    } else {
+        (
+            "page_capture_available",
+            "page_capture_segment_count",
+            "original-job-page",
+        )
+    };
+    if value[available] != true {
         return "unknown";
     }
-    let Some(count) = value["page_capture_segment_count"]
-        .as_u64()
-        .filter(|n| (1..=5).contains(n))
-    else {
+    let Some(count) = value[count_key].as_u64().filter(|n| (1..=5).contains(n)) else {
         return "unknown";
     };
-    let capture = dir.join("original-job-page");
+    let capture = dir.join(folder);
     if !fs::symlink_metadata(&capture).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
         return "missing_or_inaccessible";
     }
@@ -704,7 +714,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"page_capture_files":listing_capture_files(&entry.path(), &value),"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -1313,6 +1323,7 @@ impl AttemptRecord {
         let description = ws.job_description(id).map_err(|e| e.to_string())?;
         let remote_status = ws.job_remote_status(id).map_err(|e| e.to_string())?;
         let captured = ws.job_capture(id).map_err(|e| e.to_string())?;
+        let followup = ws.job_capture_followup(id).map_err(|e| e.to_string())?;
         let source_only = ws.job_source_only(id).map_err(|e| e.to_string())?;
         let requested_url = |metadata: &[u8]| {
             serde_json::from_slice::<Value>(metadata)
@@ -1349,7 +1360,7 @@ impl AttemptRecord {
         fs::create_dir(&dir).map_err(|e| format!("Could not create a new attempt folder: {e}"))?;
         // Establish a discoverable incomplete record before writing the rest of
         // the archive. A later failure must not look like a completed snapshot.
-        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"page_capture_coverage":page_capture_coverage,"page_capture_segment_count":captured.as_ref().map(|(_, segments)| segments.len()),"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
+        let meta = json!({"attempt_id":attempt_id,"job_id":id.as_str(),"employer":job.employer,"title":job.title,"job_url":job.canonical_url,"started_at":timestamp,"status":"record_incomplete","submitted":null,"submitted_by_waypoint":false,"page_capture_available":captured.is_some(),"page_capture_coverage":page_capture_coverage,"followup_capture_available":followup.is_some(),"followup_capture_segment_count":followup.as_ref().map(|(_, segments)| segments.len()),"page_capture_segment_count":captured.as_ref().map(|(_, segments)| segments.len()),"source_only_metadata_available":source_only.is_some(),"page_capture_source_url":capture_source_url,"page_capture_matches_current_url":capture_matches_current_url,"note":"Archive initialization did not complete; files may be missing. External submission is not monitored."});
         let mut initial = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(&mut initial, &meta).map_err(|e| e.to_string())?;
         initial.flush().map_err(|e| e.to_string())?;
@@ -1380,6 +1391,7 @@ impl AttemptRecord {
             "description": description,
             "page_capture_available": captured.is_some(),
             "page_capture_coverage": page_capture_coverage,
+            "followup_capture_available": followup.is_some(),
             "source_only_metadata_available": source_only.is_some(),
             "source_only_text_status": source_text_status,
             "source_only_source_url": source_url,
@@ -1404,46 +1416,52 @@ impl AttemptRecord {
         if let Some(text) = source_text {
             fs::write(dir.join("original-job-source-text.txt"), text).map_err(|e| e.to_string())?;
         }
-        if let Some((metadata, segments)) = captured {
-            let source_dir = dir.join("original-job-page");
-            fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
-            fs::write(source_dir.join("capture.json"), &metadata).map_err(|e| e.to_string())?;
-            if let Ok(capture) = serde_json::from_slice::<Value>(&metadata) {
-                if matches!(
-                    capture["page_text_status"].as_str(),
-                    Some("captured" | "truncated")
-                ) {
-                    let text = capture["page_text"]
-                        .as_str()
-                        .filter(|text| text.len() <= 32_000)
-                        .ok_or("Invalid captured page text")?;
-                    fs::write(source_dir.join("page-text.txt"), text).map_err(|e| e.to_string())?;
-                }
-                if capture["structured_source_status"] == "captured" {
-                    let scripts = capture["structured_source_scripts"]
-                        .as_array()
-                        .ok_or("Invalid structured source capture")?;
-                    if scripts.len() > 8 || scripts.iter().any(|s| s.as_str().is_none()) {
-                        return Err("Invalid structured source capture".into());
+        for (folder, capture) in [
+            ("original-job-page", captured),
+            ("followup-job-page", followup),
+        ] {
+            if let Some((metadata, segments)) = capture {
+                let source_dir = dir.join(folder);
+                fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
+                fs::write(source_dir.join("capture.json"), &metadata).map_err(|e| e.to_string())?;
+                if let Ok(capture) = serde_json::from_slice::<Value>(&metadata) {
+                    if matches!(
+                        capture["page_text_status"].as_str(),
+                        Some("captured" | "truncated")
+                    ) {
+                        let text = capture["page_text"]
+                            .as_str()
+                            .filter(|text| text.len() <= 32_000)
+                            .ok_or("Invalid captured page text")?;
+                        fs::write(source_dir.join("page-text.txt"), text)
+                            .map_err(|e| e.to_string())?;
                     }
-                    for (index, script) in scripts.iter().enumerate() {
-                        fs::write(
-                            source_dir.join(format!("structured-{:04}.json.txt", index + 1)),
-                            script.as_str().unwrap().as_bytes(),
-                        )
+                    if capture["structured_source_status"] == "captured" {
+                        let scripts = capture["structured_source_scripts"]
+                            .as_array()
+                            .ok_or("Invalid structured source capture")?;
+                        if scripts.len() > 8 || scripts.iter().any(|s| s.as_str().is_none()) {
+                            return Err("Invalid structured source capture".into());
+                        }
+                        for (index, script) in scripts.iter().enumerate() {
+                            fs::write(
+                                source_dir.join(format!("structured-{:04}.json.txt", index + 1)),
+                                script.as_str().unwrap().as_bytes(),
+                            )
+                            .map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+                for (index, png) in segments.iter().enumerate() {
+                    fs::write(source_dir.join(format!("{:04}.png", index + 1)), png)
                         .map_err(|e| e.to_string())?;
-                    }
                 }
+                fs::write(
+                    source_dir.join("view.html"),
+                    listing_capture_view(&metadata, segments.len()),
+                )
+                .map_err(|e| e.to_string())?;
             }
-            for (index, png) in segments.iter().enumerate() {
-                fs::write(source_dir.join(format!("{:04}.png", index + 1)), png)
-                    .map_err(|e| e.to_string())?;
-            }
-            fs::write(
-                source_dir.join("view.html"),
-                listing_capture_view(&metadata, segments.len()),
-            )
-            .map_err(|e| e.to_string())?;
         }
         if let Some(packet) = ws.packet(id).map_err(|e| e.to_string())? {
             fs::write(
@@ -3192,20 +3210,22 @@ mod tests {
     fn capture_inventory_reports_unknown_for_legacy_and_invalid_counts() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
-            listing_capture_files(dir.path(), &json!({"page_capture_available": true})),
+            listing_capture_files(dir.path(), &json!({"page_capture_available": true}), false),
             "unknown"
         );
         assert_eq!(
             listing_capture_files(
                 dir.path(),
-                &json!({"page_capture_available": true, "page_capture_segment_count": 6})
+                &json!({"page_capture_available": true, "page_capture_segment_count": 6}),
+                false
             ),
             "unknown"
         );
         assert_eq!(
             listing_capture_files(
                 dir.path(),
-                &json!({"page_capture_available": true, "page_capture_segment_count": 1})
+                &json!({"page_capture_available": true, "page_capture_segment_count": 1}),
+                false
             ),
             "missing_or_inaccessible"
         );
@@ -3341,12 +3361,22 @@ mod tests {
             assert!(source_path.starts_with(root.path().canonicalize().unwrap()));
             fs::remove_dir_all(source_path).unwrap();
             let png = b"\x89PNG\r\n\x1a\nfictional-data".to_vec();
-            let metadata=json!({"requested_url":"https://example.org/redirect/2","source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":true,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
+            let metadata=json!({"requested_url":"https://example.org/redirect/2","source_url":"https://example.org/jobs/1","segments":1,"full_dimensions_captured":false,"page_text_status":"captured","page_text":"Fictional original page text","structured_source_status":"captured","structured_source_scripts":["{\"@type\":\"JobPosting\",\"description\":\"<p>Fictional role</p>\"}"]}).to_string();
             assert!(ws
                 .save_job_capture(&id, metadata.as_bytes(), std::slice::from_ref(&png))
                 .unwrap());
             assert!(!ws
                 .save_job_capture(&id, metadata.as_bytes(), std::slice::from_ref(&png))
+                .unwrap());
+            let mut followup: Value = serde_json::from_str(&metadata).unwrap();
+            followup["full_dimensions_captured"] = json!(true);
+            followup["page_text"] = json!("Fictional later page text");
+            assert!(ws
+                .save_job_capture_followup(
+                    &id,
+                    followup.to_string().as_bytes(),
+                    std::slice::from_ref(&png)
+                )
                 .unwrap());
         }
         let mut record = AttemptRecord::start(&ws, &id, "attempt-fixture", 123)
@@ -3390,7 +3420,13 @@ mod tests {
                 br#"{"requested_url":"https://example.org/redirect/1","source_url":"https://example.org/jobs/1","segments":0,"page_text_status":"truncated","page_text":"Source-only fictional text"}"#
             );
             assert_eq!(listing["page_capture_available"], true);
-            assert_eq!(listing["page_capture_coverage"], "unavailable");
+            assert_eq!(listing["page_capture_coverage"], "partial");
+            assert_eq!(listing["followup_capture_available"], true);
+            assert_eq!(
+                fs::read_to_string(record.dir.join("followup-job-page/page-text.txt")).unwrap(),
+                "Fictional later page text"
+            );
+            assert!(record.dir.join("followup-job-page/0001.png").exists());
             assert_eq!(listing["page_capture_matches_current_url"], true);
             assert_eq!(
                 listing["page_capture_source_url"],
@@ -3448,7 +3484,11 @@ mod tests {
         assert_eq!(records["attempts"][0]["started_at"], 123);
         assert_eq!(
             records["attempts"][0]["page_capture_coverage"],
-            "unavailable"
+            if cfg!(windows) {
+                "partial"
+            } else {
+                "unavailable"
+            }
         );
         #[cfg(windows)]
         assert_eq!(
@@ -3457,6 +3497,13 @@ mod tests {
         );
         #[cfg(windows)]
         {
+            assert_eq!(records["attempts"][0]["followup_capture_available"], true);
+            assert_eq!(records["attempts"][0]["followup_capture_files"], "present");
+            fs::remove_file(record.dir.join("followup-job-page/0001.png")).unwrap();
+            assert_eq!(
+                list(&ws, &id).unwrap()["attempts"][0]["followup_capture_files"],
+                "missing_or_inaccessible"
+            );
             assert_eq!(records["attempts"][0]["page_capture_files"], "present");
             fs::remove_file(record.dir.join("original-job-page/0001.png")).unwrap();
             assert_eq!(

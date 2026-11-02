@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('async function runCandidateBatch()'),end=source.indexOf("\ndocument.querySelector('#candidate-batch-start')",start);
+assert.ok(start>=0&&end>start);
+function node(_tag,text=''){return {textContent:text,children:[],replaceChildren(){this.children=[];},append(item){this.children.push(item);}};}
+const nodes=new Map(), requests=[];
+let current=0;
+const context={candidateBatch:{items:[{url:'https://example.test/article',title:'Article'},{url:'https://example.test/job',title:'Role'}],index:0,phase:'listing',task:null,job:null,events:[],stop:false,verify:true},candidateBatchRunning:false,applicationChecks:new Map(),applicationCheckState:value=>value,selectedCandidates:new Map(),renderCandidateBatch(){},saveCandidateBatch(){},updateCandidateSelection(){},refresh:async()=>{},setTimeout:fn=>fn(),element:node,document:{querySelector:key=>{if(!nodes.has(key))nodes.set(key,node());return nodes.get(key);}},api:async(path,payload)=>{requests.push({path,payload});if(path.endsWith('/start'))return {task_id:`task-${++current}`};if(path.includes('application-check'))return {status:'complete',result:'Review form'};return {status:'complete',saved:{id:`job-${current}`,existing:false},job:{possible_non_job:current===1},capture:current===1?{saved:true,complete:false,preserved_existing:true,new_capture_complete:true,followup_saved:true,structured_source:'captured'}:{saved:true,complete:true,structured_source:'captured'}};}};
+const run=vm.runInNewContext(`${source.slice(source.indexOf('function listingDeadlinePast('),source.indexOf('function showListingDateEvidence('))}\n${source.slice(start,end)}\nrunCandidateBatch`,context);
+(async()=>{await run();const checks=requests.filter(item=>item.path==='/api/application-check/start');assert.equal(checks.length,2);assert.equal(checks[0].payload.id,'job-1');assert.equal(checks[1].payload.id,'job-3');assert.match(nodes.get('#candidate-batch-log').children[0].textContent,/suspects this is not a vacancy/);assert.match(nodes.get('#candidate-batch-log').children[0].textContent,/complete follow-up was saved/);assert.match(nodes.get('#candidate-batch-status').textContent,/Finished: 2 of 2/);console.log('Possible non-job queue check passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

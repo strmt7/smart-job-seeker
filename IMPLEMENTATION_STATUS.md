@@ -1590,3 +1590,96 @@ the stated employer; when the initial extraction was forced to name the lab,
 the model returned a conflict with the exact employer sentence. The assessment
 is advisory and has not been qualified on the real listing or a representative
 corpus.
+Two additional fictional recruiter cases were tested with the same local model.
+When a recruiter was supplied as the employer, the model reported conflict both
+when the page explicitly named the client as employer and when the hiring
+organization was unnamed. Both outcomes require review; neither establishes
+accuracy on other agency or employer pages.
+
+For unstructured listings, the local model can now select an exact, bounded
+page excerpt as a possible application deadline. The excerpt is retained with
+source provenance and shown for manual verification; it is not interpreted as
+a date or used to mark a job closed. A fictional qwen3.5:9b run extracted one
+explicit deadline correctly, and parser tests reject invented or oversized
+excerpts. This does not establish deadline accuracy or recall on real pages.
+In two additional fictional single runs, qwen3.5:9b left the deadline blank on
+a rolling-application page with posting and start dates, and selected the
+deadline from a page containing all three dates. A deterministic test also
+checks persistence and rejects an excerpt outside a selected role section.
+In a subsequent isolated real-site check, the page stated an application
+deadline of 21 June 2026 and named the University of Oulu. qwen3.5:9b extracted
+that organization and selected the date as a possible deadline, while its
+separate employer assessment remained uncertain. An earlier saved extraction
+named a different organization; reinspection reported the conflicting identity
+instead of overwriting it. The model was fully GPU resident and unloaded after
+the check. No application was filled or sent. The robots-checked source capture
+returned HTTP 200; its local native-result SHA-256 is
+`c5b973ca404740fa156f5b17eb6afae0dee65e09737858d577f951921ecd6033`.
+
+An unstructured public training article found by web search was initially
+accepted as a vacancy by qwen3.5:9b. A separate page-type check subsequently
+flagged it as a possible non-vacancy, but also misclassified fictional vacancy
+examples in an intermediate run. The app therefore retains such results for
+manual review and never treats this classification as conclusive. One retest
+flagged the same article; this is not a measured false-positive or recall rate.
+The native Crawl4AI capture is retained locally in `target/` with SHA-256
+`27ea6f508a798e4563a0fac06c20245ed957a55f1454f190931814aaab4c1cfb`.
+After a page-type prompt revision, one resource-gated qwen3.5:9b run classified
+three fictional vacancies as vacancies and flagged that captured article. This
+small comparison does not establish general classification accuracy; an
+unrecognized or failed classification remains uncertain, and flagged pages
+remain available for review rather than being silently discarded.
+In a rendered isolated-workspace run, the actual app inspected that same public
+article using qwen3.5:9b. Its initial extraction again saved an article title as
+a job, but the job card showed the explicit possible-non-vacancy review reason.
+This confirms the warning reached the UI in one real-page case; it does not
+prevent misleading candidates or establish general classification accuracy.
+The isolated app and the model started for the check were stopped afterward.
+Batch inspection now skips the automatic application-page check for a result
+that the local model flags as a possible non-vacancy, records the reason, and
+continues with the remaining selected links. The candidate remains available
+for review because the classification can be wrong. A simulated queue test
+covered one flagged result followed by an ordinary candidate. A later rendered
+two-page real-site run flagged the training article and skipped its application
+check, then also flagged the university vacancy and skipped that check. The
+university page's stated deadline had passed, but it was still a job posting;
+the non-vacancy classification is therefore a false positive for page type.
+Both remained saved for review; neither was filled or submitted. This one run
+does not establish general classifier accuracy. The test model and app were
+stopped afterward.
+After a further prompt revision distinguishing page type from expiry, the model
+still classified the captured university job ad as `not_vacancy` in one direct
+text test; a separate attempt failed listing extraction before classification.
+The app therefore no longer skips a requested application-page check solely on
+this model flag. It keeps the warning and preserves the user's selection. The
+failed real-text check remains an ignored, opt-in test; the error may depend on
+the captured text representation, and no general accuracy claim follows.
+A further source-quoted second classification pass also failed to resolve the
+same false positive in one local-model run, and was removed to avoid an extra
+inference call without demonstrated benefit. The opt-in real-text regression
+continues to fail and needs investigation; no automatic route-check skip is
+based on this classification.
+One diagnostic run classified the complete captured university page and its
+first 4,000 bytes as non-vacancy, but its last 4,000 bytes as a vacancy. For
+long pages initially classified as non-vacancies, Waypoint now checks the last
+4,000 bytes once and reports `uncertain` when those judgments conflict. A
+subsequent local-model run returned uncertain for that captured job ad and
+continued to flag the captured training article. This adds one bounded model
+call to long pages initially judged non-vacancies; the small sample does not
+establish general accuracy, causation, or behavior on all page layouts.
+
+### Listing capture stability follow-up (2026-11-02)
+
+The two saved public-page captures in the isolated batch workspace each stopped after one screenshot segment because the page dimensions changed during capture (1243 × 3313 and 1243 × 3523 CSS pixels at the initial measurement). These are observations from those attempts, not a measurement of retry effectiveness. Capture now retries once after 250 ms only for this dimension-change condition; the retry repeats the same address, dimensions and first-tile checks, discards the first attempt's segments, and remains explicitly incomplete if the second attempt fails. The batch UI displays a bounded reason for incomplete captures, including when a previously saved capture is retained. A local browser fixture and focused retry and diagnostic tests passed. The changed retry has not yet been evaluated against those live pages.
+
+The 2026-11-02 read-only retest of the same two public pages produced complete three-segment captures on the second attempt in both cases. This is a two-page observation, not a general success rate. These retest images were not saved: existing first captures are preserved by the current store. Re-inspecting an existing listing likewise does not replace or supplement its first capture; the batch UI now explicitly reports when a complete later capture was discarded. Retaining both versions and including them in application records remains unfinished. The focused candidate-task suite passed 34 tests (13 ignored), and the batch UI check passed.
+
+### Follow-up listing captures (2026-11-02)
+
+Migration 44 adds space for one DPAPI-sealed complete follow-up capture alongside an incomplete first capture. The requested and reached URLs must match the first capture; neither the first capture nor an existing follow-up is overwritten. New attempt folders include both `original-job-page` and, when available, `followup-job-page`. Existing attempt folders remain unchanged. The existing isolated encrypted workspace migrated and retained its first captures; the store suite passed 91 tests (2 ignored), and focused attempt-archive and batch-UI checks passed. The earlier real-page retest images were not saved, and the new persistence path has so far been tested with fictional captures rather than another live-page run.
+
+The fictional listing-inspection status flow now verifies that a complete reinspection is saved as a follow-up while the original capture remains unchanged. Attempt history checks whether the follow-up capture files are present and warns if they are missing or inaccessible; this checks file presence, not image integrity. Focused save-path, archive, inventory and three UI tests passed on 2026-11-02.
+
+A further 2026-11-02 read-only check re-captured the same two previously researched public pages. Each completed on its second capture attempt, was saved as a three-segment follow-up in the isolated encrypted workspace, and matched the captured bytes when read back. The original incomplete captures remained unchanged. Reopening the workspace in a separate test process returned both follow-up metadata records and all six decrypted images. This directly exercises browser capture and storage; the HTTP status route and attempt-folder export were exercised separately with fictional data. No application was sent.
+
+Checkpoint validation on 2026-11-02: the full local web-app Rust suite passed 512 tests (268 ignored), the web-app Clippy check passed, all 124 JavaScript UI tests passed, and formatting and diff-whitespace checks passed. The separate store suite passed 91 tests (2 ignored). These checks do not establish general live-site or model reliability.
