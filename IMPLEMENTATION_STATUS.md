@@ -2417,6 +2417,18 @@ when the source provides no unique byte. On ten first-page objects of this
 résumé, the change did not alter which stream edits matched (three before and
 after); it is not a demonstrated fix for the remaining résumé failures.
 
+### Email contacts on application pages (2026-11-02)
+
+When an application check follows an eligible application link, it now also
+collects bounded email-contact evidence from the destination page if that page
+has no detected walls. The result and unsent-draft controls distinguish listing
+contacts from application-page contacts; neither is treated as a confirmed
+recipient. Each page retains the existing eight-contact limit. A fictional
+browser fixture checked destination-page extraction, the existing local worker
+test checked listing contacts, and a mocked UI checked the page label and the
+two-page contact limit. Automatic link following and destination collection
+were not tested together against a live employer site; no email was sent.
+
 ### Post-fill form changes (2026-11-02)
 
 After filling reviewed answers and checking their retained values, Waypoint now

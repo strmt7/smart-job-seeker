@@ -414,7 +414,7 @@ pub(crate) fn same_origin_path_redirect_notice(
     )
 }
 
-/// Bounded, unverified contacts from the initially inspected listing.
+/// Bounded, unverified contacts from an inspected page.
 fn email_contact_inventory(
     links: Option<&[waypoint_applications::driver::PageLink]>,
     page_text: Option<(&str, bool)>,
@@ -434,7 +434,12 @@ fn email_contact_inventory(
 }
 
 /// Addresses are contact signals, not proof they accept applications.
+#[cfg(test)]
 fn email_contact_note_from_inventory(inventory: &Value) -> Option<String> {
+    email_contact_note_for_page(inventory, "listing")
+}
+
+fn email_contact_note_for_page(inventory: &Value, page: &str) -> Option<String> {
     let contacts = inventory["contacts"].as_array()?;
     let count = contacts.len();
     if count == 0 {
@@ -451,7 +456,17 @@ fn email_contact_note_from_inventory(inventory: &Value) -> Option<String> {
     if addresses.len() != count {
         return None;
     }
-    Some(format!("The listing has {}{count} email contact{}: {}. Verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, addresses.join(", "), if count == 1 { "it" } else { "any" }))
+    Some(format!("The {page} has {}{count} email contact{}: {}. Verify whether {} accepts applications before preparing a draft.", if limited { "at least " } else { "" }, if count == 1 { "" } else { "s" }, addresses.join(", "), if count == 1 { "it" } else { "any" }))
+}
+
+fn capture_contact_inventory(browser: &mut waypoint_browser::CdpDriver) -> Value {
+    let links = browser.page_links().ok();
+    let text = browser.page_text_bounded(32_000).ok();
+    email_contact_inventory(
+        links.as_deref(),
+        text.as_ref()
+            .map(|(text, truncated)| (text.as_str(), *truncated)),
+    )
 }
 
 #[cfg(test)]
@@ -573,18 +588,10 @@ pub fn start_bound(
                 waypoint_net::resolve_public(&parsed)
                     .map_err(|_| "The redirected host could not be verified as public.")?;
             }
-            let contact_inventory = if page.walls.is_empty() {
-                let links = browser.page_links().ok();
-                let text = browser.page_text_bounded(32_000).ok();
-                let inventory = email_contact_inventory(
-                    links.as_deref(),
-                    text.as_ref()
-                        .map(|(text, truncated)| (text.as_str(), *truncated)),
-                );
-                Some(inventory)
-            } else {
-                None
-            };
+            let mut contact_inventories = Vec::new();
+            if page.walls.is_empty() {
+                contact_inventories.push(("listing", capture_contact_inventory(&mut browser)));
+            }
             ensure_inspected_page(&mut browser, &current)?;
             let mut followed = false;
             let mut link_warning = None;
@@ -655,6 +662,11 @@ pub fn start_bound(
                     }
                     inspected_url = displayable_inspected_url(&destination, &final_url);
                     current = final_url;
+                    if page.walls.is_empty() {
+                        contact_inventories
+                            .push(("application page", capture_contact_inventory(&mut browser)));
+                        ensure_inspected_page(&mut browser, &current)?;
+                    }
                     if destination_origin != original.origin() {
                         link_warning = Some("An external application destination was opened for inspection; review its identity and the original listing.");
                     }
@@ -714,14 +726,18 @@ pub fn start_bound(
                 classify_fields(&page.schema.fields, followed)
             };
             report_loading_field_loss(&mut message, &page.walls);
-            if let Some(inventory) = contact_inventory {
-                if let Some(note) = email_contact_note_from_inventory(&inventory) {
+            for (page_label, inventory) in contact_inventories {
+                if let Some(note) = email_contact_note_for_page(&inventory, page_label) {
                     message.push(' ');
                     message.push_str(&note);
-                    contacts = inventory["contacts"]
+                    for mut contact in inventory["contacts"]
                         .as_array()
                         .cloned()
-                        .unwrap_or_default();
+                        .unwrap_or_default()
+                    {
+                        contact["observed_on"] = Value::String(page_label.into());
+                        contacts.push(contact);
+                    }
                 }
             }
             if let Some(warning) = link_warning {
@@ -2307,6 +2323,11 @@ mod tests {
         let links = browser.page_links().unwrap();
         let (text, truncated) = browser.page_text_bounded(32_000).unwrap();
         let message = super::email_contact_note(Some(&links), Some((&text, truncated))).unwrap();
+        let inventory = super::capture_contact_inventory(&mut browser);
+        let application_note =
+            super::email_contact_note_for_page(&inventory, "application page").unwrap();
+        assert!(application_note.contains("The application page has 2 email contacts"));
+        assert!(application_note.contains("careers@example.invalid"));
         assert!(message.contains("2 email contacts"));
         assert!(message.contains("Verify whether any accepts applications"));
         assert!(message.contains("careers@example.invalid"));
