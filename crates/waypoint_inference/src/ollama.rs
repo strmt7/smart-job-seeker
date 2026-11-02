@@ -473,6 +473,38 @@ pub fn http_request_with_guard(
     http_request_guarded(addr, method, path, body, timeout_ms, None, Some(guard))
 }
 
+fn write_guarded(
+    stream: &mut impl Write,
+    mut bytes: &[u8],
+    timeout: Duration,
+    check: &impl Fn() -> Result<(), String>,
+) -> Result<(), String> {
+    let mut last_progress = Instant::now();
+    while !bytes.is_empty() {
+        check()?;
+        match stream.write(bytes) {
+            Ok(0) => return Err("write: connection closed".into()),
+            Ok(n) => {
+                bytes = &bytes[n..];
+                last_progress = Instant::now();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= timeout {
+                    return Err("timeout writing to runtime".into());
+                }
+            }
+            Err(e) => return Err(format!("write: {e}")),
+        }
+    }
+    Ok(())
+}
+
 fn http_request_guarded(
     addr: SocketAddr,
     method: &str,
@@ -504,7 +536,11 @@ fn http_request_guarded(
         }))
         .map_err(|e| e.to_string())?;
     stream
-        .set_write_timeout(Some(timeout))
+        .set_write_timeout(Some(if guarded {
+            timeout.min(Duration::from_millis(500))
+        } else {
+            timeout
+        }))
         .map_err(|e| e.to_string())?;
 
     let body_bytes = body.unwrap_or(&[]);
@@ -512,10 +548,8 @@ fn http_request_guarded(
         "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body_bytes.len()
     );
-    stream
-        .write_all(head.as_bytes())
-        .and_then(|_| stream.write_all(body_bytes))
-        .map_err(|e| format!("write: {e}"))?;
+    write_guarded(&mut stream, head.as_bytes(), timeout, &check)?;
+    write_guarded(&mut stream, body_bytes, timeout, &check)?;
 
     let mut raw = Vec::with_capacity(8 * 1024);
     const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -629,6 +663,39 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pressure_interrupts_a_partially_written_request() {
+        struct SlowWriter(usize);
+        impl Write for SlowWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 += 1;
+                if self.0 == 1 {
+                    Ok(bytes.len().min(2))
+                } else {
+                    Err(std::io::ErrorKind::TimedOut.into())
+                }
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let checks = std::cell::Cell::new(0);
+        let check = || {
+            checks.set(checks.get() + 1);
+            if checks.get() >= 3 {
+                Err("memory pressure".into())
+            } else {
+                Ok(())
+            }
+        };
+        let mut writer = SlowWriter(0);
+        assert_eq!(
+            write_guarded(&mut writer, b"abcdef", Duration::from_secs(10), &check).unwrap_err(),
+            "memory pressure"
+        );
+        assert_eq!(writer.0, 2);
+    }
 
     #[test]
     fn in_flight_guard_closes_only_its_request() {

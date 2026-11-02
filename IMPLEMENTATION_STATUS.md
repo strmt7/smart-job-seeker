@@ -1,3 +1,7 @@
+## Local inference memory checks — 2026-11-02
+
+- Guarded local inference now rechecks its cancellation and memory guard while writing a request as well as while waiting for the response. A fictional partial-write and timeout test confirms that the caller stops writing when the guard reports pressure; all inference library tests passed (19 passed, 2 ignored), and its Clippy check passed. Closing the request is not a guarantee that Ollama immediately stops server-side work or unloads its model, and memory checks remain snapshots rather than reservations. Startup VRAM and RAM limits were not changed.
+
 ## Listing closure review — 2026-11-02
 
 - The updated Windows web app was then checked end to end in an isolated workspace: a FreeSerp wider-web search returned the same listing, and inspection with Qwen 3.5 9B displayed a quoted possible-expiry warning in the review-only result. The listing was not saved; an embedded frame and CAPTCHA were reported for manual review. No fields were filled and no application was submitted. This confirms the warning reached the interface for this one case, not general closure-detection accuracy.
