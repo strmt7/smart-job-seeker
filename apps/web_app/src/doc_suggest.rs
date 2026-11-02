@@ -223,6 +223,45 @@ fn suggest(
     })
 }
 
+/// Recover the exact source bytes only when the model changed whitespace and
+/// the normalized quotation identifies one unambiguous source span.
+fn recover_whitespace_only(source: &str, excerpt: &str) -> Option<String> {
+    let needle = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if needle.is_empty() || needle.len() > 500 {
+        return None;
+    }
+    let mut normalized = String::new();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut whitespace: Option<(usize, usize)> = None;
+    for (index, ch) in source.char_indices() {
+        let end = index + ch.len_utf8();
+        if ch.is_whitespace() {
+            if !normalized.is_empty() {
+                whitespace = Some((whitespace.map_or(index, |(start, _)| start), end));
+            }
+            continue;
+        }
+        if let Some((start, finish)) = whitespace.take() {
+            normalized.push(' ');
+            spans.push((start, finish));
+        }
+        normalized.push(ch);
+        spans.extend(std::iter::repeat_n((index, end), ch.len_utf8()));
+    }
+    let first = normalized.find(&needle)?;
+    let after_first_char = first + normalized[first..].chars().next()?.len_utf8();
+    if normalized[after_first_char..].contains(&needle) {
+        return None;
+    }
+    let start = spans.get(first)?.0;
+    let end = spans.get(first + needle.len() - 1)?.1;
+    let original = source.get(start..end)?;
+    if original.len() > 500 || original.split_whitespace().collect::<Vec<_>>().join(" ") != needle {
+        return None;
+    }
+    Some(original.to_owned())
+}
+
 fn validated_excerpts(response: &Value, source: &str) -> Result<(Vec<String>, usize), String> {
     let entries = response
         .get("excerpts")
@@ -241,12 +280,21 @@ fn validated_excerpts(response: &Value, source: &str) -> Result<(Vec<String>, us
             rejected += 1;
             continue;
         };
-        if excerpt.len() < 3 || excerpt.len() > 500 || !source.contains(excerpt) {
+        if excerpt.len() < 3 || excerpt.len() > 500 {
             rejected += 1;
             continue;
         }
-        if !excerpts.iter().any(|s| s == excerpt) {
-            excerpts.push(excerpt.to_owned());
+        let recovered = if source.contains(excerpt) {
+            Some(excerpt.to_owned())
+        } else {
+            recover_whitespace_only(source, excerpt)
+        };
+        let Some(recovered) = recovered else {
+            rejected += 1;
+            continue;
+        };
+        if !excerpts.contains(&recovered) {
+            excerpts.push(recovered);
         }
     }
     Ok((excerpts, rejected))
@@ -257,6 +305,19 @@ mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     struct Fake(Value);
+    #[test]
+    fn recovered_excerpts_preserve_unique_original_whitespace() {
+        let source = "Built a résumé\n  parser with\tRust. Other work.";
+        let result = validated_excerpts(&json!({"excerpts":["Built a résumé parser with Rust.","Built a résumé parser with Go."]}), source).unwrap();
+        assert_eq!(result.0, vec!["Built a résumé\n  parser with\tRust."]);
+        assert_eq!(result.1, 1);
+        assert!(
+            recover_whitespace_only("résumé\n  parser; résumé\tparser", "résumé parser").is_none()
+        );
+        assert!(recover_whitespace_only("a a a", "a a").is_none());
+        assert!(recover_whitespace_only("Rust and Go", "Rust and Python").is_none());
+        assert!(recover_whitespace_only(&format!("a{}b", " ".repeat(501)), "a b").is_none());
+    }
     #[test]
     #[ignore = "requires a private local PDF fixture, PDF runtime and resource-gated resident model"]
     fn live_private_cv_review_diagnostic() {
