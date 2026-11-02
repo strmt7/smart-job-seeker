@@ -39,6 +39,8 @@ try {
   $chosen = Join-Path $junction 'program\soffice.com'
   $setting = Invoke-RestMethod ($base + '/api/office-path') -Method Post -Headers $headers -ContentType 'application/json' -Body (@{path=$chosen}|ConvertTo-Json -Compress)
   if ($setting.active -ne $chosen) { throw 'Custom candidate was not selected' }
+  $observed = Invoke-RestMethod ($base + '/api/tool-status') -Method Get -Headers $headers
+  if ($observed.office_setting.path -ne $chosen -or $observed.office_setting.available -ne $true) { throw 'Saved custom path was not reported' }
   $headers['X-Document-Name'] = 'fictional.txt'
   $document = Invoke-RestMethod ($base + '/api/documents/upload') -Method Post -Headers $headers -ContentType 'application/octet-stream' -Body ([Text.Encoding]::UTF8.GetBytes('Fictional CV: Avery Example.'))
   $headers.Remove('X-Document-Name')
@@ -50,6 +52,9 @@ try {
   } while ($status.status -eq 'running' -and [DateTime]::UtcNow -lt $deadline)
   if ($status.status -ne 'complete') { throw ('Conversion did not complete: ' + $status.status + '; ' + $status.error) }
   if ($status.text_check.status -ne 'matches') { throw 'The converted PDF did not pass the text comparison' }
+  Remove-Item -LiteralPath $junction -Force
+  $observed = Invoke-RestMethod ($base + '/api/tool-status') -Method Get -Headers $headers
+  if ($observed.office_setting.path -ne $chosen -or $observed.office_setting.available -ne $false) { throw 'Missing custom path was not reported' }
   Write-Output 'Isolated custom-path conversion and text comparison passed.'
 } finally {
   try {

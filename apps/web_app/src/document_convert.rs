@@ -27,7 +27,7 @@ fn checked_office_path(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn configured_office_path(control: &Path) -> Result<Option<PathBuf>, String> {
+fn stored_office_path(control: &Path) -> Result<Option<String>, String> {
     let bytes = match std::fs::read(control.join("office-path.json")) {
         Ok(bytes) if bytes.len() <= 8192 => bytes,
         Ok(_) => return Err("LibreOffice setting is too large".into()),
@@ -39,8 +39,27 @@ fn configured_office_path(control: &Path) -> Result<Option<PathBuf>, String> {
     let path = value["path"].as_str().ok_or("Missing LibreOffice path")?;
     if path.is_empty() {
         Ok(None)
+    } else if path.len() > 2048 || path.chars().any(char::is_control) {
+        Err("Invalid LibreOffice setting".into())
     } else {
-        checked_office_path(path).map(Some)
+        Ok(Some(path.to_owned()))
+    }
+}
+
+fn configured_office_path(control: &Path) -> Result<Option<PathBuf>, String> {
+    stored_office_path(control)?
+        .map(|path| checked_office_path(&path))
+        .transpose()
+}
+
+pub fn office_setting_status(control: &Path) -> serde_json::Value {
+    match stored_office_path(control) {
+        Ok(Some(path)) => {
+            let available = checked_office_path(&path).is_ok();
+            serde_json::json!({"path":path,"available":available})
+        }
+        Ok(None) => serde_json::json!({"path":null,"available":null}),
+        Err(error) => serde_json::json!({"path":null,"available":false,"error":error}),
     }
 }
 
@@ -306,6 +325,9 @@ mod tests {
         );
         std::fs::remove_file(&executable).unwrap();
         assert!(super::configured_office_path(&control).is_err());
+        let status = super::office_setting_status(&control);
+        assert_eq!(status["path"], value);
+        assert_eq!(status["available"], false);
         super::set_office_path(&control, "").unwrap();
         assert_eq!(super::configured_office_path(&control).unwrap(), None);
     }

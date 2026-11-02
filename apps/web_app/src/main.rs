@@ -2204,13 +2204,16 @@ fn serve(
     }
     if method == "GET" && path == "/api/tool-status" {
         let office = document_convert::office_path();
+        let office_setting = storage_settings::control_dir()
+            .map(|control| document_convert::office_setting_status(&control))
+            .unwrap_or_else(|error| json!({"path":null,"available":false,"error":error}));
         let browser = waypoint_browser::cdp::BrowserProcess::discover_binaries()
             .into_iter()
             .next();
         json_reply(
             stream,
             "200 OK",
-            json!({"libreoffice":office.map(|p| p.display().to_string()),"browser":browser.map(|p| p.display().to_string()),"pdf_python":pdf_extract::python_path().map(|p|p.display().to_string())}),
+            json!({"libreoffice":office.map(|p| p.display().to_string()),"office_setting":office_setting,"browser":browser.map(|p| p.display().to_string()),"pdf_python":pdf_extract::python_path().map(|p|p.display().to_string())}),
         );
         return Ok(());
     }

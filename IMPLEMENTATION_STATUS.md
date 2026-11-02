@@ -2432,6 +2432,10 @@ only the program directory failed, while linking the complete installation
 worked. This does not verify a separately installed copy or clean-host setup.
 The local probe requires an existing build, LibreOffice and PDF Python runtime;
 it restores its environment and removes only its own temporary workspace.
+The settings panel now reloads the saved path and reports when that file is
+missing, while leaving an in-progress edit untouched. A mocked UI test covers
+the edit race and a local app probe checked reporting before and after the
+linked converter path was removed. The path check does not execute LibreOffice.
 
 ### Email contacts on application pages (2026-11-02)
 
