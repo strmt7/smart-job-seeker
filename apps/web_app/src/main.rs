@@ -13390,7 +13390,7 @@ mod tests {
                             let _ = tx.send(());
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                         } else {
-                            let page = "<!doctype html><label for='given'>First name</label><input id='given' autocomplete='given-name' oninput=\"fetch('/fixture',{method:'POST',body:'fictional'})\">";
+                            let page = "<!doctype html><label for='given'>First name</label><input id='given' autocomplete='given-name' oninput=\"fetch('/fixture',{method:'POST',body:'fictional'})\"><label for='family'>Last name</label><input id='family' autocomplete='family-name'>";
                             let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", page.len(), page);
                         }
                     }
@@ -13425,16 +13425,22 @@ mod tests {
         })
         .unwrap();
         ws.index_next_duplicate_job("").unwrap();
-        let profile = json!({"first_name":"A"});
+        let profile = json!({"first_name":"A", "last_name":"B"});
         ws.save_candidate_profile(&profile.to_string()).unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
         let preview = form_preview::FormPreview {
             schema: live.schema,
-            suggestions: vec![ProposedMapping {
-                field_selector: "#given".into(),
-                value: PacketValue::Text("A".into()),
-            }],
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#given".into(),
+                    value: PacketValue::Text("A".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#family".into(),
+                    value: PacketValue::Text("B".into()),
+                },
+            ],
             manual_review: vec![],
             model_review_selectors: Default::default(),
         };
@@ -13467,7 +13473,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let body = json!({"session_id":"fictional-session","reviewed":true,"selectors":["#given"],"answers":[]}).to_string();
+        let body = json!({"session_id":"fictional-session","reviewed":true,"selectors":["#given", "#family"],"answers":[]}).to_string();
         write!(client, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let (mut stream, _) = listener.accept().unwrap();
         let result = serve(&mut stream, &mut ws, &mut session, "fixture-token", port);
@@ -13476,11 +13482,13 @@ mod tests {
         client.read_to_string(&mut response).unwrap();
         rx.recv_timeout(Duration::from_secs(5))
             .expect("fixture request was not received");
-        assert!(result.is_ok(), "{result:?}");
-        assert!(response.contains("non-GET/HEAD request"), "{response}");
-        assert!(
-            response.contains("\"non_read_request_observed\":true"),
-            "{response}"
+        let error = result.expect_err("fill should stop after observing the request");
+        assert!(error.contains("non-GET/HEAD request"), "{error}");
+        let current = session.as_mut().unwrap();
+        assert_eq!(current.completed_selectors, vec!["#given"]);
+        assert_eq!(
+            current.driver.text_value_snapshot("#family").unwrap().value,
+            ""
         );
         assert!(ws
             .manual_reviews()

@@ -617,6 +617,9 @@ pub fn apply_reviewed_text_fields_with_replacements(
         created_at: timestamp,
     })
     .map_err(|e| e.to_string())?;
+    let mut network_count = driver.observed_non_read_requests().map_err(|_| {
+        "Network observation was unavailable during filling; requests may have occurred".to_string()
+    })?;
     for mapping in &preview.suggestions {
         let field = fresh
             .schema
@@ -650,6 +653,18 @@ pub fn apply_reviewed_text_fields_with_replacements(
             },
         };
         execute_and_verify_field(driver, preview, field, &command, completed)?;
+        if let Some(before) = network_count {
+            let after = driver.observed_non_read_requests().map_err(|_| {
+                "Network observation was unavailable during filling; requests may have occurred".to_string()
+            })?.ok_or("Network observation was unavailable during filling; requests may have occurred")?;
+            if after > before {
+                return Err("A non-GET/HEAD request was observed during filling; stopped before the next field. Its purpose and delivery are unknown".into());
+            }
+            if after < before {
+                return Err("Network observation was unavailable during filling; requests may have occurred".into());
+            }
+            network_count = Some(after);
+        }
     }
     // Check again after all writes because later fields can change earlier ones.
     for mapping in &preview.suggestions {
@@ -1025,7 +1040,10 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
         // Match the entire generated warning to a field, then require every
         // same-label field to be answered before clearing it.
         if let Some(field) = preview.schema.fields.iter().find(|field| {
-            *reason == crate::suggestions::invalid_suggestion_warning(field)
+            reason
+                .strip_suffix(crate::suggestions::MATCHING_PROFILE_HINT)
+                .unwrap_or(reason)
+                == crate::suggestions::invalid_suggestion_warning(field)
                 || *reason
                     == format!(
                         "Invalid or duplicate suggestion needs review: {}",
@@ -3153,7 +3171,11 @@ mod tests {
             .iter()
             .any(|reason| reason == "Required field needs review: First name"));
         assert!(preview.manual_review.iter().any(|reason| reason
-            == &crate::suggestions::invalid_suggestion_warning(&preview.schema.fields[0])));
+            == &format!(
+                "{}{}",
+                crate::suggestions::invalid_suggestion_warning(&preview.schema.fields[0]),
+                crate::suggestions::MATCHING_PROFILE_HINT
+            )));
         preview.suggestions.push(ProposedMapping {
             field_selector: "#first".into(),
             value: PacketValue::Text("Example".into()),

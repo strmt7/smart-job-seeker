@@ -186,6 +186,8 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
     }
 }
 
+pub(crate) const MATCHING_PROFILE_HINT: &str = " A matching profile value is available; verify the requested information and enter it manually if appropriate.";
+
 pub(crate) fn invalid_suggestion_warning(
     field: &waypoint_applications::form_mapping::FormField,
 ) -> String {
@@ -832,7 +834,7 @@ pub fn suggest_with_review(
         } else if invalid_selectors.contains(&field.selector) && !field.sensitive {
             let mut warning = invalid_suggestion_warning(field);
             if exact_selectors.contains(&field.selector) {
-                warning.push_str(" A matching profile value is available; verify the requested information and enter it manually if appropriate.");
+                warning.push_str(MATCHING_PROFILE_HINT);
             }
             warnings.push(warning);
         }

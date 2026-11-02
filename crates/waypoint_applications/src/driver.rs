@@ -126,9 +126,14 @@ pub trait BrowserDriver {
     fn verify_choice(&mut self, _command: &BrowserCommand) -> Result<(), DriverError> {
         Err(DriverError("Choice verification is unavailable".into()))
     }
+    /// Optional, partial count of observed non-GET/HEAD requests. No count can
+    /// establish that the page has not sent data by another route.
+    fn observed_non_read_requests(&mut self) -> Result<Option<u64>, DriverError> {
+        Ok(None)
+    }
     /// Execute exactly one typed command. No scripting surface exists.
     fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError>;
-    /// The single external write. Everything before this is reversible.
+    /// Attempt submission. Earlier page interactions can also send data or change remote state.
     fn commit(&mut self) -> Result<SiteAck, DriverError>;
 }
 

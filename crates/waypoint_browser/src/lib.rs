@@ -5564,6 +5564,10 @@ fn retain_loading_observations(previous: LiveForm, next: &mut LiveForm) {
 }
 
 impl BrowserDriver for CdpDriver {
+    fn observed_non_read_requests(&mut self) -> Result<Option<u64>, DriverError> {
+        CdpDriver::observed_non_read_requests(self).map(Some)
+    }
+
     fn current_url(&mut self) -> Result<String, DriverError> {
         CdpDriver::current_url(self)
     }
