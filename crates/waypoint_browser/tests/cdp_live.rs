@@ -2350,6 +2350,11 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
     });
     let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
     let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call(
+        "Network.enable",
+        json!({"maxTotalBufferSize":0,"maxResourceBufferSize":0,"maxPostDataSize":0}),
+    )
+    .unwrap();
     cdp.call("Runtime.enable", json!({})).unwrap();
     cdp.call("Runtime.evaluate", json!({"expression":format!("window.fixtureSocket = new WebSocket('ws://127.0.0.1:{port}');"),"returnByValue":true})).unwrap();
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -2371,6 +2376,7 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
         json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
     )
     .unwrap();
+    let before = cdp.observed_non_read_requests();
     cdp.call(
         "Runtime.evaluate",
         json!({"expression":"window.fixtureSocket.send('fictional')","returnByValue":true}),
@@ -2379,6 +2385,20 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
     assert!(
         rx.recv_timeout(Duration::from_secs(5)).unwrap(),
         "fixture message not received"
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while cdp.observed_non_read_requests() == before && Instant::now() < deadline {
+        cdp.pump(Duration::from_millis(100));
+    }
+    assert!(
+        cdp.observed_non_read_requests() > before,
+        "outgoing frame was not observed"
+    );
+    assert!(
+        cdp.events
+            .iter()
+            .all(|(name, _)| name != "Network.webSocketFrameSent"),
+        "frame payload was retained"
     );
     server.join().unwrap();
 }

@@ -1561,7 +1561,7 @@ impl CdpDriver {
 
     fn stop_if_non_read_request_observed(&self, before: u64) -> Result<(), DriverError> {
         if self.cdp.observed_non_read_requests() > before {
-            return Err(DriverError("A non-GET/HEAD request was observed during filling; text entry stopped. Its purpose and delivery are unknown".into()));
+            return Err(DriverError("A non-GET/HEAD request or outgoing WebSocket frame was observed during filling; text entry stopped. Its purpose and delivery are unknown".into()));
         }
         Ok(())
     }

@@ -7520,7 +7520,7 @@ fn serve(
             let network_unavailable = network_observation == FillNetworkObservation::Unavailable;
             let mut network_record_error = None;
             let network_warning = match network_observation {
-                FillNetworkObservation::Observed => Some(("non_read_request_observed_during_fill", "The browser observed a non-GET/HEAD request during filling. It may be unrelated; its purpose and delivery are unknown. Check the employer site before retrying. Other requests or transports may not have been observed.")),
+                FillNetworkObservation::Observed => Some(("non_read_request_observed_during_fill", "The browser observed a non-GET/HEAD request or outgoing WebSocket frame during filling. It may be unrelated; its purpose and delivery are unknown. Check the employer site before retrying. Other requests or transports may not have been observed.")),
                 FillNetworkObservation::Unavailable => Some(("fill_network_observation_unavailable", "Network observation was unavailable during filling. Requests may have occurred; check the employer site before retrying.")),
                 FillNetworkObservation::NoneObserved => None,
             };
@@ -7592,7 +7592,7 @@ fn serve(
                         ""
                     };
                     let network_note = if observed_request {
-                        " A non-GET/HEAD request was observed during filling; its purpose and delivery are unknown. Check the employer site before retrying."
+                        " A non-GET/HEAD request or outgoing WebSocket frame was observed during filling; its purpose and delivery are unknown. Check the employer site before retrying."
                     } else if network_unavailable {
                         " Network observation was unavailable during filling; requests may have occurred. Check the employer site before retrying."
                     } else {
@@ -7617,7 +7617,7 @@ fn serve(
             if let Some(error) = network_record_error {
                 current.created = Instant::now();
                 *session = Some(current);
-                return Err(format!("Fields may have been filled; {} The review status or record could not be saved: {error}. Check the employer site before retrying.", if observed_request { "A non-GET/HEAD request was observed." } else { "Network observation was unavailable during filling; requests may have occurred." }));
+                return Err(format!("Fields may have been filled; {} The review status or record could not be saved: {error}. Check the employer site before retrying.", if observed_request { "A non-GET/HEAD request or outgoing WebSocket frame was observed." } else { "Network observation was unavailable during filling; requests may have occurred." }));
             }
             if verify_selected_choices(&mut current).is_err() {
                 let reason =
@@ -8012,7 +8012,7 @@ fn serve(
             let network_observation =
                 classify_fill_network_observation(Some(network_before), network_after);
             let network_warning = match network_observation {
-                FillNetworkObservation::Observed => Some(("attachment_network_request_observed", "A non-GET/HEAD request was observed during attachment. Uploads can cause requests; its purpose and delivery are unknown. Check the employer site before continuing. Other requests or transports may not have been observed.")),
+                FillNetworkObservation::Observed => Some(("attachment_network_request_observed", "A non-GET/HEAD request or outgoing WebSocket frame was observed during attachment. Uploads can cause requests; its purpose and delivery are unknown. Check the employer site before continuing. Other requests or transports may not have been observed.")),
                 FillNetworkObservation::Unavailable => Some(("attachment_network_observation_unavailable", "Network observation was unavailable during attachment. Requests may have occurred; check the employer site before continuing.")),
                 FillNetworkObservation::NoneObserved => None,
             };
@@ -13691,7 +13691,10 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(5))
             .expect("fixture request was not received");
         let error = result.expect_err("fill should stop after observing the request");
-        assert!(error.contains("non-GET/HEAD request"), "{error}");
+        assert!(
+            error.contains("non-GET/HEAD request or outgoing WebSocket frame"),
+            "{error}"
+        );
         let current = session.as_mut().unwrap();
         assert!(current.completed_selectors.is_empty());
         let partial = current.driver.text_value_snapshot("#given").unwrap().value;
@@ -13703,11 +13706,9 @@ mod tests {
             current.driver.text_value_snapshot("#family").unwrap().value,
             ""
         );
-        assert!(ws
-            .manual_reviews()
-            .unwrap()
-            .iter()
-            .any(|review| review.reason.contains("non-GET/HEAD request")));
+        assert!(ws.manual_reviews().unwrap().iter().any(|review| review
+            .reason
+            .contains("non-GET/HEAD request or outgoing WebSocket frame")));
         let attempts = attempt_record::list(&ws, &id).unwrap();
         let folder = attempts["attempts"][0]["folder"].as_str().unwrap();
         let events =
@@ -13838,13 +13839,14 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(5))
             .expect("fixture request was not received");
         assert!(result.is_ok(), "{result:?}");
-        assert!(response.contains("non-GET/HEAD request"), "{response}");
+        assert!(
+            response.contains("non-GET/HEAD request or outgoing WebSocket frame"),
+            "{response}"
+        );
         assert_eq!(session.as_ref().unwrap().attachments.len(), 1);
-        assert!(ws
-            .manual_reviews()
-            .unwrap()
-            .iter()
-            .any(|review| review.reason.contains("non-GET/HEAD request")));
+        assert!(ws.manual_reviews().unwrap().iter().any(|review| review
+            .reason
+            .contains("non-GET/HEAD request or outgoing WebSocket frame")));
         let attempts = attempt_record::list(&ws, &id).unwrap();
         let folder = attempts["attempts"][0]["folder"].as_str().unwrap();
         let events =
@@ -13975,13 +13977,14 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(5))
             .expect("fixture request was not received");
         let error = result.expect_err("cleared file must not be reported as attached");
-        assert!(error.contains("non-GET/HEAD request"), "{error}");
+        assert!(
+            error.contains("non-GET/HEAD request or outgoing WebSocket frame"),
+            "{error}"
+        );
         assert!(session.as_ref().unwrap().attachments.is_empty());
-        assert!(ws
-            .manual_reviews()
-            .unwrap()
-            .iter()
-            .any(|review| review.reason.contains("non-GET/HEAD request")));
+        assert!(ws.manual_reviews().unwrap().iter().any(|review| review
+            .reason
+            .contains("non-GET/HEAD request or outgoing WebSocket frame")));
         let attempts = attempt_record::list(&ws, &id).unwrap();
         let folder = attempts["attempts"][0]["folder"].as_str().unwrap();
         let events =

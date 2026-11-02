@@ -664,7 +664,7 @@ pub fn apply_reviewed_text_fields_with_replacements(
                 "Network observation was unavailable during filling; requests may have occurred",
             )?;
         if after > network_count {
-            return Err("A non-GET/HEAD request was observed during filling; stopped before the next field. Its purpose and delivery are unknown".into());
+            return Err("A non-GET/HEAD request or outgoing WebSocket frame was observed during filling; stopped before the next field. Its purpose and delivery are unknown".into());
         }
         if after < network_count {
             return Err(

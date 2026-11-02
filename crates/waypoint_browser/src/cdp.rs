@@ -539,15 +539,18 @@ pub struct Cdp {
 }
 
 fn is_non_read_request(value: &Value) -> bool {
-    value.get("method").and_then(Value::as_str) == Some("Network.requestWillBeSent")
-        && value
+    match value.get("method").and_then(Value::as_str) {
+        Some("Network.webSocketFrameSent") => true,
+        Some("Network.requestWillBeSent") => value
             .pointer("/params/request/method")
             .and_then(Value::as_str)
             .is_some_and(|method| {
                 !method.is_empty()
                     && !method.eq_ignore_ascii_case("GET")
                     && !method.eq_ignore_ascii_case("HEAD")
-            })
+            }),
+        _ => false,
+    }
 }
 
 fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize) {
@@ -759,8 +762,12 @@ mod tests {
                 &json!({"method":"Network.requestWillBeSent","params":{"request":{"method":method}}})
             ));
         }
+        let frame = json!({"method":"Network.webSocketFrameSent","params":{"response":{"payloadData":"fictional-private-data"}}});
+        assert!(is_non_read_request(&frame));
+        retain_event(&mut events, frame, 100);
+        assert!(events.is_empty());
         assert!(!is_non_read_request(
-            &json!({"method":"Network.webSocketFrameSent"})
+            &json!({"method":"Network.webSocketFrameReceived"})
         ));
     }
 
