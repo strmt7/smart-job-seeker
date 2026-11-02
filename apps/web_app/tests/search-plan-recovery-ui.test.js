@@ -6,7 +6,7 @@ const start = source.indexOf('function renderSearchPlan(');
 const end = source.indexOf("\ndocument.querySelector('#jobicy-search')", start);
 assert.ok(start >= 0 && end > start, 'search planning UI must exist');
 
-async function fixture(saved, active, current = true) {
+async function fixture(saved, active, current = true, query = 'Fictional engineer') {
     const storage = new Map(saved ? [['waypoint-search-plan', saved]] : []);
     const calls = [];
     const button = { disabled: false, addEventListener() {} };
@@ -27,7 +27,7 @@ async function fixture(saved, active, current = true) {
         api: async (path, body) => {
             calls.push([path, body]);
             if (path === '/api/search-plan/pending') return { task_id: active };
-            if (path === '/api/search-plan/status') return { status: 'complete', queries: ['Fictional engineer'], input_digest: 'fixture-digest', omitted_private: 1, omitted_invalid: 2 };
+            if (path === '/api/search-plan/status') return { status: 'complete', queries: [query], input_digest: 'fixture-digest', omitted_private: 1, omitted_invalid: 2 };
             if (path === '/api/search-plan/current') return { current };
             throw Error(`Unexpected request ${path}`);
         },
@@ -66,5 +66,12 @@ async function fixture(saved, active, current = true) {
     assert.equal(stale.field.value, '');
     assert.ok(stale.panel.rows.some(row => row.text.includes('changed')));
     assert.equal(stale.storage.get('waypoint-search-plan'), undefined);
+    const longQuery='international materials research engineer semiconductor manufacturing Berlin';
+    const longPlan=await fixture('new-plan',null,true,longQuery);
+    const longRow=longPlan.panel.rows.find(row=>row.children?.some(child=>child.text===longQuery));
+    assert.equal(longRow.children.find(child=>child.text==='Use on Jobicy').disabled,true);
+    assert.ok(longRow.children.some(child=>child.text?.includes('Jobicy accepts up to 50 characters')));
+    await longRow.children.find(child=>child.text==='Use on web').events.click();
+    assert.equal(longPlan.field.value,longQuery);
     console.log('Search-plan recovery UI checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

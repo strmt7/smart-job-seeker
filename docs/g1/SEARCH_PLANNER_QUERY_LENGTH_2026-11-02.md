@@ -1,0 +1,5 @@
+# Search phrase length and planner check — 2026-11-02
+
+The local search planner now accepts generated phrases of 3–120 Unicode characters, bounded to 480 UTF-8 bytes. The general web provider accepts these phrases; the interface disables the Jobicy shortcut for phrases longer than that provider's 50-character input limit. A local test verifies a phrase over 50 characters is preserved in the FreeSerp request URL. This URL construction test made no network request.
+
+A resource-gated run of `qwen3.5:9b` generated search phrases for three fictional profiles. In the initial run it suggested a full-stack role for backend-only experience. After the planner prompt explicitly warned against broadening a specialty to unmentioned skills, a second run did not produce front-end or full-stack phrases for that profile. Both runs used the same three examples and do not establish general planner reliability; the user must still review suggestions. No real search or application was sent in these checks. The model was unloaded afterward.
