@@ -8820,6 +8820,37 @@ mod tests {
         });
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated model for additional fictional preference cases"]
+    fn resource_gated_preference_additional_cases() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().unwrap();
+            let inner = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                inner,
+                name,
+                crate::resident_model_identity,
+            );
+            let cases = [
+                ("I require a fully remote role", "This hybrid role requires staff to work in the Berlin office three days a week.", "contradicted"),
+                ("I require a gross annual base salary of at least EUR 80000", "The annual base salary is EUR 70000 plus a discretionary bonus.", "contradicted"),
+                ("I require at least 30 days of paid annual leave", "The employer offers paid leave; the number of days is not stated.", "unknown"),
+            ];
+            for (preference, listing, expected) in cases {
+                let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+                let baseline = validate(raw.clone(), &[], preference, listing).unwrap();
+                let result =
+                    compare_preferences(&mut model, raw, baseline, &[], preference, listing);
+                println!("fictional preference={preference:?}; expected={expected}; actual={}; comparison={}", result["rubric"][0]["status"], result["preference_comparison"]["status"]);
+                assert_eq!(result["preference_comparison"]["status"], "completed");
+                assert_eq!(result["rubric"][0]["status"], expected);
+            }
+        });
+    }
+
     #[test]
     fn explicit_numeric_minimum_needs_a_number_in_positive_evidence() {
         assert!(numeric_minimum_without_cited_number(
