@@ -1,3 +1,8 @@
+## Application-check freshness — 2026-11-02
+
+- Before returning an application-page check, the browser now rechecks the current URL, form schema and review signals against the inspected page. If these change, the earlier summary and contact inventory are discarded and the result asks for another inspection. This can flag benign dynamic changes and does not detect every same-schema text or content change, nor establish that a vacancy is open.
+- A fictional browser fixture confirmed detection of added fields and a challenge at the same URL. The first run of an existing loading-page test exposed loss of its specific disappearing-field warning; the warning was restored, and both browser fixtures passed on rerun. The focused application-check suite passed (19 passed, 21 ignored) before that warning refinement, and Windows lint passed afterward. No employer page was opened or application submitted.
+
 ## Numeric preference evidence — 2026-11-02
 
 - A uniquely located listing excerpt rejected for scoring, or returned with an unknown judgment, can now appear as explicitly unscored review context. It does not become positive or negative evidence and does not alter the score; repeated or unverifiable excerpts are not attached. Scripted fit and interface checks passed (73 fit tests passed, 41 ignored), as did Windows lint. The post-change local-model retest was again refused by the resource gate with 8,564 MiB reported free against 9,605 MiB required; no shared model was resident and no other process was stopped.

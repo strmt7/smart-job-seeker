@@ -145,6 +145,39 @@ fn ensure_inspected_page(
     Ok(())
 }
 
+fn ensure_inspected_form(
+    browser: &mut waypoint_browser::CdpDriver,
+    expected_url: &str,
+    previous: &waypoint_applications::driver::LiveForm,
+) -> Result<(), String> {
+    ensure_inspected_page(browser, expected_url)?;
+    let current = browser
+        .inspect_current()
+        .map_err(|_| "The application page could not be rechecked; inspect it again.")?;
+    ensure_inspected_page(browser, expected_url)?;
+    let mut before_walls = previous.walls.clone();
+    let mut after_walls = current.walls.clone();
+    before_walls.sort_unstable();
+    after_walls.sort_unstable();
+    if current.origin != previous.origin
+        || current.schema.schema_hash_input() != previous.schema.schema_hash_input()
+        || before_walls != after_walls
+    {
+        let mut message = "The application page's fields or review signals changed during the check; inspect it again.".to_owned();
+        if previous
+            .walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
+        {
+            report_loading_field_loss(&mut message, &previous.walls);
+        } else {
+            report_loading_field_loss(&mut message, &current.walls);
+        }
+        return Err(message);
+    }
+    Ok(())
+}
+
 /// The model's judgment is advisory. A matching DOM excerpt supports where
 /// its evidence came from, but does not prove visibility or interpretation.
 fn visual_page_advice(
@@ -776,7 +809,7 @@ pub fn start_bound(
                     }
                 }
             }
-            ensure_inspected_page(&mut browser, &current)?;
+            ensure_inspected_form(&mut browser, &current, &page)?;
             Ok((report_inspected_page(message, inspected_url), review))
         })();
         if result.is_err() {
@@ -970,6 +1003,32 @@ mod tests {
         let mut unchanged = "Existing summary.".to_owned();
         super::report_loading_field_loss(&mut unchanged, &["untrusted page text".into()]);
         assert_eq!(unchanged, "Existing summary.");
+    }
+
+    #[test]
+    #[ignore = "opens a local fictional changing form in a browser"]
+    fn final_form_check_detects_changes_at_same_url() {
+        use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-controlled-change.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let original = browser.open(&url).unwrap();
+        super::ensure_inspected_form(&mut browser, &url, &original).unwrap();
+        browser
+            .execute(&BrowserCommand::Click {
+                selector: "#change".into(),
+            })
+            .unwrap();
+        assert_eq!(browser.current_url().unwrap(), url);
+        let error = super::ensure_inspected_form(&mut browser, &url, &original).unwrap_err();
+        assert!(error.contains("changed during the check"));
+        assert!(browser
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
     }
 
     #[test]
