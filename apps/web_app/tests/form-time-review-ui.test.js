@@ -18,7 +18,7 @@ const context = {
   panel, result: {fields: [{selector: '#time', label: 'Interview time', field_type: 'time', required: true, sensitive: false}], suggestions: []},
   document: {createElement: tag => node(tag)},
   element: (tag, text) => node(tag, text),
-  formPatternNotice: () => '', formEditorNotice: () => '', attachFormLengthCounter: () => {},
+  formPatternNotice: () => '', formEditorNotice: () => '', attachFormLengthCounter: () => {}, state: {profile:{}}, profileValuePicker: () => null,
 };
 vm.createContext(context);
 vm.runInContext(`${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`, context);
@@ -34,7 +34,7 @@ for (const [kind, value] of [['date', '2026-11-01'], ['month', '2026-11'], ['tim
     result: {fields: [{selector: '#field', label: 'Available', field_type: kind, sensitive: false}], suggestions: [{field_selector: '#field', value: {date: value}}]},
     document: {createElement: tag => node(tag), createTextNode: text => node('#text', text)},
     element: (tag, text) => node(tag, text), formPatternNotice: () => '', formEditorNotice: () => '',
-    attachFormLengthCounter: () => {}, preselectFormSuggestion: () => true,
+    attachFormLengthCounter: () => {}, preselectFormSuggestion: () => true, state: {profile:{}}, profileValuePicker: () => null,
   };
   vm.createContext(mapped);
   vm.runInContext(`${render}\nglobalThis.testSelections=selections;`, mapped);
@@ -43,5 +43,5 @@ for (const [kind, value] of [['date', '2026-11-01'], ['month', '2026-11'], ['tim
   assert.equal(mapped.testSelections[0].input.value, value);
   assert.equal(mapped.testSelections[0].original, value);
 }
-const local={panel:node('div'),result:{fields:[{selector:'#dt',label:'Appointment',field_type:'date_time_local',required:true,sensitive:false}],suggestions:[]},document:{createElement:tag=>node(tag)},element:(tag,text)=>node(tag,text),formPatternNotice:()=>'',formEditorNotice:()=>'',attachFormLengthCounter:()=>{}};vm.createContext(local);vm.runInContext(`${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`,local);assert.equal(local.testAnswers[0].input.type,'datetime-local');local.testAnswers[0].input.value='2026-11-01T13:30';assert.equal(JSON.stringify(local.formAnswerPayload(local.testAnswers[0])),JSON.stringify({selector:'#dt',value:'2026-11-01T13:30'}));
+const local={panel:node('div'),result:{fields:[{selector:'#dt',label:'Appointment',field_type:'date_time_local',required:true,sensitive:false}],suggestions:[]},document:{createElement:tag=>node(tag)},element:(tag,text)=>node(tag,text),formPatternNotice:()=>'',formEditorNotice:()=>'',attachFormLengthCounter:()=>{},state:{profile:{}},profileValuePicker:()=>null};vm.createContext(local);vm.runInContext(`${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`,local);assert.equal(local.testAnswers[0].input.type,'datetime-local');local.testAnswers[0].input.value='2026-11-01T13:30';assert.equal(JSON.stringify(local.formAnswerPayload(local.testAnswers[0])),JSON.stringify({selector:'#dt',value:'2026-11-01T13:30'}));
 console.log('Reviewed date and time input UI checks passed.');

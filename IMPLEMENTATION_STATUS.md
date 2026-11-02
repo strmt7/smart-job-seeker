@@ -1883,3 +1883,11 @@ leave a previous cover-letter provenance link attached to the overwritten text.
 The picker now clears answer and cover-letter draft links and invalidates an
 in-flight letter-link update before copying the value. Focused picker and draft
 provenance UI tests passed. No application was submitted.
+
+Saved contact values can now also replace an existing, non-sensitive text
+suggestion during form review; the explicit choice updates the editable answer
+and selects it for the later reviewed fill. It does not act on the employer
+page. A simulated UI check covered selection and the resulting input event.
+The complete JavaScript test run exposed a stale isolated form-test harness
+that lacked the picker dependency; after updating the harness, all 128 checks
+passed. The expanded flow has not been exercised on a real employer form.
