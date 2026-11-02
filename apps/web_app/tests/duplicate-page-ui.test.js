@@ -1,14 +1,23 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
-const start=source.indexOf(' async function runDuplicateSearch(paged,allJobs=false){'),end=source.indexOf("\n findDuplicates.addEventListener",start);
+assert.ok(source.includes('applicationChecks.has(job.id) || duplicateBatch?.job===job.id'), 'active scan keeps its stop control exposed after refresh');
+const start=source.indexOf(' async function runDuplicateSearch(paged,allJobs=false,fromBatch=false){'),end=source.indexOf("\n findDuplicates.addEventListener",start);
 assert.ok(start>=0 && end>start);
 async function run(initial,result,paged=true,allJobs=false){
  const data=new Map(initial),requests=[],messages=[];
- const context={job:{id:'fictional'},findDuplicates:{},scanMore:{},scanAll:{},setTimeout:fn=>fn(),refresh:async()=>{},notify:value=>messages.push(value),
+ const context={job:{id:'fictional'},findDuplicates:{},scanMore:{},scanAll:{},stopScan:{},duplicateBatch:null,setTimeout:fn=>fn(),refresh:async()=>{},notify:value=>messages.push(value),
   sessionStorage:{getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)},
   api:async(path,body)=>{requests.push({path,body});if(path.endsWith('search-pending'))return {active:false};if(path.endsWith('search-start'))return {task_id:'task'};return result;}};
  await vm.runInNewContext(`${source.slice(start,end)};runDuplicateSearch`,context)(paged,allJobs);
  return {data,requests,messages};
+}
+async function batchRun(results,stopAfterFirst=false){
+ const data=new Map(),messages=[],requests=[];
+ const context={job:{id:'fictional'},findDuplicates:{},scanMore:{},scanAll:{},stopScan:{},duplicateBatch:null,setTimeout:fn=>fn(),refresh:async()=>{},notify:value=>messages.push(value),
+  sessionStorage:{getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)},
+  api:async(path,body)=>{requests.push({path,body});if(path.endsWith('search-pending'))return {active:false};if(path.endsWith('search-start'))return {task_id:'task'};const next=results.shift();if(stopAfterFirst)context.duplicateBatch.stop=true;return next;}};
+ await vm.runInNewContext(`${source.slice(start,end)};runDuplicateBatch`,context)();
+ return {data,messages,requests,context};
 }
 (async()=>{
  const result={status:'complete',page_after:'',next_cursor:'job-12',examined:12,unexamined:0,total_candidates:12,added:0,truncated:true};
@@ -21,5 +30,21 @@ async function run(initial,result,paged=true,allJobs=false){
  assert.equal(all.requests[1].body.all_jobs,true);
  assert.equal(JSON.parse(all.data.get('waypoint-duplicate-all-cursor')).after,'job-12');
  assert.equal(JSON.parse(all.data.get('waypoint-duplicate-cursor')).after,'');
+ const page=(after,next)=>({...result,all_jobs:true,page_after:after,next_cursor:next});
+ const batch=await batchRun([page('','a'),page('a','b'),page('b','c')]);
+ assert.equal(batch.requests.filter(request=>request.path.endsWith('search-start')).length,3);
+ assert.equal(JSON.parse(batch.data.get('waypoint-duplicate-all-cursor')).after,'c');
+ assert.match(batch.messages.at(-1),/Three groups checked/);
+ const stopped=await batchRun([page('','a')],true);
+ assert.equal(stopped.requests.filter(request=>request.path.endsWith('search-start')).length,1);
+ assert.match(stopped.messages.at(-1),/stopped after the current group/);
+ const done=await batchRun([page('',null)]);
+ assert.equal(done.requests.filter(request=>request.path.endsWith('search-start')).length,1);
+ assert.equal(done.data.has('waypoint-duplicate-all-cursor'),false);
+ assert.match(done.messages.at(-1),/Reached the end/);
+ const incomplete=await batchRun([{...page('','a'),examined:11,unexamined:1}]);
+ assert.equal(incomplete.requests.filter(request=>request.path.endsWith('search-start')).length,1);
+ assert.equal(JSON.parse(incomplete.data.get('waypoint-duplicate-all-cursor')).after,'');
+ assert.match(incomplete.messages.at(-1),/incomplete group/);
  console.log('Duplicate page UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
