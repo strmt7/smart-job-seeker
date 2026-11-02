@@ -1,3 +1,7 @@
+## Model startup memory snapshot — 2026-11-03
+
+- Startup now samples system and GPU memory after the runtime identity checks, closer to the actual load. This reduces the time in which its estimate can become stale; it is not a reservation and does not guarantee against later memory pressure. The resource-gate unit test and formatting check passed. No model was loaded for this change.
+
 ## Job selection recovery — 2026-11-02
 
 - The selection UI checks now also exercise disabled actions before reconciliation, enabled actions afterward and the visible storage-failure message. Both related JavaScript checks passed. An attempted isolated app launch for a rendered browser check was rejected by automatic approval review as blocked by policy; no rendered check was completed in this round.

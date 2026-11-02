@@ -193,6 +193,15 @@ fn run(model: &str) -> Result<Value, String> {
         return Ok(existing);
     }
     let binding = startup_binding(&tags, model)?;
+    let ps = get("/api/ps")?;
+    if let Some(existing) = existing_model(&ps, model)? {
+        crate::verify_local_model_binding(&ps, &get("/api/tags")?, model)?;
+        return Ok(existing);
+    }
+    // Recheck the alias before sampling resources and starting the load.
+    check_startup_binding(&get("/api/tags")?, model, &binding)?;
+    // Sample after the potentially slow runtime queries, immediately before
+    // starting the load. This narrows but cannot eliminate the snapshot race.
     let mut system = sysinfo::System::new().map_err(|_| "System memory could not be sampled")?;
     system.refresh_memory();
     resource_gate(
@@ -200,13 +209,6 @@ fn run(model: &str) -> Result<Value, String> {
         system.available_memory(),
         &crate::gpu_resources::sample(),
     )?;
-    let ps = get("/api/ps")?;
-    if let Some(existing) = existing_model(&ps, model)? {
-        crate::verify_local_model_binding(&ps, &get("/api/tags")?, model)?;
-        return Ok(existing);
-    }
-    // Recheck the alias after the resource sample, immediately before startup.
-    check_startup_binding(&get("/api/tags")?, model, &binding)?;
     let request = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Could not prepare local model request")?;
     let (status, bytes) = guarded_start_request(addr, &request, &crate::check_inference_memory)?;
     if status != 200 {
