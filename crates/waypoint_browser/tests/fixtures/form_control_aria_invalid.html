@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><body><form>
+<label for="check">Check</label><input id="check" type="checkbox" onchange="this.setAttribute('aria-invalid','true')">
+<label for="date">Date</label><input id="date" type="date" onchange="this.setAttribute('aria-invalid','true')">
+<label for="select">Select</label><select id="select" onchange="this.setAttribute('aria-invalid','true')"><option>Choose</option><option>Choice</option></select>
+<label for="multi">Multiple</label><select id="multi" multiple onchange="this.setAttribute('aria-invalid','true')"><option>Choice</option></select>
+<fieldset id="group"><legend>Radio</legend><label><input id="radio" name="radio" type="radio" onchange="this.closest('fieldset').setAttribute('aria-invalid','true')">Choice</label></fieldset>
+</form></body></html>

@@ -99,6 +99,47 @@ fn typing_stops_when_site_reports_aria_invalid() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn control_changes_stop_when_site_reports_aria_invalid() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_control_aria_invalid.html"))
+        .unwrap();
+    for command in [
+        BrowserCommand::Fill {
+            selector: "#check".into(),
+            value: PacketValue::Bool(true),
+        },
+        BrowserCommand::Fill {
+            selector: "#date".into(),
+            value: PacketValue::Date("2026-11-02".into()),
+        },
+        BrowserCommand::SelectOption {
+            selector: "#select".into(),
+            label: "Choice".into(),
+        },
+        BrowserCommand::SelectOptions {
+            selector: "#multi".into(),
+            labels: vec!["Choice".into()],
+        },
+        BrowserCommand::SelectRadio {
+            selector: "#radio".into(),
+            label: "Choice".into(),
+        },
+    ] {
+        let error = driver.execute(&command).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid"),
+            "{command:?}: {error}"
+        );
+    }
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn section_reveal_is_bounded_and_does_not_activate_controls() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver.open(&file_url("form_reveal_bounded.html")).unwrap();

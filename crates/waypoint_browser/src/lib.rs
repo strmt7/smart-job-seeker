@@ -5053,7 +5053,7 @@ impl CdpDriver {
                         "Checkbox was unavailable or its value was not retained".into(),
                     ));
                 }
-                Ok(())
+                self.verify_aria_validity(node, false)
             }
             PacketValue::Date(d) => {
                 let expected_type = if waypoint_applications::form_mapping::valid_iso_date(d) {
@@ -5084,7 +5084,7 @@ impl CdpDriver {
                             .into(),
                     ));
                 }
-                Ok(())
+                self.verify_aria_validity(node, false)
             }
             PacketValue::TextList(_) => Err(DriverError("Use a multiple-choice command".into())),
             PacketValue::None => Ok(()),
@@ -6058,13 +6058,16 @@ impl BrowserDriver for CdpDriver {
             }
             BrowserCommand::Fill { selector, value } => self.fill(selector, value),
             BrowserCommand::SelectOption { selector, label } => {
-                self.select_option(selector, label, true)
+                self.select_option(selector, label, true)?;
+                self.verify_choice(command)
             }
             BrowserCommand::SelectOptions { selector, labels } => {
-                self.select_options(selector, labels, true)
+                self.select_options(selector, labels, true)?;
+                self.verify_choice(command)
             }
             BrowserCommand::SelectRadio { selector, label } => {
-                self.select_radio(selector, label, true)
+                self.select_radio(selector, label, true)?;
+                self.verify_choice(command)
             }
             BrowserCommand::UploadFile {
                 selector,

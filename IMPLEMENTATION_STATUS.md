@@ -2852,3 +2852,9 @@ individual operation successful, in addition to the existing later retention
 checks. A local browser fixture passed for both valid input and a field that
 sets aria-invalid during typing; the existing ARIA verification fixture also
 passed. This immediate check cannot detect validation the site performs later.
+
+Immediate ARIA validation now also covers checkbox and date fills and native
+single-select, multi-select and radio changes; the latter recheck the live
+selection before returning. A local fixture passed for five controls that set
+an invalid state on change, and four existing local-browser selection/date
+tests passed. A later asynchronous validation change still needs a later check.
