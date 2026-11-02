@@ -1878,7 +1878,14 @@ fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     driver
         .open(&file_url("form_generic_click_submit_guard.html"))
         .unwrap();
-    for selector in ["#implicit", "#explicit", "#inside", "#image"] {
+    for selector in [
+        "#implicit",
+        "#explicit",
+        "#inside",
+        "#image",
+        "#submit-wrapper",
+        "#submit-label",
+    ] {
         assert!(
             driver
                 .execute(&BrowserCommand::Click {

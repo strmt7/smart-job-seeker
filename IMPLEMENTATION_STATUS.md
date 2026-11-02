@@ -1,3 +1,8 @@
+## Browser rehearsal limits — 2026-11-02
+
+- Guarded clicks now reject a native submit control at the actual hit point, including one nested inside a selected container, and labels associated with submit controls. A fictional browser fixture reproduced the nested-button bypass before the change and passed afterward; existing hover-cover and custom-choice checks also passed. This does not prevent page scripts or network activity from submitting by other means.
+- The form-review interface now states that a site may transmit or submit information during typing or other interactions, and that review mode cannot guarantee prevention. The browser enables network observation but does not install a comprehensive request-interception barrier. A guarded click is not proof that a page cannot initiate a submission. Real employer interaction therefore remains unqualified for the user's no-submission testing requirement.
+
 ## Local choice workflow qualification — 2026-11-02
 
 - Added an opt-in, resource-gated browser test that exercises a reviewed custom choice with the local vision model on fictional forms. Its setup completes duplicate indexing before requesting actions. The ordinary fixture-backed workflow also passes.
@@ -17,6 +22,7 @@
 
 ## Length-limited draft recovery — 2026-11-01
 
+- On 2026-11-02, resource-gated reruns again produced a 51-unit answer for a 35-unit limit, even when repair prompts requested a shorter phrase or supplied a word-count target; both changes were discarded. A new ignored test wrapper makes this known failing qualification reproducible with the existing model resource gate. The overlong answer remained marked `needs_edit`, and the model was unloaded.
 - A length repair now receives the prior valid draft, its measured UTF-16 length and the question. If a structurally valid answer remains too long or short after the bounded repair, the interface offers it as a draft requiring edits instead of discarding it. Its evidence check remains advisory; reviewed prefill still rejects the unedited out-of-range value. An explicit model abstention remains a failure. If the repair prompt cannot fit the context budget, the earlier draft can likewise be reviewed rather than silently lost.
 - In the fictional 20–35-unit test, `qwen3.5:9b` repeatedly returned the same 51-unit sentence. Focused shortening and exact-excerpt prompt variants did not make it fit; the latter was discarded. The live length test still fails its strict fit assertion, and the final output is explicitly marked `needs_edit`. A focused reviewed-fill test rejects that overlong sentence and accepts a shorter user-edited version. These are narrow observations, not evidence of general model reliability. Minimum sampled available RAM was 17.28 GiB in the final run; the model was unloaded. No employer was contacted or application submitted.
 

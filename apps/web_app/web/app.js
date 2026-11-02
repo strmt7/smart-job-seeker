@@ -454,7 +454,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  const root=document.querySelector('#form-preview'),panel=element('fieldset','','form-session-content');root.replaceChildren(panel);
  activeReviewSession=result.session_id;reviewSessionChecked=true;document.querySelector('#session-recovery').replaceChildren();renderReviewQueue();
  panel.replaceChildren(element('h3',`Form review: ${job.title} · ${job.employer}`));
- panel.append(element('p',`${result.visible ? 'Visible browser open. You can handle sign-in, CAPTCHA and other sections yourself.' : 'Headless browser open.'} Waypoint does not press submit; websites may transmit information as you type.`));
+ panel.append(element('p',`${result.visible ? 'Visible browser open. You can handle sign-in, CAPTCHA and other sections yourself.' : 'Headless browser open.'} Review actions do not intentionally submit an application. A website can still transmit or submit information as you type or interact; review mode cannot guarantee prevention.`));
  const choicesButton=element('button','Inspect custom choices'),choicesPanel=element('div','','application-link');choicesButton.type='button';choicesPanel.setAttribute('aria-live','polite');
  function addSelectedReview(selector,option,target){
   const verify=element('button','Check selected value with local vision');verify.type='button';target.append(verify);

@@ -1687,6 +1687,15 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated model for fictional length-limited answers"]
+    fn resource_gated_live_drafts_fit_form_limits() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_drafts_fit_fictional_form_limits,
+        );
+    }
+
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_omission_review_compares_fictional_short_and_complete_answers() {

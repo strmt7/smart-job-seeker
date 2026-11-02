@@ -4809,7 +4809,12 @@ impl CdpDriver {
         };
         let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(guard) {
             if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i]')) return false;
-            if (guard.kind !== 'ordinary' && this.closest('button:not([type="button"]), input[type="submit" i], input[type="image" i], a[href]')) return false;
+            const unsafeTarget = node => {
+                if (node.closest('button:not([type="button"]), input[type="submit" i], input[type="image" i], a[href]')) return true;
+                const control = node.closest('label')?.control;
+                return !!control && control.matches('button:not([type="button"]), input[type="submit" i], input[type="image" i]');
+            };
+            if (guard.kind !== 'ordinary' && unsafeTarget(this)) return false;
             if (guard.kind === 'combobox' && ((this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'false')) return false;
             if (guard.kind === 'option') {
                 if (this.closest('[aria-hidden="true" i]')) return false;
@@ -4836,6 +4841,7 @@ impl CdpDriver {
                 const root = current.getRootNode();
                 const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(px, py) : null;
                 if (!hit || (hit !== current && !current.contains(hit))) return false;
+                if (guard.kind !== 'ordinary' && unsafeTarget(hit)) return false;
                 if (root.nodeType === 11 && root.host) { current = root.host; continue; }
                 if (view === view.top) return true;
                 const frame = view.frameElement;

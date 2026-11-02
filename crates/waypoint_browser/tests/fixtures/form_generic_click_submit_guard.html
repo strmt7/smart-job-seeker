@@ -2,5 +2,7 @@
 <form onsubmit="event.preventDefault();document.getElementById('status').textContent='SUBMITTED'">
 <button id="implicit">Continue</button><button id="explicit" type="submit"><span id="inside">Continue</span></button>
 <input id="image" type="image" alt="Continue" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">
+<div id="submit-wrapper" style="display:inline-block"><button type="submit">Apply</button></div>
+<label id="submit-label" for="label-target">Send application</label><input id="label-target" type="submit" value="Send">
 <button id="safe" type="button" onclick="document.getElementById('status').textContent='DISMISSED'">Dismiss</button>
 </form><div id="status">INITIAL</div></body></html>
