@@ -505,7 +505,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile_fit_instructions(&profile)?;
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v55","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v56","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
@@ -570,7 +570,7 @@ fn fit_semantic_pool(facts: &[String], listing: &str) -> Vec<String> {
         return pool;
     }
     for i in 0..40 {
-        let index = i * facts.len() / 40;
+        let index = i * (facts.len() - 1) / 39;
         if let Some(fact) = facts.get(index) {
             if !pool.contains(fact) {
                 pool.push(fact.clone());
@@ -12017,6 +12017,18 @@ mod tests {
         assert!(!select_fit_facts(&facts, listing).contains(&facts[59]));
         let pool = fit_semantic_pool(&facts, &format!("{question}\n{listing}"));
         assert!(pool[..20].contains(&facts[59]));
+        assert!(pool.len() <= 60);
+    }
+
+    #[test]
+    fn semantic_pool_samples_both_ends_of_long_fact_history() {
+        let facts: Vec<String> = (0..100)
+            .map(|i| format!("Qualification number {i}"))
+            .collect();
+        assert!(!select_fit_facts(&facts, "unrelated").contains(&facts[99]));
+        let pool = fit_semantic_pool(&facts, "unrelated");
+        assert!(pool.contains(&facts[0]));
+        assert!(pool.contains(&facts[99]));
         assert!(pool.len() <= 60);
     }
 

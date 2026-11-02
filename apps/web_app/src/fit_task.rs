@@ -6319,6 +6319,15 @@ mod tests {
         assert!(abbreviated_result["rubric"].as_array().unwrap().iter().any(|item| item["excerpt"].as_str().is_some_and(|text| text.to_lowercase().contains("five years")) && item["status"] != "supported"), "abbreviated durations must not transfer experience between skills: {abbreviated_result}");
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model with private local résumé and public listing captures"]
+    fn resource_gated_private_facts_against_public_listing() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_private_facts_against_public_listing_diagnostic,
+        );
+    }
+
     #[test]
     #[ignore = "requires private local inputs, preloaded local qwen3.5:9b and resource preflight"]
     fn live_private_facts_against_public_listing_diagnostic() {
@@ -6372,8 +6381,9 @@ mod tests {
             "qwen3.5:9b".into(),
             crate::resident_model,
         ));
+        let pool = crate::fit_semantic_pool(&facts, &listing);
         let (selected, selection) =
-            select_semantic_facts(&mut model, &facts, facts.len(), "", &listing);
+            select_semantic_facts(&mut model, &pool, facts.len(), "", &listing);
         let mut assessment =
             match assess_with_source(&mut model, &selected, "", &listing, Some(&source)) {
                 Ok(value) => value,

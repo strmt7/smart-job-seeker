@@ -2215,3 +2215,20 @@ one public application-page capture, qwen3.5:9b returned non-vacancy and vacancy
 respectively after this change; earlier the article returned uncertain. Fictional
 tests cover the no-upgrade rule and warning propagation. These examples do not
 establish general accuracy or prove why the longer input was uncertain.
+
+### Real résumé fit diagnostic and bounded sampling (2026-11-02)
+
+A resource-gated qwen3.5:9b diagnostic compared 88 automatically segmented,
+unverified entries from one public résumé with one public vacancy. The corrected
+diagnostic uses the same bounded fact pool as the application; 50 entries entered
+the pool, all were examined, and 18 were selected. The assessment reported three
+criteria, including one unknown, with incomplete requirement coverage and a
+67–100 score range. The listing-only recovery was needed, so this result is not
+evidence of comprehensive or accurate matching. One sample cannot establish
+general accuracy. Source and candidate text and detailed results remain outside
+the repository; no application was sent. The model was unloaded afterwards.
+
+The evenly spaced pool now includes the last entry as well as the first, within
+the existing limit. A focused fictional test checks the endpoints. The scoring
+version was advanced so previously cached assessments are not mistaken for
+results generated with the changed pool.
