@@ -4602,15 +4602,31 @@ mod tests {
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_unknown_evidence_checks_fictional_near_misses() {
+        struct Trace<I>(I);
+        impl<I: Inference> Inference for Trace<I> {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                let result = self.0.generate_structured(schema, prompt, max)?;
+                println!("fictional {schema}: {}", result.0);
+                Ok(result)
+            }
+        }
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
             .with_context_window(4096)
             .unwrap();
-        let mut model = crate::resident_inference::ResidentInference::new(
+        let mut model = Trace(crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
             crate::resident_model,
-        );
+        ));
         let facts = vec![
             "Used SQL for one year".to_owned(),
             "Used Python for six years".to_owned(),
