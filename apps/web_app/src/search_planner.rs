@@ -335,11 +335,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a resource-gated local qwen3.5:9b model"]
+    #[ignore = "requires an installed resource-gated local model"]
     #[cfg(windows)]
     fn resource_gated_planner_covers_general_web_search() {
         let id = "fictional-search-intent";
-        crate::model_start::start(id.into(), "qwen3.5:9b".into()).unwrap();
+        let model =
+            std::env::var("WAYPOINT_SEARCH_TEST_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
+        crate::model_start::start(id.into(), model.clone()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
         let result = loop {
             let result = crate::model_start::poll(id).unwrap();
@@ -353,29 +355,27 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(250));
         };
         assert_eq!(result["status"], "complete", "{result}");
-        struct Unload(bool);
+        struct Unload(Option<String>);
         impl Drop for Unload {
             fn drop(&mut self) {
-                if self.0 {
+                if let Some(model) = &self.0 {
+                    let body = serde_json::to_vec(&json!({"model":model,"keep_alive":0})).unwrap();
                     let _ = waypoint_inference::ollama::http_request(
                         "127.0.0.1:11434".parse().unwrap(),
                         "POST",
                         "/api/generate",
-                        Some(br#"{"model":"qwen3.5:9b","keep_alive":0}"#),
+                        Some(&body),
                         10_000,
                     );
                 }
             }
         }
-        let _unload = Unload(result["model"]["already_running"] != true);
-        let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+        let _unload = Unload((result["model"]["already_running"] != true).then(|| model.clone()));
+        let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm = crate::resident_inference::ResidentInference::new(
-            llm,
-            "qwen3.5:9b".into(),
-            crate::resident_model,
-        );
+        let mut llm =
+            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
         for (facts, preferences) in [
             (
                 vec!["Laboratory technician experienced in microscopy".into()],
