@@ -682,6 +682,58 @@ fn isolated_listing_passages(listing: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Return original source bytes only for a unique whitespace/curly-quote match.
+/// Other wording changes and ambiguous matches are never accepted.
+fn recover_isolated_quote(passages: &[&str], excerpt: &str) -> Option<String> {
+    fn normalized(text: &str) -> (String, Vec<(usize, usize)>) {
+        let mut out = String::new();
+        let mut spans = Vec::new();
+        let mut whitespace: Option<(usize, usize)> = None;
+        for (index, ch) in text.char_indices() {
+            let end = index + ch.len_utf8();
+            if ch.is_whitespace() {
+                if !out.is_empty() {
+                    whitespace = Some((whitespace.map_or(index, |(start, _)| start), end));
+                }
+                continue;
+            }
+            if let Some(span) = whitespace.take() {
+                out.push(' ');
+                spans.push(span);
+            }
+            let ch = match ch {
+                '‘' | '’' => '\'',
+                '“' | '”' => '"',
+                _ => ch,
+            };
+            out.push(ch);
+            spans.extend(std::iter::repeat_n((index, end), ch.len_utf8()));
+        }
+        (out, spans)
+    }
+    let (needle, _) = normalized(excerpt);
+    if needle.is_empty() || needle.len() > 800 {
+        return None;
+    }
+    let mut result = None;
+    for passage in passages {
+        let (text, spans) = normalized(passage);
+        for (index, _) in text
+            .char_indices()
+            .filter(|(index, _)| text[*index..].starts_with(&needle))
+        {
+            let start = spans.get(index)?.0;
+            let end = spans.get(index + needle.len() - 1)?.1;
+            let original = passage.get(start..end)?;
+            if original.len() > 800 || result.is_some() {
+                return None;
+            }
+            result = Some(original.to_owned());
+        }
+    }
+    result
+}
+
 /// Independently distinguish explicit qualifications from duties before using
 /// a listing-only recovery. Uncertain classifications never contribute weight.
 fn confirm_isolated_criteria(
@@ -800,6 +852,8 @@ fn assess_with_source(
         };
         match generated {
             Ok((mut value, _)) => {
+                let mut rejected_isolated = 0usize;
+                let mut recovered_isolated = 0usize;
                 if isolated {
                     let Some(criteria) = value["criteria"]
                         .as_array()
@@ -807,7 +861,31 @@ fn assess_with_source(
                     else {
                         break;
                     };
-                    let confirmed = confirm_isolated_criteria(model, criteria, listing)?;
+                    let passages = isolated_listing_passages(listing);
+                    let mut grounded = Vec::new();
+                    for item in criteria {
+                        let Some(quote) = item["excerpt"]
+                            .as_str()
+                            .filter(|quote| !quote.trim().is_empty() && quote.len() <= 800)
+                        else {
+                            return Err("Listing-only recovery returned an invalid excerpt".into());
+                        };
+                        let mut item = item.clone();
+                        if !passages.iter().any(|part| part.contains(quote)) {
+                            if let Some(original) = recover_isolated_quote(&passages, quote) {
+                                item["excerpt"] = json!(original);
+                                recovered_isolated += 1;
+                            } else {
+                                rejected_isolated += 1;
+                                continue;
+                            }
+                        }
+                        grounded.push(item);
+                    }
+                    if grounded.is_empty() {
+                        return Err("Listing-only recovery returned no verifiable quotes; no score was produced".into());
+                    }
+                    let confirmed = confirm_isolated_criteria(model, &grounded, listing)?;
                     let criteria: Vec<_> = confirmed.iter().map(|item| json!({"source":"listing","excerpt":item["excerpt"],"importance":item["importance"],"status":"unknown","fact_index":null,"explanation":"Extracted from the job listing; candidate evidence requires separate review."})).collect();
                     value = json!({"summary":"Listing-only recovery; review all criteria.","criteria":criteria});
                 }
@@ -927,9 +1005,14 @@ fn assess_with_source(
                         );
                         assessment["initial_listing_sampled"] = json!(sampled_retry || isolated);
                         assessment["listing_only_fallback"] = json!(isolated);
+                        assessment["isolated_rejected_quotes"] = json!(rejected_isolated);
+                        assessment["isolated_recovered_quotes"] = json!(recovered_isolated);
                         if isolated {
                             if let Some(concerns) = assessment["concerns"].as_array_mut() {
                                 concerns.push(json!("This assessment used a limited listing-only recovery after source validation failed. Review the full listing and all preferences before relying on the score."));
+                                if rejected_isolated > 0 {
+                                    concerns.push(json!("The model returned listing quotes that could not be verified; those criteria were omitted."));
+                                }
                             }
                         }
                         assessment["removed_candidate_criteria"] =
@@ -2900,6 +2983,84 @@ mod tests {
             assess(&mut invented, &["Fictional fact".into()], "", &listing)
                 .unwrap_err()
                 .contains("outside the sampled passages")
+        );
+    }
+
+    #[test]
+    fn isolated_recovery_reports_normalized_and_rejected_quotes() {
+        struct Fixture;
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                let response = match task {
+                    "job_fit" => {
+                        json!({"summary":"Review","criteria":[{"source":"listing","excerpt":"Not in source","importance":"required","status":"unknown","fact_index":null,"explanation":"Unknown"}]})
+                    }
+                    "fit_isolated_listing" => {
+                        json!({"criteria":[{"excerpt":"Python experience","importance":"required"},{"excerpt":"don't need a degree","importance":"preferred"},{"excerpt":"Invented location","importance":"required"}]})
+                    }
+                    "fit_isolated_kind_check" => {
+                        json!({"items":[{"id":1,"kind":"qualification"},{"id":2,"kind":"qualification"}]})
+                    }
+                    "fit_requirement_audit" => json!({"missing":[]}),
+                    _ => json!({}),
+                };
+                Ok((
+                    response,
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let listing = "Python experience required. You don’t need a degree.";
+        let result = assess(&mut Fixture, &[], "", listing).unwrap();
+        assert_eq!(result["isolated_recovered_quotes"], 1);
+        assert_eq!(result["isolated_rejected_quotes"], 1);
+        assert!(result["rubric"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["excerpt"] == "don’t need a degree"));
+        assert!(result["concerns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item
+                .as_str()
+                .unwrap_or("")
+                .contains("could not be verified")));
+        assert!(requirement_audit_incomplete(&result));
+    }
+
+    #[test]
+    fn isolated_quote_recovery_is_unique_and_preserves_source() {
+        assert_eq!(
+            recover_isolated_quote(&["You don’t  need a degree"], "You don't need a degree")
+                .as_deref(),
+            Some("You don’t  need a degree")
+        );
+        assert_eq!(
+            recover_isolated_quote(&["It’s here", "It’s here"], "It's here"),
+            None
+        );
+        assert_eq!(recover_isolated_quote(&["aaa"], "aa"), None);
+        assert_eq!(
+            recover_isolated_quote(&["Work remotely"], "Work in Europe"),
+            None
+        );
+        assert_eq!(
+            recover_isolated_quote(&["Part one", "part two"], "one part"),
+            None
         );
     }
 
@@ -5542,11 +5703,41 @@ mod tests {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
             .with_resident_context();
-        let mut model = crate::resident_inference::ResidentInference::new(
+        struct Trace<I>(I);
+        impl<I: Inference> Inference for Trace<I> {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                limit: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                let result = self.0.generate_structured(task, prompt, limit);
+                if task == "fit_isolated_listing" {
+                    if let (Ok((value, _)), Some(path)) =
+                        (&result, std::env::var_os("WAYPOINT_PRIVATE_FIT_TRACE"))
+                    {
+                        use std::io::Write;
+                        let mut output = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(path)
+                            .expect("new private trace file");
+                        output
+                            .write_all(value.to_string().as_bytes())
+                            .expect("write private trace");
+                    }
+                }
+                result
+            }
+        }
+        let mut model = Trace(crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
             crate::resident_model,
-        );
+        ));
         let (selected, selection) =
             select_semantic_facts(&mut model, &facts, facts.len(), "", &listing);
         let mut assessment =
