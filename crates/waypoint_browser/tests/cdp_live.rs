@@ -44,6 +44,41 @@ fn file_url(name: &str) -> String {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn aria_invalid_fields_require_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_aria_invalid_retention.html"))
+        .unwrap();
+    driver.verify_text_value("#valid", "Fictional").unwrap();
+    for selector in ["#invalid", "#grammar", "#unknown"] {
+        let error = driver.verify_text_value(selector, "Fictional").unwrap_err();
+        assert!(error.to_string().contains("invalid"), "{error}");
+    }
+    for command in [
+        BrowserCommand::Fill {
+            selector: "#check".into(),
+            value: PacketValue::Bool(true),
+        },
+        BrowserCommand::SelectOption {
+            selector: "#select".into(),
+            label: "Choice".into(),
+        },
+        BrowserCommand::SelectRadio {
+            selector: "#radio".into(),
+            label: "Choice".into(),
+        },
+    ] {
+        let error = driver.verify_choice(&command).unwrap_err();
+        assert!(error.to_string().contains("invalid"), "{error}");
+    }
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn section_reveal_is_bounded_and_does_not_activate_controls() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver.open(&file_url("form_reveal_bounded.html")).unwrap();

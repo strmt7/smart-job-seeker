@@ -4972,6 +4972,42 @@ impl CdpDriver {
         }
     }
 
+    // ARIA validation is independent of native HTML constraint validation.
+    // Radio-group errors may be reported on the group or the checked radio.
+    fn verify_aria_validity(&mut self, node: u64, radio: bool) -> Result<(), DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId": node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Cannot inspect field validation state".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(radio) {
+            const invalid = element => { const value = (element.getAttribute('aria-invalid') || '').trim().toLowerCase(); return value !== '' && value !== 'false'; };
+            if (!this.isConnected || invalid(this)) return false;
+            if (!radio) return true;
+            const group = this.closest('fieldset,[role="radiogroup"]');
+            if (!group || invalid(group)) return false;
+            const radios = group.querySelectorAll('input[type=radio]'); if (radios.length > 5000) return false;
+            const checked = Array.from(radios).filter(r => r.name === this.name && r.form === this.form && r.checked);
+            return checked.length === 1 && !invalid(checked[0]);
+        }"#,"arguments":[{"value":radio}],"returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "The site reports this field as invalid; review it manually".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// A fixed, narrow operation for native single-select controls. It rejects
     /// ambiguous or disabled labels and dispatches the usual form events.
     fn select_option(
@@ -5640,7 +5676,7 @@ impl BrowserDriver for CdpDriver {
                 "A previously filled field changed or became invalid".into(),
             ));
         }
-        Ok(())
+        self.verify_aria_validity(node, false)
     }
 
     fn choice_snapshot(
@@ -5819,6 +5855,7 @@ impl BrowserDriver for CdpDriver {
                 "Previously filled choice is not visibly rendered; review it manually".into(),
             ));
         }
+        let radio = matches!(command, BrowserCommand::SelectRadio { .. });
         match command {
             BrowserCommand::SelectOptions { selector, labels } => {
                 self.select_options(selector, labels, false)
@@ -5853,7 +5890,12 @@ impl BrowserDriver for CdpDriver {
                 Ok(())
             }
             _ => Err(DriverError("Unsupported choice verification".into())),
-        }
+        }?;
+        // The choice inspection can refresh the DOM document and invalidate node IDs.
+        let current = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Previously filled choice is missing".into()))?;
+        self.verify_aria_validity(current, radio)
     }
 
     fn execute(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {

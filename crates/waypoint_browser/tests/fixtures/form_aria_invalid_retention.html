@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><body><form>
+<label for="valid">Valid</label><input id="valid" value="Fictional" aria-invalid="false">
+<label for="invalid">Invalid</label><input id="invalid" value="Fictional" aria-invalid="true">
+<label for="grammar">Grammar</label><textarea id="grammar" aria-invalid="grammar">Fictional</textarea>
+<label for="unknown">Unknown</label><input id="unknown" value="Fictional" aria-invalid="unexpected">
+<label for="check">Check</label><input id="check" type="checkbox" checked aria-invalid="true">
+<label for="select">Select</label><select id="select" aria-invalid="true"><option selected>Choice</option></select>
+<fieldset role="radiogroup" aria-invalid="true"><legend>Radio</legend><label><input id="radio" name="radio" type="radio" checked>Choice</label></fieldset>
+</form></body></html>
