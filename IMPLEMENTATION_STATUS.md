@@ -1841,3 +1841,13 @@ also caused the model to withhold the full number in the incomplete-profile
 case, so it was removed. This is not a validated end-to-end solution for split
 phone forms, and no third-party form was filled or submitted. The model was
 unloaded after the test.
+
+The split-phone local-model diagnostic now records the fictional raw mapping.
+In repeated runs the model chose `phone` for a `tel-national` field even with
+`phone_national` available; the validator withheld it. A targeted prompt, a
+single-field retry, and per-field eligible-key hints did not correct this in
+these trials and were removed. The ignored local-model test still fails for that
+expected mapping. Invalid suggestions with a recognized autocomplete component
+now show the component in their review message; a hint does not prove whose
+information the field requests. Focused suggestion tests and web Clippy passed;
+the model was unloaded. No application was submitted.

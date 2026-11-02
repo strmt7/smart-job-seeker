@@ -635,10 +635,14 @@ pub fn suggest_with_review(
                 field.label
             ));
         } else if invalid_selectors.contains(&field.selector) && !field.sensitive {
-            warnings.push(format!(
-                "Invalid or duplicate suggestion needs review: {}",
-                field.label
-            ));
+            if let Some(hint) = autocomplete_profile_key(field) {
+                warnings.push(format!("Invalid or duplicate suggestion needs review: {}. The field has an autocomplete hint for {}; check the requested value and whose information it is.", field.label, hint.replace('_', " ")));
+            } else {
+                warnings.push(format!(
+                    "Invalid or duplicate suggestion needs review: {}",
+                    field.label
+                ));
+            }
         }
     }
     if unidentified
@@ -1773,6 +1777,27 @@ mod tests {
     #[test]
     #[ignore = "loads a resource-gated local model for a fictional split phone form"]
     fn resource_gated_split_phone_mapping() {
+        struct Record<I>(I);
+        impl<I: Inference> Inference for Record<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn set_context_tags(&mut self, tags: &[&str]) {
+                self.0.set_context_tags(tags);
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let result = self.0.generate_structured(schema, prompt, max)?;
+                if schema == "form_mapping" || schema == "form_mapping_repair" {
+                    println!("Fictional raw mapping: {}", result.0);
+                }
+                Ok(result)
+            }
+        }
         let mut schema = form();
         schema.fields = [
             ("#phone", "Phone number"),
@@ -1799,11 +1824,11 @@ mod tests {
                 waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", model.clone())
                     .unwrap()
                     .with_resident_context();
-            let mut llm = crate::resident_inference::ResidentInference::new(
+            let mut llm = Record(crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
                 crate::resident_model,
-            );
+            ));
             let (mappings, warnings, review) =
                 suggest_with_review(&mut llm, &schema, &json!({"phone":"+12025550123"})).unwrap();
             println!("Fictional split phone: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
@@ -3073,9 +3098,9 @@ mod tests {
         .unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].field_selector, "#candidate");
-        assert!(warnings
-            .iter()
-            .any(|warning| warning == "Invalid or duplicate suggestion needs review: Email"));
+        assert!(warnings.iter().any(|warning| warning
+            .starts_with("Invalid or duplicate suggestion needs review: Email")
+            && warning.contains("autocomplete hint for email")));
         assert!(warnings.iter().any(
             |warning| warning == "Some model suggestions could not be matched to a form field"
         ));
@@ -3248,7 +3273,7 @@ mod tests {
                 prompt: &str,
                 max: u32,
             ) -> Result<(Value, UsageReport), InferenceError> {
-                if schema == "form_mapping" {
+                if schema == "form_mapping" || schema == "form_mapping_repair" {
                     self.calls += 1;
                 }
                 self.inner.generate_structured(schema, prompt, max)
