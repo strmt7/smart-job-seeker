@@ -90,6 +90,7 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     let mut hidden_markers = 0;
     let mut uncertain_hidden = false;
     let mut revision_markers = 0;
+    let (mut footnote_references, mut endnote_references) = (0, 0);
     loop {
         let (namespace, event) = reader
             .read_resolved_event()
@@ -118,6 +119,12 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                 }
                 if word && e.local_name().as_ref() == b"tbl" {
                     tables += 1;
+                }
+                if word && e.local_name().as_ref() == b"footnoteReference" {
+                    footnote_references += 1;
+                }
+                if word && e.local_name().as_ref() == b"endnoteReference" {
+                    endnote_references += 1;
                 }
                 if word && e.local_name().as_ref() == b"txbxContent" {
                     text_boxes += 1;
@@ -173,6 +180,9 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
         }
     }
     let mut notes = Vec::new();
+    if footnote_references > 0 || endnote_references > 0 {
+        notes.push(format!("DOCX contains {footnote_references} footnote and {endnote_references} endnote reference(s); note text is not included in Waypoint's extraction. Inspect the original document."));
+    }
     if tables > 0 {
         notes.push(format!(
             "DOCX contains {tables} table(s); extraction order can differ between parsers."
@@ -456,6 +466,22 @@ mod tests {
             .iter()
             .any(|v| v["term"] == "rust" && v["present"] == true));
     }
+    #[test]
+    fn reports_note_references_in_readability_check() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Fictional experience</w:t><w:footnoteReference w:id="1"/><w:endnoteReference w:id="2"/></w:r></w:p></w:body></w:document>"#).unwrap();
+        let notes = structure_notes("fixture.docx", &zip.finish().unwrap().into_inner()).unwrap();
+        assert!(notes.iter().any(|note| note.contains("1 footnote")
+            && note.contains("1 endnote")
+            && note.contains("not included")));
+    }
+
     #[test]
     fn detects_docx_table_text_box_and_header() {
         use std::io::Write;

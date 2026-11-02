@@ -6,7 +6,8 @@ const line = source.split('\n').find(value => value.startsWith('function renderD
 assert.ok(line, 'document review renderer must exist');
 const node = (tag,text='',className='') => ({tag,textContent:text,className,children:[],append(...items){this.children.push(...items);},addEventListener(){}});
 const notice=source.split('\n').find(value=>value.startsWith('function pdfExtractionCoverageNotice('));
-const render = vm.runInNewContext(`${notice}\n(${line})`,{element:node,document:{createElement:tag=>node(tag)}});
+const documentNotice=source.split('\n').find(value=>value.startsWith('function documentExtractionCoverageNotice('));
+const render = vm.runInNewContext(`${notice}\n${documentNotice}\n(${line})`,{element:node,document:{createElement:tag=>node(tag)}});
 const panel=node('div');
 render(panel,{total_bytes:60000,presented_bytes:44416,attempted_sections:8,failed_sections:1,limited_sections:1,omitted_excerpts:2,rejected_excerpts:3,truncated:true,stopped:null,excerpts:[],coverage:{pages:1,pages_without_selectable_text:[],pages_with_images_and_text:[1]}});
 const text=panel.children.map(item=>item.textContent).join('\n');
@@ -21,3 +22,7 @@ console.log('Document review coverage checks passed.');
 const partial=node('div');
 render(partial,{excerpts:[],coverage:{pages:2,pages_without_selectable_text:[2],structurally_blank_pages:[]}});
 assert.match(partial.children.map(item=>item.textContent).join('\n'),/No selectable text was found on PDF page 2 of 2/);
+const docx=node('div');
+render(docx,{excerpts:[],coverage:{kind:'docx',footnote_references:1,endnote_references:2}});
+assert.match(docx.children.map(item=>item.textContent).join('\n'),/1 footnote and 2 endnote.*not included/);
+assert.ok(source.includes('documentExtractionCoverageNotice(documentResult.coverage)'));
