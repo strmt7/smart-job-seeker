@@ -2437,6 +2437,25 @@ missing, while leaving an in-progress edit untouched. A mocked UI test covers
 the edit race and a local app probe checked reporting before and after the
 linked converter path was removed. The path check does not execute LibreOffice.
 
+### Packaged PDF runtime check (2026-11-02)
+
+The package builder already supplies a pinned Python NuGet runtime and PDF
+libraries. A locally built package using cached, hash-checked inputs was
+installed into a new test directory without a shortcut, LibreOffice or Ollama.
+With an isolated workspace, no Python override and a system-only PATH, the
+installed app selected its bundled Python, passed the PDF dependency probe and
+extracted text from a fictional PDF. The reusable local probe is
+`apps/web_app/tests/packaged-pdf-live.ps1`. Its first run falsely reported the
+runtime missing because it compared Windows paths with different separators;
+normalizing both paths fixed the test, and the repeat passed. This is not a
+clean-host or full-package installation test, and model and conversion setup
+were excluded. Python's [Windows documentation](https://docs.python.org/3.13/using/windows.html#the-embeddable-package)
+also notes that the embeddable distribution omits pip and needs installer-managed
+dependencies; the existing NuGet-based package path was retained. The isolated
+Crawl4AI capture had HTTP 200 and SHA-256
+`08f34e95fa2db1ebc22c70c890efe610b6b6f751a356245747d3e600b7c21f82` for
+extracted Markdown (provider `0.9.5+flitzzip.portable2`).
+
 ### Email contacts on application pages (2026-11-02)
 
 When an application check follows an eligible application link, it now also
