@@ -2111,6 +2111,24 @@ fn settle_form_recapture(
     Ok(value)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum FillNetworkObservation {
+    Observed,
+    NoneObserved,
+    Unavailable,
+}
+
+fn classify_fill_network_observation(
+    before: Option<u64>,
+    after: Option<u64>,
+) -> FillNetworkObservation {
+    match (before, after) {
+        (Some(before), Some(after)) if after > before => FillNetworkObservation::Observed,
+        (Some(before), Some(after)) if after == before => FillNetworkObservation::NoneObserved,
+        _ => FillNetworkObservation::Unavailable,
+    }
+}
+
 fn serve(
     stream: &mut TcpStream,
     ws: &mut Workspace,
@@ -7426,15 +7444,22 @@ fn serve(
                 .driver
                 .with_review_timeout(|driver| driver.observed_non_read_requests())
                 .ok();
-            let observed_request = network_before
-                .zip(network_after)
-                .is_some_and(|(before, after)| after > before);
+            let network_observation =
+                classify_fill_network_observation(network_before, network_after);
+            let observed_request = network_observation == FillNetworkObservation::Observed;
+            let network_unavailable = network_observation == FillNetworkObservation::Unavailable;
             let mut network_record_error = None;
-            if observed_request {
-                let reason = "The browser observed a non-GET/HEAD request during filling. It may be unrelated; its purpose and delivery are unknown. Check the employer site before retrying. Other requests or transports may not have been observed.";
+            let network_warning = match network_observation {
+                FillNetworkObservation::Observed => Some(("non_read_request_observed_during_fill", "The browser observed a non-GET/HEAD request during filling. It may be unrelated; its purpose and delivery are unknown. Check the employer site before retrying. Other requests or transports may not have been observed.")),
+                FillNetworkObservation::Unavailable => Some(("fill_network_observation_unavailable", "Network observation was unavailable during filling. Requests may have occurred; check the employer site before retrying.")),
+                FillNetworkObservation::NoneObserved => None,
+            };
+            if let Some((event_type, reason)) = network_warning {
                 current.preview.manual_review.push(reason.into());
                 if let Some(record) = &mut current.record {
-                    if let Err(error) = record.event(json!({"type":"non_read_request_observed_during_fill","time":now(),"note":"A request was observed, but its purpose and delivery are unknown. URLs, headers and bodies are not retained. Other requests or transports may not have been observed."})) {
+                    if let Err(error) =
+                        record.event(json!({"type":event_type,"time":now(),"note":reason}))
+                    {
                         network_record_error = Some(error);
                     }
                 }
@@ -7498,6 +7523,8 @@ fn serve(
                     };
                     let network_note = if observed_request {
                         " A non-GET/HEAD request was observed during filling; its purpose and delivery are unknown. Check the employer site before retrying."
+                    } else if network_unavailable {
+                        " Network observation was unavailable during filling; requests may have occurred. Check the employer site before retrying."
                     } else {
                         ""
                     };
@@ -7520,7 +7547,7 @@ fn serve(
             if let Some(error) = network_record_error {
                 current.created = Instant::now();
                 *session = Some(current);
-                return Err(format!("Fields may have been filled and a non-GET/HEAD request was observed, but its review status or record could not be saved: {error}. Check the employer site before retrying."));
+                return Err(format!("Fields may have been filled; {} The review status or record could not be saved: {error}. Check the employer site before retrying.", if observed_request { "A non-GET/HEAD request was observed." } else { "Network observation was unavailable during filling; requests may have occurred." }));
             }
             if verify_selected_choices(&mut current).is_err() {
                 let reason =
@@ -7618,7 +7645,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"filled":filled,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"non_read_request_observed":observed_request,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
+                json!({"filled":filled,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"non_read_request_observed":observed_request,"network_observation_unavailable":network_unavailable,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
             );
             *session = Some(current);
         }
@@ -13308,6 +13335,30 @@ mod tests {
             .trace
             .iter()
             .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
+    fn network_observation_requires_two_consistent_snapshots() {
+        assert_eq!(
+            classify_fill_network_observation(Some(3), Some(4)),
+            FillNetworkObservation::Observed
+        );
+        assert_eq!(
+            classify_fill_network_observation(Some(3), Some(3)),
+            FillNetworkObservation::NoneObserved
+        );
+        assert_eq!(
+            classify_fill_network_observation(None, Some(4)),
+            FillNetworkObservation::Unavailable
+        );
+        assert_eq!(
+            classify_fill_network_observation(Some(3), None),
+            FillNetworkObservation::Unavailable
+        );
+        assert_eq!(
+            classify_fill_network_observation(Some(4), Some(3)),
+            FillNetworkObservation::Unavailable
+        );
     }
 
     #[test]

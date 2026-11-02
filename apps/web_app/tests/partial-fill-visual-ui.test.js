@@ -47,6 +47,9 @@ async function exercise(message, visionFails=false, status={active:true,session_
   const observed = await exercise('Autofill stopped. A non-GET/HEAD request was observed during filling.');
   assert.ok(observed.events.every(event=>event[0]!=='inspect'));
   assert.ok(observed.events.some(event=>event[0]==='visual-error' && event[1].includes('Automatic visual review paused')));
+  const unavailable = await exercise('Autofill stopped. Network observation was unavailable during filling; requests may have occurred.');
+  assert.ok(unavailable.events.every(event=>event[0]!=='inspect'));
+  assert.ok(unavailable.events.some(event=>event[0]==='visual-error' && event[1].includes('Automatic visual review paused')));
   const uncertain = await exercise('Connection interrupted');
   assert.ok(uncertain.events.some(event=>event[0]==='inspect'));
   const changedSession = await exercise('Connection interrupted',false,{active:true,session_id:'different',completed_selectors:['#a']});
