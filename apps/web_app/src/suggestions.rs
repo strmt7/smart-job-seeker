@@ -183,6 +183,30 @@ fn is_applicant_preferred_name_label(label: &str) -> bool {
     )
 }
 
+// These labels explicitly identify another person or organization. This is
+// only a conservative review trigger, not a complete semantic classifier.
+fn names_third_party(label: &str) -> bool {
+    let lower = label.to_lowercase();
+    let words: Vec<_> = lower
+        .split(|ch: char| !ch.is_alphabetic())
+        .filter(|word| !word.is_empty())
+        .collect();
+    words.iter().any(|word| {
+        matches!(
+            *word,
+            "reference"
+                | "references"
+                | "referee"
+                | "referees"
+                | "manager"
+                | "supervisor"
+                | "recruiter"
+        )
+    }) || words
+        .windows(2)
+        .any(|pair| pair == ["emergency", "contact"])
+}
+
 /// Conservative offline fallback using exact labels or standard autocomplete hints.
 pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<ProposedMapping>, String> {
     if schema.fields.len() > MAX_FIELDS {
@@ -191,7 +215,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
     let profile = profile.as_object().ok_or("Profile must be an object")?;
     let mut result = Vec::new();
     for field in &schema.fields {
-        if field.sensitive {
+        if field.sensitive || names_third_party(&field.label) {
             continue;
         }
         let keys: Vec<_> = profile
@@ -827,7 +851,10 @@ fn validate_suggestions(
                 .fields
                 .iter()
                 .find(|field| field.selector == selector)?;
-            if field.sensitive || !AUTOFILL_PROFILE_FIELDS.contains(&key) {
+            if field.sensitive
+                || names_third_party(&field.label)
+                || !AUTOFILL_PROFILE_FIELDS.contains(&key)
+            {
                 return None;
             }
             if (is_preferred_name_label(&field.label) && key != "preferred_name")
@@ -1793,6 +1820,33 @@ mod tests {
             .iter()
             .any(|w| w.contains("1 required field(s) have no suggestion")));
     }
+    #[test]
+    fn third_party_contact_labels_cannot_use_applicant_profile_values() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        let profile = json!({"full_name":"Avery Example","first_name":"Avery","email":"avery@example.invalid","phone":"2025550101"});
+        for (label, key, hint) in [
+            ("Professional reference — Email", "email", "email"),
+            ("Current manager phone", "phone", "tel"),
+            ("Referee full name", "full_name", "name"),
+            ("Emergency contact first name", "first_name", "given-name"),
+        ] {
+            schema.fields[0].label = label.into();
+            schema.fields[0].autocomplete = Some(hint.into());
+            assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+            let (mapped, invalid, _) = validate_suggestions(
+                &schema,
+                profile.as_object().unwrap(),
+                &json!({"mappings":[{"selector":"#candidate","profile_key":key}]}),
+            )
+            .unwrap();
+            assert!(mapped.is_empty(), "{label}");
+            assert!(invalid.contains("#candidate"));
+        }
+        assert!(!names_third_party("Your preferred name"));
+        assert!(!names_third_party("Application preferences"));
+    }
+
     #[test]
     fn preferred_name_requires_its_own_profile_value() {
         let mut schema = form();
