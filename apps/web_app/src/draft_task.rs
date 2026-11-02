@@ -521,14 +521,29 @@ fn generate_with_selection(
     let limit = if input.kind == "cv" { 18 } else { 20 };
     let over_limit = selected.len().saturating_sub(limit);
     selected.truncate(limit);
-    // Give longer user instructions more of the existing prompt budget,
-    // without increasing its upper bound. Facts omitted by the smaller budget
-    // remain visible in selection diagnostics; prioritized facts cannot drop.
+    // Use unused description and template capacity for instructions before
+    // reducing the qualification budget. All sizes include JSON escaping.
     let instructions = crate::answer_task::json_prefix(&input.instructions, 1500);
     let instruction_bytes = serde_json::to_string(instructions)
         .map_err(|_| "Could not serialize writing instructions")?
         .len();
-    let fact_budget = 3000usize.saturating_sub(instruction_bytes.saturating_sub(500));
+    let description_slack = match input.job.get("description") {
+        None | Some(Value::Null) => 1200,
+        Some(Value::String(description)) => {
+            let bounded = crate::answer_task::json_prefix(description, 1200);
+            let used = serde_json::to_string(bounded)
+                .map_err(|_| "Could not serialize job description")?
+                .len();
+            1200usize.saturating_sub(used)
+        }
+        Some(_) => 0,
+    };
+    let template_bytes = serde_json::to_string(&template_excerpt)
+        .map_err(|_| "Could not serialize template style")?
+        .len();
+    let slack = description_slack + 700usize.saturating_sub(template_bytes);
+    let extra_instructions = instruction_bytes.saturating_sub(500);
+    let fact_budget = 3000usize.saturating_sub(extra_instructions.saturating_sub(slack));
     let mut facts = Vec::new();
     let mut bytes = 2usize;
     for fact in &selected {
@@ -1825,10 +1840,20 @@ mod tests {
         let mut crowded = input.clone();
         crowded.facts = (0..3).map(|i| format!("{i}{}", "x".repeat(899))).collect();
         crowded.available_facts = 3;
-        let draft = generate_with_selection(&mut Capture(vec![]), &crowded, "", None).unwrap();
+        crowded.priority_facts = crowded.facts.clone();
+        let spacious = generate_with_selection(&mut Capture(vec![]), &crowded, "", None).unwrap();
+        assert_eq!(spacious["selection"]["draft_fact_budget_omitted"], 0);
+        crowded.job["description"] = json!("x".repeat(3000));
+        crowded.priority_facts.clear();
+        let draft =
+            generate_with_selection(&mut Capture(vec![]), &crowded, &"t".repeat(2000), None)
+                .unwrap();
         assert_eq!(draft["selection"]["draft_fact_budget_omitted"], 1);
         crowded.priority_facts = crowded.facts.clone();
-        assert!(generate_with_selection(&mut Capture(vec![]), &crowded, "", None).is_err());
+        assert!(
+            generate_with_selection(&mut Capture(vec![]), &crowded, &"t".repeat(2000), None)
+                .is_err()
+        );
     }
 
     #[test]
