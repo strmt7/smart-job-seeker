@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf('function batchTemplateSuggestions(');
-const end = source.indexOf('function pdfExtractionCoverageNotice(', start);
+const end = source.indexOf('\nfunction ', start);
 assert.ok(start >= 0 && end > start);
 function node(tag, text = '') {
   return {tag, textContent:text, disabled:false, children:[], handlers:{},

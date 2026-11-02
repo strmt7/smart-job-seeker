@@ -80,9 +80,23 @@ mod tests {
                 title: "Senior Rust Engineer".into(),
                 location: "Zurich".into(),
                 remote: false,
-                req_id: Some("482731".into()),
+                // Greenhouse posting ID is an identity key, not necessarily
+                // the employer's separate requisition ID.
+                req_id: None,
             }],
         );
+    }
+
+    #[test]
+    fn greenhouse_preserves_explicit_requisition_separately() {
+        let payload = GH_PINNED.replace(
+            "\"id\":482731",
+            "\"id\":482731,\"requisition_id\":\"REQ-47\"",
+        );
+        let jobs = parse_greenhouse("acme", &payload).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].identity, "greenhouse::req::482731");
+        assert_eq!(jobs[0].requisition_id.as_deref(), Some("REQ-47"));
     }
 
     #[test]
