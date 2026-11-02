@@ -2958,4 +2958,121 @@ mod tests {
             && !line.contains("clicked")
             && !line.contains("submitted")));
     }
+
+    #[test]
+    #[ignore = "visible live app-worker rescan after an operator-reviewed cookie dialog; never fills or submits"]
+    fn live_visible_inspection_and_rescan_after_review() {
+        use std::io::Write;
+        use waypoint_applications::driver::BrowserDriver;
+        let _guard = TEST_LOCK.lock().unwrap();
+        let url = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed public URL");
+        let ready = std::env::var_os("WAYPOINT_VISIBLE_READY").expect("new ready marker");
+        let resume = std::env::var_os("WAYPOINT_VISIBLE_RESUME").expect("new resume marker");
+        assert!(!std::path::Path::new(&ready).exists() && !std::path::Path::new(&resume).exists());
+        let parsed = url::Url::parse(&url).unwrap();
+        assert_eq!(parsed.scheme(), "https");
+        assert_eq!(parsed.host_str(), Some("apply.workable.com"));
+        crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
+        waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
+        let job = JobIdentityId::new("fictional-live-review").unwrap();
+        start_bound(
+            "live-visible-inspection".into(),
+            job.clone(),
+            url.clone(),
+            serde_json::json!({}),
+            Ok(None),
+            true,
+            (0, vec![], None),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let finished = loop {
+            if let Some(done) = poll("live-visible-inspection").unwrap() {
+                break done;
+            }
+            assert!(std::time::Instant::now() < deadline, "inspection timed out");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let (mut driver, preview) = finished.result.unwrap();
+        let initial = driver.inspect_current().unwrap();
+        assert!(initial
+            .walls
+            .iter()
+            .any(|w| w.contains("A dialog covers a form field")));
+        let initial_count = preview.schema.fields.len();
+        let mut session = crate::ReviewSession {
+            id: "fictional-session".into(),
+            job_id: job,
+            inspection_task_id: "live-visible-inspection".into(),
+            inspection_pending_revision: 0,
+            url: url.clone(),
+            route_binding: None,
+            profile_digest: finished.profile_digest,
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(180),
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: true,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        };
+        let mut marker = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&ready)
+            .unwrap();
+        marker.write_all(b"ready").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        while !std::path::Path::new(&resume).exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        assert!(
+            std::path::Path::new(&resume).exists(),
+            "visible review timed out"
+        );
+        assert_eq!(session.driver.current_url().unwrap(), url);
+        crate::form_links::start(
+            "live-visible-rescan".into(),
+            session,
+            None,
+            false,
+            None,
+            serde_json::json!({}),
+            (0, vec![]),
+        )
+        .unwrap_or_else(|(_, error)| panic!("rescan start: {error}"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let (session, _, _) = loop {
+            if let Some(result) = crate::form_links::poll("live-visible-rescan").unwrap() {
+                break result.unwrap_or_else(|error| panic!("rescan: {}", error.reason));
+            }
+            assert!(std::time::Instant::now() < deadline, "rescan timed out");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        println!(
+            "App worker: initial {} fields; rescanned {} fields; {} review reasons",
+            initial_count,
+            session.preview.schema.fields.len(),
+            session.preview.manual_review.len()
+        );
+        assert!(session.preview.schema.fields.len() > initial_count);
+        assert!(!session
+            .preview
+            .manual_review
+            .iter()
+            .any(|w| w.contains("A dialog covers a form field")));
+        assert!(session
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
 }

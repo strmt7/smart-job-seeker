@@ -2314,9 +2314,19 @@ cookies. Reinspection of that same browser session found seven fields instead of
 four, and the dialog-obstruction warning cleared; four other review reasons
 remained. No applicant information was entered and no application was submitted.
 This verifies the browser driver's same-session rescan in one case; it does not
-verify the complete web-app handoff, automatic dialog handling, filling, or
-completion. An ignored diagnostic retains the visible session briefly for an
+verify automatic dialog handling, filling, or completion. An ignored diagnostic retains the visible session briefly for an
 operator to perform a reviewed action and then requests reinspection.
+
+### Application-worker rescan on a public form (2026-11-02)
+
+An ignored live diagnostic ran the application inspection worker in a visible
+isolated browser, then invoked its normal rescan worker with the same retained
+session after the operator declined optional cookies. The preview increased
+from four observed fields to seven; the dialog warning cleared, while eleven
+review reasons remained. The profile was empty, no model was loaded, and no
+applicant data was entered or submitted. This covers the workers, not the full
+rendered web interface or automatic dialog handling, and does not establish that
+the form can be filled or completed.
 
 ### Multi-passage requirement audit (2026-11-02)
 
