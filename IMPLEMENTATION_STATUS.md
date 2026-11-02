@@ -1859,3 +1859,18 @@ and refresh logic now share the same warning format; duplicate labels remain
 flagged until each matching field has an answer. The web-app suite passed 536
 tests (286 ignored) with two test threads, and web Clippy passed. This does not
 resolve the local model's national-phone mapping failure described above.
+
+### Selecting a saved value during form review (2026-11-02)
+
+An unresolved, non-sensitive text or email field can now use an explicitly
+selected saved contact value, including split phone components. The picker shows
+field names, not values, until the user chooses one; the inserted answer remains
+editable and still requires the normal reviewed fill action. Sensitive and
+choice controls do not expose this picker. A simulated UI test checked explicit
+selection, the allowed-field list and sensitive-field exclusion; it does not
+establish behavior on a live employer form.
+
+Reordering the profile keys and renaming the full-phone key in the local-model
+prompt did not correct the fictional national-phone mapping in individual
+resource-gated trials, so those experiments were removed. The ignored mapping
+test remains failing for the national number. No application was submitted.
