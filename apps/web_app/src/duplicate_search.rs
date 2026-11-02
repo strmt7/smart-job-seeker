@@ -685,6 +685,15 @@ mod tests {
         assert!(result.matches.iter().all(|item| item["id"] == same_id));
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local-model comparison on fictional jobs"]
+    fn resource_gated_duplicate_search_checks_crowded_employer() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_duplicate_search_checks_ranked_crowded_employer,
+        );
+    }
+
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_duplicate_search_handles_bounded_multilingual_context() {
@@ -709,6 +718,15 @@ mod tests {
         assert_eq!(result.candidate_texts_shortened, 2);
         assert!(result.matches.iter().any(|item| item["id"] == "same"));
         assert!(!result.matches.iter().any(|item| item["id"] == "different"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local-model comparison on fictional multilingual jobs"]
+    fn resource_gated_duplicate_search_handles_multilingual_context() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_duplicate_search_handles_bounded_multilingual_context,
+        );
     }
 
     #[test]
