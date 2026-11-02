@@ -9759,6 +9759,12 @@ mod tests {
             inventory["models"][0]["memory_check"]["state"],
             "fits_snapshot"
         );
+        assert_eq!(
+            inventory["models"][1]["memory_check"]["state"],
+            "fits_snapshot"
+        );
+        let tighter_gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*gib,"used_bytes":7*gib}]});
+        model_inventory_memory_snapshot(&mut inventory, &tags, 24 * gib, &tighter_gpu);
         assert_eq!(inventory["models"][1]["memory_check"]["state"], "not_ready");
         assert!(inventory["models"][1]["memory_check"]["reason"]
             .as_str()
@@ -11165,7 +11171,7 @@ mod tests {
             .unwrap();
         let save = |ws: &Workspace| {
             let (_, available, _, _, digest) = fit_assessment_inputs(ws, &id).unwrap();
-            let assessment = json!({"score":75,"selection":{"available_bounded":available,"pool":available,"selected":1,"failed_batches":0,"budget_truncated":false}});
+            let assessment = json!({"score":75,"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":available,"selected":1,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0}});
             ws.save_fit_assessment(
                 &id,
                 json!({"input_digest":digest,"assessment":assessment,"model":"fixture"})

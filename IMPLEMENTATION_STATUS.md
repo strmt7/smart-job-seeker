@@ -1,3 +1,7 @@
+## Match input coverage — 2026-11-02
+
+- Qualification-coverage reporting now treats missing or invalid selection-limit metadata as unavailable rather than assuming no facts were omitted. Direct all-facts selections are recognized separately and must have internally consistent counts. This can make older or incomplete saved assessments show coverage unavailable; it does not change their score or prove model judgments correct. Fictional coverage and saved-assessment checks passed. The first full web-suite run also exposed a stale GPU-startup test expectation from the bounded-offload change; that test now checks both sides of the current estimate. The rerun passed (621 passed, 344 ignored), and Windows web Clippy passed. No live model or external application was used.
+
 ## Document context feedback — 2026-11-02
 
 - Draft selection feedback now identifies whether job details, writing instructions, or template text were shortened, instead of combining them into an ambiguous warning. Fictional UI checks cover individual and combined omissions; the JavaScript syntax check passed. This does not increase the model's context or recover omitted material.

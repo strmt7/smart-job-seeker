@@ -1276,12 +1276,30 @@ pub(crate) fn qualification_coverage(assessment: &Value) -> &'static str {
     if available != bounded || selected > pool || pool > bounded {
         return "unavailable";
     }
+    let (capped, oversized_in_selection) = match selection["method"].as_str() {
+        Some("all_pool_facts") if pool <= 20 && selected == pool && failed == 0 && !truncated => {
+            (false, 0)
+        }
+        Some("bounded_semantic_with_lexical_fallback") => {
+            let (Some(capped), Some(oversized)) = (
+                selection["selection_capped"].as_bool(),
+                selection["oversized_facts"].as_u64(),
+            ) else {
+                return "unavailable";
+            };
+            if oversized > pool {
+                return "unavailable";
+            }
+            (capped, oversized)
+        }
+        _ => return "unavailable",
+    };
     if oversized > 0
         || over_limit > 0
         || failed > 0
         || truncated
-        || selection["selection_capped"] == true
-        || selection["oversized_facts"].as_u64().unwrap_or(0) > 0
+        || capped
+        || oversized_in_selection > 0
     {
         "limited"
     } else if selected < bounded {
@@ -3587,8 +3605,30 @@ mod tests {
 
     #[test]
     fn qualification_coverage_distinguishes_selection_and_limits() {
-        let mut a = json!({"source_coverage":{"reviewed_facts_total":3,"reviewed_facts_bounded":3,"reviewed_facts_oversized":0,"reviewed_facts_over_limit":0},"selection":{"available_bounded":3,"pool":3,"selected":3,"failed_batches":0,"budget_truncated":false}});
+        let mut a = json!({"source_coverage":{"reviewed_facts_total":3,"reviewed_facts_bounded":3,"reviewed_facts_oversized":0,"reviewed_facts_over_limit":0},"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":3,"pool":3,"selected":3,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0}});
         assert_eq!(qualification_coverage(&a), "complete");
+        let mut missing = a.clone();
+        missing["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("oversized_facts");
+        assert_eq!(qualification_coverage(&missing), "unavailable");
+        missing = a.clone();
+        missing["selection"]["selection_capped"] = json!("false");
+        assert_eq!(qualification_coverage(&missing), "unavailable");
+        let mut direct = a.clone();
+        direct["selection"]["method"] = json!("all_pool_facts");
+        direct["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("selection_capped");
+        direct["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("oversized_facts");
+        assert_eq!(qualification_coverage(&direct), "complete");
+        direct["selection"]["selected"] = json!(2);
+        assert_eq!(qualification_coverage(&direct), "unavailable");
         a["selection"]["selected"] = json!(2);
         assert_eq!(qualification_coverage(&a), "selected");
         a["selection"]["budget_truncated"] = json!(true);
