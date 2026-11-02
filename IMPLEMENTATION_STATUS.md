@@ -2836,3 +2836,11 @@ The custom-choice and radio review screens now ask for the candidate's fact or
 preference and explain that visual recognition does not verify the suggested
 answer. Fictional interface tests cover both messages. This guidance does not
 prevent model misinterpretation and does not resolve the adversarial failure.
+
+### Screenshot capture bounds (2026-11-02)
+
+Attempt screenshot storage rejects oversized base64 input before decoding it,
+avoiding a second large allocation. A focused test checks rejection without
+creating a file and acceptance at the 6 MiB decoded boundary. This limits the
+archive decoder; it does not measure or bound memory used by the browser or
+other stages before the capture reaches it.

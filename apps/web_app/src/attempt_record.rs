@@ -2021,8 +2021,14 @@ impl AttemptRecord {
         Ok(self.dir.join(format!("visual-result-{task_id}.json")))
     }
     pub fn screenshot_with_name(&mut self, data: &str) -> Result<String, String> {
+        const MAX_SCREENSHOT_BYTES: usize = 6 * 1024 * 1024;
+        // Reject oversized input before base64 decoding allocates another buffer.
+        // The decoded-size check remains necessary for padded boundary values.
+        if data.len() > MAX_SCREENSHOT_BYTES.div_ceil(3) * 4 {
+            return Err("Screenshot exceeds limit".into());
+        }
         let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
-        if bytes.len() > 6 * 1024 * 1024 {
+        if bytes.len() > MAX_SCREENSHOT_BYTES {
             return Err("Screenshot exceeds limit".into());
         }
         self.sequence = self
@@ -3309,6 +3315,39 @@ mod tests {
             b"existing"
         );
     }
+    #[test]
+    fn oversized_screenshot_is_rejected_before_decoding_or_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("screenshots")).unwrap();
+        let mut record = AttemptRecord {
+            dir: dir.path().to_path_buf(),
+            sequence: 0,
+        };
+        // Invalid base64 of this size would produce a decoding error if decoded.
+        let oversized = "!".repeat((6 * 1024 * 1024 / 3) * 4 + 1);
+        assert_eq!(
+            record.screenshot_with_name(&oversized).unwrap_err(),
+            "Screenshot exceeds limit"
+        );
+        assert_eq!(record.sequence, 0);
+        assert_eq!(
+            fs::read_dir(dir.path().join("screenshots"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert!(record.screenshot_with_name("!").is_err());
+        drop(oversized);
+        let boundary = "A".repeat((6 * 1024 * 1024 / 3) * 4);
+        let name = record.screenshot_with_name(&boundary).unwrap();
+        assert_eq!(
+            fs::metadata(dir.path().join("screenshots").join(name))
+                .unwrap()
+                .len(),
+            6 * 1024 * 1024
+        );
+    }
+
     #[test]
     fn saved_document_review_binds_job_and_pdf_snapshot() {
         let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
