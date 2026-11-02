@@ -140,21 +140,69 @@ fn reject_removed_revisions(bytes: &[u8]) -> Result<(), String> {
     use std::io::Cursor;
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
-    let mut parts = crate::document_extract::docx_text_parts(&mut archive)?;
-    for name in ["word/footnotes.xml", "word/endnotes.xml"] {
-        let count = (0..archive.len())
-            .filter(|&index| {
-                archive
-                    .by_index_raw(index)
-                    .is_ok_and(|file| file.name() == name)
-            })
-            .count();
-        if count > 1 {
-            return Err("Duplicate DOCX note part".into());
+    let text_parts = crate::document_extract::docx_text_parts(&mut archive)?;
+    let (_, coverage) = crate::docx_notes::extract(&mut archive, &text_parts)?;
+    if coverage["unresolved_note_references"].as_u64() != Some(0) {
+        return Err("DOCX note references could not be inspected; review the document manually before conversion".into());
+    }
+    // Wordprocessing content can live in custom-named parts, including notes
+    // outside word/. Inspect bounded XML parts rather than guessing locations.
+    let mut parts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|_| "Invalid DOCX entry")?;
+        let name = entry.name();
+        if name
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("xml"))
+        {
+            if !seen.insert(name.to_owned()) {
+                return Err("Duplicate DOCX XML part".into());
+            }
+            parts.push(name.to_owned());
+            if parts.len() > 128 {
+                return Err(
+                    "DOCX has too many XML parts for revision inspection; review manually".into(),
+                );
+            }
         }
-        if count == 1 {
-            parts.push(name.into());
+    }
+    let rel_name = "word/_rels/document.xml.rels";
+    let rel_count = (0..archive.len())
+        .filter(|&i| {
+            archive
+                .by_index_raw(i)
+                .is_ok_and(|entry| entry.name() == rel_name)
+        })
+        .count();
+    if rel_count > 1 {
+        return Err("Duplicate DOCX relationship part".into());
+    }
+    if rel_count == 1 {
+        let rel_xml = crate::document_extract::read_docx_text_part(&mut archive, rel_name, &mut 0)?;
+        for name in crate::docx_notes::note_relationships(&rel_xml)?
+            .into_iter()
+            .flatten()
+        {
+            let count = (0..archive.len())
+                .filter(|&i| {
+                    archive
+                        .by_index_raw(i)
+                        .is_ok_and(|entry| entry.name() == name)
+                })
+                .count();
+            if count > 1 {
+                return Err("Duplicate DOCX note part".into());
+            }
+            if count == 1 && seen.insert(name.clone()) {
+                parts.push(name);
+            }
         }
+    }
+    if parts.len() > 128 {
+        return Err("DOCX has too many XML parts for revision inspection; review manually".into());
     }
     let mut total = 0;
     for name in parts {
@@ -356,6 +404,9 @@ mod tests {
             "word/footer1.xml",
             "word/footnotes.xml",
             "word/endnotes.xml",
+            "word/custom/notes.xml",
+            "word/comments.xml",
+            "custom/notes.xml",
         ] {
             for marker in ["<w:del/>", "<w:moveFrom><w:r/></w:moveFrom>"] {
                 assert!(
@@ -371,6 +422,55 @@ mod tests {
             "<w:ins><w:r/></w:ins>"
         ))
         .is_ok());
+    }
+
+    #[test]
+    fn revision_inspection_rejects_excessive_xml_parts() {
+        use std::io::{Cursor, Write};
+        let make = || {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("word/document.xml", options).unwrap();
+            writer.write_all(b"<document/>").unwrap();
+            for i in 0..128 {
+                writer
+                    .start_file(format!("custom/{i}.xml"), options)
+                    .unwrap();
+                writer.write_all(b"<root/>").unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+        assert!(super::reject_removed_revisions(&make())
+            .unwrap_err()
+            .contains("too many"));
+    }
+
+    #[test]
+    fn revision_inspection_follows_custom_named_note_parts() {
+        use std::io::{Cursor, Write};
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, xml) in [
+            (
+                "word/document.xml",
+                r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Experience</w:t><w:footnoteReference w:id="1"/></w:r></w:p></w:body></w:document>"#,
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="../custom/notes.bin"/></Relationships>"#,
+            ),
+            (
+                "custom/notes.bin",
+                r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Current</w:t></w:r><w:del><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p></w:footnote></w:footnotes>"#,
+            ),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        }
+        let bytes = writer.finish().unwrap().into_inner();
+        assert!(super::reject_removed_revisions(&bytes)
+            .unwrap_err()
+            .contains("Resolve revisions"));
     }
 
     #[test]

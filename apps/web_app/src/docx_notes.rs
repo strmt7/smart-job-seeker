@@ -11,7 +11,7 @@ const WORD_NAMESPACES: [&[u8]; 2] = [
 const MAX_REFERENCES: usize = 128;
 const REL_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
 
-fn note_relationships(xml: &[u8]) -> Result<[Option<String>; 2], String> {
+pub(crate) fn note_relationships(xml: &[u8]) -> Result<[Option<String>; 2], String> {
     let mut reader = NsReader::from_reader(xml);
     let mut result: [Option<String>; 2] = [None, None];
     let mut counts = [0usize; 2];
