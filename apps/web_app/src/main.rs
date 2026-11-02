@@ -7448,12 +7448,16 @@ fn serve(
                     })
                     .and_then(|_| attempt_record::capture_page(&mut current.driver, record, now()))
                 {
+                    let guidance = attempt_record::capture_failure_guidance(&error);
                     let _ = record
                         .event(json!({"type":"capture_incomplete","time":now(),"error":error}));
                     current
                         .preview
                         .manual_review
                         .push("Attempt screenshot capture was incomplete".into());
+                    if let Some(guidance) = guidance {
+                        current.preview.manual_review.push(guidance.into());
+                    }
                 }
             }
             if let Err(error) = ws.mark_manual_review(
@@ -7812,6 +7816,7 @@ fn serve(
                 }
                 if let Err(error) = attempt_record::capture_page(&mut current.driver, record, now())
                 {
+                    let guidance = attempt_record::capture_failure_guidance(&error);
                     let _ = record
                         .event(json!({"type":"capture_incomplete","time":now(),"error":error}));
                     ws.mark_manual_review(
@@ -7824,6 +7829,9 @@ fn serve(
                         .preview
                         .manual_review
                         .push("Attempt screenshot capture was incomplete".into());
+                    if let Some(guidance) = guidance {
+                        current.preview.manual_review.push(guidance.into());
+                    }
                 }
             }
             if verify_selected_choices(current).is_err() {

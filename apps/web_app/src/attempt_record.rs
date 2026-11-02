@@ -2036,6 +2036,22 @@ fn record_capture_failure(record: &mut AttemptRecord, error: String, timestamp: 
     message
 }
 
+/// Map known capture failures to bounded UI guidance without exposing raw
+/// browser errors, which can contain site-provided or local data.
+pub fn capture_failure_guidance(error: &str) -> Option<&'static str> {
+    if error.starts_with("Page image changed during capture") {
+        Some("The page image changed during capture. A blinking cursor, animation or a real page change may be responsible; inspect the page and capture again.")
+    } else if error.starts_with("Page dimensions changed during both captures") {
+        Some("The page dimensions changed during capture. Inspect the page and capture again.")
+    } else if error.starts_with("Page address changed during capture") {
+        Some("The page address changed during capture. Inspect the current destination and capture again.")
+    } else if error == "Page exceeded screenshot capture limits" {
+        Some("The page exceeded screenshot capture limits. Some content was not captured and needs manual review.")
+    } else {
+        None
+    }
+}
+
 /// Build at most six bounded tiles, reporting when dimensions exceed the budget.
 fn capture_tiles(width: f64, height: f64) -> (Vec<(f64, f64, f64, f64)>, bool) {
     let capped_width = width.min(4096.0);
@@ -2225,6 +2241,33 @@ pub fn capture_before_navigation(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn capture_failure_guidance_is_specific_and_does_not_expose_raw_errors() {
+        assert!(
+            super::capture_failure_guidance("Page image changed during capture; fixture")
+                .unwrap()
+                .contains("blinking cursor")
+        );
+        assert!(super::capture_failure_guidance(
+            "Page dimensions changed during both captures; fixture"
+        )
+        .unwrap()
+        .contains("dimensions"));
+        assert!(
+            super::capture_failure_guidance("Page address changed during capture; fixture")
+                .unwrap()
+                .contains("destination")
+        );
+        assert!(
+            super::capture_failure_guidance("Page exceeded screenshot capture limits")
+                .unwrap()
+                .contains("not captured")
+        );
+        assert_eq!(
+            super::capture_failure_guidance("arbitrary site or local data"),
+            None
+        );
+    }
     use super::*;
     #[test]
     fn page_capture_detects_navigation_and_dimension_changes() {
