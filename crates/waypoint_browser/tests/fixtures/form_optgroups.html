@@ -7,6 +7,12 @@
     <optgroup label="Europe"><option value="de">Germany</option><option value="fr" label="French Republic">France</option><option disabled>Unavailable</option></optgroup>
     <optgroup label="Unavailable" disabled><option>Hidden choice</option></optgroup>
   </select>
+  <label for="ambiguous-value">Work arrangement</label>
+  <select id="ambiguous-value" onchange="this.setAttribute('data-seen', this.selectedOptions[0].label)">
+    <option value="initial">Choose an arrangement</option>
+    <option value="shared">Remote</option>
+    <option value="shared">On site</option>
+  </select>
   <label for="skills">Skills</label>
   <select id="skills" multiple required onchange="this.setAttribute('data-seen', Array.from(this.selectedOptions, option => option.value).join(','))">
     <optgroup label="Available"><option value="rust">Rust</option><option value="python">Python</option><option disabled>Unavailable</option></optgroup>

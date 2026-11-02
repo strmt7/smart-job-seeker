@@ -4072,6 +4072,25 @@ fn grouped_select_options_can_be_inspected_and_filled() {
         })
         .is_err());
     assert!(driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#ambiguous-value".into(),
+            label: "On site".into()
+        })
+        .is_err());
+    assert_eq!(
+        driver
+            .read_attribute("#ambiguous-value", "data-seen")
+            .unwrap(),
+        None,
+        "an ambiguous submitted value must not dispatch a change"
+    );
+    driver
+        .verify_choice(&BrowserCommand::SelectOption {
+            selector: "#ambiguous-value".into(),
+            label: "Choose an arrangement".into(),
+        })
+        .expect("the original choice remains selected");
+    assert!(driver
         .trace
         .iter()
         .all(|entry| !entry.contains("submitted")));
