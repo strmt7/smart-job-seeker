@@ -1313,12 +1313,9 @@ pub(crate) fn qualification_coverage(assessment: &Value) -> &'static str {
 pub(crate) fn requirement_audit_incomplete(assessment: &Value) -> bool {
     let rubric = assessment["rubric"].as_array();
     rubric.is_none_or(|items| items.is_empty() || items.len() >= 12)
-        || assessment["initial_listing_sampled"] == true
-        || assessment["removed_candidate_criteria"]
-            .as_u64()
-            .unwrap_or(0)
-            > 0
-        || assessment["criteria_limit_reached"] == true
+        || assessment["initial_listing_sampled"] != false
+        || assessment["removed_candidate_criteria"].as_u64() != Some(0)
+        || assessment["criteria_limit_reached"] != false
         || assessment["requirement_audit"]["status"] != "completed"
         || assessment["requirement_audit"]["listing_truncated"] != false
         || assessment["requirement_audit"]["criterion_limit_reached"] != false
@@ -3668,13 +3665,26 @@ mod tests {
 
     #[test]
     fn required_job_coverage_exposes_unknown_conflict_and_missing_rubrics() {
-        let mut assessment = json!({"source_coverage":{"description_present":true,"listing_used_chars":100,"listing_total_chars":100},"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[
+        let mut assessment = json!({"initial_listing_sampled":false,"removed_candidate_criteria":0,"criteria_limit_reached":false,"source_coverage":{"description_present":true,"listing_used_chars":100,"listing_total_chars":100},"requirement_audit":{"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false},"rubric":[
             {"source":"listing","importance":"required","status":"supported"},
             {"source":"listing","importance":"preferred","status":"unknown"},
             {"source":"preference","importance":"required","status":"contradicted"}
         ]});
         assert_eq!(requirement_coverage(&assessment), "supported");
         assert!(!requirement_audit_incomplete(&assessment));
+        for field in [
+            "initial_listing_sampled",
+            "removed_candidate_criteria",
+            "criteria_limit_reached",
+        ] {
+            let mut missing = assessment.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(requirement_audit_incomplete(&missing), "missing {field}");
+            assert_eq!(requirement_coverage(&missing), "incomplete");
+            missing[field] = json!("invalid");
+            assert!(requirement_audit_incomplete(&missing), "invalid {field}");
+            assert_eq!(requirement_coverage(&missing), "incomplete");
+        }
         assessment["source_coverage"]["description_present"] = json!(false);
         assert_eq!(requirement_coverage(&assessment), "incomplete");
         assert!(requirement_audit_incomplete(&assessment));
