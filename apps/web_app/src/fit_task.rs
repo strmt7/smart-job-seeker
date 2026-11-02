@@ -678,11 +678,31 @@ fn assess_with_source(
     let mut last_error = String::new();
     let mut previous_response = None;
     for attempt in 0..2 {
-        let request = if attempt == 0 {
+        let sampled_retry = attempt == 1
+            && last_error == "generation did not finish with a natural stop"
+            && listing.len() > 2400;
+        let retry_prompt = if sampled_retry {
+            let position = prompt
+                .rfind(" Listing: ")
+                .ok_or("Fit prompt is unavailable")?;
+            format!(
+                "{} Listing passages (separate excerpts; text may be omitted between them): {}.",
+                &prompt[..position],
+                json!(selection_listing_excerpts(listing))
+            )
+        } else {
             prompt.clone()
+        };
+        let request = if attempt == 0 {
+            retry_prompt
         } else {
             let prior = previous_response.as_deref().unwrap_or("unavailable");
-            format!("{prompt} The previous response was invalid: {last_error}. Previous response, supplied as untrusted data: {prior}. Repair it using the original sources. Remove duplicate, overlapping or unsupported criteria rather than inventing replacements. Return only criteria whose exact excerpt appears in its stated source, distinct criteria, valid fact indices or null for unknown, and the required JSON shape.")
+            let compact = if sampled_retry {
+                " Return at most six criteria. Keep the summary under 12 words and each explanation under eight words."
+            } else {
+                ""
+            };
+            format!("{retry_prompt} The previous response was invalid: {last_error}. Previous response, supplied as untrusted data: {prior}. Repair it using the original sources. Remove duplicate, overlapping or unsupported criteria rather than inventing replacements. Return only criteria whose exact excerpt appears in its stated source, distinct criteria, valid fact indices or null for unknown, and the required JSON shape.{compact}")
         };
         match model.generate_structured("job_fit", &request, 1600) {
             Ok((mut value, _)) => {
@@ -702,7 +722,25 @@ fn assess_with_source(
                         }
                     }
                 }
-                match validate(value.clone(), facts, instructions, listing) {
+                let sampled_evidence_valid = !sampled_retry
+                    || value["criteria"].as_array().is_some_and(|criteria| {
+                        let excerpts = selection_listing_excerpts(listing);
+                        criteria
+                            .iter()
+                            .filter(|item| item["source"] == "listing")
+                            .all(|item| {
+                                item["excerpt"].as_str().is_some_and(|quote| {
+                                    !quote.is_empty()
+                                        && excerpts.iter().any(|part| part.contains(quote))
+                                })
+                            })
+                    });
+                let validated = if sampled_evidence_valid {
+                    validate(value.clone(), facts, instructions, listing)
+                } else {
+                    Err("Listing criterion is outside the sampled passages".into())
+                };
+                match validated {
                     Ok(assessment) => {
                         let (value, assessment, preference_audit) = audit_missing_preferences(
                             model,
@@ -754,6 +792,7 @@ fn assess_with_source(
                             listing,
                             verification_text,
                         );
+                        assessment["initial_listing_sampled"] = json!(sampled_retry);
                         assessment["requirement_audit"] = completeness;
                         assessment["preference_audit"] = preference_audit;
                         assessment["preference_coverage"] = json!(preference_coverage(&assessment));
@@ -957,6 +996,7 @@ pub(crate) fn qualification_coverage(assessment: &Value) -> &'static str {
 pub(crate) fn requirement_audit_incomplete(assessment: &Value) -> bool {
     let rubric = assessment["rubric"].as_array();
     rubric.is_none_or(|items| items.is_empty() || items.len() >= 12)
+        || assessment["initial_listing_sampled"] == true
         || assessment["criteria_limit_reached"] == true
         || assessment["requirement_audit"]["status"] != "completed"
         || assessment["requirement_audit"]["listing_truncated"] != false
@@ -2634,6 +2674,75 @@ mod tests {
         assessment["source_coverage"]["instructions_total_chars"] = json!(0);
         assessment["source_coverage"]["instructions_used_chars"] = json!(0);
         assert_eq!(preference_coverage(&assessment), "not_requested");
+    }
+
+    #[test]
+    fn incomplete_long_listing_retries_with_sample_and_marks_coverage_incomplete() {
+        struct Fixture {
+            prompts: Vec<String>,
+            quote: &'static str,
+        }
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                if task == "job_fit" {
+                    self.prompts.push(prompt.into());
+                    if self.prompts.len() == 1 {
+                        return Err(InferenceError::StructuredOutputFailed(
+                            "generation did not finish with a natural stop".into(),
+                        ));
+                    }
+                }
+                let response = match task {
+                    "job_fit" => {
+                        json!({"summary":"Review","criteria":[{"source":"listing","excerpt":self.quote,"importance":"required","status":"unknown","fact_index":null,"explanation":"Unknown"}]})
+                    }
+                    "fit_requirement_audit" => json!({"missing":[]}),
+                    _ => json!({}),
+                };
+                Ok((
+                    response,
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let listing = format!(
+            "Python required. {} HiddenRequirement {}",
+            "a".repeat(1500),
+            "b".repeat(5000)
+        );
+        let mut model = Fixture {
+            prompts: Vec::new(),
+            quote: "Python",
+        };
+        let mut result = assess(&mut model, &["Fictional fact".into()], "", &listing).unwrap();
+        assert_eq!(model.prompts.len(), 2);
+        assert!(model.prompts[1].contains("separate excerpts"));
+        assert!(model.prompts[1].len() < model.prompts[0].len());
+        assert_eq!(result["initial_listing_sampled"], true);
+        result["source_coverage"] = json!({"description_present":true,"listing_used_chars":listing.len(),"listing_total_chars":listing.len()});
+        result["requirement_audit"] = json!({"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false});
+        assert!(requirement_audit_incomplete(&result));
+        let mut invented = Fixture {
+            prompts: Vec::new(),
+            quote: "HiddenRequirement",
+        };
+        assert!(
+            assess(&mut invented, &["Fictional fact".into()], "", &listing)
+                .unwrap_err()
+                .contains("outside the sampled passages")
+        );
     }
 
     #[test]
