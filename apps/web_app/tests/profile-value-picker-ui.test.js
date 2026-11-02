@@ -11,14 +11,14 @@ class Event { constructor(type,options){this.type=type;this.bubbles=options.bubb
 let notice='';
 const context={element:node, document:{createElement:node}, Option, Event, notify:message=>{notice=message;}};
 vm.runInNewContext(source.slice(start,end),context);
-const input=node('input');
+const input=node('input');input._draftId='old-answer';input._letterDraftId='old-letter';input._updateLetterLink=()=>{input.linkUpdated=true;};
 const profile={phone_national:'2025550123',phone_country_code:'+1',work_authorization:'private',instructions:'private'};
 const picker=context.profileValuePicker(profile,input,{label:'Phone number',field_type:'text',sensitive:false});
 assert.ok(picker);
 const [select,button]=picker.children;
 assert.deepEqual(Array.from(select.children, x=>x.value),['','phone_national','phone_country_code']);
 button.listeners.click();assert.match(notice,/Choose/);assert.equal(input.value,'');
-select.value='phone_national';button.listeners.click();assert.equal(input.value,'2025550123');assert.equal(input.lastEvent.type,'input');assert.equal(input.lastEvent.bubbles,true);assert.ok(input.focused);
+select.value='phone_national';button.listeners.click();assert.equal(input.value,'2025550123');assert.equal(input.lastEvent.type,'input');assert.equal(input.lastEvent.bubbles,true);assert.ok(input.focused);assert.equal(input._draftId,undefined);assert.equal(input._letterDraftId,undefined);assert.ok(input.linkUpdated);
 select.value='work_authorization';button.listeners.click();assert.equal(input.value,'2025550123');
 assert.equal(context.profileValuePicker(profile,input,{label:'Sensitive',field_type:'text',sensitive:true}),null);
 assert.equal(context.profileValuePicker(profile,input,{label:'Choice',field_type:{select:{options:['a']}},sensitive:false}),null);

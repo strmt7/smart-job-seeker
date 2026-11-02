@@ -1874,3 +1874,12 @@ Reordering the profile keys and renaming the full-phone key in the local-model
 prompt did not correct the fictional national-phone mapping in individual
 resource-gated trials, so those experiments were removed. The ignored mapping
 test remains failing for the national number. No application was submitted.
+
+A rendered fictional localhost fixture using the picker and application styles
+confirmed that selecting a saved national number places it in the editable
+answer field. This was a standalone fixture, not the full application or an
+employer site. During this check, selecting a saved profile value was found to
+leave a previous cover-letter provenance link attached to the overwritten text.
+The picker now clears answer and cover-letter draft links and invalidates an
+in-flight letter-link update before copying the value. Focused picker and draft
+provenance UI tests passed. No application was submitted.
