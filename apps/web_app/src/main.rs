@@ -211,6 +211,26 @@ fn staged_attachments_unchanged(
         .all(|(_, path, _, digest)| staged_file_matches(path, digest))
 }
 
+fn choice_attachments_verified(session: &mut ReviewSession) -> bool {
+    let groups = current_attachment_groups(&session.attachments, &session.id);
+    let started = Instant::now();
+    if groups.len() > 8 {
+        return false;
+    }
+    for (selector, paths) in groups {
+        if started.elapsed() >= Duration::from_secs(4)
+            || !staged_attachments_unchanged(&session.attachments, &session.id, &selector)
+            || session
+                .driver
+                .with_review_timeout(|driver| driver.verify_local_files(&selector, &paths))
+                .is_err()
+        {
+            return false;
+        }
+    }
+    true
+}
+
 struct SavedFormAnswer {
     selector: String,
     digest: String,
@@ -5339,6 +5359,12 @@ fn serve(
                             .into(),
                     );
                 }
+            }
+            if !choice_attachments_verified(current) {
+                return Err(
+                    "Previously attached files changed or could not be checked; inspect them again"
+                        .into(),
+                );
             }
             let live = current
                 .driver

@@ -139,15 +139,17 @@ pub fn start(
             option.as_ref().map(|_| selector.as_str()),
         )
         .is_ok();
+        let attachments_verified = crate::choice_attachments_verified(&mut session);
+        let previous_verified = previous_verified && attachments_verified;
         let result = match action {
             Ok(Some(choice)) => {
-                json!({"status":"complete","opened":scroll.is_none(),"scrolled":scroll.is_some(),"choice":choice,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
+                json!({"status":"complete","opened":scroll.is_none(),"scrolled":scroll.is_some(),"choice":choice,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"attachments_verified":attachments_verified,"visual_review_required":true})
             }
             Ok(None) => {
-                json!({"status":"complete","selected":true,"option":option,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
+                json!({"status":"complete","selected":true,"option":option,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"attachments_verified":attachments_verified,"visual_review_required":true})
             }
             Err(error) => {
-                json!({"status":"uncertain","opened":false,"error":error,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"visual_review_required":true})
+                json!({"status":"uncertain","opened":false,"error":error,"screenshot":screenshot,"record_saved":saved,"previous_fields_verified":previous_verified,"attachments_verified":attachments_verified,"visual_review_required":true})
             }
         };
         session.pending_choice_visual = Some((selector, id, revision, option));
@@ -290,6 +292,30 @@ mod tests {
             last_visual_freshness_key: None,
             record: Some(record),
         });
+        // A later choice action must not silently accept an attachment that the
+        // page replaced, even when the staged file itself is unchanged.
+        let staged = dir.path().join("staged.pdf");
+        let replacement = dir.path().join("replacement.pdf");
+        std::fs::write(&staged, b"fixture original").unwrap();
+        std::fs::write(&replacement, b"fixture replacement").unwrap();
+        let current = session.as_mut().unwrap();
+        current
+            .driver
+            .attach_local_file("#fixture-upload", &staged)
+            .unwrap();
+        current.attachments.push((
+            "#fixture-upload".into(),
+            staged.clone(),
+            current.id.clone(),
+            waypoint_domain::sha256_hex(b"fixture original"),
+        ));
+        assert!(crate::choice_attachments_verified(current));
+        current
+            .driver
+            .attach_local_file("#fixture-upload", &replacement)
+            .unwrap();
+        assert!(!crate::choice_attachments_verified(current));
+        current.attachments.clear();
         let (inventory, digest) =
             crate::custom_choice_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
         let choice = inventory

@@ -1,3 +1,8 @@
+## Attachments and custom choices — 2026-11-02
+
+- Reviewed custom-choice actions now check the current inspection's staged files and browser file controls before and after opening, scrolling or selecting. Missing, changed, unverified or over-budget attachments require review; the interface identifies an attachment check failure. Checks are limited to eight upload controls and a four-second start budget, and do not prove server receipt or prevent a later page change.
+- A fictional local-browser fixture verified that a staged upload is accepted by the check and a replacement file is detected; the existing reviewed-choice workflow, two choice UI checks and Windows web lint passed. This did not test an employer form or submission.
+
 ## Greenhouse remote evidence — 2026-11-02
 
 - Remote-title classification also leaves the status unknown when nearby words in the same sentence negate remote work, including `not a fully remote position` and `remote work is not available`. This is a bounded English-language heuristic, not complete semantic contradiction detection; other wording can still be missed and unrelated nearby negations can suppress a valid signal. Connector tests (16 passed) and Windows web lint passed.
