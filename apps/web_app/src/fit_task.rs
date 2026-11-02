@@ -70,6 +70,16 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
     let score = |value: &Value| value["score"].as_i64().filter(|s| (0..=100).contains(s));
     let old_score = score(before)?;
     let new_score = score(after)?;
+    let range = |value: &Value, score: i64| -> Option<(i64, i64)> {
+        let lower = value["score_range"]["lower"].as_i64()?;
+        let upper = value["score_range"]["upper"].as_i64()?;
+        (0 <= lower && lower <= score && score <= upper && upper <= 100).then_some((lower, upper))
+    };
+    let range_change = range(before, old_score)
+        .zip(range(after, new_score))
+        .map(|((old_lower, old_upper), (new_lower, new_upper))| {
+            json!({"previous_lower":old_lower,"previous_upper":old_upper,"lower_change":new_lower-old_lower,"upper_change":new_upper-old_upper})
+        });
     let keys = |value: &Value| -> Option<Vec<String>> {
         let items = value["rubric"]
             .as_array()
@@ -137,7 +147,7 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
         }
     }
     Some(
-        json!({"previous_score":old_score,"score_change":new_score-old_score,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"identity_basis":"digest_context_snapshots"}),
+        json!({"previous_score":old_score,"score_change":new_score-old_score,"range_change":range_change,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"identity_basis":"digest_context_snapshots"}),
     )
 }
 
@@ -3114,6 +3124,28 @@ mod tests {
         assert_eq!(comparison["changed_judgments"], 1);
         assert_eq!(comparison["added_criteria"], 0);
         assert_eq!(comparison["removed_criteria"], 0);
+        assert!(comparison["range_change"].is_null());
+        let mut narrow = prior.clone();
+        narrow["assessment"]["score"] = json!(50);
+        narrow["assessment"]["score_range"] = json!({"lower":50,"upper":50});
+        narrow["assessment"]["rubric"] = json!([
+            {"source":"listing","excerpt":"Python","importance":"preferred","status":"supported","qualification":"Used Python"},
+            {"source":"listing","excerpt":"SQL","importance":"preferred","status":"contradicted","qualification":"No SQL"}
+        ]);
+        let mut wide = narrow.clone();
+        wide["assessment"]["score_range"] = json!({"lower":0,"upper":100});
+        for item in wide["assessment"]["rubric"].as_array_mut().unwrap() {
+            item["status"] = json!("unknown");
+            item["qualification"] = Value::Null;
+        }
+        let uncertainty = repeatability_comparison(&narrow, &wide).unwrap();
+        assert_eq!(uncertainty["score_change"], 0);
+        assert_eq!(
+            uncertainty["range_change"],
+            json!({"previous_lower":50,"previous_upper":50,"lower_change":-50,"upper_change":50})
+        );
+        wide["assessment"]["score_range"] = json!({"lower":80,"upper":100});
+        assert!(repeatability_comparison(&narrow, &wide).unwrap()["range_change"].is_null());
         assert!(repeatability_comparison(&prior, &prior).unwrap()["same_rubric"] == true);
         let mut replaced = prior.clone();
         replaced["assessment"]["rubric"][0]["excerpt"] = json!("SQL");
