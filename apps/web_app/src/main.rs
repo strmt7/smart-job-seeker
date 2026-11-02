@@ -2705,12 +2705,24 @@ fn serve(
                     result = json!({"status":"failed","error":"Listings or duplicate decisions changed; search again"});
                 } else {
                     let mut flagged = Vec::new();
+                    let target_job = ws
+                        .job(&job)
+                        .map_err(|e| e.to_string())?
+                        .ok_or("Job changed; search again")?;
                     for item in result["matches"].as_array().ok_or("invalid results")? {
                         let candidate = item["id"].as_str().ok_or("missing candidate")?;
                         if !input.candidates.iter().any(|(id, _)| id == candidate) {
                             return Err("Candidate changed; search again".into());
                         }
-                        let reason=format!("Local AI flagged a possible duplicate; its explanation may be inaccurate. Compare both complete listings: {}. Listing excerpts: {} / {}",item["reason"].as_str().unwrap_or(""),item["target_excerpt"].as_str().unwrap_or(""),item["candidate_excerpt"].as_str().unwrap_or(""));
+                        let candidate_id =
+                            JobIdentityId::new(candidate).map_err(|e| e.to_string())?;
+                        let candidate_job = ws
+                            .job(&candidate_id)
+                            .map_err(|e| e.to_string())?
+                            .ok_or("Candidate changed; search again")?;
+                        let comparison =
+                            duplicate_search::saved_field_comparison(&target_job, &candidate_job);
+                        let reason=format!("Local AI flagged a possible duplicate; its explanation may be inaccurate. Compare both complete listings: {}. Listing excerpts: {} / {}. {}",item["reason"].as_str().unwrap_or(""),item["target_excerpt"].as_str().unwrap_or(""),item["candidate_excerpt"].as_str().unwrap_or(""),comparison);
                         flagged.push((candidate.to_owned(), reason));
                     }
                     let added = ws.add_ai_duplicates(&job, &flagged).map_err(|e| {

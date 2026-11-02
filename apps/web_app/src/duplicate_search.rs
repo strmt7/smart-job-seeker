@@ -40,6 +40,34 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 pub(crate) const OMITTED: &str = "\n[... omitted ...]\n";
 
+/// Compare saved text literally, without deciding whether two vacancies match.
+pub(crate) fn saved_field_comparison(
+    first: &waypoint_store::StoredJob,
+    second: &waypoint_store::StoredJob,
+) -> String {
+    fn relation(a: Option<&str>, b: Option<&str>) -> &'static str {
+        let normalize = |value: &str| {
+            value
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        let (Some(a), Some(b)) = (
+            a.filter(|s| !s.trim().is_empty()),
+            b.filter(|s| !s.trim().is_empty()),
+        ) else {
+            return "unavailable";
+        };
+        if normalize(a) == normalize(b) {
+            "same text"
+        } else {
+            "different text"
+        }
+    }
+    format!("Saved field text comparison at assessment time (ignoring case and whitespace): title {}; employer {}; location {}; requisition {}. Different text can still refer to the same vacancy; matching text does not prove it. Listings may have changed.", relation(Some(&first.title), Some(&second.title)), relation(Some(&first.employer), Some(&second.employer)), relation(Some(&first.location), Some(&second.location)), relation(first.requisition_id.as_deref(), second.requisition_id.as_deref()))
+}
+
 /// Keep the listing header and samples from later sections within a fixed
 /// character budget. The separator is not evidence from the original ad.
 pub(crate) fn sample_listing(text: &str) -> String {
@@ -662,7 +690,11 @@ mod tests {
             .reason
             .contains("explanation may be inaccurate")
             && item.reason.contains("Nurse")
-            && item.reason.contains("Research scientist")));
+            && item.reason.contains("Research scientist")
+            && item.reason.contains("title different text")
+            && item.reason.contains("employer same text")
+            && item.reason.contains("location unavailable")
+            && item.reason.contains("requisition unavailable")));
         *COMPLETED.lock().unwrap() = None;
     }
 
