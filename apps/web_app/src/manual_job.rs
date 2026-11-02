@@ -279,6 +279,40 @@ mod tests {
     }
 
     #[test]
+    fn refreshed_observation_survives_restart_and_rejects_stale_snapshots() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let mut data = json!({"url":"https://example.org/job","title":"Engineer","employer":"Example","location":"Berlin","description":"Fictional duties.","remote":false});
+        let saved = add(&mut ws, &data, 100).unwrap();
+        let id = JobIdentityId::new(saved["id"].as_str().unwrap()).unwrap();
+        let stale = ws.job(&id).unwrap().unwrap();
+        data["extraction"] = json!("structured");
+        assert_eq!(
+            add_inspected(&mut ws, &data, 300, Some(200)).unwrap()["observation_refreshed"],
+            true
+        );
+        assert!(!ws
+            .refresh_job_observation(&stale, "Fictional duties.", 250)
+            .unwrap());
+        drop(ws);
+        let mut reopened = Workspace::open(directory.path()).unwrap();
+        assert_eq!(
+            reopened.job(&id).unwrap().unwrap().last_seen.as_deref(),
+            Some("200")
+        );
+        let old = reopened.job(&id).unwrap().unwrap();
+        let mut changed = old.clone();
+        changed.location = "Hamburg".into();
+        reopened.import_job(changed).unwrap();
+        assert!(!reopened
+            .refresh_job_observation(&old, "Fictional duties.", 250)
+            .unwrap());
+        let current = reopened.job(&id).unwrap().unwrap();
+        assert_eq!(current.location, "Hamburg");
+        assert_eq!(current.last_seen.as_deref(), Some("200"));
+    }
+
+    #[test]
     fn similar_cross_site_listings_are_held_until_the_user_decides() {
         let mut ws = Workspace::in_memory().unwrap();
         let first = add(&mut ws, &json!({"url":"https://example.com/jobs/1","title":"Senior Software Engineer","employer":"Acme Inc","location":"Berlin","description":"A fictional software position"}), 1).unwrap();

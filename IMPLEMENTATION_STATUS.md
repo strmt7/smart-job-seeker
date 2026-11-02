@@ -2956,3 +2956,7 @@ model-only extraction and aliases do not refresh this way. The inspection
 interface reports whether a refresh happened. Nine intake tests, focused
 queue UI checks and web-app Clippy passed. A recent observation still does not
 prove a vacancy is open, and earlier legacy timestamps are not corrected.
+
+A disk-backed re-inspection test also confirms that the refreshed timestamp
+survives reopening the workspace and that stale snapshots cannot overwrite a
+newer observation or a changed location.
