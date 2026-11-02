@@ -3012,7 +3012,7 @@ fn compare_preferences_with_source(
             prompt.clone()
         } else {
             retried = true;
-            format!("Compare the preferences against the separate job text passages below. Return JSON only: {{\"items\":[{{\"id\":1,\"status\":\"supported\" or \"contradicted\" or \"unknown\",\"quote\": exact text from one passage or null,\"explanation\":\"brief explanation\"}}]}}. Include each ID once. For supported or contradicted copy an exact contiguous quote from one passage, not from the preference. Missing text is unknown. JOB PASSAGES: {}. PREFERENCES: {}.", json!(listing_passages), json!(items))
+            format!("{prompt} The previous response did not meet the output requirements. Include each ID exactly once; copy each supported or contradicted quote as a contiguous substring from a single listing passage, not from a preference. Return only the required JSON.")
         };
         match model.generate_structured("fit_preference_comparison", &request, 900) {
             Ok((value, _)) if response_valid(&value) => {
@@ -8082,6 +8082,7 @@ mod tests {
         struct Fixture {
             calls: usize,
             runtime_error: bool,
+            prompts: Vec<String>,
         }
         impl Inference for Fixture {
             fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
@@ -8090,10 +8091,11 @@ mod tests {
             fn generate_structured(
                 &mut self,
                 _: &str,
-                _: &str,
+                prompt: &str,
                 _: u32,
             ) -> Result<(Value, UsageReport), InferenceError> {
                 self.calls += 1;
+                self.prompts.push(prompt.to_owned());
                 if self.runtime_error {
                     return Err(InferenceError::RuntimeUnreachable("fixture".into()));
                 }
@@ -8119,6 +8121,7 @@ mod tests {
         let mut model = Fixture {
             calls: 0,
             runtime_error: false,
+            prompts: Vec::new(),
         };
         let result = compare_preferences(
             &mut model,
@@ -8129,6 +8132,9 @@ mod tests {
             listing,
         );
         assert_eq!(model.calls, 2);
+        assert!(model.prompts[1].starts_with(&model.prompts[0]));
+        assert!(model.prompts[1]
+            .contains("a required qualification or a related activity is not by itself evidence"));
         assert_eq!(result["rubric"][0]["status"], "supported");
         assert_eq!(result["rubric"][0]["qualification"], "Remote role");
         assert_eq!(result["rubric"][0]["evidence_context"], listing);
@@ -8136,6 +8142,7 @@ mod tests {
         let mut model = Fixture {
             calls: 0,
             runtime_error: true,
+            prompts: Vec::new(),
         };
         let result = compare_preferences(&mut model, raw, fallback, &[], preferences, listing);
         assert_eq!(model.calls, 1);
