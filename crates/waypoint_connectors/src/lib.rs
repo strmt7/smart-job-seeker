@@ -256,12 +256,57 @@ fn extract_job_list(
         .map_err(|e| ConnectorError::Parse(format!("{source} items: {e}")))
 }
 
+fn greenhouse_remote_title_evidence(
+    title: &str,
+    location: &str,
+    description: Option<&str>,
+) -> Option<bool> {
+    let title = title.trim().to_ascii_lowercase();
+    let location = location.to_ascii_lowercase();
+    let description = description.unwrap_or("").to_ascii_lowercase();
+    if !title.ends_with("(remote)") {
+        return None;
+    }
+    let conflicting = [
+        "hybrid",
+        "on-site",
+        "onsite",
+        "on site",
+        "in-office",
+        "in office",
+        "not remote",
+        "non-remote",
+    ];
+    if conflicting
+        .iter()
+        .any(|term| title.contains(term) || location.contains(term) || description.contains(term))
+    {
+        return None;
+    }
+    Some(true)
+}
+
 /// Parse a Greenhouse board JSON payload into raw postings.
 pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
     let jobs = extract_job_list(payload, &["jobs"], "greenhouse")?;
     Ok(jobs
         .into_iter()
         .map(|j| {
+            let description = j.content.as_deref().map(description_text);
+            // The normalizer truncates exceptionally long HTML/text. Do not
+            // claim non-conflicting evidence when the rest was not checked.
+            let complete = j
+                .content
+                .as_ref()
+                .is_none_or(|text| text.chars().count() <= 200_000)
+                && description
+                    .as_ref()
+                    .is_none_or(|text| text.chars().count() < 100_000);
+            let remote_evidence = if complete {
+                greenhouse_remote_title_evidence(&j.title, &j.location.name, description.as_deref())
+            } else {
+                None
+            };
             let req = match &j.id {
                 Some(serde_json::Value::Number(n)) => Some(n.to_string()),
                 Some(serde_json::Value::String(s)) => Some(s.clone()),
@@ -285,11 +330,11 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
                 title: j.title,
                 employer: board.to_string(),
                 location: j.location.name,
-                remote: false,
-                remote_evidence: None,
+                remote: remote_evidence == Some(true),
+                remote_evidence,
                 // An update is not evidence of the original publication date.
                 posted_at: j.first_published,
-                description: j.content.as_deref().map(description_text),
+                description,
                 content_hash_source: format!("gh://{board}/{}", req.unwrap_or_default()),
             }
         })
@@ -725,6 +770,36 @@ pub fn is_public_host_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn greenhouse_remote_title_is_evidence_only_when_unambiguous() {
+        let payload = serde_json::json!({"jobs":[
+            {"id":1,"title":"Data Engineer (Remote)","location":{"name":"Berlin, Germany"},"absolute_url":"https://example.org/1"},
+            {"id":2,"title":"Remote Sensing Engineer","location":{"name":"Berlin"},"absolute_url":"https://example.org/2"},
+            {"id":3,"title":"Engineer - Hybrid (Remote)","location":{"name":"Berlin"},"absolute_url":"https://example.org/3"},
+            {"id":4,"title":"Engineer (REMOTE)","location":{"name":"On-site"},"absolute_url":"https://example.org/4"},
+            {"id":5,"title":"Engineer (Remote)","location":{"name":"Berlin"},"absolute_url":"https://example.org/5"},
+            {"id":6,"title":"Engineer (Remote)","location":{"name":"Berlin"},"content":"<p>This position is on-site.</p>","absolute_url":"https://example.org/6"}
+        ]}).to_string();
+        let jobs = super::parse_greenhouse("fictional", &payload).unwrap();
+        assert_eq!(
+            jobs.iter()
+                .map(|job| job.remote_evidence)
+                .collect::<Vec<_>>(),
+            vec![Some(true), None, None, None, Some(true), None]
+        );
+        assert!(jobs[0].remote);
+        assert!(!jobs[2].remote);
+        let truncated = serde_json::json!({"jobs":[{
+            "id":7,"title":"Engineer (Remote)","location":{"name":"Berlin"},
+            "content":"x".repeat(200_001),"absolute_url":"https://example.org/7"
+        }]})
+        .to_string();
+        assert_eq!(
+            super::parse_greenhouse("fictional", &truncated).unwrap()[0].remote_evidence,
+            None
+        );
+    }
+
     use super::*;
     use waypoint_policy::INITIAL_REGISTRY_JSON;
 
