@@ -1823,3 +1823,21 @@ check whether the form expects a national number. This heuristic does not cover
 all languages or layouts, split numbers, or prove the resulting format is valid.
 The same local-model scenario passed after the change; the model was unloaded.
 Focused suggestion tests and web Clippy passed. No application was submitted.
+
+### Explicit split-phone profile values (2026-11-02)
+
+The profile can now store an explicitly supplied national phone number, calling
+code and extension alongside the complete phone number. The mapper recognizes
+matching labels and telephone autocomplete hints, rejects conflicting hinted
+components, and never derives a component from another value. The normal
+review gates still apply. A Windows restart test confirmed the new profile
+values persist; fictional deterministic mapping tests and web Clippy passed.
+
+In a resource-gated qwen3.5:9b test with all components supplied and matching
+hints, the model-assisted path suggested the calling code and extension but
+its national-number suggestion was rejected as invalid; the opt-in test
+therefore fails and the number remains for manual review. A prompt experiment
+also caused the model to withhold the full number in the incomplete-profile
+case, so it was removed. This is not a validated end-to-end solution for split
+phone forms, and no third-party form was filled or submitted. The model was
+unloaded after the test.

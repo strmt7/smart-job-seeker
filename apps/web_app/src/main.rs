@@ -324,6 +324,9 @@ const PROFILE_FIELDS: &[&str] = &[
     "last_name",
     "email",
     "phone",
+    "phone_national",
+    "phone_country_code",
+    "phone_extension",
     "address",
     "city",
     "region",
@@ -11623,7 +11626,7 @@ mod tests {
             serde_json::from_str::<Value>(&reopened.candidate_profile().unwrap().unwrap()).unwrap()
         });
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let body = r#"{"full_name":"Avery Example","preferred_name":"Ace"}"#;
+        let body = r#"{"full_name":"Avery Example","preferred_name":"Ace","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42"}"#;
         write!(stream, "POST /api/profile HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
@@ -11631,6 +11634,9 @@ mod tests {
         let profile = worker.join().unwrap();
         assert_eq!(profile["full_name"], "Avery Example");
         assert_eq!(profile["preferred_name"], "Ace");
+        assert_eq!(profile["phone_national"], "2025550123");
+        assert_eq!(profile["phone_country_code"], "+1");
+        assert_eq!(profile["phone_extension"], "42");
     }
 
     #[test]

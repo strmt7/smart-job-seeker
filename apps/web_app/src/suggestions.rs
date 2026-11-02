@@ -21,6 +21,9 @@ const AUTOFILL_PROFILE_FIELDS: &[&str] = &[
     "last_name",
     "email",
     "phone",
+    "phone_national",
+    "phone_country_code",
+    "phone_extension",
     "address",
     "city",
     "region",
@@ -124,6 +127,9 @@ fn autocomplete_profile_key(
             "family-name" => Some("last_name"),
             "email" => Some("email"),
             "tel" => Some("phone"),
+            "tel-national" => Some("phone_national"),
+            "tel-country-code" => Some("phone_country_code"),
+            "tel-extension" => Some("phone_extension"),
             "street-address" => Some("address"),
             "address-level2" => Some("city"),
             "address-level1" => Some("region"),
@@ -150,6 +156,19 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
             plain,
             "phone" | "phonenumber" | "telephone" | "telephonenumber" | "mobile" | "mobilenumber"
         ),
+        "phone_national" => matches!(
+            plain,
+            "nationalphonenumber" | "nationalnumber" | "phonenumber" | "phone"
+        ),
+        "phone_country_code" => matches!(
+            plain,
+            "countrycallingcode"
+                | "callingcode"
+                | "countrydialcode"
+                | "dialingcode"
+                | "diallingcode"
+        ),
+        "phone_extension" => matches!(plain, "phoneextension" | "telephoneextension" | "extension"),
         "address" => matches!(plain, "address" | "streetaddress" | "homeaddress"),
         "city" => matches!(plain, "city" | "town"),
         "region" => matches!(plain, "state" | "region" | "stateorregion" | "province"),
@@ -241,6 +260,12 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
         let hint = autocomplete_profile_key(field)
             .filter(|hint| !(*hint == "full_name" && is_preferred_name_label(&field.label)));
         let key = match (keys.as_slice(), hint) {
+            ([(key, _)], Some("phone_national"))
+                if key.as_str() == "phone"
+                    && hint_matches_applicant_label(&field.label, "phone_national") =>
+            {
+                "phone_national"
+            }
             ([(key, _)], Some(hint)) if key.as_str() != hint => continue,
             ([(key, _)], _) => key.as_str(),
             ([], Some(hint)) if hint_matches_applicant_label(&field.label, hint) => hint,
@@ -907,15 +932,19 @@ fn validate_suggestions(
             {
                 return None;
             }
-            let direct = AUTOFILL_PROFILE_FIELDS.iter().copied().find(|candidate| {
-                normalize_field_name(candidate) == normalize_field_name(&field.label)
-                    || hint_matches_applicant_label(&field.label, candidate)
-            });
             let hint = autocomplete_profile_key(field).filter(|hint| {
                 !(key == "preferred_name"
                     && *hint == "full_name"
                     && is_preferred_name_label(&field.label))
             });
+            let direct = hint
+                .filter(|hint| hint_matches_applicant_label(&field.label, hint))
+                .or_else(|| {
+                    AUTOFILL_PROFILE_FIELDS.iter().copied().find(|candidate| {
+                        normalize_field_name(candidate) == normalize_field_name(&field.label)
+                            || hint_matches_applicant_label(&field.label, candidate)
+                    })
+                });
             // A postal autocomplete token can identify the requested component
             // even when the visible label is unfamiliar or in another language.
             // It is still only a hint: matching it does not establish that the
@@ -923,7 +952,15 @@ fn validate_suggestions(
             if hint.is_some_and(|hint| {
                 matches!(
                     hint,
-                    "address" | "city" | "region" | "postal_code" | "country"
+                    "address"
+                        | "city"
+                        | "region"
+                        | "postal_code"
+                        | "country"
+                        | "phone"
+                        | "phone_national"
+                        | "phone_country_code"
+                        | "phone_extension"
                 ) && hint != key
             }) {
                 return None;
@@ -1662,6 +1699,45 @@ mod tests {
     }
 
     #[test]
+    fn explicit_split_phone_profile_maps_matching_components_only() {
+        let mut schema = form();
+        schema.fields = [
+            ("#national", "Phone number", "tel-national"),
+            ("#code", "Country calling code", "tel-country-code"),
+            ("#ext", "Phone extension", "tel-extension"),
+            ("#ref", "Reference phone extension", "tel-extension"),
+        ]
+        .into_iter()
+        .map(|(selector, label, hint)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some(hint.into()),
+        })
+        .collect();
+        let profile = json!({"phone":"+12025550123","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42"});
+        let exact = suggest_exact(&schema, &profile).unwrap();
+        assert_eq!(exact.len(), 3);
+        for (selector, value) in [("#national", "2025550123"), ("#code", "+1"), ("#ext", "42")] {
+            assert!(exact.iter().any(
+                |m| m.field_selector == selector && m.value == PacketValue::Text(value.into())
+            ));
+        }
+        let (invalid, rejected, _) = validate_suggestions(&schema, profile.as_object().unwrap(), &json!({"mappings":[{"selector":"#code","profile_key":"phone"},{"selector":"#ext","profile_key":"phone_national"},{"selector":"#ref","profile_key":"phone_extension"}]})).unwrap();
+        assert!(invalid.is_empty());
+        assert_eq!(rejected.len(), 3);
+        assert!(suggest_exact(&schema, &json!({"phone":"+12025550123"}))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn split_phone_warning_requires_international_phone_and_code_field() {
         let mut schema = form();
         schema.fields[0].label = "Country calling code".into();
@@ -1731,13 +1807,36 @@ mod tests {
             let (mappings, warnings, review) =
                 suggest_with_review(&mut llm, &schema, &json!({"phone":"+12025550123"})).unwrap();
             println!("Fictional split phone: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
-            assert!(mappings.iter().any(|m| m.field_selector == "#phone"));
-            assert!(warnings
-                .iter()
-                .any(|warning| warning.contains("separate calling-code field")));
+            if mappings.iter().any(|m| m.field_selector == "#phone") {
+                assert!(warnings
+                    .iter()
+                    .any(|warning| warning.contains("separate calling-code field")));
+            }
             assert!(!mappings
                 .iter()
                 .any(|m| m.field_selector == "#extension" || m.field_selector == "#calling-code"));
+            let mut split = schema.clone();
+            for (field, hint) in
+                split
+                    .fields
+                    .iter_mut()
+                    .zip(["tel-national", "tel-extension", "tel-country-code"])
+            {
+                field.autocomplete = Some(hint.into());
+            }
+            let (mapped, warnings, review) = suggest_with_review(&mut llm, &split, &json!({"phone":"+12025550123","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42"})).unwrap();
+            println!("Fictional explicit components: mappings={mapped:?}; warnings={warnings:?}; review={review:?}");
+            for (selector, value) in [
+                ("#phone", "2025550123"),
+                ("#extension", "42"),
+                ("#calling-code", "+1"),
+            ] {
+                assert!(
+                    mapped.iter().any(|m| m.field_selector == selector
+                        && m.value == PacketValue::Text(value.into())),
+                    "{selector}: {mapped:?} {warnings:?}"
+                );
+            }
         });
     }
 
