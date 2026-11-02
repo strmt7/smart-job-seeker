@@ -3670,6 +3670,22 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(job["location"], "Berlin, Germany; Paris, France");
+        let constraints = waypoint_search::CampaignConstraints {
+            locations: vec!["Paris, France".into()],
+            ..Default::default()
+        };
+        let outcomes = waypoint_search::check_constraints_with_remote(
+            &constraints,
+            &[],
+            None,
+            None,
+            Some(false),
+            job["location"].as_str().unwrap(),
+        );
+        assert!(
+            outcomes.is_empty(),
+            "a listed location must not be excluded: {outcomes:?}"
+        );
         assert_eq!(job["url"], "https://example.org/jobs/123");
     }
 

@@ -2916,3 +2916,12 @@ the experimental gate is test-only, adds inference work, and is not enabled
 in the application. Both models were unloaded after their runs. Separately,
 Gemma matched 6/7 statement-classification labels, treating an undecided
 answer as a definite statement.
+
+### Multiple-location constraints (2026-11-02)
+
+Location constraints now recognize semicolon-separated locations as well as
+newline-separated locations. Structured listings already used semicolons, so
+a matching second location could previously be excluded. A parsed fictional
+listing and all 20 search-crate tests passed, including partial-location and
+remote-eligibility unknown cases. This does not establish that a listing is
+still open or that all geographic eligibility rules are represented.

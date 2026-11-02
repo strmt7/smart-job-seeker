@@ -203,7 +203,7 @@ pub fn check_constraints_with_remote(
             .filter(|allowed| !allowed.trim().is_empty())
             .any(|allowed| {
                 observed
-                    .lines()
+                    .split(['\n', ';'])
                     .any(|candidate| candidate.trim().eq_ignore_ascii_case(allowed.trim()))
             });
         let partial_location =
@@ -212,7 +212,7 @@ pub fn check_constraints_with_remote(
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
                 .any(|allowed| {
-                    observed.lines().any(|candidate| {
+                    observed.split(['\n', ';']).any(|candidate| {
                         let candidate = candidate.trim();
                         candidate
                             .split(',')
@@ -232,7 +232,10 @@ pub fn check_constraints_with_remote(
                     "remote eligibility for the requested location is not established".into(),
                 ),
             ));
-        } else if observed.is_empty() {
+        } else if observed
+            .split(['\n', ';'])
+            .all(|part| part.trim().is_empty())
+        {
             out.push((
                 "location".into(),
                 ConstraintOutcome::Unknown("job does not state a location".into()),
@@ -594,6 +597,35 @@ mod tests {
             check_constraints_with_remote(&constraints, &[], None, None, Some(false), listed)
                 .is_empty()
         );
+        let separated = "New York, NY; San Francisco, CA";
+        assert!(check_constraints_with_remote(
+            &constraints,
+            &[],
+            None,
+            None,
+            Some(false),
+            separated
+        )
+        .is_empty());
+        let partial = CampaignConstraints {
+            locations: vec!["San Francisco".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_constraints_with_remote(&partial, &[], None, None, Some(false), separated)[0].1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        assert!(matches!(
+            check_constraints_with_remote(&constraints, &[], None, None, Some(true), separated)[0]
+                .1,
+            ConstraintOutcome::Unknown(_)
+        ));
+        assert!(matches!(
+            check_constraints_with_remote(&constraints, &[], None, None, Some(false), " ; \n ; ")
+                [0]
+            .1,
+            ConstraintOutcome::Unknown(_)
+        ));
         let different = CampaignConstraints {
             locations: vec!["London".into()],
             ..Default::default()
