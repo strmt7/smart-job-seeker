@@ -271,6 +271,46 @@ mod tests {
         assert!(pending().unwrap().is_none());
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "installs pinned PDF packages into an explicitly isolated test profile"]
+    fn automatic_setup_skips_incompatible_python_and_renders_pdf() {
+        let root = PathBuf::from(std::env::var_os("WAYPOINT_SETUP_TEST_DIR").unwrap())
+            .canonicalize()
+            .unwrap();
+        let appdata = PathBuf::from(std::env::var_os("APPDATA").unwrap())
+            .canonicalize()
+            .unwrap();
+        assert!(appdata.starts_with(&root));
+        let control = crate::storage_settings::control_dir().unwrap();
+        std::fs::create_dir_all(&control).unwrap();
+        assert!(managed_python(&control).is_none());
+        let bootstrap = PathBuf::from(std::env::var_os("WAYPOINT_BOOTSTRAP_PYTHON").unwrap());
+        assert_eq!(crate::pdf_extract::setup_python().unwrap(), bootstrap);
+        let id = "1234567890abcdef1234567890abcdef";
+        start(id.into(), String::new()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        let result = loop {
+            let result = poll(id).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "isolated setup timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
+        assert_eq!(result["status"], "complete", "{result}");
+        assert_eq!(
+            managed_python(&control).unwrap().display().to_string(),
+            result["path"].as_str().unwrap()
+        );
+        let fixture = std::fs::read(std::env::var_os("WAYPOINT_PDF_FIXTURE").unwrap()).unwrap();
+        let rendered = crate::pdf_extract::render_page(&fixture, 0).unwrap();
+        assert_eq!(rendered["page"], 0);
+    }
+
     #[test]
     #[ignore = "downloads pinned PDF packages into a temporary isolated environment"]
     fn installs_and_activates_a_private_environment() {
