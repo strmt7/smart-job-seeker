@@ -723,6 +723,7 @@ fn listing_capture_integrity(
     if files.len() != names.len() {
         return "unavailable";
     }
+    let mut capture_metadata = Vec::new();
     for name in names {
         let Some(expected) = files.get(&name).and_then(Value::as_str).filter(|s| {
             s.len() == 64
@@ -731,11 +732,15 @@ fn listing_capture_integrity(
         }) else {
             return "unavailable";
         };
+        let is_metadata = name == "capture.json";
         let path = capture.join(name);
         let Ok(meta) = fs::symlink_metadata(&path) else {
             return "unavailable";
         };
         if !meta.is_file() || meta.file_type().is_symlink() {
+            return "unavailable";
+        }
+        if full && is_metadata && meta.len() > 512 * 1024 {
             return "unavailable";
         }
         if meta.len() > *budget {
@@ -760,16 +765,61 @@ fn listing_capture_integrity(
             }
             *budget -= n as u64;
             digest.update(&buffer[..n]);
+            if full && is_metadata {
+                if capture_metadata.len().saturating_add(n) > 512 * 1024 {
+                    return "unavailable";
+                }
+                capture_metadata.extend_from_slice(&buffer[..n]);
+            }
         }
         if format!("{:x}", digest.finalize()) != expected {
             return "mismatch";
         }
     }
-    if full {
-        "match"
-    } else {
-        "partial_match"
+    if !full {
+        return "partial_match";
     }
+    let Ok(metadata) = serde_json::from_slice::<Value>(&capture_metadata) else {
+        return "unavailable";
+    };
+    let text_expected = matches!(
+        metadata["page_text_status"].as_str(),
+        Some("captured" | "truncated")
+    );
+    if text_expected {
+        let Some(text) = metadata["page_text"].as_str().filter(|s| s.len() <= 32_000) else {
+            return "unavailable";
+        };
+        if files.get("page-text.txt").and_then(Value::as_str)
+            != Some(waypoint_domain::sha256_hex(text.as_bytes()).as_str())
+        {
+            return "mismatch";
+        }
+    } else if files.contains_key("page-text.txt") {
+        return "mismatch";
+    }
+    let scripts = if metadata["structured_source_status"] == "captured" {
+        let Some(scripts) = metadata["structured_source_scripts"]
+            .as_array()
+            .filter(|scripts| scripts.len() <= 8 && scripts.iter().all(Value::is_string))
+        else {
+            return "unavailable";
+        };
+        scripts.as_slice()
+    } else {
+        &[]
+    };
+    for i in 0..8 {
+        let name = format!("structured-{:04}.json.txt", i + 1);
+        let expected = scripts
+            .get(i)
+            .and_then(Value::as_str)
+            .map(|text| waypoint_domain::sha256_hex(text.as_bytes()));
+        if files.get(&name).and_then(Value::as_str) != expected.as_deref() {
+            return "mismatch";
+        }
+    }
+    "match"
 }
 
 // A comparison of saved workspace data, not a claim about the live vacancy or
@@ -3745,8 +3795,11 @@ mod tests {
         fs::write(dir.join("view.html"), b"viewer").unwrap();
         fs::write(dir.join("page-text.txt"), b"listing text").unwrap();
         fs::write(dir.join("structured-0001.json.txt"), b"structured").unwrap();
+        let capture = json!({"page_text_status":"captured", "page_text":"listing text", "structured_source_status":"captured", "structured_source_scripts":["structured"]}).to_string();
+        fs::write(dir.join("capture.json"), &capture).unwrap();
         let mut complete = manifest.clone();
         complete["version"] = json!(2);
+        complete["files"]["capture.json"] = json!(waypoint_domain::sha256_hex(capture.as_bytes()));
         complete["files"]["view.html"] = json!(waypoint_domain::sha256_hex(b"viewer"));
         complete["files"]["page-text.txt"] = json!(waypoint_domain::sha256_hex(b"listing text"));
         complete["files"]["structured-0001.json.txt"] =
@@ -3772,6 +3825,33 @@ mod tests {
             );
             fs::write(dir.join(name), original).unwrap();
         }
+        for name in ["page-text.txt", "structured-0001.json.txt"] {
+            let mut incomplete = complete.clone();
+            incomplete["files"].as_object_mut().unwrap().remove(name);
+            fs::write(
+                dir.join("capture-hashes.json"),
+                serde_json::to_vec(&incomplete).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+                "mismatch"
+            );
+        }
+        fs::write(dir.join("page-text.txt"), b"changed").unwrap();
+        let mut inconsistent = complete.clone();
+        inconsistent["files"]["page-text.txt"] = json!(waypoint_domain::sha256_hex(b"changed"));
+        fs::write(
+            dir.join("capture-hashes.json"),
+            serde_json::to_vec(&inconsistent).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "mismatch"
+        );
+        fs::write(dir.join("page-text.txt"), b"listing text").unwrap();
+        fs::write(dir.join("capture.json"), b"metadata").unwrap();
         fs::write(
             dir.join("capture-hashes.json"),
             serde_json::to_vec(&manifest).unwrap(),
