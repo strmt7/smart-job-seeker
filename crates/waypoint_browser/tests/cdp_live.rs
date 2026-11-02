@@ -392,6 +392,25 @@ fn custom_choice_inventory_reaches_later_controls_and_reports_its_cap() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn custom_choice_inventory_keeps_long_question_labels() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_long_label.html"))
+        .unwrap();
+    let choices = driver.page_custom_choices().unwrap();
+    assert_eq!(choices.choices.len(), 1);
+    let label = &choices.choices[0].label;
+    assert!(label.chars().count() > 200);
+    assert!(label.ends_with("when the requirements or circumstances change."));
+    assert_ne!(label, "Unlabelled choice");
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn native_time_is_filled_and_verified_within_site_limits() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

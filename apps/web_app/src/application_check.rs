@@ -856,8 +856,18 @@ mod tests {
         {
             let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
             let page = browser.open(&url).expect("read-only page inspection");
-            println!("Observed review reasons: {:?}", page.walls);
+            println!("Observed review reasons: {}", page.walls.len());
             println!("Observed fields: {}", page.schema.fields.len());
+            let choices = browser
+                .page_custom_choices()
+                .expect("read-only choice inventory");
+            println!(
+                "Observed custom choices: {}; labels over 200 characters: {}; unlabelled: {}; incomplete: {}",
+                choices.choices.len(),
+                choices.choices.iter().filter(|c| c.label.chars().count() > 200).count(),
+                choices.choices.iter().filter(|c| c.label == "Unlabelled choice").count(),
+                choices.incomplete
+            );
         }
         super::start("live-public-check".into(), "test-job".into(), url, false).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);

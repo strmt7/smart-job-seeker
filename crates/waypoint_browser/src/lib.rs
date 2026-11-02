@@ -979,7 +979,7 @@ impl CdpDriver {
                     return true;
                 };
                 let label = anchor_label(node, &attrs, &references)
-                    .filter(|label| !label.is_empty() && label.len() <= 200)
+                    .filter(|label| !label.is_empty() && label.chars().count() <= 512)
                     .unwrap_or_else(|| {
                         incomplete = true;
                         "Unlabelled choice".into()

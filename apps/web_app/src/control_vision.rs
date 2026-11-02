@@ -123,7 +123,7 @@ fn validate(value: &Value) -> Result<Vec<String>, String> {
         .map(|item| {
             let text = item
                 .as_str()
-                .filter(|text| text.chars().count() <= 200 && !text.chars().any(char::is_control))
+                .filter(|text| text.chars().count() <= 512 && !text.chars().any(char::is_control))
                 .ok_or("Invalid visual control text")?
                 .trim();
             if text.is_empty() {
@@ -740,6 +740,11 @@ mod tests {
     fn validates_and_conservatively_compares_transcriptions() {
         assert!(validate(&json!({"buttons":[""]})).is_err());
         assert!(validate(&json!({"buttons":["bad\ntext"]})).is_err());
+        assert_eq!(
+            validate(&json!({"buttons":["x".repeat(300)]})).unwrap()[0].len(),
+            300
+        );
+        assert!(validate(&json!({"buttons":["x".repeat(513)]})).is_err());
         assert!(validate(&json!({"buttons":vec!["x";9]})).is_err());
         assert_eq!(
             comparison("Continue", false, &[" continue ".into()]),
