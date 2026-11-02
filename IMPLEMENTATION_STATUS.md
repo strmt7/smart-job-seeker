@@ -1,5 +1,7 @@
 ## Listing not-found review — 2026-11-02
 
+- The wider-web search panel now displays saved selected links in a review list, with individual removal before inspection. Removing an item updates visible checkboxes and requests the existing local selection save; removal is disabled while a batch is active. Fictional UI checks covered rendering, removal and the running-batch state, alongside existing selection and batch UI checks. An isolated unauthenticated interface check showed the empty list; it did not test a real search or saved selection through the live interface. No employer page was opened or application submitted.
+
 - Listing inspection now also flags an early, adjacent `Page not found | 404`-style title as a possible not-found page. This remains a manual-review signal, not proof that a vacancy is closed; other wording, languages and page layouts can be missed, and unusual job descriptions can still trigger a false positive. Fictional cases for both title orders and a non-adjacent technical description passed; the candidate-inspection group passed (45 passed, 21 ignored) and Windows web Clippy passed. No live site was inspected for this change.
 
 ## Local model identity check — 2026-11-02

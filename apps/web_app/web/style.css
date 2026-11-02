@@ -206,3 +206,5 @@ aside>#documents-section.document-workspace{padding:0;border:0;box-shadow:none} 
 /* Separate setup feedback from the next action at narrow and wide sizes. */
 .local-tools > p:not(:empty) + button{margin-top:8px}
 .local-tools > button{margin-right:8px}
+
+#selected-candidates-list{list-style:none;margin:8px 0;padding:0}.selected-candidate-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #dce5e3}.selected-candidate-info{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.selected-candidate-row button{flex:0 0 auto}
