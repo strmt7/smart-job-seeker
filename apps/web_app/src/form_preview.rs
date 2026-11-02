@@ -2018,6 +2018,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "resource-gated local model and fictional multi-step form"]
+    fn resource_gated_local_model_wizard() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            live_local_model_reinspects_and_prefills_a_fictional_wizard();
+        });
+    }
+
+    #[test]
     #[ignore = "starts a local browser and requires a preloaded local model and resource preflight"]
     fn live_local_model_reinspects_and_prefills_a_fictional_wizard() {
         use waypoint_domain::GrantId;

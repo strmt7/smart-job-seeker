@@ -2088,3 +2088,15 @@ fictional Lever/Ashby collision test covers rediscovery and preservation of a
 shortlisted state. Existing records already overwritten by an earlier collision
 are not reconstructed. This does not establish that every cross-source duplicate
 will be detected.
+
+### Resource-gated multi-step model check (2026-11-02)
+
+A new ignored test runs the existing fictional two-step form exercise through
+the app's model resource gate and unloads a model it started. In one run,
+qwen3.5:9b proposed and filled a given name and email on separate steps, left
+the sensitive work-authorization field empty, and visually transcribed the two
+filled values as matching. No application was submitted. Ollama reported a
+5.5 GB, fully GPU-resident model during the run; sampled free system memory
+was about 14.1 GiB during the run and 19.7 GiB after unloading. These are
+snapshots, not peak measurements. One fictional run does not establish
+reliability on real multi-step applications or general model accuracy.
