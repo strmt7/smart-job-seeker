@@ -26,6 +26,10 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "fit_grouped_support_check",
+        r#"{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":12},"relation":{"type":"string","enum":["all","any","uncertain"]},"components":{"type":"array","items":{"type":"object","properties":{"requirement_quote":{"type":"string","minLength":1},"fact_quote":{"type":["string","null"]}},"required":["requirement_quote","fact_quote"],"additionalProperties":false},"minItems":2,"maxItems":12}},"required":["id","relation","components"],"additionalProperties":false},"minItems":1,"maxItems":1}},"required":["items"],"additionalProperties":false}"#,
+    ),
+    (
         "fit_qualification_check",
         r#"{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":12},"status":{"type":"string","enum":["supported","contradicted","unknown"]}},"required":["id","status"],"additionalProperties":false},"minItems":1,"maxItems":12}},"required":["items"],"additionalProperties":false}"#,
     ),

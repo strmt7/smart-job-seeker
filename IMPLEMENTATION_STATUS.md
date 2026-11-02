@@ -2256,6 +2256,21 @@ score range was 25–100 and requirement coverage still needed review. This is o
 unverified input pair, not a general accuracy measurement. The model was
 unloaded and no application was sent.
 
+### Grouped qualification checks (2026-11-02)
+
+One diagnostic exposed a grouped criterion marked supported even though its
+cited fact did not name several listed elements. Stronger instructions alone
+did not correct that result. A separate local-model check now requests individual
+source-backed components; invalid, incomplete or unsupported checks leave the
+criterion unknown. This remains a heuristic and does not prove that the model
+identified every component or interpreted the source correctly.
+
+On the same real-input diagnostic, five grouped judgments were checked; three
+produced structurally valid results and all five were left unknown. The score
+range was 0–100. This is a material usability limitation of this model and check,
+not a successful fit assessment. The model was unloaded and no application was
+sent.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and
