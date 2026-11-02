@@ -70,6 +70,25 @@ def text_object_colours(data):
     return colours
 
 assert text_object_colours(result.stdout) == text_object_colours(base64.b64decode(styled_source))
+# The whole object may not map to one PDF text operator even when its selected
+# span does. Exercise that fallback through the same final validation path.
+fallback_program = program.replace("def edit_pdf_stream(reader, page_index, before, after):",
+                                   "def original_edit_pdf_stream(reader, page_index, before, after):", 1)
+wrapper = """
+def edit_pdf_stream(reader, page_index, before, after):
+    if before == 'BetaSuffix':
+        return None
+    if before == 'Beta':
+        print('selected-span stream fallback', file=sys.stderr)
+    return original_edit_pdf_stream(reader, page_index, before, after)
+"""
+fallback_program = fallback_program.replace("# Bounded PDF text-object edit.", wrapper + "\n# Bounded PDF text-object edit.", 1)
+fallback = subprocess.run([sys.executable, "-c", fallback_program], input=payload,
+                          capture_output=True, timeout=30, check=False)
+assert fallback.returncode == 0, fallback.stdout.decode(errors="replace") + fallback.stderr.decode(errors="replace")
+assert b"selected-span stream fallback" in fallback.stderr
+assert PdfReader(io.BytesIO(fallback.stdout)).pages[0].extract_text() == "PrefixAlphaBetSuffix"
+assert text_object_colours(fallback.stdout) == text_object_colours(base64.b64decode(styled_source))
 # Expansion is deliberately refused for multi-object edits.
 payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBetaLong"})
 result = subprocess.run([sys.executable, "-c", program], input=payload, text=True,

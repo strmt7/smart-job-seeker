@@ -92,12 +92,17 @@ try:
         # stream edit is accepted only if every changed object maps uniquely;
         # otherwise retry with PDFium and retain the same post-edit checks.
         streamed = source
-        for (address, _), part in zip(groups, parts):
+        for position, ((address, selected), part) in enumerate(zip(groups, parts)):
             full = objects[address].extract()
             if full == part:
                 continue
+            prefix, suffix = edges[position]
+            end = len(part) - len(suffix) if suffix else len(part)
+            replacement = part[len(prefix):end]
             try:
                 candidate = edit_pdf_stream(PdfReader(io.BytesIO(streamed), strict=True), page_index, full, part)
+                if candidate is None:
+                    candidate = edit_pdf_stream(PdfReader(io.BytesIO(streamed), strict=True), page_index, selected, replacement)
             except (AttributeError, KeyError, TypeError, ValueError, NotImplementedError):
                 candidate = None
             if candidate is None:

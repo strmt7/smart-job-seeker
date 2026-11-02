@@ -2388,6 +2388,14 @@ All were refused by existing text or visual checks, so this does not establish
 that the new path works on that résumé or on arbitrary PDFs. The source and any
 derived material remain outside the repository; no application was sent.
 
+Follow-up diagnostics found that three shortening failures inserted an inferred
+space into extracted text. The stream path now also tries the selected span when
+the complete text object cannot be matched, while retaining the same final
+checks. A fictional test exercised that fallback and preserved text and colors.
+On the same public résumé, ten shortening attempts and three equal-width
+substitutions still failed the existing text, bounds or visual checks. No real
+edit was accepted; these results do not establish a general success rate.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the
