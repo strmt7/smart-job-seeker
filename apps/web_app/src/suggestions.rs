@@ -9,7 +9,7 @@ use waypoint_inference::Inference;
 
 pub const MAX_FIELDS: usize = 200;
 const MODEL_BATCH_FIELDS: usize = 20;
-const MAX_MAPPING_PROMPT: usize = 8_000;
+pub(crate) const MAX_MAPPING_PROMPT: usize = 8_000;
 const MAX_FIELD_BATCH_BYTES: usize = 6_000;
 const MAX_PROFILE_VALUE: usize = 2000;
 // Only these candidate-entered contact fields are eligible for mapping.
