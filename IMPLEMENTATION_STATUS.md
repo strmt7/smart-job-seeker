@@ -1,3 +1,7 @@
+## Document context feedback — 2026-11-02
+
+- Draft selection feedback now identifies whether job details, writing instructions, or template text were shortened, instead of combining them into an ambiguous warning. Fictional UI checks cover individual and combined omissions; the JavaScript syntax check passed. This does not increase the model's context or recover omitted material.
+
 ## Local choice-advice evaluation — 2026-11-02
 
 - A separate resource-gated Qwen 3.5 9B run passed six additional fictional choice cases: two instruction-only answers, two clear preferences, one undecided answer, and one preference followed by a conflicting instruction. The evaluated model was unloaded after the run; Windows web Clippy passed. This is a small fixed test set, not evidence of performance on arbitrary application questions.
