@@ -1158,6 +1158,14 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
             !label.trim().is_empty() && label.len() <= 500 && !label.chars().any(char::is_control)
         });
         let mut context = json!({"type":kind,"time":timestamp});
+        if matches!(kind, "page_capture_segment" | "page_capture_changed") {
+            if let Some(id) = value["capture_id"]
+                .as_str()
+                .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                context["capture_id"] = json!(id);
+            }
+        }
         if let Some(label) = label {
             context["field_label"] = json!(label);
         }
@@ -1191,6 +1199,53 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
         }
         // Later events may record that a previously captured page changed.
         contexts.insert(name.to_owned(), context);
+    }
+    // A screenshot segment is attributable to one capture, even when a later
+    // retry succeeds. A changed or interrupted capture must not look complete.
+    let mut captures = std::collections::HashMap::<String, &'static str>::new();
+    for line in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .take(5000)
+    {
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        let Some(id) = value["capture_id"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            continue;
+        };
+        match value["type"].as_str() {
+            Some("page_capture_started") => {
+                captures.entry(id.to_owned()).or_insert("incomplete");
+            }
+            Some("page_capture_changed") => {
+                captures.insert(id.to_owned(), "changed");
+            }
+            Some("page_capture") if captures.get(id) == Some(&"incomplete") => {
+                let outcome = match value["full_dimensions_captured"].as_bool() {
+                    Some(true) => "complete",
+                    Some(false) => "partial",
+                    None => "unknown",
+                };
+                captures.insert(id.to_owned(), outcome);
+            }
+            _ => {}
+        }
+    }
+    for context in contexts.values_mut() {
+        if let Some(id) = context["capture_id"].as_str() {
+            let outcome = captures.get(id).copied().unwrap_or("unknown");
+            context["capture_outcome"] = json!(if partial && outcome == "incomplete" {
+                "unknown"
+            } else {
+                outcome
+            });
+        } else if context["type"] == "page_capture_segment" {
+            context["capture_outcome"] = json!("unknown");
+        }
     }
     // Follow-up checks refer to the original task, and often have no screenshot.
     // Retain the latest recorded outcome without treating it as a current result.
@@ -2528,6 +2583,34 @@ mod tests {
         record.event(json!({"type":"page_capture_segment","time":124,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"page_capture_changed","time":125,"screenshot":"screenshots/0002.png"})).unwrap();
         record.event(json!({"type":"attachment_viewport","time":126,"field_label":"Resume","screenshot":"screenshots/0025.png"})).unwrap();
+        let failed_capture = "11111111111111111111111111111111";
+        let good_capture = "22222222222222222222222222222222";
+        let pending_capture = "33333333333333333333333333333333";
+        record
+            .event(json!({"type":"page_capture_started","capture_id":failed_capture}))
+            .unwrap();
+        record.event(json!({"type":"page_capture_segment","capture_id":failed_capture,"screenshot":"screenshots/0004.png"})).unwrap();
+        record
+            .event(json!({"type":"page_capture_changed","capture_id":failed_capture}))
+            .unwrap();
+        record
+            .event(json!({"type":"page_capture_started","capture_id":good_capture}))
+            .unwrap();
+        record.event(json!({"type":"page_capture_segment","capture_id":good_capture,"screenshot":"screenshots/0005.png"})).unwrap();
+        record
+            .event(json!({"type":"page_capture","capture_id":good_capture,"full_dimensions_captured":true}))
+            .unwrap();
+        record
+            .event(json!({"type":"page_capture_started","capture_id":pending_capture}))
+            .unwrap();
+        record.event(json!({"type":"page_capture_segment","capture_id":pending_capture,"screenshot":"screenshots/0006.png"})).unwrap();
+        let partial_capture = "44444444444444444444444444444444";
+        record
+            .event(json!({"type":"page_capture_started","capture_id":partial_capture}))
+            .unwrap();
+        record.event(json!({"type":"page_capture_segment","capture_id":partial_capture,"screenshot":"screenshots/0007.png"})).unwrap();
+        record.event(json!({"type":"page_capture","capture_id":partial_capture,"full_dimensions_captured":false})).unwrap();
+        record.event(json!({"type":"page_capture","capture_id":failed_capture,"full_dimensions_captured":true})).unwrap();
         let visual_id = "0123456789abcdef0123456789abcdef";
         let omitted_labels: Vec<_> = (0..22).map(|n| format!("Field {n}")).collect();
         record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png","coverage_complete":false,"comparisons_truncated":true,"omitted_labels":omitted_labels})).unwrap();
@@ -2543,6 +2626,13 @@ mod tests {
         )
         .unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
+        assert_eq!(first["contexts"]["0004.png"]["capture_outcome"], "changed");
+        assert_eq!(first["contexts"]["0005.png"]["capture_outcome"], "complete");
+        assert_eq!(
+            first["contexts"]["0006.png"]["capture_outcome"],
+            "incomplete"
+        );
+        assert_eq!(first["contexts"]["0007.png"]["capture_outcome"], "partial");
         assert_eq!(first["contexts"]["0003.png"]["visual_task_id"], visual_id);
         assert_eq!(first["contexts"]["0003.png"]["coverage_complete"], false);
         assert_eq!(first["contexts"]["0003.png"]["comparisons_truncated"], true);
