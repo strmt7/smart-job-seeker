@@ -927,6 +927,9 @@ fn build_preview(
                 && !is_custom_review(wall)
         });
     let mut manual_review = live.walls;
+    if blocked && !live.schema.fields.is_empty() {
+        manual_review.push("Field suggestions were not attempted because the page has a blocking inspection warning. Resolve the warning and inspect again.".into());
+    }
     if has_captcha && !blocked {
         manual_review.push("CAPTCHA integration detected. Suggestions are for review only; inspect the page again after resolving the obstacle before filling.".into());
     }
@@ -3532,6 +3535,10 @@ mod tests {
         mixed.walls.push("login required".into());
         let preview = suggest_without_model(mixed, &json!({"first_name":"A"}), "offline").unwrap();
         assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("suggestions were not attempted")));
     }
 
     #[test]

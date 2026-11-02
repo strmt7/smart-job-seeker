@@ -2742,16 +2742,15 @@ mod tests {
                                 .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
                         );
                         println!("review warnings: {:?}", preview.manual_review);
-                        let blocked_by_frame = preview.manual_review.iter().any(|reason| {
-                            reason == "An embedded frame may contain uninspected application content; review it manually"
+                        let mapping_blocked = preview.schema.fields.is_empty() || preview.manual_review.iter().any(|reason| {
+                            reason.starts_with("Field suggestions were not attempted because the page has a blocking inspection warning.")
                         });
-                        if blocked_by_frame && preview.suggestions.is_empty() {
-                            println!(
-                                "No mapping evaluation: no suggestions were returned with the uninspected frame warning."
-                            );
+                        if mapping_blocked {
+                            println!("No mapping evaluation: no fields or a blocking inspection warning prevented mapping.");
+                            assert!(preview.suggestions.is_empty());
                         }
                         if expected_model
-                            && !blocked_by_frame
+                            && !mapping_blocked
                             && !preview
                                 .manual_review
                                 .iter()
@@ -2808,7 +2807,7 @@ mod tests {
                             }
                         }
                         if expected_model
-                            && !blocked_by_frame
+                            && !mapping_blocked
                             && !preview
                                 .manual_review
                                 .iter()
@@ -2825,7 +2824,7 @@ mod tests {
                                 }
                             }
                         }
-                        if expected_preferred.is_some() && !blocked_by_frame {
+                        if expected_preferred.is_some() && !mapping_blocked {
                             assert!(
                                 preview.suggestions.iter().any(|mapping| preview
                                     .schema
