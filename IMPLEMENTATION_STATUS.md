@@ -2434,6 +2434,10 @@ when both its listing URL and application URL still match the current job.
 Previously the interface only allowed a direct listing URL, hiding those
 contacts. A mocked UI test covers the current route and rejects changed or
 missing route bindings; this does not verify recipient suitability.
+When the check starts directly at a board-provided application URL, its
+contacts are labeled as application-page contacts rather than listing
+contacts. A local browser worker test covers both starting routes and result
+replay; the board binding in that fixture is fictional.
 
 ### Post-fill form changes (2026-11-02)
 

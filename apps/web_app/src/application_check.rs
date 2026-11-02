@@ -558,6 +558,11 @@ pub fn start_bound(
     }
     let (sender, receiver) = mpsc::channel();
     let inspected_url = url.clone();
+    let initial_page_label = if route_binding.is_some() {
+        "application page"
+    } else {
+        "listing"
+    };
     std::thread::spawn(move || {
         let mut contacts = Vec::new();
         let result = (|| -> Result<(String, bool), String> {
@@ -590,7 +595,8 @@ pub fn start_bound(
             }
             let mut contact_inventories = Vec::new();
             if page.walls.is_empty() {
-                contact_inventories.push(("listing", capture_contact_inventory(&mut browser)));
+                contact_inventories
+                    .push((initial_page_label, capture_contact_inventory(&mut browser)));
             }
             ensure_inspected_page(&mut browser, &current)?;
             let mut followed = false;
@@ -2285,9 +2291,41 @@ mod tests {
         assert_eq!(contacts.len(), 2);
         assert!(contacts
             .iter()
+            .all(|contact| contact["observed_on"] == "listing"));
+        assert!(contacts
+            .iter()
             .any(|contact| contact["address"] == "careers@example.invalid"));
         acknowledge("fixture-email-worker").unwrap();
         assert_eq!(super::contacts("fixture-email-worker").unwrap(), contacts);
+        super::start_bound(
+            "fixture-email-route".into(),
+            "fictional-job".into(),
+            format!("http://127.0.0.1:{port}/application"),
+            false,
+            Some(("fixture".into(), "https://example.invalid/job".into())),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let (_, _, route_message, route_review) = loop {
+            if let Some(result) = poll("fixture-email-route").unwrap() {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        let route_contacts = super::contacts("fixture-email-route").unwrap();
+        assert_eq!(route_contacts.len(), 2);
+        assert!(route_contacts
+            .iter()
+            .all(|contact| contact["observed_on"] == "application page"));
+        assert!(
+            route_review && route_message.contains("The application page has 2 email contacts")
+        );
+        acknowledge("fixture-email-route").unwrap();
+        assert_eq!(
+            super::contacts("fixture-email-route").unwrap(),
+            route_contacts
+        );
         done.store(true, Ordering::Release);
         let requests = server.join().unwrap();
         assert!(review);
