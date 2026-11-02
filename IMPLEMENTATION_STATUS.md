@@ -2479,6 +2479,12 @@ The settings panel now reloads the saved path and reports when that file is
 missing, while leaving an in-progress edit untouched. A mocked UI test covers
 the edit race and a local app probe checked reporting before and after the
 linked converter path was removed. The path check does not execute LibreOffice.
+An isolated running-app check rendered this setup at 1,200 and 390 pixels,
+rejected an invalid path and saved a cleared setting at both sizes. The check
+found no page exceptions or horizontal overflow. Feedback and adjacent buttons
+were given additional spacing after visual review. The Browser plugin was not
+available; the check used local Playwright Core and Edge. This does not verify
+screen-reader behavior or a clean-host setup.
 
 ### Packaged PDF runtime check (2026-11-02)
 
