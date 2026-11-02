@@ -2063,22 +2063,44 @@ impl AttemptRecord {
         file.flush().map_err(|e| e.to_string())?;
         file.persist_noclobber(materials.join(&filename))
             .map_err(|e| e.to_string())?;
-        let mut manifest = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(materials.join("manifest.jsonl"))
-            .map_err(|e| format!("Material was saved but its manifest could not be opened: {e}"))?;
-        serde_json::to_writer(
-            &mut manifest,
-            &json!({"requested_name":name,"stored_name":filename,"bytes":bytes.len(),"sha256":waypoint_domain::sha256_hex(bytes)}),
-        )
-        .map_err(|e| format!("Material was saved but its manifest could not be written: {e}"))?;
-        manifest.write_all(b"\n").map_err(|e| {
-            format!("Material was saved but its manifest could not be written: {e}")
-        })?;
-        manifest.flush().map_err(|e| {
-            format!("Material was saved but its manifest could not be flushed: {e}")
-        })?;
+        let manifest_result = (|| -> Result<(), String> {
+            let mut manifest = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(materials.join("manifest.jsonl"))
+                .map_err(|e| {
+                    format!("Material was saved but its manifest could not be opened: {e}")
+                })?;
+            serde_json::to_writer(
+                &mut manifest,
+                &json!({"requested_name":name,"stored_name":filename,"bytes":bytes.len(),"sha256":waypoint_domain::sha256_hex(bytes)}),
+            )
+            .map_err(|e| format!("Material was saved but its manifest could not be written: {e}"))?;
+            manifest.write_all(b"\n").map_err(|e| {
+                format!("Material was saved but its manifest could not be written: {e}")
+            })?;
+            manifest.flush().map_err(|e| {
+                format!("Material was saved but its manifest could not be flushed: {e}")
+            })?;
+            Ok(())
+        })();
+        if let Err(error) = manifest_result {
+            // The material exists but its manifest entry may be missing or partial.
+            // Keep it for recovery and independently mark the attempt for review.
+            let timestamp = crate::now();
+            let event_error = self.event(json!({"type":"material_manifest_incomplete","time":timestamp,"stored_name":filename,"note":"Material was saved but its manifest entry could not be completed; inspect the archive."})).err();
+            let status_error = self.status("manual_review", timestamp).err();
+            let mut details = error;
+            if let Some(error) = event_error {
+                details.push_str(&format!("; archive event could not be saved: {error}"));
+            }
+            if let Some(error) = status_error {
+                details.push_str(&format!(
+                    "; attempt review status could not be saved: {error}"
+                ));
+            }
+            return Err(details);
+        }
         Ok(filename)
     }
 }
@@ -3264,6 +3286,52 @@ mod tests {
             waypoint_domain::sha256_hex(b"fictional pdf")
         );
         assert_eq!(entries[1]["requested_name"], unicode);
+    }
+
+    #[test]
+    fn manifest_failure_keeps_material_and_marks_attempt_for_review() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("materials")).unwrap();
+        fs::create_dir(dir.path().join("materials/manifest.jsonl")).unwrap();
+        fs::write(
+            dir.path().join("attempt.json"),
+            br#"{"status":"preparation_in_progress"}"#,
+        )
+        .unwrap();
+        let mut record = AttemptRecord {
+            dir: dir.path().to_path_buf(),
+            sequence: 0,
+        };
+        let error = record.material("resume.pdf", b"fictional PDF").unwrap_err();
+        assert!(error.contains("manifest"), "{error}");
+        assert_eq!(
+            fs::read(dir.path().join("materials/0001-resume.pdf")).unwrap(),
+            b"fictional PDF"
+        );
+        let metadata: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(metadata["status"], "manual_review");
+        let event: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("events.jsonl")).unwrap()).unwrap();
+        assert_eq!(event["type"], "material_manifest_incomplete");
+        assert_eq!(event["stored_name"], "0001-resume.pdf");
+        fs::remove_file(dir.path().join("events.jsonl")).unwrap();
+        fs::create_dir(dir.path().join("events.jsonl")).unwrap();
+        let error = record.material("second.pdf", b"second PDF").unwrap_err();
+        assert!(
+            error.contains("archive event could not be saved"),
+            "{error}"
+        );
+        let metadata: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(metadata["status"], "manual_review");
+        fs::remove_file(dir.path().join("attempt.json")).unwrap();
+        fs::create_dir(dir.path().join("attempt.json")).unwrap();
+        let error = record.material("third.pdf", b"third PDF").unwrap_err();
+        assert!(
+            error.contains("attempt review status could not be saved"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -2863,3 +2863,11 @@ Checkbox fills also check native browser validity before reporting success. A
 fictional browser fixture confirms that an unchecked required checkbox is
 reported invalid and that checking it succeeds. A rejected fill may already
 have changed the page and therefore still requires review.
+
+### Material archive recovery (2026-11-02)
+
+When a material is saved but its manifest entry cannot be completed, the attempt
+now retains the file, independently attempts to record the failure and mark the
+attempt for manual review, and reports any failure of those recovery writes.
+Focused tests cover manifest, event and status write failures as well as normal
+material preservation. A partially written manifest still requires inspection.
