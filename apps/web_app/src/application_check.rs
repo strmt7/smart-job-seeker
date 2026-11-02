@@ -65,6 +65,7 @@ fn navigation_failure(stage: &str, error: &waypoint_applications::driver::Driver
         .and_then(|text| text.parse::<u16>().ok())
         .filter(|code| (400..=599).contains(code));
     match status {
+        Some(code @ (404 | 410)) => format!("The {stage} returned HTTP {code}; it could not be inspected. The page may have moved or been removed; this does not establish whether the vacancy is closed."),
         Some(code) => format!("The {stage} returned HTTP {code}; it could not be inspected."),
         None => format!("The {stage} could not be opened or inspected."),
     }
@@ -902,19 +903,30 @@ mod tests {
         waypoint_net::resolve_public(&parsed).expect("public destination");
         {
             let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
-            let page = browser.open(&url).expect("read-only page inspection");
-            println!("Observed review reasons: {}", page.walls.len());
-            println!("Observed fields: {}", page.schema.fields.len());
-            let choices = browser
-                .page_custom_choices()
-                .expect("read-only choice inventory");
-            println!(
+            let page = match browser.open(&url) {
+                Ok(page) => Some(page),
+                Err(error) => {
+                    println!(
+                        "Initial inspection: {}",
+                        super::navigation_failure("listing page", &error)
+                    );
+                    None
+                }
+            };
+            if let Some(page) = page {
+                println!("Observed review reasons: {}", page.walls.len());
+                println!("Observed fields: {}", page.schema.fields.len());
+                let choices = browser
+                    .page_custom_choices()
+                    .expect("read-only choice inventory");
+                println!(
                 "Observed custom choices: {}; labels over 200 characters: {}; unlabelled: {}; incomplete: {}",
                 choices.choices.len(),
                 choices.choices.iter().filter(|c| c.label.chars().count() > 200).count(),
                 choices.choices.iter().filter(|c| c.label == "Unlabelled choice").count(),
                 choices.incomplete
             );
+            }
         }
         super::start("live-public-check".into(), "test-job".into(), url, false).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -928,6 +940,14 @@ mod tests {
         acknowledge("live-public-check").unwrap();
         println!("Application check: {result}; manual review: {review}");
         assert!(!result.is_empty());
+        if let Ok(status) = std::env::var("WAYPOINT_EXPECT_HTTP_STATUS") {
+            let status: u16 = status.parse().expect("numeric expected status");
+            assert!((400..=599).contains(&status));
+            assert!(
+                review && result.contains(&format!("HTTP {status}")),
+                "{result}"
+            );
+        }
     }
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
@@ -991,8 +1011,18 @@ mod tests {
                 "listing page",
                 &DriverError("The page returned HTTP 404; manual review is required".into())
             ),
-            "The listing page returned HTTP 404; it could not be inspected."
+            "The listing page returned HTTP 404; it could not be inspected. The page may have moved or been removed; this does not establish whether the vacancy is closed."
         );
+        let gone = super::navigation_failure(
+            "application page",
+            &DriverError("The page returned HTTP 410; manual review is required".into()),
+        );
+        assert!(gone.contains("HTTP 410") && gone.contains("does not establish"));
+        let blocked = super::navigation_failure(
+            "listing page",
+            &DriverError("The page returned HTTP 403; manual review is required".into()),
+        );
+        assert!(!blocked.contains("moved or been removed"));
         for error in [
             "The page returned HTTP 999; manual review is required",
             "The page returned HTTP 404; manual review is required token=secret",
@@ -1011,13 +1041,19 @@ mod tests {
     #[ignore = "starts a local browser against a fictional HTTP error page"]
     fn http_error_is_reported_as_a_reviewable_application_check() {
         use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
         let _guard = TASK_TEST_LOCK.lock().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
         let server = std::thread::spawn(move || {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while std::time::Instant::now() < deadline {
+            while !stop_server.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
@@ -1026,7 +1062,6 @@ mod tests {
                         let body = "<html><body><input name='email'></body></html>";
                         let response = format!("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                         let _ = stream.write_all(response.as_bytes());
-                        return;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(std::time::Duration::from_millis(25))
@@ -1053,6 +1088,7 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
+        stop.store(true, Ordering::Relaxed);
         server.join().unwrap();
         acknowledge("http-error-fixture").unwrap();
         assert!(review);
