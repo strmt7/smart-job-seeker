@@ -216,11 +216,11 @@ fn search_with_cancel(
         }
         attempted += batch.len();
         let (bounded_target, bounded_batch, prompt) = prepare_batch(target, batch);
-        target_text_shortened |= bounded_target.len() < target.len();
+        target_text_shortened |= bounded_target != target;
         candidate_texts_shortened += batch
             .iter()
             .zip(&bounded_batch)
-            .filter(|(original, bounded)| bounded.1.len() < original.1.len())
+            .filter(|(original, bounded)| bounded.1 != original.1)
             .count();
         match search_batch(model, &bounded_target, &bounded_batch, &prompt) {
             Ok(found) => {
@@ -237,7 +237,7 @@ fn search_with_cancel(
                         retried_candidates += 1;
                         let single = std::slice::from_ref(candidate);
                         let (target, items, prompt) = prepare_batch(target, single);
-                        target_text_shortened |= target.len() < bounded_target.len();
+                        target_text_shortened |= target != bounded_target;
                         match search_batch(model, &target, &items, &prompt) {
                             Ok(found) => {
                                 examined += 1;
@@ -444,6 +444,21 @@ mod tests {
         assert!(result.target_text_shortened);
         assert_eq!(result.candidate_texts_shortened, 3);
         assert_eq!(result.examined, 3);
+    }
+
+    #[test]
+    fn multilingual_overlap_is_reported_even_when_sample_bytes_grow() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let description = format!("{}{}", "😀".repeat(900), "a".repeat(901));
+        let first = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/a","title":"Research Scientist","employer":"Example Labs","description":description}), 1).unwrap();
+        crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/b","title":"Research Scientist","employer":"Example Labs"}), 1).unwrap();
+        let id = waypoint_domain::JobIdentityId::new(first["id"].as_str().unwrap()).unwrap();
+        let inputs = crate::duplicate_search_inputs(&ws, &id).unwrap();
+        assert_eq!(inputs.source_texts_shortened, 1);
+        let original = format!("{}{}", "😀".repeat(900), "a".repeat(901));
+        let sample = sample_listing(&original);
+        assert!(sample.len() > original.len());
+        assert_ne!(sample, original);
     }
 
     #[test]

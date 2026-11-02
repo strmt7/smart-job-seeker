@@ -20,6 +20,10 @@
 - Required-criteria coverage now treats missing or invalid listing-sampling, removed-criteria and criterion-limit metadata as incomplete. Current saved assessments recompute this coverage when read; the score itself is unchanged. This can make older assessments show incomplete coverage rather than supported. Fictional fit tests passed (76 passed, 41 ignored), as did Windows web Clippy. No live model or application was used.
 - Qualification-coverage reporting now treats missing or invalid selection-limit metadata as unavailable rather than assuming no facts were omitted. Direct all-facts selections are recognized separately and must have internally consistent counts. This can make older or incomplete saved assessments show coverage unavailable; it does not change their score or prove model judgments correct. Fictional coverage and saved-assessment checks passed. The first full web-suite run also exposed a stale GPU-startup test expectation from the bounded-offload change; that test now checks both sides of the current estimate. The rerun passed (621 passed, 344 ignored), and Windows web Clippy passed. No live model or external application was used.
 
+## Duplicate search — 2026-11-03
+
+- Duplicate-search coverage now detects sampled source text by content rather than byte length. Overlapping samples with multilingual characters can be longer in bytes than the original despite omitted content. Fictional duplicate-search tests passed (12 passed, 8 ignored), including this case; Windows web Clippy passed. This improves coverage reporting, not duplicate-matching accuracy. No live model or employer site was used.
+
 ## Form review — 2026-11-03
 
 - Required-field review now retains invalid or incorrectly typed proposed answers, including invalid dates, out-of-range text, and unavailable or blank multi-select choices. It is still a review of proposed values, not a live browser validity check. Form preview tests passed (27 passed, 42 ignored), as did Windows web Clippy; an initial test compile failed due to a missing test import and passed after correction. No browser or live model was run.

@@ -1499,7 +1499,7 @@ fn duplicate_search_inputs_scope(
             description
         );
         let short = duplicate_search::sample_listing(&full);
-        let shortened = short.len() < full.len();
+        let shortened = short != full;
         Ok((
             short,
             waypoint_domain::sha256_hex(full.as_bytes()),
