@@ -529,6 +529,23 @@ fn fit_assessment_digest(
     Ok((pool, listing, digest))
 }
 
+fn listing_observation(job: &waypoint_store::StoredJob, timestamp: i64) -> Value {
+    let observed = job
+        .last_seen
+        .as_deref()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    match waypoint_search::freshness(observed, timestamp, waypoint_workspace::STALE_AFTER_SECONDS) {
+        waypoint_search::Freshness::Fresh { age_seconds } => {
+            json!({"status":"recent","age_seconds":age_seconds})
+        }
+        waypoint_search::Freshness::Stale { age_seconds } => {
+            json!({"status":"old","age_seconds":age_seconds})
+        }
+        waypoint_search::Freshness::Unknown => json!({"status":"unknown"}),
+    }
+}
+
 fn fit_remote_status_text(status: Option<bool>) -> &'static str {
     match status {
         Some(true) => "Source indicates remote work; eligible locations are not established by this flag",
@@ -2114,16 +2131,17 @@ fn serve(
             None => json!({}),
         };
         let constraints = campaign_constraints(&profile)?;
+        let observed_now = now();
         let ranked = ws
-            .ranked(&constraints, &skills, now())
+            .ranked(&constraints, &skills, observed_now)
             .map_err(|e| e.to_string())?;
         let mut jobs: Vec<Value> = ranked.strict.iter().map(|row| {
             let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
-            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"unknown_constraints":row.unknown_constraints})
+            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"observation":listing_observation(&row.job, observed_now),"unknown_constraints":row.unknown_constraints})
         }).collect();
         jobs.extend(ranked.excluded.iter().map(|row| {
             let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
-            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"unknown_constraints":row.unknown_constraints,"excluded_reasons":row.reasons})
+            json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"observation":listing_observation(&row.job, observed_now),"unknown_constraints":row.unknown_constraints,"excluded_reasons":row.reasons})
         }));
         let routes = ws.job_application_routes().map_err(|e| e.to_string())?;
         for row in &mut jobs {
@@ -10369,6 +10387,26 @@ mod tests {
             assert!(facts.len() <= if kind == "cv" { 18 } else { 20 });
         }
     }
+    #[test]
+    fn listing_observation_preserves_unknown_and_age_boundaries() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut job = ws.job(&id).unwrap().unwrap();
+        job.last_seen = Some("100".into());
+        assert_eq!(
+            listing_observation(&job, 100 + waypoint_workspace::STALE_AFTER_SECONDS)["status"],
+            "recent"
+        );
+        assert_eq!(
+            listing_observation(&job, 101 + waypoint_workspace::STALE_AFTER_SECONDS)["status"],
+            "old"
+        );
+        assert_eq!(listing_observation(&job, 99)["status"], "unknown");
+        job.last_seen = None;
+        assert_eq!(listing_observation(&job, 100)["status"], "unknown");
+    }
+
     #[test]
     fn fit_listing_reports_remote_evidence_and_invalidates_changed_assessment() {
         let mut ws = Workspace::in_memory().unwrap();

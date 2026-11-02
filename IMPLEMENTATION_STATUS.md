@@ -1,3 +1,8 @@
+## Listing observation age — 2026-11-02
+
+- Job cards now show how long ago the listing was last recorded, recommend a refresh after the existing 72-hour threshold, and state that availability is unverified. Missing, invalid or future timestamps remain unknown. This timestamp can represent a saved observation rather than a fresh visit to the employer page; a recent record does not establish that a position is open, and an old one does not establish closure. Age is calculated when the job list refreshes.
+- Focused server boundary and interface tests passed, as did the Windows web build and lint. An isolated running app displayed the new message for a fictional manually added listing. No real job was checked or application submitted in this test.
+
 ## Attachments and custom choices — 2026-11-02
 
 - A separate fictional browser fixture cleared an uploaded file when the choice opened. The choice worker reported the action as opened but the attachment and prior-field checks as unsuccessful. Attachment failures now also save a specific manual-review reason when detected before an action or in its status result. A browser-backed status-endpoint test confirmed the saved reason. The interface now tells the user to close the review, inspect the form again and reattach documents; reinspection can lose unsaved site changes.

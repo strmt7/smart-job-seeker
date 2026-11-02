@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(item=>item.startsWith('function listingObservationText('));
+assert.ok(line);
+const text=vm.runInNewContext(`(${line})`);
+assert.match(text({status:'recent',age_seconds:10}),/less than an hour ago.*availability unverified/);
+assert.match(text({status:'old',age_seconds:259201}),/3 days ago.*refresh recommended.*availability unverified/);
+for(const value of [null,{}, {status:'recent',age_seconds:-1}, {status:'old',age_seconds:NaN}])assert.match(text(value),/time unknown/);
+console.log('Listing observation UI checks passed.');
