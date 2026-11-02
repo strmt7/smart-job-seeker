@@ -2054,9 +2054,9 @@ fn public_listing_navigation_probe() {
     println!("browser version: {}", driver.browser_version().unwrap());
     match driver.open(&url) {
         Ok(form) => println!(
-            "navigation succeeded; {} fields and {} review walls",
+            "navigation succeeded; {} fields; review walls: {:?}",
             form.schema.fields.len(),
-            form.walls.len()
+            form.walls
         ),
         Err(error) => panic!("navigation failed: {error}"),
     }

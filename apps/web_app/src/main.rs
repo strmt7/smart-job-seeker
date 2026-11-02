@@ -3161,6 +3161,19 @@ fn serve(
                         ws.mark_manual_review(&job_id, "Some listing details are missing or could not be verified against the page", now())
                             .map_err(|e| e.to_string())?;
                     }
+                    if job["extraction_warnings"]
+                        .as_array()
+                        .is_some_and(|warnings| {
+                            warnings.iter().any(|warning| {
+                                warning
+                                    .as_str()
+                                    .is_some_and(|text| text.contains("CAPTCHA"))
+                            })
+                        })
+                    {
+                        ws.mark_manual_review(&job_id, "The application page reports a CAPTCHA; handle it manually before applying", now())
+                            .map_err(|e| e.to_string())?;
+                    }
                     if matches!(
                         job["employer_audit"]["status"].as_str(),
                         Some("conflict" | "uncertain")
