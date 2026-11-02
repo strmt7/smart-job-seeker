@@ -28,6 +28,10 @@
 
 - Application checks now report when an automatically followed application link redirects to a different path on the same site, and mark same-site path redirects from either the listing or followed link for review. This does not prove role identity or prevent redirects. Focused application-check tests passed (20 passed, 22 ignored) and Windows web Clippy passed. An initial test compile failed due to missing test-scope qualification and passed after correction; no live employer or model was used.
 
+## Fit display for invalid ranges — 2026-11-03
+
+- Fit badges and the assessment headline now show an unavailable estimate when its score range is missing or inconsistent, rather than displaying an unqualified midpoint. The rubric-range line is suppressed in that case, avoiding a missing-range dereference. Focused JavaScript fixture checks and syntax validation passed; this was not inspected in the rendered app. The underlying scoring and saved data are unchanged.
+
 ## Fictional fit experience check — 2026-11-03
 
 - A new resource-gated `qwen3.5:9b` test assessed a fictional clinical role requiring three years against five years of unrelated retail work and six months of clinical experience. The production assessment retained the clinical duration as unknown, with a 0–100% range; it did not credit the unrelated years. This is one case and does not establish calibration or general semantic accuracy. One system memory sample during the test showed 13,360,504 KiB available; it is not a measured minimum. The test-owned model unloaded afterward, and Windows web Clippy passed. No employer or application was used.
