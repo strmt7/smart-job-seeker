@@ -6936,8 +6936,20 @@ fn serve(
                     .as_mut()
                     .filter(|s| Some(s.id.as_str()) == result["session_id"].as_str())
                     .ok_or("Form session expired")?;
-                let available =
-                    current.answer_drafts.contains_key(id) || current.answer_drafts.len() < 20;
+                // Checkbox evidence is advisory and cannot be attached as the
+                // provenance of a boolean answer. Do not consume a text-draft
+                // slot for it, particularly on forms with many checkboxes.
+                let checkbox_advice = result["selector"].as_str().is_some_and(|selector| {
+                    current.preview.schema.fields.iter().any(|field| {
+                        field.selector == selector
+                            && matches!(
+                                field.field_type,
+                                waypoint_applications::form_mapping::FormFieldType::Checkbox
+                            )
+                    })
+                });
+                let available = !checkbox_advice
+                    && (current.answer_drafts.contains_key(id) || current.answer_drafts.len() < 20);
                 if available {
                     current.answer_drafts.insert(
                         id.to_owned(),
@@ -13237,6 +13249,70 @@ mod tests {
                     .retain(|reason| reason != form_preview::CHANGED_INFORMATIONAL_PREVIEW);
                 assert!(check_answer_page(current).is_ok());
             }
+            {
+                let current = session.as_mut().unwrap();
+                let checkbox = answer_inputs(&ws, current, "#fixture-rust").unwrap();
+                assert!(
+                    checkbox.question.contains("checkbox question and option")
+                        || checkbox.question.contains("Checkbox question and option")
+                );
+                assert!(checkbox.question.contains("Rust"));
+                current
+                    .preview
+                    .model_review_selectors
+                    .insert("#fixture-rust".into());
+                assert!(answer_inputs(&ws, current, "#fixture-rust").is_err());
+                current
+                    .preview
+                    .model_review_selectors
+                    .remove("#fixture-rust");
+                answer_task::set_completed_fixture(
+                    "fixture-checkbox-advice",
+                    checkbox,
+                    json!({"text":"Review the qualification","sources":["Fictional research experience"]}),
+                );
+            }
+            let checkbox_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let checkbox_port = checkbox_listener.local_addr().unwrap().port();
+            let checkbox_body = json!({"task_id":"fixture-checkbox-advice"}).to_string();
+            let mut checkbox_client = TcpStream::connect(("127.0.0.1", checkbox_port)).unwrap();
+            write!(checkbox_client, "POST /api/form/answer-status HTTP/1.1\r\nHost: 127.0.0.1:{checkbox_port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{checkbox_body}", checkbox_body.len()).unwrap();
+            let (mut checkbox_server, _) = checkbox_listener.accept().unwrap();
+            serve(
+                &mut checkbox_server,
+                &mut ws,
+                &mut session,
+                "test-token",
+                checkbox_port,
+            )
+            .unwrap();
+            drop(checkbox_server);
+            let mut checkbox_response = String::new();
+            checkbox_client
+                .read_to_string(&mut checkbox_response)
+                .unwrap();
+            let checkbox_response: Value =
+                serde_json::from_str(checkbox_response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(checkbox_response["status"], "complete");
+            assert_eq!(checkbox_response["provenance_available"], false);
+            assert!(!session
+                .as_ref()
+                .unwrap()
+                .answer_drafts
+                .contains_key("fixture-checkbox-advice"));
+            assert_eq!(
+                checkbox_response["answer"]["sources"][0],
+                "Fictional research experience"
+            );
+            assert_eq!(
+                session
+                    .as_mut()
+                    .unwrap()
+                    .driver
+                    .read_attribute("#fixture-rust", "data-seen")
+                    .unwrap(),
+                None
+            );
             let input = answer_inputs(&ws, session.as_ref().unwrap(), "#candidate").unwrap();
             answer_task::set_completed_fixture(
                 "fixture-draft",
