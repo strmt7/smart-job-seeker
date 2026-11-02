@@ -1931,3 +1931,23 @@ completed batch history; simulated UI checks covered the link and rejected a
 non-HTTPS reference. This does not prove that the listings are duplicates or
 restore links omitted by older batches. Web Clippy passed; no live provider or
 application was contacted.
+
+### Employer instructions in form review (2026-11-02)
+
+A read-only inspection of a public Lever application found an instruction to
+answer a section without AI assistance. The browser exposed 19 fields; four
+text areas were already marked for manual review, but the instruction was not
+reliably present in each field label. Form inspection now scans up to 32,000
+bytes of page text for a small set of explicit no-AI phrases and adds an
+advisory to review the original instruction and its scope. Truncated or failed
+text checks are reported. This is a limited phrase heuristic over DOM text,
+which may include hidden content; it is neither a complete policy classifier
+nor an automatic determination of which questions are affected.
+
+The production inspection worker reported the advisory on that page in one
+read-only run; no fields were filled and no application was sent. A preceding
+robots-checked Crawl4AI 0.9.5+flitzzip.portable2 capture returned HTTP 200
+(native SHA-256 `3615ce867a5cd0a2a712f211ca7d9ac24ccc67011344622ad876c7cc54ec6ceb`;
+markdown SHA-256 `a9f4aa91f433e06ed52b0ef7bd291faaa806ca24fa354f160b4f1b5fd74f84cf`)
+for `https://jobs.lever.co/Nomagic/fafe0fa1-f6b8-4004-a869-cbe587325067/apply`.
+No local model was loaded. Focused form-task tests and web Clippy passed.

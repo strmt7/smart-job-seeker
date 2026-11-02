@@ -3678,6 +3678,14 @@ mod tests {
                 .unwrap();
             std::fs::write(path, png).unwrap();
         }
+        if std::env::var_os("WAYPOINT_EXPECT_NO_AI_NOTICE").is_some() {
+            let (text, truncated) = driver.page_text_bounded(32_000).unwrap();
+            println!(
+                "no_ai_instruction_detected={} text_truncated={truncated}",
+                crate::form_task::possible_no_ai_instruction(&text)
+            );
+            assert!(crate::form_task::possible_no_ai_instruction(&text));
+        }
         let choices = driver.page_custom_choices().unwrap();
         println!(
             "fields={} required={} sensitive={} custom_choices={} expanded={} incomplete_choices={} inventory_incomplete={}",
@@ -3690,6 +3698,16 @@ mod tests {
             choices.incomplete,
         );
         for field in &live.schema.fields {
+            if matches!(field.field_type, FormFieldType::TextArea) {
+                let normalized = field.label.to_lowercase();
+                println!(
+                    "text_area label_chars={} mentions_ai={} mentions_without_ai={} sensitive={}",
+                    field.label.chars().count(),
+                    normalized.contains("ai"),
+                    normalized.contains("without ai"),
+                    field.sensitive
+                );
+            }
             if field.label.to_lowercase().contains("phone") {
                 println!("phone field label={:?}, type={:?}, required={}, sensitive={}, autocomplete={:?}", field.label, field.field_type, field.required, field.sensitive, field.autocomplete);
             }

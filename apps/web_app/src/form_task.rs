@@ -6,6 +6,28 @@ use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_inference::OllamaInference;
 use waypoint_workspace::form_experience::ExperienceMatch;
 
+// A narrow advisory for explicit instructions in untrusted page text. This is
+// not a comprehensive policy classifier and DOM text may include hidden text.
+pub(crate) fn possible_no_ai_instruction(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let words: Vec<_> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let phrases: &[&[&str]] = &[
+        &["without", "ai"],
+        &["without", "artificial", "intelligence"],
+        &["without", "the", "use", "of", "ai"],
+        &["without", "the", "use", "of", "artificial", "intelligence"],
+        &["do", "not", "use", "ai"],
+        &["no", "ai", "assistance"],
+        &["no", "ai", "tools"],
+    ];
+    phrases
+        .iter()
+        .any(|phrase| words.windows(phrase.len()).any(|window| window == *phrase))
+}
+
 #[cfg(test)]
 pub(crate) struct CrossOriginFixture {
     pub url: String,
@@ -604,6 +626,18 @@ pub fn start(
             if let Some(warning) = navigation_warning {
                 preview.manual_review.push(warning);
             }
+            match driver.with_review_timeout(|browser| browser.page_text_bounded(32_000)) {
+                Ok((text, truncated)) => {
+                    if possible_no_ai_instruction(&text) {
+                        preview.manual_review.push("The page may ask candidates to answer without AI assistance. Read the original instructions and answer the affected questions yourself; this notice does not identify their scope.".into());
+                    }
+                    if truncated { preview.manual_review.push("Only part of the page text was checked for employer instructions; review the full page.".into()); }
+                }
+                Err(_) => preview.manual_review.push("Page text could not be checked for employer instructions; review the original page.".into()),
+            }
+            if driver.current_url().map_err(|e| e.to_string())? != observed_url {
+                return Err("The application changed while checking page instructions; inspect it again".into());
+            }
             Ok((driver, preview))
         }))
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
@@ -767,6 +801,70 @@ mod tests {
                     && wall.contains("Earlier field"))
         );
         assert!(form_preview::is_custom_review(&current.walls[0]));
+    }
+
+    #[test]
+    #[ignore = "read-only public application inspection; requires an explicitly supplied URL"]
+    fn live_public_form_reports_no_ai_instruction() {
+        let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").unwrap();
+        let parsed = url::Url::parse(&url).unwrap();
+        crate::form_links::check_job_and_destination(
+            crate::manual_job::source(parsed.host_str().unwrap()),
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        start(
+            "notice-check".into(),
+            JobIdentityId::new("fictional-notice-check").unwrap(),
+            url,
+            serde_json::json!({}),
+            Ok(None),
+            false,
+            (0, vec![]),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let finished = loop {
+            if let Some(result) = poll("notice-check").unwrap() {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let (driver, preview) = finished.result.unwrap();
+        assert!(
+            preview
+                .manual_review
+                .iter()
+                .any(|warning| warning.contains("without AI assistance")),
+            "{:?}",
+            preview.manual_review
+        );
+        assert!(driver.trace.iter().all(|item| !item.contains("typed")
+            && !item.contains("clicked")
+            && !item.contains("submitted")));
+        println!(
+            "read-only form fields={} advisory=true",
+            preview.schema.fields.len()
+        );
+    }
+
+    #[test]
+    fn no_ai_instruction_advisory_handles_word_boundaries() {
+        assert!(possible_no_ai_instruction(
+            "Please answer yourself, without AI assistance."
+        ));
+        assert!(possible_no_ai_instruction("Do not use AI tools."));
+        assert!(possible_no_ai_instruction(
+            "WITHOUT the use of artificial intelligence"
+        ));
+        assert!(!possible_no_ai_instruction(
+            "We use AI tools to review applications."
+        ));
+        assert!(!possible_no_ai_instruction(
+            "This role requires maintaining data pipelines."
+        ));
     }
 
     #[test]
