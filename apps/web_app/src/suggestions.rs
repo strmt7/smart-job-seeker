@@ -2574,8 +2574,11 @@ mod tests {
             let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
                 .unwrap()
                 .with_resident_context();
-            let mut llm =
-                crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                name.clone(),
+                crate::resident_model,
+            );
             let (mappings, warnings, _) = suggest_with_review(
                 &mut llm,
                 &schema,
@@ -2593,6 +2596,40 @@ mod tests {
                 && item.value == PacketValue::Text("10 Fictional Street".into())));
             assert!(split.iter().any(|item| item.field_selector == "#line2"
                 && item.value == PacketValue::Text("Apartment 6".into())));
+            for mapping in &split {
+                driver
+                    .execute(&waypoint_applications::form_mapping::BrowserCommand::Fill {
+                        selector: mapping.field_selector.clone(),
+                        value: mapping.value.clone(),
+                    })
+                    .unwrap();
+                if let PacketValue::Text(value) = &mapping.value {
+                    driver
+                        .verify_text_value(&mapping.field_selector, value)
+                        .unwrap();
+                }
+            }
+            let image = driver.screenshot_base64().unwrap();
+            let expected = vec![
+                ("Address line 1".into(), "10 Fictional Street".into()),
+                ("Address line 2".into(), "Wrong apartment".into()),
+                ("City".into(), "Example City".into()),
+            ];
+            let visual = crate::visual_review::analyze(
+                "127.0.0.1:11434".parse().unwrap(),
+                &name,
+                &image,
+                &expected,
+            )
+            .unwrap();
+            println!("Fictional address visual review: {visual}");
+            let comparisons = visual["comparisons"].as_array().unwrap();
+            assert!(comparisons
+                .iter()
+                .any(|item| item["label"] == "Address line 2"
+                    && item["status"] == "differs_from_transcription"));
+            let (page, _) = driver.page_text_bounded(2000).unwrap();
+            assert!(page.contains("NOT SUBMITTED"));
         });
     }
 

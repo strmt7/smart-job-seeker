@@ -1,6 +1,7 @@
-<!doctype html><html lang="en"><body><form>
+<!doctype html><html lang="en"><head><style>body{font:22px Arial,sans-serif;margin:36px}label{display:block;margin-top:14px}input{font:20px Arial,sans-serif;width:360px}</style></head><body><form onsubmit="document.getElementById('status').textContent='SUBMITTED';return false">
 <label for="line1">Address line 1</label><input id="line1" autocomplete="address-line1" required>
 <label for="line2">Address line 2</label><input id="line2" autocomplete="address-line2">
 <label for="city">City</label><input id="city" autocomplete="address-level2" required>
 <button type="submit">Submit</button>
+<output id="status">NOT SUBMITTED</output>
 </form></body></html>
