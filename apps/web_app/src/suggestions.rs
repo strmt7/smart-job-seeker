@@ -498,7 +498,7 @@ pub fn suggest_with_review(
                 FormFieldType::Email => "email",
                 FormFieldType::TextArea => "text_area",
                 FormFieldType::Text => "text",
-                FormFieldType::Number => "number",
+                FormFieldType::Number { .. } => "number",
                 FormFieldType::MultiSelect { .. } => "multi_select",
                 FormFieldType::Checkbox => "checkbox",
                 FormFieldType::File => "file",
@@ -567,7 +567,7 @@ pub fn suggest_with_review(
             matches!(
                 field.field_type,
                 FormFieldType::Text
-                    | FormFieldType::Number
+                    | FormFieldType::Number { .. }
                     | FormFieldType::Email
                     | FormFieldType::TextArea
                     | FormFieldType::Date

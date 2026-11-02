@@ -4640,6 +4640,18 @@ impl CdpDriver {
             if native_datalist && !walls.iter().any(|wall| wall == NATIVE_DATALIST_REVIEW) {
                 walls.push(NATIVE_DATALIST_REVIEW.into());
             }
+            if input_type == "number"
+                && ["min", "max", "step"].iter().any(|key| {
+                    control
+                        .attrs
+                        .get(*key)
+                        .is_some_and(|value| value.len() > 128)
+                })
+            {
+                walls.push(
+                    "numeric constraints exceed the inspection limit; review manually".into(),
+                );
+            }
             let field_type = match (control.tag.as_str(), input_type.as_str()) {
                 ("input", _) if native_datalist => FormFieldType::Select {
                     options: control.options.clone(),
@@ -4655,7 +4667,23 @@ impl CdpDriver {
                 (_, "select") => FormFieldType::Select {
                     options: control.options.clone(),
                 },
-                (_, "number") => FormFieldType::Number,
+                (_, "number") => FormFieldType::Number {
+                    min: control
+                        .attrs
+                        .get("min")
+                        .filter(|value| value.len() <= 128)
+                        .cloned(),
+                    max: control
+                        .attrs
+                        .get("max")
+                        .filter(|value| value.len() <= 128)
+                        .cloned(),
+                    step: control
+                        .attrs
+                        .get("step")
+                        .filter(|value| value.len() <= 128)
+                        .cloned(),
+                },
                 (_, "email") => FormFieldType::Email,
                 (_, "date") => FormFieldType::Date,
                 (_, "month") => FormFieldType::Month,

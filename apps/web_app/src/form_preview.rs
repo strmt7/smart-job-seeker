@@ -275,7 +275,7 @@ fn required_value_valid(
                     .count()
                     == 1
         }
-        (FormFieldType::Number, PacketValue::Text(value)) => {
+        (FormFieldType::Number { .. }, PacketValue::Text(value)) => {
             waypoint_applications::form_mapping::valid_number(value)
         }
         (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
@@ -410,7 +410,7 @@ fn check_existing_value(
             }
             (
                 FormFieldType::Text
-                | FormFieldType::Number
+                | FormFieldType::Number { .. }
                 | FormFieldType::Email
                 | FormFieldType::TextArea,
                 PacketValue::Text(_),
@@ -454,7 +454,7 @@ fn check_existing_value(
     match (&field.field_type, value) {
         (
             FormFieldType::Text
-            | FormFieldType::Number
+            | FormFieldType::Number { .. }
             | FormFieldType::Email
             | FormFieldType::TextArea,
             PacketValue::Text(text),
@@ -597,7 +597,7 @@ pub fn apply_reviewed_text_fields_with_replacements(
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
         let valid = match (&field.field_type, &mapping.value) {
-            (FormFieldType::Number, PacketValue::Text(value)) => {
+            (FormFieldType::Number { .. }, PacketValue::Text(value)) => {
                 waypoint_applications::form_mapping::valid_number(value)
             }
             (
@@ -877,7 +877,7 @@ pub fn verify_filled_field(
     let checked = match (&field.field_type, &mapping.value) {
         (
             FormFieldType::Text
-            | FormFieldType::Number
+            | FormFieldType::Number { .. }
             | FormFieldType::Email
             | FormFieldType::TextArea,
             PacketValue::Text(value),
@@ -1051,7 +1051,7 @@ fn build_preview(
             if matches!(
                 field.field_type,
                 FormFieldType::Text
-                    | FormFieldType::Number
+                    | FormFieldType::Number { .. }
                     | FormFieldType::Email
                     | FormFieldType::TextArea
             ) && !waypoint_applications::form_mapping::text_fits_field(field, text)
@@ -4425,6 +4425,89 @@ mod tests {
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
             && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser on a fictional numeric form"]
+    fn changed_numeric_constraints_invalidate_review_before_filling() {
+        use waypoint_domain::GrantId;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_number_constraints.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(live, &json!({}), "offline").unwrap();
+        let (preview, _) = crate::prepare_reviewed_fill(
+            &preview,
+            &json!({"selectors":[],"answers":[{"selector":"#years","value":"5"}]}),
+        )
+        .unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("number-constraint-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("number-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let mut grant = ApprovalGrant {
+            id: GrantId::new("number-grant").unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&preview.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+            destination_origin: preview.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#change-max".into(),
+            })
+            .unwrap();
+        let mut completed = Vec::new();
+        let error = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("Form changed"), "{error}");
+        assert!(!grant.consumed);
+        assert!(completed.is_empty());
+        driver.verify_text_value("#years", "3").unwrap();
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     #[test]

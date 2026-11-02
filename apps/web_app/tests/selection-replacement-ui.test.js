@@ -9,7 +9,8 @@ function node(tag,text=''){return {tag,textContent:text,style:{},children:[],val
 (async()=>{
  let pending;const panel=node('panel'), approvals=new Map(), desired=new Map([['#choice','Beta'],['#text','New answer'],['#multi','["Beta"]'],['#check','false']]);
  const ctx={result:{session_id:'session',fields:[{selector:'#choice',label:'Work arrangement',sensitive:false,field_type:{select:{options:['Alpha','Beta']}}},{selector:'#text',label:'Notes',sensitive:false,field_type:'text_area'},{selector:'#multi',label:'Skills',sensitive:false,field_type:{multi_select:{options:['Alpha','Beta']}}},{selector:'#check',label:'Travel',sensitive:false,field_type:'checkbox'}]},panel,replacementApprovals:approvals,desiredSelection:s=>desired.get(s)||'',document:{createElement:node,createTextNode:text=>node('text',text)},element:node,Option:function(text,value){this.textContent=text;this.value=value;},notify(){},api:()=>new Promise(resolve=>{pending=resolve;})};
- vm.runInNewContext(source.slice(start,end),ctx);
+ const numberHelper=source.split('\n').find(line=>line.startsWith('function isNumberField('));
+ vm.runInNewContext(`${numberHelper}\n${source.slice(start,end)}`,ctx);
  const details=panel.children[0],pick=details.children.find(x=>x.tag==='select'),inspect=details.children.find(x=>x.textContent==='Inspect current answer'),message=details.children.find(x=>x.textContent.startsWith('Choose a field')),ack=details.children.find(x=>x.tag==='label').children[0],status=details.children.find(x=>x.textContent==='No replacements approved.');
  pick.value='#choice';const request=inspect.click();pending({selection:{label:'Alpha',value:'a'},digest:'a'.repeat(64)});await request;
  assert.match(message.textContent,/Work arrangement: review/);assert.match(details.children.find(x=>x.tag==='pre').textContent,/Current value:\nAlpha/);assert.equal(ack.disabled,false);

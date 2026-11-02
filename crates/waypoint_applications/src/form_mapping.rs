@@ -12,18 +12,28 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum FormFieldType {
     Text,
-    Number,
+    Number {
+        min: Option<String>,
+        max: Option<String>,
+        step: Option<String>,
+    },
     Email,
     TextArea,
-    Select { options: Vec<String> },
-    MultiSelect { options: Vec<String> },
+    Select {
+        options: Vec<String>,
+    },
+    MultiSelect {
+        options: Vec<String>,
+    },
     Checkbox,
     File,
     Date,
     Month,
     Time,
     DateTimeLocal,
-    Radio { options: Vec<String> },
+    Radio {
+        options: Vec<String>,
+    },
 }
 
 /// Distinguish editing hosts from native text controls for review and binding.
@@ -268,7 +278,7 @@ pub fn validate_mapping(
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                 PacketValue::Text(text),
             ) => text_fits_field(f, text),
-            (FormFieldType::Number, PacketValue::Text(value)) => valid_number(value),
+            (FormFieldType::Number { .. }, PacketValue::Text(value)) => valid_number(value),
             (FormFieldType::Date, PacketValue::Date(date)) => valid_iso_date(date),
             (FormFieldType::Month, PacketValue::Date(date)) => valid_iso_month(date),
             (FormFieldType::Time, PacketValue::Date(time)) => valid_iso_time(time),

@@ -4949,8 +4949,18 @@ fn numeric_constraints_are_checked_before_changing_the_field() {
         .unwrap();
     assert!(live.schema.fields.iter().all(|field| matches!(
         field.field_type,
-        waypoint_applications::form_mapping::FormFieldType::Number
+        waypoint_applications::form_mapping::FormFieldType::Number { .. }
     )));
+    let years = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#years")
+        .unwrap();
+    assert!(
+        matches!(&years.field_type, waypoint_applications::form_mapping::FormFieldType::Number { min: Some(min), max: Some(max), step: Some(step) } if min == "1" && max == "9" && step == "2")
+    );
+    let original_schema = live.schema.schema_hash_input();
     let fill = |selector: &str, value: &str| BrowserCommand::Fill {
         selector: selector.into(),
         value: PacketValue::Text(value.into()),
@@ -4963,6 +4973,22 @@ fn numeric_constraints_are_checked_before_changing_the_field() {
     assert_eq!(driver.text_value_snapshot("#changing").unwrap().value, "3");
     driver.execute(&fill("#years", "5")).unwrap();
     driver.verify_text_value("#years", "5").unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#change-max".into(),
+        })
+        .unwrap();
+    let changed = driver.inspect_current().unwrap();
+    assert_ne!(changed.schema.schema_hash_input(), original_schema);
+    let changed_years = changed
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.selector == "#years")
+        .unwrap();
+    assert!(
+        matches!(&changed_years.field_type, waypoint_applications::form_mapping::FormFieldType::Number { max: Some(max), .. } if max == "10")
+    );
     assert!(driver
         .trace
         .iter()

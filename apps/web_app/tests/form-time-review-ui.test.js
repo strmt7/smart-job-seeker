@@ -5,6 +5,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const render = source.split('\n').find(line => line.includes('const selections=[],manualAnswers=[]'));
 const payload = source.split('\n').find(line => line.startsWith('function formAnswerPayload('));
+const numberHelpers = source.split('\n').filter(line=>line.startsWith('function isNumberField(')||line.startsWith('function attachNumberConstraints(')).join('\n');
 assert.ok(render && payload);
 
 function node(tag, text = '') {
@@ -21,7 +22,7 @@ const context = {
   formPatternNotice: () => '', formEditorNotice: () => '', attachFormLengthCounter: () => {}, state: {profile:{}}, profileValuePicker: () => null,
 };
 vm.createContext(context);
-vm.runInContext(`${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`, context);
+vm.runInContext(`${numberHelpers}\n${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`, context);
 assert.equal(context.testAnswers.length, 1);
 const answer = context.testAnswers[0];
 assert.equal(answer.input.type, 'time');
@@ -37,12 +38,12 @@ for (const [kind, value] of [['date', '2026-11-01'], ['month', '2026-11'], ['tim
     attachFormLengthCounter: () => {}, preselectFormSuggestion: () => true, state: {profile:{}}, profileValuePicker: () => null,
   };
   vm.createContext(mapped);
-  vm.runInContext(`${render}\nglobalThis.testSelections=selections;`, mapped);
+  vm.runInContext(`${numberHelpers}\n${render}\nglobalThis.testSelections=selections;`, mapped);
   assert.equal(mapped.testSelections.length, 1);
   assert.equal(mapped.testSelections[0].input.type, kind==='date_time_local'?'datetime-local':kind);
   assert.equal(mapped.testSelections[0].input.value, value);
   assert.equal(mapped.testSelections[0].original, value);
 }
-const local={panel:node('div'),result:{fields:[{selector:'#dt',label:'Appointment',field_type:'date_time_local',required:true,sensitive:false}],suggestions:[]},document:{createElement:tag=>node(tag)},element:(tag,text)=>node(tag,text),formPatternNotice:()=>'',formEditorNotice:()=>'',attachFormLengthCounter:()=>{},state:{profile:{}},profileValuePicker:()=>null};vm.createContext(local);vm.runInContext(`${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`,local);assert.equal(local.testAnswers[0].input.type,'datetime-local');local.testAnswers[0].input.value='2026-11-01T13:30';assert.equal(JSON.stringify(local.formAnswerPayload(local.testAnswers[0])),JSON.stringify({selector:'#dt',value:'2026-11-01T13:30'}));
-const numeric={panel:node('div'),result:{fields:[{selector:'#years',label:'Years of experience',field_type:'number',required:true,sensitive:false}],suggestions:[]},document:{createElement:tag=>node(tag)},element:(tag,text)=>node(tag,text),formPatternNotice:()=>'',formEditorNotice:()=>'',attachFormLengthCounter:()=>{},state:{profile:{}},profileValuePicker:()=>null};vm.createContext(numeric);vm.runInContext(`${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`,numeric);assert.equal(numeric.testAnswers.length,1);assert.equal(numeric.testAnswers[0].input.type,'number');assert.equal(numeric.testAnswers[0].input.step,'any');numeric.testAnswers[0].input.value='2.5';assert.equal(JSON.stringify(numeric.formAnswerPayload(numeric.testAnswers[0])),JSON.stringify({selector:'#years',value:'2.5'}));assert.ok(numeric.panel.children.some(child=>child.textContent==='Draft answer with local AI'));
+const local={panel:node('div'),result:{fields:[{selector:'#dt',label:'Appointment',field_type:'date_time_local',required:true,sensitive:false}],suggestions:[]},document:{createElement:tag=>node(tag)},element:(tag,text)=>node(tag,text),formPatternNotice:()=>'',formEditorNotice:()=>'',attachFormLengthCounter:()=>{},state:{profile:{}},profileValuePicker:()=>null};vm.createContext(local);vm.runInContext(`${numberHelpers}\n${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`,local);assert.equal(local.testAnswers[0].input.type,'datetime-local');local.testAnswers[0].input.value='2026-11-01T13:30';assert.equal(JSON.stringify(local.formAnswerPayload(local.testAnswers[0])),JSON.stringify({selector:'#dt',value:'2026-11-01T13:30'}));
+const numeric={panel:node('div'),result:{fields:[{selector:'#years',label:'Years of experience',field_type:{number:{min:'0',max:'10',step:'1'}},required:true,sensitive:false}],suggestions:[]},document:{createElement:tag=>node(tag)},element:(tag,text)=>node(tag,text),formPatternNotice:()=>'',formEditorNotice:()=>'',attachFormLengthCounter:()=>{},state:{profile:{}},profileValuePicker:()=>null};vm.createContext(numeric);vm.runInContext(`${numberHelpers}\n${payload}\n${render}\nglobalThis.testAnswers=manualAnswers;`,numeric);assert.equal(numeric.testAnswers.length,1);assert.equal(numeric.testAnswers[0].input.type,'number');assert.equal(numeric.testAnswers[0].input.step,'any');assert.match(numeric.panel.children.flatMap(x=>x.children||[]).map(x=>x.textContent).join(' '),/minimum: 0.*maximum: 10.*increment: 1/);numeric.testAnswers[0].input.value='2.5';assert.equal(JSON.stringify(numeric.formAnswerPayload(numeric.testAnswers[0])),JSON.stringify({selector:'#years',value:'2.5'}));assert.ok(numeric.panel.children.some(child=>child.textContent==='Draft answer with local AI'));
 console.log('Reviewed date and time input UI checks passed.');

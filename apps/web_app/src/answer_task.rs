@@ -1923,7 +1923,10 @@ mod tests {
             let url = url::Url::from_file_path(fixture).unwrap().to_string();
             let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
             let live = driver.open(&url).unwrap();
-            assert_eq!(live.schema.fields[0].field_type, FormFieldType::Number);
+            assert!(matches!(
+                live.schema.fields[0].field_type,
+                FormFieldType::Number { .. }
+            ));
             let preview =
                 crate::form_preview::suggest_without_model(live, &json!({}), "offline").unwrap();
             let (preview, _) = crate::prepare_reviewed_fill(
