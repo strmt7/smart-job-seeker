@@ -2336,6 +2336,24 @@ The second run asserted those mappings. This checks one form and profile, not
 general mapping accuracy, actual filling, visual verification or submission.
 No applicant data was entered and the model was unloaded afterward.
 
+### Phone country-picker review (2026-11-02)
+
+The live form's phone field has a separate country-picker button. The previous
+mapping test confirmed only that the proposed text matched the fictional
+profile; it did not establish that the site's selected country and number would
+combine correctly. When a proposed international number accompanies a recognized
+phone-country control, Waypoint now withholds that mapping and requires manual
+handling. An incomplete control inventory also requires review. The check runs
+on initial inspection, rescan and immediately before reviewed filling; it does
+not infer a country or number format. Its English-label and autocomplete cues
+do not cover every language or widget.
+
+On one repeat of the same public form with the fictional profile and local
+model, three name/email suggestions remained and the phone field was marked for
+manual review. No field was filled, no application was sent, and the model was
+unloaded. Focused fictional tests cover the recognized control, unrelated
+controls and incomplete inspection; this does not prove detection on all forms.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and

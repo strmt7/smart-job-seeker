@@ -20,6 +20,101 @@ pub struct FormPreview {
     pub model_review_selectors: std::collections::HashSet<String>,
 }
 
+/// A separate country picker can make an international number ambiguous.
+/// Do not guess the selected country or how the site's widget combines values.
+pub(crate) fn guard_international_phone_picker(
+    preview: &mut FormPreview,
+    inventory: Result<waypoint_browser::PageControls, waypoint_applications::driver::DriverError>,
+) -> bool {
+    let phone_selectors: Vec<String> = preview
+        .suggestions
+        .iter()
+        .filter_map(|mapping| {
+            let PacketValue::Text(value) = &mapping.value else {
+                return None;
+            };
+            if !value.trim_start().starts_with('+') {
+                return None;
+            }
+            let field = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == mapping.field_selector)?;
+            let label: String = field
+                .label
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect();
+            let telephone_hint = field.autocomplete.as_deref().is_some_and(|hint| {
+                hint.split_ascii_whitespace()
+                    .last()
+                    .is_some_and(|token| token.eq_ignore_ascii_case("tel"))
+            });
+            if telephone_hint
+                || [
+                    "phone",
+                    "phonenumber",
+                    "telephone",
+                    "telephonenumber",
+                    "mobile",
+                    "mobilenumber",
+                ]
+                .iter()
+                .any(|suffix| label.ends_with(suffix))
+            {
+                Some(field.selector.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if phone_selectors.is_empty() {
+        return false;
+    }
+    let (needs_review, unknown) = match inventory {
+        Ok(controls) => {
+            let picker = controls.controls.iter().any(|control| {
+                let lower = control.label.to_lowercase();
+                let words: Vec<_> = lower
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|word| !word.is_empty())
+                    .collect();
+                words
+                    .iter()
+                    .any(|word| matches!(*word, "phone" | "telephone" | "mobile"))
+                    && words.iter().any(|word| {
+                        matches!(
+                            *word,
+                            "country" | "calling" | "dial" | "dialing" | "dialling"
+                        )
+                    })
+            });
+            (
+                picker || controls.incomplete,
+                controls.incomplete && !picker,
+            )
+        }
+        Err(_) => (true, true),
+    };
+    if !needs_review {
+        return false;
+    }
+    for selector in &phone_selectors {
+        preview.model_review_selectors.insert(selector.clone());
+    }
+    preview
+        .suggestions
+        .retain(|mapping| !phone_selectors.contains(&mapping.field_selector));
+    preview.manual_review.push(if unknown {
+        "The phone-country controls could not be fully inspected. Check the selected country and enter the phone number manually.".into()
+    } else {
+        "A separate phone-country control is present. Check its selected country and enter the phone number manually; do not assume the widget accepts a full international number.".into()
+    });
+    true
+}
+
 impl FormPreview {
     pub fn repeated_label_selectors(&self) -> Vec<String> {
         self.schema
@@ -966,6 +1061,79 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn international_phone_picker_requires_manual_review_without_affecting_other_fields() {
+        let field = |selector: &str, label: &str, hint: Option<&str>| {
+            waypoint_applications::form_mapping::FormField {
+                selector: selector.into(),
+                label: label.into(),
+                field_type: FormFieldType::Text,
+                required: false,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: None,
+                min_length_utf16: None,
+                pattern: None,
+                autocomplete: hint.map(str::to_owned),
+            }
+        };
+        let preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![
+                    field("#phone", "Phone", Some("tel")),
+                    field("#name", "Name", None),
+                ],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#phone".into(),
+                    value: PacketValue::Text("+12025550123".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#name".into(),
+                    value: PacketValue::Text("Avery".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let controls = |label: &str, incomplete: bool| waypoint_browser::PageControls {
+            controls: vec![waypoint_browser::PageControl {
+                label: label.into(),
+                disabled: false,
+                selector: "#country".into(),
+            }],
+            incomplete,
+        };
+        let mut selected = preview.clone();
+        assert!(guard_international_phone_picker(
+            &mut selected,
+            Ok(controls(
+                "Change country for phone number, currently selected Example (+41)",
+                false
+            ))
+        ));
+        assert!(selected.model_review_selectors.contains("#phone"));
+        assert_eq!(selected.suggestions.len(), 1);
+        assert_eq!(selected.suggestions[0].field_selector, "#name");
+        assert!(!selected.manual_review[0].contains("Example"));
+        let mut unrelated = preview.clone();
+        assert!(!guard_international_phone_picker(
+            &mut unrelated,
+            Ok(controls("Country of residence", false))
+        ));
+        assert_eq!(unrelated.suggestions.len(), 2);
+        let mut incomplete = preview;
+        assert!(guard_international_phone_picker(
+            &mut incomplete,
+            Ok(controls("Other", true))
+        ));
+        assert!(incomplete.manual_review[0].contains("could not be fully inspected"));
+    }
 
     #[test]
     fn source_route_prefill_rechecks_binding_before_writing() {

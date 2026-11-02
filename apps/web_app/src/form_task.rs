@@ -686,6 +686,10 @@ pub fn start_bound(
             if merge_final_inspection(&mut preview, &fresh, &profile, &initial_walls)? {
                 used_revisions.clear();
             }
+            if preview.suggestions.iter().any(|mapping| matches!(&mapping.value, waypoint_applications::form_mapping::PacketValue::Text(value) if value.trim_start().starts_with('+'))) {
+                let controls = driver.page_controls();
+                form_preview::guard_international_phone_picker(&mut preview, controls);
+            }
             if let Some(warning) = navigation_warning {
                 preview.manual_review.push(warning);
             }
@@ -3075,7 +3079,6 @@ mod tests {
                 ("First name", "Avery"),
                 ("Last name", "Example"),
                 ("Email", "avery@example.invalid"),
-                ("Phone", "+12025550123"),
             ];
             assert_eq!(session.preview.suggestions.len(), expected.len());
             for mapping in &session.preview.suggestions {
@@ -3117,6 +3120,22 @@ mod tests {
                     "missing or duplicate fictional mapping for {label}"
                 );
             }
+            let phone = session
+                .preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.label == "Phone")
+                .expect("phone field");
+            assert!(session
+                .preview
+                .model_review_selectors
+                .contains(&phone.selector));
+            assert!(session
+                .preview
+                .manual_review
+                .iter()
+                .any(|reason| reason.contains("phone-country control")));
         }
         assert!(session.preview.schema.fields.len() > initial_count);
         assert!(!session
