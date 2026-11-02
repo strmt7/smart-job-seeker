@@ -10,6 +10,7 @@ pub struct Inputs {
     pub digest: String,
     pub truncated: bool,
     pub source_texts_shortened: usize,
+    pub all_jobs: bool,
     pub page_after: Option<String>,
     pub next_cursor: Option<String>,
 }
@@ -117,7 +118,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     );
     Ok(match result {
         Ok(result) => {
-            json!({"status":"complete","job_id":job,"digest":digest,"page_after":task.input.page_after,"next_cursor":task.input.next_cursor,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"truncated":truncated,"source_texts_shortened":task.input.source_texts_shortened,"target_text_shortened":result.target_text_shortened,"candidate_texts_shortened":result.candidate_texts_shortened,"retried_candidates":result.retried_candidates,"matches":result.matches})
+            json!({"status":"complete","job_id":job,"digest":digest,"all_jobs":task.input.all_jobs,"page_after":task.input.page_after,"next_cursor":task.input.next_cursor,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"truncated":truncated,"source_texts_shortened":task.input.source_texts_shortened,"target_text_shortened":result.target_text_shortened,"candidate_texts_shortened":result.candidate_texts_shortened,"retried_candidates":result.retried_candidates,"matches":result.matches})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
@@ -393,6 +394,35 @@ mod tests {
         assert_ne!(a.digest, b.digest);
         assert_eq!(a.source_texts_shortened, 1);
     }
+
+    #[test]
+    fn all_jobs_scan_includes_different_employers_and_is_paginated() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let target = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/target-global","title":"Platform Engineer","employer":"Example Holdings"}), 1).unwrap();
+        for index in 0..15 {
+            crate::manual_job::add(&mut ws, &json!({"url":format!("https://example.org/other-global-{index}"),"title":"Platform Engineer","employer":"Unrelated Name"}), 1).unwrap();
+        }
+        let id = waypoint_domain::JobIdentityId::new(target["id"].as_str().unwrap()).unwrap();
+        let first = crate::duplicate_search_inputs_scope(&ws, &id, Some(""), true).unwrap();
+        assert!(first.all_jobs);
+        assert_eq!(first.candidates.len(), 12);
+        let second =
+            crate::duplicate_search_inputs_scope(&ws, &id, first.next_cursor.as_deref(), true)
+                .unwrap();
+        assert_eq!(second.candidates.len(), 3);
+        assert!(second.next_cursor.is_none());
+        assert!(first
+            .candidates
+            .iter()
+            .all(|(id, _)| second.candidates.iter().all(|(other, _)| id != other)));
+        assert!(first
+            .candidates
+            .iter()
+            .all(|(_, text)| text.contains("Unrelated Name")));
+        let related = crate::duplicate_search_inputs_scope(&ws, &id, Some(""), false).unwrap();
+        assert!(related.candidates.is_empty());
+        assert_ne!(first.digest, related.digest);
+    }
     #[test]
     fn paged_search_inputs_bind_cursor_and_do_not_repeat_candidates() {
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
@@ -578,6 +608,60 @@ mod tests {
     }
 
     #[test]
+    fn all_jobs_status_rechecks_the_same_scope_before_saving() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let first = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/global-a","title":"Engineer","employer":"Alpha"}),
+            1,
+        )
+        .unwrap();
+        let second = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/global-b","title":"Developer","employer":"Beta"}),
+            1,
+        )
+        .unwrap();
+        let id = waypoint_domain::JobIdentityId::new(first["id"].as_str().unwrap()).unwrap();
+        let input = crate::duplicate_search_inputs_scope(&ws, &id, Some(""), true).unwrap();
+        assert_eq!(input.candidates.len(), 1);
+        *TASK.lock().unwrap() = Some(Task {
+            id: "global-fixture".into(),
+            input,
+            result: Some(Ok(SearchResult {
+                matches: vec![
+                    json!({"id":second["id"],"reason":"Possible duplicate","target_excerpt":"Engineer","candidate_excerpt":"Developer"}),
+                ],
+                examined: 1,
+                failed_batches: 0,
+                unexamined: 0,
+                target_text_shortened: false,
+                candidate_texts_shortened: 0,
+                retried_candidates: 0,
+            })),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = json!({"task_id":"global-fixture"}).to_string();
+        write!(client, "POST /api/duplicates/search-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let value: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(value["all_jobs"], true);
+        assert_eq!(value["added"], 1);
+        assert!(ws.has_duplicate_hold(&id).unwrap());
+        *COMPLETED.lock().unwrap() = None;
+    }
+
+    #[test]
     fn partial_batches_preserve_valid_matches_and_report_unexamined_candidates() {
         struct Sequence(std::collections::VecDeque<Result<Value, InferenceError>>);
         impl Inference for Sequence {
@@ -692,6 +776,39 @@ mod tests {
         crate::experience_inference::tests::with_resource_gated_model(
             live_duplicate_search_checks_ranked_crowded_employer,
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local-model comparison across fictional employers"]
+    fn resource_gated_all_jobs_scan_checks_recruiter_listing() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+            let target = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/direct-role","title":"Senior Data Analyst","employer":"Northstar Analytics","location":"Berlin","description":"Analyze laboratory datasets using Python and build dashboards."}), 1).unwrap();
+            let recruiter = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/recruiter-role","title":"Senior Analytics Specialist","employer":"Harbor Talent Agency","location":"Berlin","description":"Harbor Talent Agency is recruiting for Northstar Analytics. Analyze laboratory datasets using Python and build dashboards."}), 1).unwrap();
+            crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/unrelated-role","title":"Accountant","employer":"Other Company","location":"Munich","description":"Prepare financial statements."}), 1).unwrap();
+            let id = waypoint_domain::JobIdentityId::new(target["id"].as_str().unwrap()).unwrap();
+            let input = crate::duplicate_search_inputs_scope(&ws, &id, Some(""), true).unwrap();
+            let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                "qwen3.5:9b".into(),
+                crate::resident_model,
+            );
+            let result = search(&mut model, &input.target, &input.candidates).unwrap();
+            println!(
+                "Fictional cross-employer scan: examined={}, matches={:?}",
+                result.examined, result.matches
+            );
+            assert_eq!(result.examined, 2);
+            assert!(result
+                .matches
+                .iter()
+                .any(|item| item["id"] == recruiter["id"]));
+            assert_eq!(result.matches.len(), 1);
+        });
     }
 
     #[test]

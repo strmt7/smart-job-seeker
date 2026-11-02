@@ -1,13 +1,13 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
-const start=source.indexOf(' async function runDuplicateSearch(paged){'),end=source.indexOf("\n findDuplicates.addEventListener",start);
+const start=source.indexOf(' async function runDuplicateSearch(paged,allJobs=false){'),end=source.indexOf("\n findDuplicates.addEventListener",start);
 assert.ok(start>=0 && end>start);
-async function run(initial,result,paged=true){
+async function run(initial,result,paged=true,allJobs=false){
  const data=new Map(initial),requests=[],messages=[];
- const context={job:{id:'fictional'},findDuplicates:{},scanMore:{},setTimeout:fn=>fn(),refresh:async()=>{},notify:value=>messages.push(value),
+ const context={job:{id:'fictional'},findDuplicates:{},scanMore:{},scanAll:{},setTimeout:fn=>fn(),refresh:async()=>{},notify:value=>messages.push(value),
   sessionStorage:{getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)},
   api:async(path,body)=>{requests.push({path,body});if(path.endsWith('search-pending'))return {active:false};if(path.endsWith('search-start'))return {task_id:'task'};return result;}};
- await vm.runInNewContext(`${source.slice(start,end)};runDuplicateSearch`,context)(paged);
+ await vm.runInNewContext(`${source.slice(start,end)};runDuplicateSearch`,context)(paged,allJobs);
  return {data,requests,messages};
 }
 (async()=>{
@@ -17,5 +17,9 @@ async function run(initial,result,paged=true){
  let recovered=await run([...x.data],{...result,page_after:'job-12',next_cursor:'job-24',failed_batches:1,retried_candidates:3});assert.equal(JSON.parse(recovered.data.get('waypoint-duplicate-cursor')).after,'job-24');
  x=await run([...x.data],{...result,page_after:'job-12',next_cursor:null,truncated:false});assert.equal(x.data.has('waypoint-duplicate-cursor'),false);
  x=await run([],{...result,page_after:null,next_cursor:null},false);assert.equal(JSON.parse(x.data.get('waypoint-duplicate-cursor')).after,'');
+ const all=await run([...x.data],{...result,all_jobs:true},true,true);
+ assert.equal(all.requests[1].body.all_jobs,true);
+ assert.equal(JSON.parse(all.data.get('waypoint-duplicate-all-cursor')).after,'job-12');
+ assert.equal(JSON.parse(all.data.get('waypoint-duplicate-cursor')).after,'');
  console.log('Duplicate page UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

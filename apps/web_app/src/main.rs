@@ -1365,12 +1365,21 @@ fn duplicate_search_inputs(
 ) -> Result<duplicate_search::Inputs, String> {
     duplicate_search_inputs_page(ws, id, None)
 }
+#[cfg(test)]
 fn duplicate_search_inputs_page(
     ws: &Workspace,
     id: &JobIdentityId,
     after: Option<&str>,
 ) -> Result<duplicate_search::Inputs, String> {
-    if ws.duplicate_index_pending().map_err(|e| e.to_string())? {
+    duplicate_search_inputs_scope(ws, id, after, false)
+}
+fn duplicate_search_inputs_scope(
+    ws: &Workspace,
+    id: &JobIdentityId,
+    after: Option<&str>,
+    all_jobs: bool,
+) -> Result<duplicate_search::Inputs, String> {
+    if !all_jobs && ws.duplicate_index_pending().map_err(|e| e.to_string())? {
         return Err(
             "Older jobs are still being indexed; try duplicate search after indexing finishes"
                 .into(),
@@ -1402,7 +1411,12 @@ fn duplicate_search_inputs_page(
         .map_err(|e| e.to_string())?
         .ok_or("Job not found")?;
     let (target, target_digest, target_shortened) = listing(&job)?;
-    let (neighbors, truncated, next_cursor) = if let Some(after) = after {
+    let (neighbors, truncated, next_cursor) = if all_jobs {
+        let (neighbors, next) = ws
+            .duplicate_all_jobs_page(id, after.unwrap_or(""))
+            .map_err(|e| e.to_string())?;
+        (neighbors, next.is_some(), next)
+    } else if let Some(after) = after {
         let (neighbors, next) = ws
             .duplicate_neighbors_page(id, after)
             .map_err(|e| e.to_string())?;
@@ -1421,7 +1435,7 @@ fn duplicate_search_inputs_page(
         candidates.push((job.id.as_str().to_owned(), text));
     }
     let digest = Sha256Digest::of(
-        &json!({"target":target,"target_digest":target_digest,"candidates":candidates,"source_digests":source_digests,"truncated":truncated,"page_after":after,"next_cursor":next_cursor}).to_string(),
+        &json!({"target":target,"target_digest":target_digest,"candidates":candidates,"source_digests":source_digests,"truncated":truncated,"all_jobs":all_jobs,"page_after":after,"next_cursor":next_cursor}).to_string(),
     )
     .as_str()
     .to_owned();
@@ -1432,6 +1446,7 @@ fn duplicate_search_inputs_page(
         digest,
         truncated,
         source_texts_shortened,
+        all_jobs,
         page_after: after.map(str::to_owned),
         next_cursor,
     })
@@ -2382,9 +2397,24 @@ fn serve(
                 }
                 _ => return Err("Invalid duplicate search cursor".into()),
             };
-            let input = duplicate_search_inputs_page(ws, &job, after)?;
+            let all_jobs = match body.get("all_jobs") {
+                None | Some(Value::Bool(false)) => false,
+                Some(Value::Bool(true)) => true,
+                _ => return Err("Invalid duplicate search scope".into()),
+            };
+            let after = if all_jobs {
+                Some(after.unwrap_or(""))
+            } else {
+                after
+            };
+            let input = duplicate_search_inputs_scope(ws, &job, after, all_jobs)?;
             if input.candidates.is_empty() && input.next_cursor.is_none() {
-                return Err("No unreviewed employer or requisition candidates were found".into());
+                return Err(if all_jobs {
+                    "No further unreviewed saved jobs were found"
+                } else {
+                    "No unreviewed employer or requisition candidates were found"
+                }
+                .into());
             }
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
@@ -2399,7 +2429,12 @@ fn serve(
             if result["status"] == "complete" && result["saved"] != true {
                 let job = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job")?)
                     .map_err(|e| e.to_string())?;
-                let input = duplicate_search_inputs_page(ws, &job, result["page_after"].as_str())?;
+                let input = duplicate_search_inputs_scope(
+                    ws,
+                    &job,
+                    result["page_after"].as_str(),
+                    result["all_jobs"] == true,
+                )?;
                 if Some(input.digest.as_str()) != result["digest"].as_str() {
                     result = json!({"status":"failed","error":"Listings or duplicate decisions changed; search again"});
                 } else {

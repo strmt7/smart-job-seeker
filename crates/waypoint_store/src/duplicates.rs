@@ -874,6 +874,36 @@ impl Store {
         Ok((jobs, next))
     }
 
+    /// Scan one primary-key page without relying on employer or requisition
+    /// similarity. Returned records are candidates only, not duplicate claims.
+    pub fn duplicate_all_jobs_page(
+        &self,
+        id: &str,
+        after: &str,
+    ) -> rusqlite::Result<(Vec<StoredJob>, Option<String>)> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM jobs WHERE id>?1 AND id<>?2 ORDER BY id LIMIT 13")?;
+        let ids = stmt
+            .query_map(params![after, id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let more = ids.len() > 12;
+        let mut jobs = Vec::new();
+        let mut last = None;
+        for candidate in ids.into_iter().take(12) {
+            last = Some(candidate.clone());
+            let decided: bool = self.conn.query_row("SELECT EXISTS(SELECT 1 FROM possible_duplicates WHERE (job_a=?1 AND job_b=?2) OR (job_a=?2 AND job_b=?1))", params![id, candidate], |row| row.get(0))?;
+            if !decided {
+                if let Ok(candidate_id) = waypoint_domain::JobIdentityId::new(&candidate) {
+                    if let Some(job) = self.get_job(&candidate_id)? {
+                        jobs.push(job);
+                    }
+                }
+            }
+        }
+        Ok((jobs, if more { last } else { None }))
+    }
+
     pub fn add_ai_duplicates(
         &self,
         first: &str,
@@ -2263,6 +2293,32 @@ mod tests {
             .unwrap()
             .0
             .is_empty());
+    }
+    #[test]
+    fn all_jobs_scan_advances_through_an_entirely_reviewed_page() {
+        let mut store = Store::in_memory().unwrap();
+        store
+            .upsert_job(&job("source", "Engineer", "Alpha", None))
+            .unwrap();
+        for index in 0..13 {
+            let id = format!("candidate-{index:02}");
+            store
+                .upsert_job(&job(&id, "Engineer", &format!("Other {index}"), None))
+                .unwrap();
+            if index < 12 {
+                store
+                    .add_ai_duplicates("source", &[(id, "Review".into())])
+                    .unwrap();
+            }
+        }
+        let (first, next) = store.duplicate_all_jobs_page("source", "").unwrap();
+        assert!(first.is_empty());
+        let (second, end) = store
+            .duplicate_all_jobs_page("source", &next.unwrap())
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].id.as_str(), "candidate-12");
+        assert!(end.is_none());
     }
     #[test]
     fn bounded_neighbors_prioritize_similar_titles_and_keep_employer_only_slots() {
