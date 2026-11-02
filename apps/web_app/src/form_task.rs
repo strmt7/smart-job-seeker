@@ -2772,6 +2772,10 @@ mod tests {
                                     || field.label == "Full legal name"
                                 {
                                     "Avery Example"
+                                } else if field.label.starts_with("First Name") {
+                                    "Avery"
+                                } else if field.label.starts_with("Last Name") {
+                                    "Example"
                                 } else if field.label.starts_with("Preferred name") {
                                     expected_preferred
                                         .as_deref()
@@ -2789,6 +2793,23 @@ mod tests {
                                     "incorrect fictional value for {:?}",
                                     field.label
                                 );
+                            }
+                        }
+                        if expected_model
+                            && !preview
+                                .manual_review
+                                .iter()
+                                .any(|reason| reason == form_preview::CHANGED_INFORMATIONAL_PREVIEW)
+                        {
+                            for label in ["First Name", "Last Name"] {
+                                if preview
+                                    .schema
+                                    .fields
+                                    .iter()
+                                    .any(|field| field.label == label)
+                                {
+                                    assert!(preview.suggestions.iter().any(|mapping| preview.schema.fields.iter().any(|field| field.label == label && field.selector == mapping.field_selector)), "{label} was not suggested despite an explicit fictional profile value");
+                                }
                             }
                         }
                         if expected_preferred.is_some() {
@@ -2866,7 +2887,7 @@ mod tests {
             }
         }
         let _unload = Unload(result["model"]["already_running"] != true);
-        let mut profile = serde_json::json!({"full_name":"Avery Example","email":"avery@example.invalid","phone":"+1 202 555 0101","city":"Fictional City"});
+        let mut profile = serde_json::json!({"full_name":"Avery Example","first_name":"Avery","last_name":"Example","email":"avery@example.invalid","phone":"+1 202 555 0101","city":"Fictional City"});
         if std::env::var("WAYPOINT_TEST_PREFERRED_NAME").as_deref() == Ok("1") {
             profile["preferred_name"] = serde_json::json!("Ace");
         }
