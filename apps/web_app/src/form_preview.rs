@@ -603,7 +603,7 @@ pub fn verify_completed_fields(
             .map(String::as_str)
             .filter(|item| *item != selected),
     ) {
-        if checked >= 32 || start.elapsed() >= std::time::Duration::from_secs(4) {
+        if checked >= 128 || start.elapsed() >= std::time::Duration::from_secs(8) {
             break;
         }
         checked += 1;
@@ -1389,7 +1389,7 @@ mod tests {
                 }
             }
         }
-        let fields: Vec<_> = (0..34)
+        let fields: Vec<_> = (0..130)
             .map(|i| waypoint_applications::form_mapping::FormField {
                 selector: format!("#field-{i}"),
                 label: format!("Field {i}"),
@@ -1429,7 +1429,7 @@ mod tests {
             "#field-0",
         );
         assert!(limited.selected_retained);
-        assert_eq!(limited.verified, 32);
+        assert_eq!(limited.verified, 128);
         assert_eq!(limited.unverified, 2);
         assert!(limited.failed_labels.is_empty());
         let failed = verify_completed_fields(
@@ -1442,7 +1442,7 @@ mod tests {
         );
         assert!(failed.selected_retained);
         assert_eq!(failed.verified, 1);
-        assert_eq!(failed.unverified, 32);
+        assert_eq!(failed.unverified, 128);
         assert_eq!(failed.failed_labels, vec!["Field 1"]);
         assert_eq!(
             failed.failed_details,
@@ -1452,6 +1452,47 @@ mod tests {
             "A previously filled field failed a browser constraint: private-fixture"
         )
         .is_none());
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional form without submitting"]
+    fn long_form_completed_field_review_checks_all_fields() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-long-review.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let completed: Vec<_> = live
+            .schema
+            .fields
+            .iter()
+            .map(|field| field.selector.clone())
+            .collect();
+        assert_eq!(completed.len(), 40);
+        let suggestions = completed
+            .iter()
+            .map(|selector| ProposedMapping {
+                field_selector: selector.clone(),
+                value: PacketValue::Text("fictional".into()),
+            })
+            .collect();
+        let preview = FormPreview {
+            schema: live.schema,
+            suggestions,
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let check = driver.with_review_timeout(|driver| {
+            verify_completed_fields(driver, &preview, &completed, &completed[0])
+        });
+        assert!(check.selected_retained);
+        assert_eq!(check.verified, 40);
+        assert_eq!(check.unverified, 0);
+        assert!(check.failed_labels.is_empty());
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
     }
 
     #[test]
