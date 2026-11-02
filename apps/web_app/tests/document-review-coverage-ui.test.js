@@ -24,5 +24,11 @@ render(partial,{excerpts:[],coverage:{pages:2,pages_without_selectable_text:[2],
 assert.match(partial.children.map(item=>item.textContent).join('\n'),/No selectable text was found on PDF page 2 of 2/);
 const docx=node('div');
 render(docx,{excerpts:[],coverage:{kind:'docx',footnote_references:1,endnote_references:2}});
-assert.match(docx.children.map(item=>item.textContent).join('\n'),/1 footnote and 2 endnote.*not included/);
+assert.match(docx.children.map(item=>item.textContent).join('\n'),/note coverage is unavailable/i);
+const resolved=node('div');
+render(resolved,{excerpts:[],coverage:{kind:'docx',footnote_references:1,endnote_references:2,unresolved_note_references:0}});
+assert.match(resolved.children.map(item=>item.textContent).join('\n'),/appended.*reading order/i);
+const unresolved=node('div');
+render(unresolved,{excerpts:[],coverage:{kind:'docx',footnote_references:1,endnote_references:2,unresolved_note_references:1}});
+assert.match(unresolved.children.map(item=>item.textContent).join('\n'),/1 note reference.*could not be resolved/i);
 assert.ok(source.includes('documentExtractionCoverageNotice(documentResult.coverage)'));

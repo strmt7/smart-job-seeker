@@ -20,44 +20,11 @@ pub fn extract_for_review(
         .rsplit_once('.')
         .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("docx"))
     {
-        let text = extract(name, bytes)?;
-        let coverage = docx_note_reference_coverage(bytes)?;
-        Ok((text, Some(coverage)))
+        let (text, coverage) = extract_docx(bytes)?;
+        Ok((validate_text(text)?, Some(coverage)))
     } else {
         Ok((extract(name, bytes)?, None))
     }
-}
-
-fn docx_note_reference_coverage(bytes: &[u8]) -> Result<serde_json::Value, String> {
-    let mut archive =
-        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
-    let names = docx_text_parts(&mut archive)?;
-    let mut total = 0;
-    let (mut footnotes, mut endnotes) = (0u64, 0u64);
-    for name in names {
-        let xml = read_docx_text_part(&mut archive, &name, &mut total)?;
-        let mut reader = NsReader::from_reader(xml.as_slice());
-        loop {
-            let (namespace, event) = reader
-                .read_resolved_event()
-                .map_err(|_| "Malformed DOCX XML")?;
-            let word = matches!(namespace, ResolveResult::Bound(ns) if
-                ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
-            match event {
-                Event::Start(e) | Event::Empty(e) if word => match e.local_name().as_ref() {
-                    b"footnoteReference" => footnotes += 1,
-                    b"endnoteReference" => endnotes += 1,
-                    _ => {}
-                },
-                Event::Eof => break,
-                _ => {}
-            }
-        }
-    }
-    Ok(
-        serde_json::json!({"kind":"docx","footnote_references":footnotes,"endnote_references":endnotes}),
-    )
 }
 
 /// Model suggestions are advisory and carry coverage to the user.
@@ -79,10 +46,14 @@ pub fn extract(name: &str, bytes: &[u8]) -> Result<String, String> {
             if text.contains('\0') { return Err("Text contains binary data".into()); }
             text.trim_start_matches('\u{feff}').to_string()
         }
-        "docx" => extract_docx(bytes)?,
+        "docx" => extract_docx(bytes)?.0,
         "pdf" => crate::pdf_extract::extract(bytes)?,
         _ => return Err("Text extraction supports UTF-8 text, Markdown, DOCX and selectable-text PDF; this file remains stored".into()),
     };
+    validate_text(text)
+}
+
+fn validate_text(text: String) -> Result<String, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("No text was found".into());
@@ -158,20 +129,27 @@ pub(crate) fn read_docx_text_part(
     Ok(xml)
 }
 
-fn extract_docx(bytes: &[u8]) -> Result<String, String> {
+fn extract_docx(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
     let names = docx_text_parts(&mut archive)?;
     let mut output = String::new();
     let mut total = 0;
-    for name in names {
-        let xml = read_docx_text_part(&mut archive, &name, &mut total)?;
+    for name in &names {
+        let xml = read_docx_text_part(&mut archive, name, &mut total)?;
         if !output.is_empty() && !output.ends_with('\n') {
             output.push('\n');
         }
         extract_docx_xml(&xml, &mut output)?;
     }
-    Ok(output)
+    let (notes, coverage) = crate::docx_notes::extract(&mut archive, &names)?;
+    if !notes.is_empty() {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(&notes);
+    }
+    Ok((output, coverage))
 }
 
 fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
@@ -296,6 +274,33 @@ mod tests {
         assert_eq!(coverage["kind"], "docx");
         assert_eq!(coverage["footnote_references"], 1);
         assert_eq!(coverage["endnote_references"], 1);
+        assert_eq!(coverage["unresolved_note_references"], 2);
+    }
+
+    #[test]
+    fn extracts_only_referenced_current_notes_and_reports_ambiguous_ids() {
+        fn package(footnotes: &str) -> Vec<u8> {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("word/document.xml", options).unwrap();
+            writer.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Main text</w:t><w:footnoteReference w:id="1"/><w:footnoteReference w:id="1"/><w:endnoteReference w:id="2"/></w:r><w:del><w:r><w:footnoteReference w:id="3"/></w:r></w:del></w:p></w:body></w:document>"#).unwrap();
+            writer.start_file("word/footnotes.xml", options).unwrap();
+            writer.write_all(footnotes.as_bytes()).unwrap();
+            writer.start_file("word/endnotes.xml", options).unwrap();
+            writer.write_all(br#"<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:endnote w:id="2"><w:p><w:r><w:t>Endnote qualification</w:t></w:r></w:p></w:endnote></w:endnotes>"#).unwrap();
+            writer.finish().unwrap().into_inner()
+        }
+        let notes = r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Certified</w:t></w:r><w:del><w:r><w:delText>Deleted</w:delText></w:r></w:del></w:p></w:footnote><w:footnote w:id="3"><w:p><w:r><w:t>Deleted reference</w:t></w:r></w:p></w:footnote><w:footnote w:id="4"><w:p><w:r><w:t>Unreferenced</w:t></w:r></w:p></w:footnote></w:footnotes>"#;
+        let (text, coverage) = extract_for_review("cv.docx", &package(notes)).unwrap();
+        let coverage = coverage.unwrap();
+        assert_eq!(text, "Main text\nCertified\nEndnote qualification");
+        assert_eq!(coverage["footnote_references"], 2);
+        assert_eq!(coverage["endnote_references"], 1);
+        assert_eq!(coverage["unresolved_note_references"], 0);
+        let duplicate = r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>One</w:t></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>Two</w:t></w:r></w:p></w:footnote></w:footnotes>"#;
+        let (text, coverage) = extract_for_review("cv.docx", &package(duplicate)).unwrap();
+        assert!(!text.contains("One") && !text.contains("Two"));
+        assert_eq!(coverage.unwrap()["unresolved_note_references"], 2);
     }
 
     #[test]

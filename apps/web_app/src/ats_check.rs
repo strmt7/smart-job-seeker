@@ -181,7 +181,7 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     }
     let mut notes = Vec::new();
     if footnote_references > 0 || endnote_references > 0 {
-        notes.push(format!("DOCX contains {footnote_references} footnote and {endnote_references} endnote reference(s); note text is not included in Waypoint's extraction. Inspect the original document."));
+        notes.push(format!("DOCX contains {footnote_references} footnote and {endnote_references} endnote reference(s); referenced text may appear after the main text or be unavailable. Inspect the extracted text and original document."));
     }
     if tables > 0 {
         notes.push(format!(
@@ -479,7 +479,7 @@ mod tests {
         let notes = structure_notes("fixture.docx", &zip.finish().unwrap().into_inner()).unwrap();
         assert!(notes.iter().any(|note| note.contains("1 footnote")
             && note.contains("1 endnote")
-            && note.contains("not included")));
+            && note.contains("may appear after")));
     }
 
     #[test]
