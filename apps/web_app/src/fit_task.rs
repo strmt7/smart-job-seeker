@@ -777,6 +777,9 @@ fn assess_with_source(
             Err(error) => return Err(error.to_string()),
         }
     }
+    if last_error == "generation did not finish with a natural stop" {
+        return Err("The local model did not finish the assessment after one retry. No score was produced; try a shorter job description or fewer candidate facts and review omitted information.".into());
+    }
     Err(format!(
         "Assessment could not be validated after one repair: {last_error}"
     ))
@@ -2631,6 +2634,39 @@ mod tests {
         assessment["source_coverage"]["instructions_total_chars"] = json!(0);
         assessment["source_coverage"]["instructions_used_chars"] = json!(0);
         assert_eq!(preference_coverage(&assessment), "not_requested");
+    }
+
+    #[test]
+    fn incomplete_local_generation_returns_actionable_unscored_error() {
+        struct Incomplete(usize);
+        impl Inference for Incomplete {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                self.0 += 1;
+                Err(InferenceError::StructuredOutputFailed(
+                    "generation did not finish with a natural stop".into(),
+                ))
+            }
+        }
+        let mut model = Incomplete(0);
+        let error = assess(
+            &mut model,
+            &["Fictional qualification".into()],
+            "",
+            "Fictional listing",
+        )
+        .unwrap_err();
+        assert_eq!(model.0, 2);
+        assert!(
+            error.contains("No score was produced") && error.contains("shorter job description")
+        );
     }
 
     #[test]
@@ -4959,6 +4995,65 @@ mod tests {
         let abbreviated_result = assess(&mut model, &abbreviated, "", listing).unwrap();
         println!("Abbreviated mixed-skill assessment: {abbreviated_result}");
         assert!(abbreviated_result["rubric"].as_array().unwrap().iter().any(|item| item["excerpt"].as_str().is_some_and(|text| text.to_lowercase().contains("five years")) && item["status"] != "supported"), "abbreviated durations must not transfer experience between skills: {abbreviated_result}");
+    }
+
+    #[test]
+    #[ignore = "requires private local inputs, preloaded local qwen3.5:9b and resource preflight"]
+    fn live_private_facts_against_public_listing_diagnostic() {
+        let facts_path =
+            std::env::var_os("WAYPOINT_PRIVATE_FIT_FACTS").expect("private facts path");
+        let listing_path =
+            std::env::var_os("WAYPOINT_PUBLIC_FIT_LISTING").expect("public listing path");
+        let output_path =
+            std::env::var_os("WAYPOINT_PRIVATE_FIT_RESULT").expect("private result path");
+        let facts: Vec<String> =
+            serde_json::from_slice(&std::fs::read(facts_path).expect("facts file"))
+                .expect("facts JSON array");
+        let source = std::fs::read_to_string(listing_path).expect("listing file");
+        assert!(!facts.is_empty() && facts.len() <= 100 && source.len() <= 100_000);
+        let listing = &source[..source.floor_char_boundary(source.len().min(8000))];
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_resident_context();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let (selected, selection) =
+            select_semantic_facts(&mut model, &facts, facts.len(), "", listing);
+        let mut assessment =
+            match assess_with_source(&mut model, &selected, "", listing, Some(&source)) {
+                Ok(value) => value,
+                Err(error) => {
+                    use std::io::Write;
+                    let mut output = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&output_path)
+                        .expect("new private result file");
+                    output
+                        .write_all(error.as_bytes())
+                        .expect("write private error");
+                    panic!("Private assessment could not be validated; details saved locally");
+                }
+            };
+        assessment["selection"] = selection;
+        let rubric = assessment["rubric"].as_array().expect("rubric");
+        println!("Private assessment completed: {} criteria; {} supported; {} unknown; {} contradicted; score {}", rubric.len(), rubric.iter().filter(|v| v["status"] == "supported").count(), rubric.iter().filter(|v| v["status"] == "unknown").count(), rubric.iter().filter(|v| v["status"] == "contradicted").count(), assessment["score"]);
+        use std::io::Write;
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output_path)
+            .expect("new private result file");
+        output
+            .write_all(
+                serde_json::to_string_pretty(&assessment)
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .expect("write private result");
     }
 
     #[test]
