@@ -113,25 +113,64 @@ fn coverage(total: usize, history: &[Value]) -> Value {
     json!({"requested_pages":total,"attempted_pages":history.len(),"succeeded_pages":succeeded,"failed_pages":failed,"unattempted_pages":total.saturating_sub(history.len()),"limited_pages":limited,"pages_with_unresponsive_engines":engines_unavailable,"pages_with_unknown_engine_availability":availability_unknown})
 }
 
+// Comparison key only: preserve the original URL in the result. Remove a
+// small set of standard tracking parameters; all other query parameters and
+// fragments remain significant because sites may use them to identify roles.
+fn tracking_comparison_key(raw: &str) -> String {
+    let Ok(mut url) = url::Url::parse(raw) else {
+        return raw.to_owned();
+    };
+    let retained: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(name, _)| {
+            !matches!(
+                name.to_ascii_lowercase().as_str(),
+                "utm_source"
+                    | "utm_medium"
+                    | "utm_campaign"
+                    | "utm_term"
+                    | "utm_content"
+                    | "gclid"
+                    | "fbclid"
+            )
+        })
+        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .collect();
+    url.set_query(None);
+    if !retained.is_empty() {
+        let mut pairs = url.query_pairs_mut();
+        for (name, value) in retained {
+            pairs.append_pair(&name, &value);
+        }
+    }
+    url.into()
+}
+
 /// Keep the global result cap visible when the final provider page has more
 /// valid links than the remaining budget. Previously the page could appear
 /// complete even though some of its parsed links were discarded here.
 fn retain_batch_budget(data: &mut Value, seen: &mut HashSet<String>) -> bool {
     let mut omitted = 0usize;
+    let mut tracking_equivalent = 0usize;
     if let Some(items) = data["results"].as_array_mut() {
         items.retain(|item| {
             let Some(url) = item["url"].as_str() else {
                 return false;
             };
-            if seen.contains(url) {
+            let comparison = tracking_comparison_key(url);
+            if seen.contains(&comparison) {
+                tracking_equivalent += 1;
                 return false;
             }
             if seen.len() >= 600 {
                 omitted += 1;
                 return false;
             }
-            seen.insert(url.to_owned())
+            seen.insert(comparison)
         });
+    }
+    if tracking_equivalent > 0 {
+        data["tracking_equivalent_omitted"] = json!(tracking_equivalent);
     }
     if omitted > 0 {
         data["limited"] = json!(true);
@@ -1071,6 +1110,25 @@ mod tests {
         let recover = request("/api/web-search/batch-pending", json!({}));
         assert_eq!(recover["last"]["result"], done);
     }
+    #[test]
+    fn batch_deduplicates_tracking_variants_without_losing_job_identity() {
+        let mut seen = HashSet::new();
+        let mut page = json!({"results":[
+            {"url":"https://example.org/job?id=1&utm_source=first"},
+            {"url":"https://example.org/job?id=1&utm_source=second"},
+            {"url":"https://example.org/job?id=2&utm_source=second"},
+            {"url":"https://example.org/job?id=1#other-role"},
+            {"url":"https://example.org/job?id=1&ref=other"}
+        ]});
+        assert!(!retain_batch_budget(&mut page, &mut seen));
+        assert_eq!(page["results"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            page["results"][0]["url"],
+            "https://example.org/job?id=1&utm_source=first"
+        );
+        assert_eq!(page["tracking_equivalent_omitted"], 1);
+    }
+
     #[test]
     fn searches_sequentially_deduplicates_and_reports_each_query() {
         let _lock = TEST_LOCK.lock().unwrap();

@@ -1903,3 +1903,14 @@ estimates; neither model was evaluated. A separate Qwen multi-role listing test
 passed through the refactored helper (one excerpt retained, two withheld), and
 Ollama reported no resident model afterward. This does not resolve the split
 phone mapping issue or establish comparative model quality. Web Clippy passed.
+
+### Search-link tracking variants (2026-11-02)
+
+A wider-web batch now compares URLs after removing selected common tracking
+parameters, while keeping the first original URL and retaining other query
+parameters and fragments in the comparison key. Coverage reports how many later
+links were omitted as equivalent. This is a heuristic: a site that gives one of
+those parameters substantive meaning could have a distinct link suppressed.
+It does not establish that different domains advertise different jobs or prevent
+all duplicate applications. Fictional batch and coverage tests passed, as did
+web Clippy; no live provider or application was contacted in this check.
