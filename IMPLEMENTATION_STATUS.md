@@ -2429,6 +2429,12 @@ form still fills without submission. This is a point-in-time inspection, not a
 guarantee against later asynchronous page changes, and has not been tested on
 a live employer form.
 
+A second local-browser fixture now reveals a required question when the first
+answer is entered. The real browser fill path detected the changed form,
+reported the fill as incomplete and retained the already-entered value; it did
+not submit. This verifies the browser behavior on that fixture, not the full
+web endpoint or arbitrary employer pages.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the

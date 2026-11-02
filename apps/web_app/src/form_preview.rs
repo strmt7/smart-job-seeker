@@ -5279,9 +5279,22 @@ mod tests {
     #[test]
     #[ignore = "starts a local browser and does not submit"]
     fn offline_autocomplete_can_be_reviewed_and_filled_without_submission() {
+        check_autocomplete_in_browser(false);
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and does not submit"]
+    fn newly_revealed_question_requires_review_after_prefill() {
+        check_autocomplete_in_browser(true);
+    }
+
+    fn check_autocomplete_in_browser(dynamic: bool) {
         use waypoint_domain::GrantId;
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-autocomplete.html");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if dynamic {
+            "tests/form-autocomplete-dynamic.html"
+        } else {
+            "tests/form-autocomplete.html"
+        });
         let url = url::Url::from_file_path(fixture).unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(url.as_str()).unwrap();
@@ -5355,25 +5368,29 @@ mod tests {
             expired: false,
         };
         let mut completed = Vec::new();
-        assert_eq!(
-            apply_reviewed_text_fields(
-                &mut ws,
-                &job_id,
-                &mut driver,
-                url.as_str(),
-                &preview,
-                &mut grant,
-                FillContext {
-                    intent: &intent,
-                    packet_digest: &packet,
-                    source_reviewed: true,
-                    timestamp: 1,
-                    completed: &mut completed
-                }
-            )
-            .unwrap(),
-            1
+        let result = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
         );
+        if dynamic {
+            let error = result.unwrap_err();
+            assert!(error.contains("form changed after filling"), "{error}");
+            assert_eq!(completed.len(), 1);
+            assert!(grant.consumed);
+        } else {
+            assert_eq!(result.unwrap(), 1);
+        }
         assert_eq!(
             driver
                 .read_attribute("#candidate", "data-seen")

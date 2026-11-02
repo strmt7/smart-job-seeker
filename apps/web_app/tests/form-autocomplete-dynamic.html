@@ -1,0 +1,9 @@
+<!doctype html><html><body><form>
+<label for="candidate">Applicant's first name</label><input id="candidate" autocomplete="section-app given-name" oninput="this.setAttribute('data-seen', this.value); document.getElementById('conditional').hidden = false">
+<label for="ambiguous">Applicant name</label><input id="ambiguous" autocomplete="given-name">
+<label for="conflicting-type">First name</label><input id="conflicting-type" type="email" autocomplete="given-name">
+<label for="permit">Work authorization</label><input id="permit" autocomplete="email">
+<div role="combobox" aria-label="Preferred location" aria-required="true">Choose a location</div>
+<div id="conditional" hidden><label for="additional">Additional question</label><input id="additional" required></div>
+<button type="submit">Submit</button>
+</form></body></html>
