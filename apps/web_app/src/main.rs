@@ -3373,7 +3373,12 @@ fn serve(
                         json_reply(stream, "200 OK", response);
                         return Ok(());
                     }
-                    let result = manual_job::add(ws, job, now())?;
+                    let result = manual_job::add_inspected(
+                        ws,
+                        job,
+                        now(),
+                        inspected.capture.metadata["captured_at"].as_i64(),
+                    )?;
                     let job_id =
                         JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)
                             .map_err(|e| e.to_string())?;
@@ -10839,6 +10844,7 @@ mod tests {
         let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
         let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
         let mut job = ws.job(&id).unwrap().unwrap();
+        assert_eq!(listing_observation(&job, 100)["status"], "unknown");
         job.last_seen = Some("100".into());
         assert_eq!(
             listing_observation(&job, 100 + waypoint_workspace::STALE_AFTER_SECONDS)["status"],

@@ -63,6 +63,25 @@ pub fn source(host: &str) -> &'static str {
     "user_supplied_url"
 }
 pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, String> {
+    add_with_observation(ws, body, timestamp, None)
+}
+
+/// Called only after the application's listing inspection has completed.
+pub fn add_inspected(
+    ws: &mut Workspace,
+    body: &Value,
+    timestamp: i64,
+    observed_at: Option<i64>,
+) -> Result<Value, String> {
+    add_with_observation(ws, body, timestamp, observed_at)
+}
+
+fn add_with_observation(
+    ws: &mut Workspace,
+    body: &Value,
+    timestamp: i64,
+    observed_at: Option<i64>,
+) -> Result<Value, String> {
     let raw = input(body, "url", 2048, true)?;
     let mut parsed = url::Url::parse(raw).map_err(|_| "Invalid job URL")?;
     if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
@@ -132,7 +151,9 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
         canonical_url: Some(url),
         content_hash: None,
         first_seen: Some(now.clone()),
-        last_seen: Some(now),
+        last_seen: observed_at
+            .filter(|observed| *observed > 0 && *observed <= timestamp)
+            .map(|observed| observed.to_string()),
         remote: body["remote"].as_bool().unwrap_or(false),
         source: source(&host).into(),
         requisition_id: (!requisition_id.is_empty()).then(|| requisition_id.to_owned()),
@@ -145,6 +166,31 @@ pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, St
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manually_entered_listings_do_not_claim_a_page_observation() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let raw = json!({"url":"https://example.org/manual","title":"Engineer","employer":"Example","extraction":"structured"});
+        let saved = add(&mut ws, &raw, 100).unwrap();
+        let id = JobIdentityId::new(saved["id"].as_str().unwrap()).unwrap();
+        let manual = ws.job(&id).unwrap().unwrap();
+        assert_eq!(manual.first_seen.as_deref(), Some("100"));
+        assert_eq!(manual.last_seen, None);
+        let raw =
+            json!({"url":"https://example.org/observed","title":"Engineer","employer":"Example"});
+        let saved = add_inspected(&mut ws, &raw, 300, Some(200)).unwrap();
+        let id = JobIdentityId::new(saved["id"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            ws.job(&id).unwrap().unwrap().last_seen.as_deref(),
+            Some("200")
+        );
+        for (index, observed_at) in [None, Some(0), Some(301)].into_iter().enumerate() {
+            let raw = json!({"url":format!("https://example.org/invalid-{index}"),"title":"Engineer","employer":"Example"});
+            let saved = add_inspected(&mut ws, &raw, 300, observed_at).unwrap();
+            let id = JobIdentityId::new(saved["id"].as_str().unwrap()).unwrap();
+            assert_eq!(ws.job(&id).unwrap().unwrap().last_seen, None);
+        }
+    }
+
     #[test]
     fn similar_cross_site_listings_are_held_until_the_user_decides() {
         let mut ws = Workspace::in_memory().unwrap();

@@ -2934,3 +2934,13 @@ contain an unsupported entry. This avoids treating a partial list as a complete
 mismatch. Fictional tests cover truncation, unsupported entries, provenance,
 normal multiple locations and remote restrictions; web-app Clippy passed.
 Previously saved listings are not automatically re-extracted.
+
+### Manual listing observation time (2026-11-02)
+
+New manually entered listings no longer claim a page observation just because
+they were saved. Newly inspected listings use their validated capture timestamp;
+missing, nonpositive or future timestamps remain unknown. Eight intake tests
+and the observation-boundary test passed. Existing saved timestamps are not
+retrospectively corrected, and inspecting an already-saved listing does not
+yet refresh its observation timestamp. Recent observation is not proof that a
+role is still open.
