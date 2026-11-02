@@ -748,8 +748,12 @@ pub(crate) mod tests {
 
     #[cfg(windows)]
     pub(crate) fn with_resource_gated_model(action: impl FnOnce()) {
+        with_resource_gated_named_model("qwen3.5:9b", action);
+    }
+
+    pub(crate) fn with_resource_gated_named_model(name: &str, action: impl FnOnce()) {
         let id = "fictional-experience-evaluation";
-        crate::model_start::start(id.into(), "qwen3.5:9b".into()).unwrap();
+        crate::model_start::start(id.into(), name.into()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
         let result = loop {
             let result = crate::model_start::poll(id).unwrap();
@@ -763,22 +767,28 @@ pub(crate) mod tests {
             std::thread::sleep(std::time::Duration::from_millis(250));
         };
         assert_eq!(result["status"], "complete", "{result}");
-        struct Unload(bool);
+        struct Unload {
+            owned: bool,
+            name: String,
+        }
         impl Drop for Unload {
             fn drop(&mut self) {
-                if self.0 {
-                    let request = br#"{"model":"qwen3.5:9b","keep_alive":0}"#;
+                if self.owned {
+                    let request = serde_json::json!({"model":self.name,"keep_alive":0}).to_string();
                     let _ = waypoint_inference::ollama::http_request(
                         "127.0.0.1:11434".parse().unwrap(),
                         "POST",
                         "/api/generate",
-                        Some(request),
+                        Some(request.as_bytes()),
                         10_000,
                     );
                 }
             }
         }
-        let _unload = Unload(result["model"]["already_running"] != true);
+        let _unload = Unload {
+            owned: result["model"]["already_running"] != true,
+            name: name.to_owned(),
+        };
         action();
     }
 

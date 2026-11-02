@@ -1824,51 +1824,58 @@ mod tests {
             autocomplete: None,
         })
         .collect();
-        crate::experience_inference::tests::with_resource_gated_model(|| {
-            let model = crate::resident_model().unwrap().expect("resident model");
-            let llm =
-                waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", model.clone())
-                    .unwrap()
-                    .with_resident_context();
-            let mut llm = Record(crate::resident_inference::ResidentInference::new(
-                llm,
-                model,
-                crate::resident_model,
-            ));
-            let (mappings, warnings, review) =
-                suggest_with_review(&mut llm, &schema, &json!({"phone":"+12025550123"})).unwrap();
-            println!("Fictional split phone: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
-            if mappings.iter().any(|m| m.field_selector == "#phone") {
-                assert!(warnings
-                    .iter()
-                    .any(|warning| warning.contains("separate calling-code field")));
-            }
-            assert!(!mappings
-                .iter()
-                .any(|m| m.field_selector == "#extension" || m.field_selector == "#calling-code"));
-            let mut split = schema.clone();
-            for (field, hint) in
-                split
-                    .fields
-                    .iter_mut()
-                    .zip(["tel-national", "tel-extension", "tel-country-code"])
-            {
-                field.autocomplete = Some(hint.into());
-            }
-            let (mapped, warnings, review) = suggest_with_review(&mut llm, &split, &json!({"phone":"+12025550123","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42"})).unwrap();
-            println!("Fictional explicit components: mappings={mapped:?}; warnings={warnings:?}; review={review:?}");
-            for (selector, value) in [
-                ("#phone", "2025550123"),
-                ("#extension", "42"),
-                ("#calling-code", "+1"),
-            ] {
-                assert!(
-                    mapped.iter().any(|m| m.field_selector == selector
-                        && m.value == PacketValue::Text(value.into())),
-                    "{selector}: {mapped:?} {warnings:?}"
-                );
-            }
-        });
+        let benchmark_model =
+            std::env::var("WAYPOINT_SPLIT_PHONE_MODEL").unwrap_or_else(|_| "qwen3.5:9b".into());
+        crate::experience_inference::tests::with_resource_gated_named_model(
+            &benchmark_model,
+            || {
+                let model = crate::resident_model().unwrap().expect("resident model");
+                let llm = waypoint_inference::OllamaInference::new(
+                    "http://127.0.0.1:11434",
+                    model.clone(),
+                )
+                .unwrap()
+                .with_resident_context();
+                let mut llm = Record(crate::resident_inference::ResidentInference::new(
+                    llm,
+                    model,
+                    crate::resident_model,
+                ));
+                let (mappings, warnings, review) =
+                    suggest_with_review(&mut llm, &schema, &json!({"phone":"+12025550123"}))
+                        .unwrap();
+                println!("Fictional split phone: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
+                if mappings.iter().any(|m| m.field_selector == "#phone") {
+                    assert!(warnings
+                        .iter()
+                        .any(|warning| warning.contains("separate calling-code field")));
+                }
+                assert!(!mappings.iter().any(
+                    |m| m.field_selector == "#extension" || m.field_selector == "#calling-code"
+                ));
+                let mut split = schema.clone();
+                for (field, hint) in split.fields.iter_mut().zip([
+                    "tel-national",
+                    "tel-extension",
+                    "tel-country-code",
+                ]) {
+                    field.autocomplete = Some(hint.into());
+                }
+                let (mapped, warnings, review) = suggest_with_review(&mut llm, &split, &json!({"phone":"+12025550123","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42"})).unwrap();
+                println!("Fictional explicit components: mappings={mapped:?}; warnings={warnings:?}; review={review:?}");
+                for (selector, value) in [
+                    ("#phone", "2025550123"),
+                    ("#extension", "42"),
+                    ("#calling-code", "+1"),
+                ] {
+                    assert!(
+                        mapped.iter().any(|m| m.field_selector == selector
+                            && m.value == PacketValue::Text(value.into())),
+                        "{selector}: {mapped:?} {warnings:?}"
+                    );
+                }
+            },
+        );
     }
 
     #[test]

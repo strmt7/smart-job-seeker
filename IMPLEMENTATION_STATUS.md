@@ -1891,3 +1891,15 @@ page. A simulated UI check covered selection and the resulting input event.
 The complete JavaScript test run exposed a stale isolated form-test harness
 that lacked the picker dependency; after updating the harness, all 128 checks
 passed. The expanded flow has not been exercised on a real employer form.
+
+### Split-phone model comparison availability (2026-11-02)
+
+The opt-in fictional split-phone test can now select an installed model while
+using the same resource-gated startup and owned-model cleanup. Attempts to run
+`gemma4:12b-it-q4_K_M` and `gemma4:12b-it-qat` were refused before loading:
+the gate observed 10,121 MiB free versus 11,229 MiB required, and 10,118 MiB
+free versus 10,232 MiB required, respectively. These are point-in-time memory
+estimates; neither model was evaluated. A separate Qwen multi-role listing test
+passed through the refactored helper (one excerpt retained, two withheld), and
+Ollama reported no resident model afterward. This does not resolve the split
+phone mapping issue or establish comparative model quality. Web Clippy passed.
