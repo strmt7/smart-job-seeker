@@ -1951,3 +1951,25 @@ robots-checked Crawl4AI 0.9.5+flitzzip.portable2 capture returned HTTP 200
 markdown SHA-256 `a9f4aa91f433e06ed52b0ef7bd291faaa806ca24fa354f160b4f1b5fd74f84cf`)
 for `https://jobs.lever.co/Nomagic/fafe0fa1-f6b8-4004-a869-cbe587325067/apply`.
 No local model was loaded. Focused form-task tests and web Clippy passed.
+
+### Context from headed containers (2026-11-02)
+
+A public Lever form placed its section instruction in a heading inside an
+ordinary container, so question labels lacked that context. The browser now
+includes a single direct, visibly rendered heading from such a container as a
+`Possible section` in descendant field labels. This is an inference, not proof
+of semantic grouping; broad container headings can also appear and should be
+reviewed. Unverifiable headings remain review warnings, and changes to captured
+context change the form schema identity.
+
+A fictional local-browser fixture checked two questions, a hidden heading and a
+changed heading. On the previously captured public form, four text-area labels
+then included the instruction. In one read-only, resource-gated qwen3.5:9b run,
+the browser already marked the instruction-bearing controls for review; none
+was suggested, and the fictional phone value was suggested. This does not show
+that the model independently recognized the instruction or establish general
+accuracy. A browser test run before the final `Possible section` labeling passed
+103 cases and failed two public probes because their URL environment variables
+were absent; the affected headed-container and existing semantic-heading cases
+passed after the labeling change. Browser and web Clippy passed. The model was
+unloaded; no fields were filled and no application was submitted.

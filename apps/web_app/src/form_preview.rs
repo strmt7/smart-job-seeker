@@ -3655,6 +3655,62 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated read-only model inspection of a public form"]
+    fn resource_gated_public_form_context_mapping() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").unwrap();
+            let parsed = url::Url::parse(&url).unwrap();
+            crate::form_links::check_job_and_destination(
+                crate::manual_job::source(parsed.host_str().unwrap()),
+                &parsed.origin().ascii_serialization(),
+                waypoint_policy::Operation::Read,
+            )
+            .unwrap();
+            let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let live = driver.open(&url).unwrap();
+            let model = crate::resident_model().unwrap().expect("resident model");
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let preview = suggest_for_live_form(live, &mut llm, &json!({"full_name":"Avery Example","email":"avery@example.invalid","phone":"+12025550123"})).unwrap();
+            let instruction_fields: Vec<_> = preview
+                .schema
+                .fields
+                .iter()
+                .filter(|field| field.label.to_lowercase().contains("without ai"))
+                .collect();
+            assert!(!instruction_fields.is_empty());
+            assert!(instruction_fields.iter().all(|field| !preview
+                .suggestions
+                .iter()
+                .any(|mapping| mapping.field_selector == field.selector)));
+            let phone = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.label.ends_with(" — Phone"));
+            println!(
+                "instruction_fields={} phone_suggested={} warnings={}",
+                instruction_fields.len(),
+                phone.is_some_and(|field| preview
+                    .suggestions
+                    .iter()
+                    .any(|mapping| mapping.field_selector == field.selector)),
+                preview.manual_review.len()
+            );
+            assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+                && !entry.contains("clicked")
+                && !entry.contains("submitted")));
+        });
+    }
+
     #[test]
     #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_structure_is_read_only() {

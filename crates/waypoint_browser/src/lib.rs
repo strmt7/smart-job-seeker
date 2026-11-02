@@ -3166,7 +3166,7 @@ impl CdpDriver {
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
         let mut radio_form_owners: HashMap<u64, u64> = HashMap::new();
         let mut radio_group_required: HashMap<u64, bool> = HashMap::new();
-        type GroupContext = (String, Option<String>, Option<u64>, bool);
+        type GroupContext = (String, Option<String>, Option<u64>, bool, bool);
         let mut field_containers: HashMap<u64, Vec<GroupContext>> = HashMap::new();
         let mut wall_flags: Vec<String> = vec![];
         let mut custom_nodes = Vec::new();
@@ -3536,7 +3536,33 @@ impl CdpDriver {
                     });
                 }
             }
-            let named_field_group = tag == "fieldset"
+            // A plain container with one direct heading can describe a form
+            // section even without a semantic section/fieldset element. The
+            // heading is still checked for rendered visibility below.
+            let headed_div = tag == "div"
+                && node
+                    .get("children")
+                    .and_then(Value::as_array)
+                    .is_some_and(|children| {
+                        children
+                            .iter()
+                            .filter(|child| {
+                                child
+                                    .get("nodeName")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|name| {
+                                        matches!(
+                                            name.to_ascii_lowercase().as_str(),
+                                            "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                                        )
+                                    })
+                            })
+                            .take(2)
+                            .count()
+                            == 1
+                    });
+            let named_field_group = headed_div
+                || tag == "fieldset"
                 || (tag == "section"
                     && attrs
                         .get("role")
@@ -3600,7 +3626,10 @@ impl CdpDriver {
                     attrs.get("aria-label").cloned().unwrap_or_default()
                 };
                 let group_ref = attrs.get("aria-labelledby").cloned();
-                if tag == "section" && legend.trim().is_empty() && group_ref.is_none() {
+                if (tag == "section" || headed_div)
+                    && legend.trim().is_empty()
+                    && group_ref.is_none()
+                {
                     let headings: Vec<_> = node
                         .get("children")
                         .and_then(Value::as_array)
@@ -3652,6 +3681,7 @@ impl CdpDriver {
                                         group_ref.clone(),
                                         implicit_heading,
                                         ambiguous_heading,
+                                        headed_div && implicit_heading.is_some(),
                                     ));
                                 }
                             }
@@ -3945,7 +3975,7 @@ impl CdpDriver {
             .chain(
                 field_containers
                     .values()
-                    .flat_map(|groups| groups.iter().map(|(_, group_ref, _, _)| group_ref)),
+                    .flat_map(|groups| groups.iter().map(|(_, group_ref, _, _, _)| group_ref)),
             )
         {
             if let Some(ids) = group_ref.as_ref().filter(|s| s.len() <= 512) {
@@ -4202,7 +4232,7 @@ impl CdpDriver {
                         walls.push("field group nesting exceeds the inspection limit".into());
                     }
                     let mut context = Vec::new();
-                    for (legend, group_ref, heading, ambiguous) in groups.iter().take(8) {
+                    for (legend, group_ref, heading, ambiguous, inferred) in groups.iter().take(8) {
                         if *ambiguous {
                             walls.push(
                                 "a section heading is ambiguous; review the form manually".into(),
@@ -4256,10 +4286,17 @@ impl CdpDriver {
                             Some(group)
                                 if !label.eq_ignore_ascii_case(&group)
                                     && !context.iter().any(|existing: &String| {
-                                        existing.eq_ignore_ascii_case(&group)
+                                        existing
+                                            .strip_prefix("Possible section: ")
+                                            .unwrap_or(existing)
+                                            .eq_ignore_ascii_case(&group)
                                     }) =>
                             {
-                                context.push(group)
+                                context.push(if *inferred {
+                                    format!("Possible section: {group}")
+                                } else {
+                                    group
+                                })
                             }
                             Some(_) => {}
                             None => walls.push(

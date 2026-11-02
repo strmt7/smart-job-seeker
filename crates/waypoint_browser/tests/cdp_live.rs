@@ -816,6 +816,46 @@ fn visible_unambiguous_headings_give_context_and_others_require_review() {
 }
 
 #[test]
+#[ignore = "launches one local browser against fictional headed containers"]
+fn plain_headed_containers_provide_reviewable_context() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let form = driver.open(&file_url("form_div_headings.html")).unwrap();
+    for (selector, question) in [("#one", "First question"), ("#two", "Second question")] {
+        assert!(form
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == selector
+                && field.label
+                    == format!("Possible section: Project questions — answer in your own words — {question}")));
+    }
+    assert!(form
+        .walls
+        .iter()
+        .any(|wall| wall.contains("section heading could not be verified")));
+    let original = form.schema.schema_hash_input();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#change".into(),
+        })
+        .unwrap();
+    let updated = driver.inspect_current().unwrap();
+    assert_ne!(original, updated.schema.schema_hash_input());
+    assert!(
+        updated
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#one"
+                && field.label.contains("Changed project questions"))
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional fixture"]
 fn verification_rejects_hidden_choices() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
