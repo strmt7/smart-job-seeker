@@ -36,12 +36,26 @@ fn compare_plain_text(source: &[u8], extracted: Result<String, String>) -> Value
     json!({"status":if source == normalize(&extracted) {"matches"} else {"differs"}})
 }
 
+fn compare_pdf_text(source: &[u8], extracted: Result<(String, Value), String>) -> Value {
+    match extracted {
+        Ok((text, coverage)) => {
+            let mut check = compare_plain_text(source, Ok(text));
+            check["pdf_coverage"] = coverage;
+            check
+        }
+        Err(error) => compare_plain_text(source, Err(error)),
+    }
+}
+
 pub(crate) fn compare_docx_to_pdf(docx: &[u8], pdf: &[u8]) -> Value {
     let mut check = match crate::document_extract::extract("source.docx", docx) {
         Ok(source) if source.len() > 200_000 || source.trim().is_empty() => {
             compare_plain_text(source.as_bytes(), Err(String::new()))
         }
-        Ok(source) => compare_plain_text(source.as_bytes(), crate::pdf_extract::extract(pdf)),
+        Ok(source) => compare_pdf_text(
+            source.as_bytes(),
+            crate::pdf_extract::extract_checked_with_coverage(pdf),
+        ),
         Err(_) => json!({"status":"unavailable","reason":"DOCX text could not be extracted"}),
     };
     check["scope"] = json!("docx_extract");
@@ -101,7 +115,10 @@ pub fn start(id: String, name: String, bytes: Vec<u8>, kind: ConversionKind) -> 
                     let check = if bytes.len() > 200_000 {
                         compare_plain_text(&bytes, Err(String::new()))
                     } else {
-                        compare_plain_text(&bytes, crate::pdf_extract::extract(&pdf))
+                        compare_pdf_text(
+                            &bytes,
+                            crate::pdf_extract::extract_checked_with_coverage(&pdf),
+                        )
                     };
                     (pdf, check)
                 }
@@ -211,6 +228,36 @@ mod tests {
             compare_plain_text(&vec![b'a'; 200_001], Ok(String::new()))["status"],
             "unavailable"
         );
+    }
+    #[test]
+    fn comparison_keeps_pdf_coverage_without_exposing_extracted_text() {
+        let coverage = json!({"pages":2,"pages_with_images_and_text":[2],"pages_with_unknown_image_inventory":[]});
+        let check = compare_pdf_text(
+            b"Fictional text",
+            Ok(("Fictional text".into(), coverage.clone())),
+        );
+        assert_eq!(check["status"], "matches");
+        assert_eq!(check["pdf_coverage"], coverage);
+        assert!(!check.to_string().contains("Fictional text"));
+        assert_eq!(
+            compare_pdf_text(b"Fictional text", Err("unavailable".into()))["status"],
+            "unavailable"
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "uses the installed PDF worker on a fictional mixed-content document"]
+    fn comparison_reports_mixed_pdf_image_coverage() {
+        let bytes = include_bytes!("../tests/fictional-mixed-image-text.pdf");
+        let (text, _) = crate::pdf_extract::extract_checked_with_coverage(bytes).unwrap();
+        let check = compare_pdf_text(
+            text.as_bytes(),
+            crate::pdf_extract::extract_checked_with_coverage(bytes),
+        );
+        assert_eq!(check["status"], "matches");
+        assert!(check["pdf_coverage"]["pages_with_images_and_text"]
+            .as_array()
+            .is_some_and(|pages| !pages.is_empty()));
     }
     #[test]
     fn saved_conversion_can_be_retried_without_duplicate_documents() {
@@ -375,6 +422,9 @@ mod tests {
                     result["text_check"]["status"].as_str(),
                     Some("matches" | "differs")
                 ));
+                assert!(result["text_check"]["pdf_coverage"]["pages"]
+                    .as_u64()
+                    .is_some());
                 println!("Fictional DOCX comparison: {}", result["text_check"]);
                 let id = result["id"].as_str().unwrap();
                 let pdf = ws.document_content(id).unwrap().unwrap();

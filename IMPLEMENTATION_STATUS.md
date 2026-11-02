@@ -1,3 +1,8 @@
+## Converted PDF content coverage — 2026-11-02
+
+- Text comparison for converted DOCX and plain-text PDFs now retains the PDF extractor's page coverage. The conversion and template-edit results identify pages containing both selectable text and images, or with an unknown image inventory, because text inside images may be absent from the comparison. A match still does not verify the source's complete content, visual layout or ATS reading order. Existing stored results may lack coverage; extraction failures remain unavailable.
+- A fictional mixed-content PDF passed the local worker check, and a separate fictional DOCX conversion returned page coverage in its saved background result. Focused conversion, interface and Windows lint checks passed. The first worker run failed because its selected Python lacked `pypdf`; the successful runs explicitly selected the existing bundled PDF runtime. Clean-host setup and generic document fidelity remain unverified.
+
 ## Split-phone model evaluation — 2026-11-02
 
 - A second fictional evaluation seeded incorrect initial street, city and reference-email mappings to exercise the retry independently of the first model call. In its first run, `qwen3.5:9b` corrected city but flagged street for manual review; the applicant email was not mapped to the reference. After the retry prompt clarified that the component key has an explicit profile value, one rerun corrected street and city and still left the reference unmapped. A separate rerun of the earlier split-phone test also passed. These are limited, seeded observations, not a real form or a general accuracy measure. A regression checks the two-retry limit; the suggestion suite passed (43 passed, 19 ignored) and Windows web lint passed. The test-owned model was unloaded.
