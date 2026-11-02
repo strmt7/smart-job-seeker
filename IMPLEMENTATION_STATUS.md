@@ -1,3 +1,7 @@
+## Job selection recovery — 2026-11-02
+
+- Job checkboxes now retain up to 10,000 job IDs in the current browser tab across reloads. Before enabling shortlist or new selected-job assessment, the app reconciles the restored IDs against the refreshed list and removes missing or no-longer-discovered jobs. A storage failure is displayed; this is tab-session recovery, not durable cross-device selection or application authorization. Fictional JavaScript checks cover restoration, stale IDs, malformed storage, quota failure and the existing selected-assessment limit. No application was submitted.
+
 ## Duplicate explanation evaluation — 2026-11-02
 
 - New AI duplicate candidates now include a deterministic comparison of the saved title, employer, location and requisition text at assessment time, ignoring case and whitespace and reporting missing fields as unavailable. The comparison is evidence for review only: wording can differ for the same role, matching text does not establish identity, and the saved listings may later change. Existing duplicate records are not rewritten. The fictional duplicate-search suite (11 passed, 8 ignored) and Windows web Clippy passed; no application was submitted.

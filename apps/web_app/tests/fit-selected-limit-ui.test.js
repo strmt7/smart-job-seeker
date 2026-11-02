@@ -20,7 +20,8 @@ function context(size, saved = null) {
   const storage = new Map(saved ? [['waypoint-fit-batch', JSON.stringify(saved)]] : []);
   const ctx = {
     selectedJobs: new Set(Array.from({length:size}, (_, i) => `job-${i}`)),
-    shortlisting: false, fitBatchRunning: false, autoFitRunning: false,
+    shortlisting: false, fitBatchRunning: false, autoFitRunning: false, selectionReconciled: true,
+    saveJobSelection: () => true,
     fitBatch: null, runs: 0,
     document: {querySelector(selector) {
       if (!nodes.has(selector)) nodes.set(selector, {addEventListener: (_type, fn) => { listeners[selector] = fn; }});
