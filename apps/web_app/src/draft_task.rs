@@ -794,9 +794,22 @@ fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     Ok(value.clone())
 }
 
-/// Extract ASCII numeric literals and a small set of unit distinctions without
-/// splitting decimals or grouped numbers. This is not semantic verification.
+/// Extract ASCII numeric literals and common English written durations with
+/// a small set of unit distinctions. This is not semantic verification.
 fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
+    fn unit(word: &str) -> &'static str {
+        match word {
+            "percent" | "percentage" => "percent",
+            "second" | "seconds" | "sec" | "secs" => "second",
+            "minute" | "minutes" | "min" | "mins" => "minute",
+            "hour" | "hours" | "hr" | "hrs" => "hour",
+            "day" | "days" => "day",
+            "week" | "weeks" => "week",
+            "month" | "months" => "month",
+            "year" | "years" | "yr" | "yrs" => "year",
+            _ => "other",
+        }
+    }
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut index = 0;
@@ -830,19 +843,85 @@ fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
         let unit = if suffix.starts_with('%') {
             "percent"
         } else {
-            match word.as_str() {
-                "percent" | "percentage" => "percent",
-                "second" | "seconds" | "sec" | "secs" => "second",
-                "minute" | "minutes" | "min" | "mins" => "minute",
-                "hour" | "hours" | "hr" | "hrs" => "hour",
-                "day" | "days" => "day",
-                "week" | "weeks" => "week",
-                "month" | "months" => "month",
-                "year" | "years" | "yr" | "yrs" => "year",
-                _ => "other",
-            }
+            unit(&word)
         };
         out.push((text[start..index].to_owned(), unit));
+    }
+    fn number_word(number: &str) -> Option<u32> {
+        match number {
+            "zero" => Some(0),
+            "one" => Some(1),
+            "two" => Some(2),
+            "three" => Some(3),
+            "four" => Some(4),
+            "five" => Some(5),
+            "six" => Some(6),
+            "seven" => Some(7),
+            "eight" => Some(8),
+            "nine" => Some(9),
+            "ten" => Some(10),
+            "eleven" => Some(11),
+            "twelve" => Some(12),
+            "thirteen" => Some(13),
+            "fourteen" => Some(14),
+            "fifteen" => Some(15),
+            "sixteen" => Some(16),
+            "seventeen" => Some(17),
+            "eighteen" => Some(18),
+            "nineteen" => Some(19),
+            "twenty" => Some(20),
+            "thirty" => Some(30),
+            "forty" => Some(40),
+            "fifty" => Some(50),
+            "sixty" => Some(60),
+            "seventy" => Some(70),
+            "eighty" => Some(80),
+            "ninety" => Some(90),
+            "hundred" => Some(100),
+            "thousand" => Some(1000),
+            _ => None,
+        }
+    }
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_ascii_lowercase()
+        })
+        .collect();
+    for (position, pair) in words.windows(2).enumerate() {
+        let kind = unit(&pair[1]);
+        if !matches!(
+            kind,
+            "second" | "minute" | "hour" | "day" | "week" | "month" | "year"
+        ) {
+            continue;
+        }
+        let number = &pair[0];
+        let is_number = |word: &str| {
+            !word.is_empty() && word.split('-').all(|part| number_word(part).is_some())
+        };
+        if !is_number(number) {
+            continue;
+        }
+        let mut start = position;
+        while start > 0 {
+            if is_number(&words[start - 1]) {
+                start -= 1;
+            } else if words[start - 1] == "and" && start >= 2 && is_number(&words[start - 2]) {
+                start -= 2;
+            } else {
+                break;
+            }
+        }
+        let value = if start == position && !number.contains('-') {
+            number_word(number)
+                .expect("validated number word")
+                .to_string()
+        } else {
+            format!("compound:{}", words[start..=position].join(" "))
+        };
+        out.push((value, kind));
     }
     out
 }
@@ -1332,6 +1411,39 @@ mod tests {
         let result = check("Reduced outage by 90 percent.", "Helped resolve an outage.");
         assert_eq!(result["items"][0]["status"], "uncertain");
         assert_eq!(result["items"][0]["numeric_guard"], true);
+        assert_eq!(
+            check(
+                "Ten years of Rust experience.",
+                "Three years of Rust experience."
+            )["items"][0]["status"],
+            "uncertain"
+        );
+        assert_eq!(
+            check(
+                "Three years of Rust experience.",
+                "3 years of Rust experience."
+            )["items"][0]["status"],
+            "supported"
+        );
+        assert_eq!(
+            check("Twenty one years of experience.", "One year of experience.")["items"][0]
+                ["status"],
+            "uncertain"
+        );
+        for claim in [
+            "Twenty-one years of experience.",
+            "Two hundred and one years of experience.",
+        ] {
+            assert_eq!(
+                check(claim, "One year of experience.")["items"][0]["status"],
+                "uncertain"
+            );
+        }
+        assert_eq!(
+            check("Three months of experience.", "Three years of experience.")["items"][0]
+                ["status"],
+            "uncertain"
+        );
         assert_eq!(
             check(
                 "Reduced outage by 90 percent.",
