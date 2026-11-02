@@ -469,7 +469,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  activeReviewSession=result.session_id;reviewSessionChecked=true;document.querySelector('#session-recovery').replaceChildren();renderReviewQueue();
  panel.replaceChildren(element('h3',`Form review: ${job.title} · ${job.employer}`));
  panel.append(element('p',`${result.visible ? 'Visible browser open. You can handle sign-in, CAPTCHA and other sections yourself.' : 'Headless browser open.'} Review actions do not intentionally submit an application. A website can still transmit or submit information as you type or interact; review mode cannot guarantee prevention.`));
- const choicesButton=element('button','Inspect custom choices'),choicesPanel=element('div','','application-link');choicesButton.type='button';choicesPanel.setAttribute('aria-live','polite');
+ const choicesButton=element('button','Inspect custom comboboxes'),choicesPanel=element('div','','application-link');choicesButton.type='button';choicesPanel.setAttribute('aria-live','polite');
  function addSelectedReview(selector,option,target){
   const verify=element('button','Check selected value with local vision');verify.type='button';target.append(verify);
   verify.addEventListener('click',async()=>{verify.disabled=true;try{
@@ -483,13 +483,13 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  }
  let choicePage=0;
  choicesButton.addEventListener('click',async()=>{
-  choicesButton.disabled=true;choicesPanel.replaceChildren(element('p','Inspecting visible choice controls…','footnote'));
+  choicesButton.disabled=true;choicesPanel.replaceChildren(element('p','Inspecting visible custom comboboxes…','footnote'));
   try{
    const inventory=await api('/api/form/custom-choices',{session_id:result.session_id});
    if(!Array.isArray(inventory.choices)||typeof inventory.snapshot_digest!=='string')throw new Error('Invalid choice inventory');
    choicesPanel.replaceChildren();
    if(inventory.pending_selected){const pending=inventory.pending_selected,review=element('section','','choice-review-item');review.append(element('p',`A selected value needs visual review: ${pending.option}`,'review-label'));addSelectedReview(pending.selector,pending.option,review);choicesPanel.append(review);}
-   if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom choices were detected.','footnote'));
+   if(!inventory.choices.length)choicesPanel.append(element('p','No visible custom comboboxes were detected by this check. Other choice controls may still need manual review.','footnote'));
    choicePage=Math.min(choicePage,Math.max(0,Math.ceil(inventory.choices.length/15)-1));
    for(const choice of inventory.choices.slice(choicePage*15,choicePage*15+15)){
     const section=element('section','','choice-review-item'),optionChecks=new Map();section.append(element('strong',choice.label || 'Unlabelled choice'));

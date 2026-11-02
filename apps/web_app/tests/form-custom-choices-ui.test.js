@@ -140,5 +140,11 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 16');nav=paged.choicesPanel.children.at(-1);nav.children[2].click();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 31');nav=paged.choicesPanel.children.at(-1);assert.equal(nav.children[2].disabled,true);nav.children[0].click();await new Promise(resolve=>setImmediate(resolve));assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 16');assert.equal(pagesRead,4);
   many.splice(10);nav=paged.choicesPanel.children.at(-1);nav.children[2].click();await new Promise(resolve=>setImmediate(resolve));assert.equal(paged.choicesPanel.children[0].children[0].text,'Choice 1');assert.equal(paged.choicesPanel.children.length,10);
+  const empty=run(new Node('panel'),{session_id:'session'},element,async()=>({choices:[],incomplete:true,snapshot_digest:'f'.repeat(64)}));
+  assert.equal(empty.choicesButton.text,'Inspect custom comboboxes');
+  await empty.choicesButton.listeners.click();
+  assert.match(empty.choicesPanel.children[0].text,/No visible custom comboboxes/);
+  assert.match(empty.choicesPanel.children[0].text,/Other choice controls may still need manual review/);
+  assert.ok(empty.choicesPanel.children.some(item=>/could not be inspected/.test(item.text)));
   console.log('Custom choice review UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
