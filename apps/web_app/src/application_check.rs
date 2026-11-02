@@ -372,7 +372,7 @@ fn application_destination_with_external(
 
 /// Automatic inspection must satisfy both the conservative single-link rule
 /// and the current page's label-aware review filter.
-fn vetted_application_destination(
+pub(crate) fn vetted_application_destination(
     current: &str,
     links: &[String],
     vetted: &[String],

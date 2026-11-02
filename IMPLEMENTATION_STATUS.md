@@ -2048,3 +2048,13 @@ disappearing-field fixture passed. One subsequent read-only Workable diagnostic
 still produced inconsistent separate observations: the first found no fields,
 while the application check reported possible CAPTCHA, required custom and
 hidden-control obstacles. It required manual review and did not fill or submit.
+
+### Consistent application-link review (2026-11-02)
+
+The form-inspection worker now applies the same bounded, label-aware candidate
+filter as the read-only application checker before following a likely link.
+If a different visible link to the same destination has a final-action label,
+or the link inventory cannot be read, navigation is left for manual review.
+The worker also checks that the page URL has not changed during the inventory.
+Fictional driver tests cover a conflicting submit label and an ordinary link.
+This is a conservative filter, not proof that arbitrary links cannot submit.

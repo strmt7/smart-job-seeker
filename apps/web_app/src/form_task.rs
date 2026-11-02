@@ -175,7 +175,26 @@ fn open_application_page(
             ))
         }
     };
-    if let Some(destination) = crate::application_check::application_destination(&current, &links) {
+    let vetted = if links.is_empty() {
+        Vec::new()
+    } else {
+        match crate::form_links::candidates(driver) {
+            Ok(candidates) => candidates,
+            Err(_) => return Ok((
+                live,
+                Some(
+                    "Application link labels could not be checked completely; navigate manually."
+                        .into(),
+                ),
+            )),
+        }
+    };
+    if driver.current_url().map_err(|e| e.to_string())? != current {
+        return Err("The page changed while checking application links; inspect it again".into());
+    }
+    if let Some(destination) =
+        crate::application_check::vetted_application_destination(&current, &links, &vetted, false)
+    {
         live = driver.open(&destination).map_err(|e| e.to_string())?;
         let final_url = driver.current_url().map_err(|e| e.to_string())?;
         let final_url = url::Url::parse(&final_url).map_err(|_| "Invalid application URL")?;
@@ -2137,6 +2156,18 @@ mod tests {
                 Ok(self.links.clone())
             }
         }
+        fn page_links(
+            &mut self,
+        ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+            Ok(self
+                .links
+                .iter()
+                .map(|url| waypoint_applications::driver::PageLink {
+                    url: url.clone(),
+                    label: "Apply".into(),
+                })
+                .collect())
+        }
         fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
             panic!("inspection must not execute field actions")
         }
@@ -2159,12 +2190,65 @@ mod tests {
         fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
             self.0.application_links()
         }
+        fn page_links(
+            &mut self,
+        ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+            self.0.page_links()
+        }
         fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
             panic!("inspection must not execute actions")
         }
         fn commit(&mut self) -> Result<SiteAck, DriverError> {
             panic!("inspection must not submit")
         }
+    }
+
+    struct ConflictingLinkDriver(FakeDriver);
+    impl BrowserDriver for ConflictingLinkDriver {
+        fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
+            self.0.open(url)
+        }
+        fn current_url(&mut self) -> Result<String, DriverError> {
+            self.0.current_url()
+        }
+        fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+            self.0.application_links()
+        }
+        fn page_links(
+            &mut self,
+        ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+            Ok(vec![
+                waypoint_applications::driver::PageLink {
+                    url: "/role/apply".into(),
+                    label: "Apply".into(),
+                },
+                waypoint_applications::driver::PageLink {
+                    url: "/role/apply".into(),
+                    label: "Submit application".into(),
+                },
+            ])
+        }
+        fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+            panic!("inspection must not execute actions")
+        }
+        fn commit(&mut self) -> Result<SiteAck, DriverError> {
+            panic!("inspection must not submit")
+        }
+    }
+
+    #[test]
+    fn form_worker_does_not_follow_conflicting_final_action_label() {
+        let mut driver = ConflictingLinkDriver(FakeDriver {
+            current: String::new(),
+            links: vec!["/role/apply".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: false,
+        });
+        let (_, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        assert_eq!(driver.0.opened, ["https://jobs.example.org/role"]);
+        assert!(warning.unwrap().contains("manual navigation"));
     }
 
     #[test]
