@@ -599,7 +599,39 @@ function showFormPreview(job,result){setWorkspaceView('applications');
   }catch(error){choicesPanel.replaceChildren(element('p',`Custom choices could not be inspected: ${error.message}`,'review-label'));}finally{choicesButton.disabled=false;}
  });panel.append(choicesButton,choicesPanel);
  const radioButton=element('button','Inspect custom radio groups'),radioPanel=element('div','','application-link');radioButton.type='button';radioPanel.setAttribute('aria-live','polite');panel.append(radioButton,radioPanel);
- radioButton.addEventListener('click',async()=>{radioButton.disabled=true;radioPanel.replaceChildren(element('p','Inspecting custom radio groups…','footnote'));try{const inventory=await api('/api/form/custom-radio-groups',{session_id:result.session_id});if(!Array.isArray(inventory.groups))throw new Error('Invalid radio inventory');radioPanel.replaceChildren();if(!inventory.groups.length)radioPanel.append(element('p','No visible custom radio groups were detected by this check.','footnote'));for(const group of inventory.groups){const section=element('section','','choice-review-item');section.append(element('strong',group.label));const list=element('ul','');for(const option of group.options || [])list.append(element('li',`${option.label} — ${option.checked===true?'reported selected':option.checked===false?'reported not selected':'selection unknown'}${option.disabled?' (disabled)':''}`));section.append(list);if(group.incomplete)section.append(element('p','Some options or states could not be inspected.','review-label'));radioPanel.append(section);}if(inventory.incomplete)radioPanel.append(element('p','Some page scopes or groups could not be inspected.','review-label'));radioPanel.append(element('p','These are page-reported states. Review and change them in the visible browser.','footnote'));}catch(error){radioPanel.replaceChildren(element('p',`Radio group inspection failed: ${error.message}`,'review-label'));}finally{radioButton.disabled=false;}});
+ radioButton.addEventListener('click',async()=>{
+  radioButton.disabled=true;radioPanel.replaceChildren(element('p','Inspecting custom radio groups…','footnote'));
+  try{
+   const inventory=await api('/api/form/custom-radio-groups',{session_id:result.session_id});
+   if(!Array.isArray(inventory.groups)||typeof inventory.snapshot_digest!=='string')throw new Error('Invalid radio inventory');
+   radioPanel.replaceChildren();
+   if(!inventory.groups.length)radioPanel.append(element('p','No visible custom radio groups were detected by this check.','footnote'));
+   for(const group of inventory.groups){
+    const section=element('section','','choice-review-item');section.append(element('strong',group.label));const list=element('ul','');
+    for(const option of group.options || []){
+     const row=element('li',`${option.label} — ${option.checked===true?'reported selected':option.checked===false?'reported not selected':'selection unknown'}${option.disabled?' (disabled)':''}`);
+     const check=element('button','Check option with local vision'),feedback=element('span','','review-label');check.type='button';
+     check.disabled=inventory.incomplete||group.incomplete||option.disabled||!group.options.every(item=>item.checked===false);
+     check.addEventListener('click',async()=>{
+      if(check.disabled)return;check.disabled=true;feedback.textContent='Checking option…';
+      try{
+       let pending;try{pending=JSON.parse(sessionStorage.getItem('waypoint-radio-vision')||'null');}catch{pending=null;}
+       if(pending&&(pending.session!==result.session_id||pending.selector!==group.selector||pending.option!==option.label))throw new Error('Another radio visual check is pending');
+       if(!pending){const active=await api('/api/form/control-vision-pending',{});if(active.active)throw new Error('Another visual check is pending');const started=await api('/api/form/custom-radio-option-vision-start',{session_id:result.session_id,selector:group.selector,option:option.label,snapshot_digest:inventory.snapshot_digest});pending={task:started.task_id,session:result.session_id,selector:group.selector,option:option.label};sessionStorage.setItem('waypoint-radio-vision',JSON.stringify(pending));}
+       let visual;for(let attempt=0;attempt<180;attempt++){visual=await api('/api/form/control-vision-status',{task_id:pending.task});if(visual.status!=='running')break;await new Promise(resolve=>setTimeout(resolve,700));}
+       if(visual?.status==='running')throw new Error('The visual check is still running; retry to recover its result');
+       sessionStorage.removeItem('waypoint-radio-vision');
+       if(visual?.status!=='complete'||visual.rank_task_id!=='custom-radio-option'||visual.session_id!==result.session_id||visual.label!==option.label)throw new Error(visual?.error||'The visual result does not match this option');
+       feedback.textContent=visual.comparison==='label_observed'&&visual.capture_saved===true&&visual.result_saved===true?'Local vision observed this option; selection still requires manual review.':'Visual review was uncertain or could not be recorded; inspect manually.';
+      }catch(error){feedback.textContent=`Visual check needs review: ${error.message}`;}finally{check.disabled=false;}
+     });row.append(check,feedback);list.append(row);
+    }
+    section.append(list);if(group.incomplete)section.append(element('p','Some options or states could not be inspected.','review-label'));radioPanel.append(section);
+   }
+   if(inventory.incomplete)radioPanel.append(element('p','Some page scopes or groups could not be inspected.','review-label'));
+   radioPanel.append(element('p','These are page-reported states. Review and change them in the visible browser.','footnote'));
+  }catch(error){radioPanel.replaceChildren(element('p',`Radio group inspection failed: ${error.message}`,'review-label'));}finally{radioButton.disabled=false;}
+ });
  const sessionEstimate=element('p','','session-estimate'),sessionAlert=element('p','','review-label');sessionAlert.setAttribute('role','status');panel.append(sessionEstimate,sessionAlert);let sessionTimer=null;
  function updateSessionEstimate(seconds){clearInterval(sessionTimer);sessionAlert.textContent='';if(!Number.isFinite(seconds)||seconds<0||seconds>3600){sessionEstimate.textContent='Session time is unavailable. The browser session may expire.';return;}const deadline=Date.now()+seconds*1000;const tick=()=>{if(!panel.isConnected||panel.disabled){clearInterval(sessionTimer);return;}const remaining=Math.max(0,Math.ceil((deadline-Date.now())/1000));if(remaining===0){sessionEstimate.textContent='Estimated session time has elapsed.';sessionAlert.textContent='The review session may have expired. Inspect the application again before continuing.';clearInterval(sessionTimer);}else sessionEstimate.textContent=`Estimated session time remaining: ${remaining} seconds. The server determines whether the session is still active.`;};tick();if(Date.now()<deadline)sessionTimer=setInterval(tick,1000);}
  updateSessionEstimate(result.expires_in_seconds);

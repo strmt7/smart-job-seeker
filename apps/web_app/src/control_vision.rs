@@ -66,6 +66,18 @@ pub(crate) fn set_option_fixture(
 }
 
 #[cfg(test)]
+pub(crate) fn set_radio_option_fixture(
+    id: &str,
+    session: &str,
+    job: &str,
+    revision: i64,
+    capture: (&str, &str, &str, &str),
+) {
+    set_choice_fixture(id, session, job, revision, capture, true);
+    TASK.lock().unwrap().as_mut().unwrap().rank_task = "custom-radio-option".into();
+}
+
+#[cfg(test)]
 pub(crate) fn set_selected_fixture(
     id: &str,
     session: &str,
@@ -237,7 +249,7 @@ pub fn start(request: Request) -> Result<(), String> {
         capture_saved,
         choice,
     } = request;
-    let option = rank_task == "custom-choice-option";
+    let option = rank_task == "custom-choice-option" || rank_task == "custom-radio-option";
     let selected = rank_task == "custom-choice-selected";
     *task = Some(Task {
         id: id.clone(),

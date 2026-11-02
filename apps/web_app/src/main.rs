@@ -1661,6 +1661,22 @@ fn custom_choice_snapshot(
     Ok((choices, digest.as_str().to_owned()))
 }
 
+fn custom_radio_snapshot(
+    driver: &mut waypoint_browser::CdpDriver,
+) -> Result<(waypoint_browser::CustomRadioGroups, String), String> {
+    let live = driver
+        .inspect_current()
+        .map_err(|error| error.to_string())?;
+    let url = driver.current_url().map_err(|error| error.to_string())?;
+    let groups = driver
+        .page_custom_radio_groups()
+        .map_err(|error| error.to_string())?;
+    let digest = Sha256Digest::of(
+        &json!({"url":url,"schema":live.schema,"walls":live.walls,"groups":groups}).to_string(),
+    );
+    Ok((groups, digest.as_str().to_owned()))
+}
+
 /// Locate a closed choice without trusting that a scroll leaves the page unchanged.
 fn scroll_closed_choice_for_visual(
     current: &mut ReviewSession,
@@ -4652,11 +4668,96 @@ fn serve(
                 .as_mut()
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
-            let inventory = current
+            let (inventory, digest) = custom_radio_snapshot(&mut current.driver)?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"groups":inventory.groups,"incomplete":inventory.incomplete,"snapshot_digest":digest}),
+            );
+        }
+        "/api/form/custom-radio-option-vision-start" => {
+            let id = body["session_id"].as_str().ok_or("missing session")?;
+            let selector = body["selector"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 4096)
+                .ok_or("Invalid radio selector")?;
+            let option = body["option"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 200 && *s == s.trim())
+                .ok_or("Invalid radio option")?;
+            let expected = body["snapshot_digest"]
+                .as_str()
+                .filter(|s| s.len() == 64)
+                .ok_or("Missing radio snapshot")?;
+            let current = session
+                .as_mut()
+                .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
+                .ok_or("Form session expired")?;
+            let (inventory, digest) = custom_radio_snapshot(&mut current.driver)?;
+            if digest != expected {
+                return Err("The page changed; inspect radio groups again".into());
+            }
+            let groups: Vec<_> = inventory
+                .groups
+                .iter()
+                .filter(|group| group.selector == selector)
+                .collect();
+            if inventory.incomplete
+                || groups.len() != 1
+                || groups[0].incomplete
+                || groups[0]
+                    .options
+                    .iter()
+                    .any(|item| item.checked != Some(false))
+                || groups[0]
+                    .options
+                    .iter()
+                    .filter(|item| item.label == option && !item.disabled)
+                    .count()
+                    != 1
+            {
+                return Err("Radio option is unavailable, ambiguous, or already selected".into());
+            }
+            let image = current
                 .driver
-                .page_custom_radio_groups()
-                .map_err(|error| error.to_string())?;
-            json_reply(stream, "200 OK", json!(inventory));
+                .with_review_timeout(|driver| {
+                    driver.screenshot_custom_radio_option(selector, option)
+                })
+                .map_err(|error| format!("Could not capture the radio option: {error}"))?;
+            if custom_radio_snapshot(&mut current.driver)?.1 != digest {
+                return Err("The page changed during capture; inspect radio groups again".into());
+            }
+            let model = resident_model()?.ok_or(
+                "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
+            )?;
+            let task_id = random_id()?;
+            let capture_saved = current.record.as_mut().is_some_and(|record| record.screenshot_with_name(&image).and_then(|name| record.event(json!({"type":"custom_radio_visual_capture","time":now(),"task_id":task_id,"screenshot":format!("screenshots/{name}"),"note":"Advisory radio option crop; no control was clicked."}))).is_ok());
+            let revision = control_vision::begin_pending(ws, &current.job_id, &task_id, now())?;
+            if let Err(error) = control_vision::start(control_vision::Request {
+                id: task_id.clone(),
+                session: current.id.clone(),
+                rank_task: "custom-radio-option".into(),
+                control_index: 0,
+                job_id: current.job_id.as_str().into(),
+                pending_revision: revision,
+                model,
+                selector: selector.into(),
+                digest,
+                image: image.clone(),
+                label: option.into(),
+                ambiguous: false,
+                capture_saved,
+                choice: true,
+            }) {
+                control_vision::finish_pending(ws, &current.job_id, &task_id, revision)?;
+                return Err(error);
+            }
+            current.created = Instant::now();
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":task_id,"screenshot":image,"capture_saved":capture_saved}),
+            );
         }
         "/api/form/custom-choice-advice-pending" => {
             json_reply(stream, "200 OK", choice_advice::pending()?);
@@ -5493,7 +5594,10 @@ fn serve(
                     current.created = Instant::now();
                     if result["status"] == "complete" {
                         let choice = result["choice"] == true;
-                        let current_snapshot = if choice {
+                        let radio = result["rank_task_id"] == "custom-radio-option";
+                        let current_snapshot = if radio {
+                            custom_radio_snapshot(&mut current.driver).map(|(_, digest)| digest)
+                        } else if choice {
                             custom_choice_snapshot(&mut current.driver).map(|(_, digest)| digest)
                         } else {
                             control_rank::snapshot(&mut current.driver).map(|(_, digest)| digest)
@@ -5503,7 +5607,12 @@ fn serve(
                             current
                                 .driver
                                 .with_review_timeout(|driver| {
-                                    if result["rank_task_id"] == "custom-choice-selected" {
+                                    if radio {
+                                        driver.screenshot_custom_radio_option(
+                                            selector,
+                                            result["label"].as_str().unwrap_or(""),
+                                        )
+                                    } else if result["rank_task_id"] == "custom-choice-selected" {
                                         driver.screenshot_control(selector)
                                     } else if result["rank_task_id"] == "custom-choice-option" {
                                         driver.screenshot_custom_choice_option(
@@ -5518,7 +5627,9 @@ fn serve(
                                 })
                                 .ok()
                         });
-                        let final_snapshot = if choice {
+                        let final_snapshot = if radio {
+                            custom_radio_snapshot(&mut current.driver).map(|(_, digest)| digest)
+                        } else if choice {
                             custom_choice_snapshot(&mut current.driver).map(|(_, digest)| digest)
                         } else {
                             control_rank::snapshot(&mut current.driver).map(|(_, digest)| digest)

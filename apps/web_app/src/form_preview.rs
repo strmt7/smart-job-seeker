@@ -2903,6 +2903,123 @@ mod tests {
 
     #[test]
     #[ignore = "starts one local browser and inspects fictional custom choices"]
+    fn custom_radio_visual_result_requires_unchanged_snapshot() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_custom_radio_action.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        let job = crate::manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.invalid/fictional","title":"Role","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let mut session = Some(crate::ReviewSession {
+            id: "fixture-session".into(),
+            job_id: JobIdentityId::new(job["id"].as_str().unwrap()).unwrap(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url: url.to_string(),
+            profile_digest: Sha256Digest::of("fixture"),
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(120),
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            selected_choices: vec![],
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let (inventory, digest) =
+            crate::custom_radio_snapshot(&mut session.as_mut().unwrap().driver).unwrap();
+        let group = inventory
+            .groups
+            .iter()
+            .find(|g| g.label == "Working arrangement")
+            .unwrap();
+        let selector = group.selector.clone();
+        let image = session
+            .as_mut()
+            .unwrap()
+            .driver
+            .screenshot_custom_radio_option(&selector, "Remote")
+            .unwrap();
+        let job_id = session.as_ref().unwrap().job_id.clone();
+        let revision =
+            crate::control_vision::begin_pending(&ws, &job_id, "radio-visual", 1).unwrap();
+        crate::control_vision::set_radio_option_fixture(
+            "radio-visual",
+            "fixture-session",
+            job_id.as_str(),
+            revision,
+            (&selector, &digest, &image, "Remote"),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"task_id":"radio-visual"}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/form/control-vision-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["comparison"], "label_observed");
+        assert_eq!(result["rank_task_id"], "custom-radio-option");
+        assert_eq!(result["pending_finished"], true);
+        // A fresh model result attached to the old snapshot must be marked stale
+        // if the page changes before its status is collected.
+        let revision =
+            crate::control_vision::begin_pending(&ws, &job_id, "radio-stale", 1).unwrap();
+        crate::control_vision::set_radio_option_fixture(
+            "radio-stale",
+            "fixture-session",
+            job_id.as_str(),
+            revision,
+            (&selector, &digest, &image, "Remote"),
+        );
+        session
+            .as_mut()
+            .unwrap()
+            .driver
+            .select_custom_radio_option(&selector, "Remote")
+            .unwrap();
+        let body = json!({"task_id":"radio-stale"}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/form/control-vision-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["comparison"], "stale");
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one local browser and inspects fictional custom choices"]
     fn custom_radio_endpoint_reports_options_without_interaction() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
@@ -2958,6 +3075,22 @@ mod tests {
         assert_eq!(result["groups"][0]["options"][1]["label"], "Remote");
         assert_eq!(result["groups"][0]["options"][1]["checked"], true);
         assert_eq!(result["groups"][0]["options"][1]["disabled"], true);
+        let selector = result["groups"][0]["selector"].as_str().unwrap();
+        for (digest, expected) in [
+            ("0".repeat(64), "page changed"),
+            (
+                result["snapshot_digest"].as_str().unwrap().to_owned(),
+                "already selected",
+            ),
+        ] {
+            let body = json!({"session_id":"fixture-session","selector":selector,"option":"On site","snapshot_digest":digest}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/custom-radio-option-vision-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let error = crate::serve(&mut server, &mut ws, &mut session, "fixture-token", port)
+                .unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
         assert!(session
             .as_ref()
             .unwrap()
