@@ -1021,7 +1021,7 @@ fn extract_page_text_with_hint(
         warnings.push("The local model could not determine whether this page is a job vacancy; verify the original page.".into());
     }
     if section_title.is_some() && section_text.is_none() {
-        warnings.push("The selected role section could not be bounded; verify each extracted detail against the role.".into());
+        warnings.push("The selected role section could not be bounded; location and deadline were omitted. Verify each extracted detail against the role.".into());
     }
     if repaired {
         warnings.push("The first model response failed exact-source validation; this result came from one retry.".into());
@@ -1039,8 +1039,13 @@ fn extract_page_text_with_hint(
             String::new()
         }
     };
-    let location = optional("location", 200);
-    let mut description = if section_title.is_some() && section_text.is_none() {
+    let unbounded_selected_section = section_title.is_some() && section_text.is_none();
+    let location = if unbounded_selected_section {
+        String::new()
+    } else {
+        optional("location", 200)
+    };
+    let mut description = if unbounded_selected_section {
         warnings.push(
             "Description was omitted because the selected role section could not be bounded."
                 .into(),
@@ -1057,7 +1062,8 @@ fn extract_page_text_with_hint(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|text| {
-            (3..=250).contains(&text.len())
+            !unbounded_selected_section
+                && (3..=250).contains(&text.len())
                 && source.contains(text)
                 && section_text.is_none_or(|section| section.contains(text))
                 && !text
@@ -3747,8 +3753,8 @@ mod tests {
 
     #[test]
     fn unbounded_selected_section_does_not_supply_a_description() {
-        let source = "Example Lab Research Engineer builds scientific instruments and tests experimental systems.";
-        let response = json!({"title":"Research Engineer","employer":"Example Lab","description":"builds scientific instruments"});
+        let source = "Example Lab Research Engineer builds scientific instruments and tests experimental systems. Data Scientist in Berlin. Deadline: 30 November.";
+        let response = json!({"title":"Research Engineer","employer":"Example Lab","description":"builds scientific instruments","location":"Berlin","deadline_excerpt":"Deadline: 30 November"});
         let job = extract_page_text_with_hint(
             &mut Fake(response),
             source,
@@ -3758,6 +3764,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(job["description"], "");
+        assert_eq!(job["location"], "");
+        assert_eq!(job["deadline_excerpt"], "");
         assert!(job["extraction_warnings"]
             .as_array()
             .unwrap()
