@@ -2877,3 +2877,12 @@ The application-record list displays an actionable warning to inspect the
 materials folder and manifest. Focused archive and interface tests passed.
 Older records without this flag are not retrospectively audited, and absence of
 the warning does not prove that an archive is complete.
+
+### Choice-evidence classifier experiment (2026-11-02)
+
+A separate qwen3.5:9b classification experiment matched 6 of 7 fictional
+labels. It rejected both instruction-only inputs, but also rejected a valid
+preference followed by a conflicting instruction. The experimental test is
+resource-gated and ignored by default; it fails on that false abstention. It
+is not wired into production choice advice, and does not resolve the earlier
+instruction-only failure. The model was unloaded after the experiment.
