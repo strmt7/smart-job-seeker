@@ -351,12 +351,14 @@ pub(crate) fn parse_excluding(
                 }
             }
         }
-        if engines.is_empty() {
-            if let Some(value) = item.get("engine").and_then(Value::as_str) {
-                let cleaned: String = value.chars().filter(|c| !c.is_control()).take(80).collect();
-                let cleaned = cleaned.trim();
-                if !cleaned.is_empty() {
+        if let Some(value) = item.get("engine").and_then(Value::as_str) {
+            let cleaned: String = value.chars().filter(|c| !c.is_control()).take(80).collect();
+            let cleaned = cleaned.trim();
+            if !cleaned.is_empty() && !engines.iter().any(|engine| engine == cleaned) {
+                if engines.len() < 8 {
                     engines.push(cleaned.to_owned());
+                } else {
+                    engines_limited = true;
                 }
             }
         }
@@ -710,11 +712,14 @@ mod tests {
     #[test]
     fn provider_metadata_is_optional_bounded_and_cleaned() {
         let data = parse(&json!({"results":[
-            {"title":"Role", "url":"https://example.org/one", "engines":["search\nengine", "search\nengine", 4], "publishedDate":"2026-10-28\n"},
+            {"title":"Role", "url":"https://example.org/one", "engines":["search\nengine", "search\nengine", 4], "engine":"another", "publishedDate":"2026-10-28\n"},
             {"title":"Other", "url":"https://example.org/two", "engine":"fallback", "publishedDate":null},
             {"title":"Plain", "url":"https://example.org/three"}
         ]}).to_string()).unwrap();
-        assert_eq!(data["results"][0]["engines"], json!(["searchengine"]));
+        assert_eq!(
+            data["results"][0]["engines"],
+            json!(["searchengine", "another"])
+        );
         assert_eq!(data["results"][0]["published_date"], "2026-10-28");
         assert_eq!(data["results"][1]["engines"], json!(["fallback"]));
         assert_eq!(data["results"][2]["engines"], json!([]));
@@ -732,6 +737,9 @@ mod tests {
         let engines = long["results"][0]["engines"].as_array().unwrap();
         assert_eq!(engines.len(), 8);
         assert_eq!(engines[0].as_str().unwrap().chars().count(), 80);
+        let full = parse(&json!({"results":[{"url":"https://example.org/full", "engines":["a","b","c","d","e","f","g","h"],"engine":"i"}]}).to_string()).unwrap();
+        assert_eq!(full["results"][0]["engines"].as_array().unwrap().len(), 8);
+        assert_eq!(full["results"][0]["engines_limited"], true);
         assert_eq!(
             long["results"][0]["published_date"]
                 .as_str()

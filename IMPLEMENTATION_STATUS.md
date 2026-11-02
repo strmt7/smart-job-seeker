@@ -1,5 +1,21 @@
+## Listing inspection feedback — 2026-11-02
+
+- Individual search-result cards now keep inspection progress, success or failure visible until the search results are replaced. The error remains a review prompt, not a declaration that a role is closed. Focused UI fixtures cover an HTTP 404 failure and existing search-card behavior.
+- In an isolated workspace, one public search returned a CERN job URL that a separate bounded Crawl4AI capture reported as HTTP 404. Initially Waypoint did not add it and no persistent outcome was visible after the transient notification disappeared. On retest, the changed interface kept the HTTP 404 and manual-review message on the card. This is one unavailable page, not general freshness verification. No application was submitted.
+
+## Isolated workspace and live search — 2026-11-02
+
+- A process can set `WAYPOINT_WORKSPACE_DIR` to an absolute folder for an isolated workspace. It does not replace the saved workspace preference; while the override is active the settings API refuses changes to that preference, and the interface identifies the temporary workspace and disables the saved-folder controls. Invalid override paths fail startup. The focused storage and interface tests and Windows build passed; the disabled controls were also observed in the running app.
+- The web-app suite passed with 515 tests and 275 ignored; all 123 JavaScript checks and web-app lint passed after the workspace and inspection changes.
+- In an isolated encrypted workspace, one generic materials-science search through the web interface and FreeSerp returned nine unverified links from ten reported results. The results included search pages and unrelated material; no listing was opened and no application was submitted. This is one query and does not establish search coverage or listing freshness.
+
+## Search engine attribution — 2026-11-02
+
+- Search results now retain a distinct singular `engine` label even when the provider also reports an `engines` list. Labels remain unverified provider attribution and are capped at eight; the limit is reported if another distinct label cannot fit. Fictional parser tests passed; no search provider or employer was contacted.
+
 ## Browser rehearsal limits — 2026-11-02
 
+- A fictional loopback browser test confirmed that enabling CDP `Fetch` interception after a WebSocket is established does not block messages sent on that socket. Request interception alone is therefore insufficient for a no-submission rehearsal barrier; this test does not characterize every browser transport or target.
 - Guarded clicks now reject a native submit control at the actual hit point, including one nested inside a selected container, and labels associated with submit controls. A fictional browser fixture reproduced the nested-button bypass before the change and passed afterward; existing hover-cover and custom-choice checks also passed. This does not prevent page scripts or network activity from submitting by other means.
 - The form-review interface now states that a site may transmit or submit information during typing or other interactions, and that review mode cannot guarantee prevention. The browser enables network observation but does not install a comprehensive request-interception barrier. A guarded click is not proof that a page cannot initiate a submission. Real employer interaction therefore remains unqualified for the user's no-submission testing requirement.
 

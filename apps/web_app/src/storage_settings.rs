@@ -18,6 +18,16 @@ pub fn default_workspace() -> Result<PathBuf, String> {
         .ok_or_else(|| "User profile directory is unavailable".into())
 }
 
+pub fn process_override() -> Result<Option<String>, String> {
+    std::env::var_os("WAYPOINT_WORKSPACE_DIR")
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "Workspace override is not valid Unicode".into())
+        })
+        .transpose()
+}
+
 fn checked(value: &str) -> Result<PathBuf, String> {
     if value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control) {
         return Err("Enter an absolute folder path".into());
@@ -34,6 +44,19 @@ fn checked(value: &str) -> Result<PathBuf, String> {
         return Err("The chosen path is not a folder".into());
     }
     Ok(path)
+}
+
+/// An explicit process override is useful for isolated workspaces. It never
+/// changes the persisted workspace preference.
+pub fn load_with_override(
+    control: &Path,
+    default: &Path,
+    override_path: Option<&str>,
+) -> Result<PathBuf, String> {
+    match override_path {
+        Some(path) => checked(path),
+        None => load_at(control, default),
+    }
 }
 
 pub fn load_at(control: &Path, default: &Path) -> Result<PathBuf, String> {
@@ -85,5 +108,15 @@ mod tests {
         assert_eq!(load_at(&control, &default).unwrap(), selected);
         assert!(!selected.exists());
         assert!(save_at(&control, "relative").is_err());
+        let isolated = root.path().join("isolated");
+        assert_eq!(
+            load_with_override(&control, &default, Some(isolated.to_str().unwrap())).unwrap(),
+            isolated
+        );
+        assert_eq!(
+            load_with_override(&control, &default, None).unwrap(),
+            selected
+        );
+        assert!(load_with_override(&control, &default, Some("relative")).is_err());
     }
 }

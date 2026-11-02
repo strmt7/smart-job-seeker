@@ -2338,7 +2338,12 @@ fn serve(
         "/api/storage/status" => {
             let control = storage_settings::control_dir()?;
             let default = storage_settings::default_workspace()?;
-            let configured = storage_settings::load_at(&control, &default)?;
+            let workspace_override = storage_settings::process_override()?;
+            let configured = storage_settings::load_with_override(
+                &control,
+                &default,
+                workspace_override.as_deref(),
+            )?;
             let active = ws
                 .db_path
                 .as_ref()
@@ -2347,10 +2352,13 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"active":active,"configured":configured.to_string_lossy(),"default":default.to_string_lossy()}),
+                json!({"active":active,"configured":configured.to_string_lossy(),"default":default.to_string_lossy(),"process_override":workspace_override.is_some()}),
             );
         }
         "/api/storage/configure" => {
+            if storage_settings::process_override()?.is_some() {
+                return Err("Workspace is set for this process; restart without the override to change the saved folder".into());
+            }
             let value = body["path"].as_str().ok_or("missing folder")?;
             let selected = storage_settings::save_at(&storage_settings::control_dir()?, value)?;
             json_reply(
@@ -7749,9 +7757,11 @@ fn show_startup_error(message: &str) {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let data = storage_settings::load_at(
+    let workspace_override = storage_settings::process_override()?;
+    let data = storage_settings::load_with_override(
         &storage_settings::control_dir()?,
         &storage_settings::default_workspace()?,
+        workspace_override.as_deref(),
     )?;
     #[cfg(all(feature = "sqlcipher", windows))]
     let ws = Workspace::open_encrypted(&data)?;

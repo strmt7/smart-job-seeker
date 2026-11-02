@@ -1986,6 +1986,65 @@ fn offline_emulation_existing_websocket_qualification() {
 }
 
 #[test]
+#[ignore = "uses one browser and a loopback WebSocket to evaluate request interception"]
+fn fetch_interception_does_not_block_existing_websocket_messages() {
+    use serde_json::{json, Value};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use waypoint_browser::cdp::{BrowserProcess, Cdp};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        let mut ws = tungstenite::accept(stream).unwrap();
+        tx.send(
+            ws.read()
+                .ok()
+                .is_some_and(|value| value.to_text().ok() == Some("fictional")),
+        )
+        .unwrap();
+    });
+    let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call("Runtime.enable", json!({})).unwrap();
+    cdp.call("Runtime.evaluate", json!({"expression":format!("window.fixtureSocket = new WebSocket('ws://127.0.0.1:{port}');"),"returnByValue":true})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let state = cdp
+            .call(
+                "Runtime.evaluate",
+                json!({"expression":"window.fixtureSocket.readyState","returnByValue":true}),
+            )
+            .unwrap();
+        if state.pointer("/result/value").and_then(Value::as_u64) == Some(1) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "fixture socket did not connect");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    cdp.call(
+        "Fetch.enable",
+        json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
+    )
+    .unwrap();
+    cdp.call(
+        "Runtime.evaluate",
+        json!({"expression":"window.fixtureSocket.send('fictional')","returnByValue":true}),
+    )
+    .unwrap();
+    assert!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "fixture message not received"
+    );
+    server.join().unwrap();
+}
+
+#[test]
 #[ignore = "uses two local browser targets and a loopback WebSocket"]
 fn offline_emulation_target_scope_qualification() {
     use serde_json::{json, Value};
