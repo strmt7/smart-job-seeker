@@ -384,7 +384,18 @@ pub(crate) fn relevant_experiences(
                     | Field::Radio { .. }
             )
     });
-    let platform = observed_platform(&schema.origin);
+    // A form schema can combine fields from the top page and nested frames.
+    // Its single origin describes the top page, not necessarily every field's
+    // platform; the shared mapping batch cannot attribute a hint per frame.
+    let platform = if schema
+        .fields
+        .iter()
+        .any(|field| field.selector.contains("waypoint-frame:"))
+    {
+        None
+    } else {
+        observed_platform(&schema.origin)
+    };
     let mut selected = Vec::new();
     for (control, present) in [(Control::Text, has_text), (Control::Choice, has_choice)] {
         if !present {
@@ -1327,6 +1338,20 @@ mod tests {
         assert!(relevant_experiences(&unrelated, &items)
             .iter()
             .all(|value| !value.same_platform));
+        let mut embedded = schema.clone();
+        embedded.fields[0].selector = "waypoint-frame:12:34:input[name=given]".into();
+        assert!(relevant_experiences(&embedded, &items)
+            .iter()
+            .all(|value| !value.same_platform));
+        embedded.fields[0].selector =
+            "waypoint-shadow:7:8:waypoint-frame:12:34:input[name=given]".into();
+        assert!(relevant_experiences(&embedded, &items)
+            .iter()
+            .all(|value| !value.same_platform));
+        embedded.fields[0].selector = "waypoint-shadow:7:8:input[name=given]".into();
+        assert!(relevant_experiences(&embedded, &items)
+            .iter()
+            .any(|value| value.same_platform));
         let mut workable_schema = schema.clone();
         workable_schema.origin = "https://apply.workable.com".into();
         let mut workable_lesson = item(8, Control::Text, Platform::Workable, 1);
@@ -1421,6 +1446,92 @@ mod tests {
         assert!(selected
             .iter()
             .any(|item| item.experience.note.as_deref() == Some("private context 6")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the resource gate using fictional fields"]
+    fn local_model_maps_embedded_fields_with_unestablished_lesson_platform() {
+        use waypoint_applications::form_mapping::{
+            FormField, FormFieldType, FormSchema, PacketValue,
+        };
+        use waypoint_workspace::form_experience::{
+            Control, Experience, ExperienceMatch, Observation, Outcome, Platform, Response, Stage,
+        };
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let field = |selector: &str, label: &str, kind| FormField {
+                selector: selector.into(),
+                label: label.into(),
+                field_type: kind,
+                required: true,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: None,
+                min_length_utf16: None,
+                pattern: None,
+                autocomplete: None,
+            };
+            let schema = FormSchema {
+                origin: "https://jobs.lever.co".into(),
+                fields: vec![
+                    field("#given", "Your given name", FormFieldType::Text),
+                    field(
+                        "waypoint-frame:12:34:input[name=email]",
+                        "Email address",
+                        FormFieldType::Email,
+                    ),
+                ],
+                multi_step: false,
+                steps: 1,
+            };
+            let lesson = ExperienceMatch {
+                id: "00000000000000000000000000000001".into(),
+                revision: 1,
+                same_platform: false,
+                experience: Experience {
+                    version: 1,
+                    reviewed: true,
+                    enabled: true,
+                    observed_at: 1,
+                    platform: Some(Platform::Lever),
+                    stage: Stage::EnterInformation,
+                    control: Control::Text,
+                    observation: Observation::AmbiguousLabel,
+                    response: Response::InspectContext,
+                    outcome: Outcome::Unknown,
+                    note: None,
+                    use_note_in_model: false,
+                },
+            };
+            let selected = relevant_experiences(&schema, &[lesson]);
+            assert_eq!(selected.len(), 1);
+            assert!(!selected[0].same_platform);
+            let model = crate::resident_model().unwrap().unwrap();
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let mut experienced =
+                crate::experience_inference::ExperienceInference::new(&mut llm, &selected);
+            let (mappings, _, _) = crate::suggestions::suggest_with_review(
+                &mut experienced,
+                &schema,
+                &serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"}),
+            )
+            .unwrap();
+            assert!(experienced.attempted_with_hints());
+            assert!(mappings
+                .iter()
+                .any(|m| m.field_selector == "#given"
+                    && m.value == PacketValue::Text("Avery".into())));
+            assert!(mappings.iter().any(|m| m.field_selector
+                == "waypoint-frame:12:34:input[name=email]"
+                && m.value == PacketValue::Text("avery@example.invalid".into())));
+        });
     }
 
     #[cfg(all(windows, feature = "sqlcipher"))]
