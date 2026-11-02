@@ -132,6 +132,23 @@ fn verify_started_model(ps: &Value, requested: &str) -> Result<Value, String> {
     )
 }
 
+#[cfg(any(windows, test))]
+fn guarded_start_request(
+    addr: std::net::SocketAddr,
+    request: &[u8],
+    guard: &(dyn Fn() -> Result<(), String> + Send + Sync),
+) -> Result<(u16, Vec<u8>), String> {
+    waypoint_inference::ollama::http_request_with_guard(
+        addr,
+        "POST",
+        "/api/generate",
+        Some(request),
+        120_000,
+        guard,
+    )
+    .map_err(|_| "Model startup was interrupted or did not return; a model may still be loading or resident. Check local model status before retrying".into())
+}
+
 #[cfg(windows)]
 fn run(model: &str) -> Result<Value, String> {
     use waypoint_inference::ollama::http_request;
@@ -167,8 +184,7 @@ fn run(model: &str) -> Result<Value, String> {
     // Recheck the alias after the resource sample, immediately before startup.
     installed_size(&get("/api/tags")?, model)?;
     let request = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Could not prepare local model request")?;
-    let (status, bytes) = http_request(addr, "POST", "/api/generate", Some(&request), 120_000)
-        .map_err(|_| "Model startup did not return; check the model status before trying again")?;
+    let (status, bytes) = guarded_start_request(addr, &request, &crate::check_inference_memory)?;
     if status != 200 {
         return Err(format!("Local model startup failed (HTTP {status}); check the model status before trying again"));
     }
@@ -248,6 +264,42 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_request_stops_on_memory_guard_and_reports_uncertain_state() {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = [0; 2048];
+            assert!(stream.read(&mut bytes).unwrap() > 0);
+            tx.send(()).unwrap();
+            while stream.read(&mut bytes).unwrap() != 0 {}
+        });
+        let pressure = Arc::new(AtomicBool::new(false));
+        let worker_pressure = pressure.clone();
+        let client = std::thread::spawn(move || {
+            guarded_start_request(addr, b"{}", &|| {
+                if worker_pressure.load(Ordering::Relaxed) {
+                    Err("simulated pressure".into())
+                } else {
+                    Ok(())
+                }
+            })
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        pressure.store(true, Ordering::Relaxed);
+        let error = client.join().unwrap().unwrap_err();
+        assert!(error.contains("may still be loading or resident"));
+        server.join().unwrap();
+    }
+
     #[test]
     fn existing_model_is_reused_only_when_identity_context_and_memory_match() {
         let valid = json!({"models":[{"name":"fixture","size":6*GIB,"size_vram":6*GIB,"context_length":4096}]});

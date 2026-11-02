@@ -13,6 +13,7 @@
 
 ## Local inference memory checks — 2026-11-02
 
+- Model startup now uses the same periodic available-memory guard during its load request. A local mock verified that simulated pressure closes the request and reports that the model may still be loading or resident; a resource-gated Qwen 3.5 9B startup then completed normally and the test-owned model was unloaded. Five startup tests passed (three live tests ignored in the ordinary suite), the selected live startup passed, and Windows web Clippy passed. Closing a request does not prove Ollama immediately stops loading; there is no hard RAM reservation. GPU spillover and the existing startup limits remain unchanged.
 - Guarded local inference now rechecks its cancellation and memory guard while writing a request as well as while waiting for the response. A fictional partial-write and timeout test confirms that the caller stops writing when the guard reports pressure; all inference library tests passed (19 passed, 2 ignored), and its Clippy check passed. Closing the request is not a guarantee that Ollama immediately stops server-side work or unloads its model, and memory checks remain snapshots rather than reservations. Startup VRAM and RAM limits were not changed.
 
 ## Listing closure review — 2026-11-02
