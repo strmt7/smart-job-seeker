@@ -140,6 +140,16 @@ pub fn protected_identifiers(profile: &Value) -> Vec<String> {
     if !first.is_empty() && !last.is_empty() {
         values.push(normalized_identifier(&format!("{first} {last}")));
     }
+    // A model may emit either name on its own. Match short names as whole
+    // words so a name such as "Ada" does not match inside "Canada".
+    for name in [first, last] {
+        let normalized = normalized_identifier(name);
+        if (2..6).contains(&normalized.chars().count()) {
+            short_names.push(normalized);
+        } else if normalized.chars().count() >= 6 {
+            values.push(normalized);
+        }
+    }
     for key in [
         "full_name",
         "preferred_name",
@@ -523,6 +533,35 @@ mod tests {
             &protected
         )
         .is_err());
+        for query in ["Ada engineer", "A-da engineer", "Example engineer"] {
+            assert!(generate(
+                &mut Fake(json!({"queries":[query]})),
+                &facts,
+                "",
+                &protected
+            )
+            .is_err());
+        }
+        assert_eq!(
+            generate(
+                &mut Fake(json!({"queries":["Canada engineer"]})),
+                &facts,
+                "",
+                &protected
+            )
+            .unwrap()
+            .queries,
+            ["Canada engineer"]
+        );
+        let mixed = generate(
+            &mut Fake(json!({"queries":["Ada engineer", "Canada engineer", "Example developer"]})),
+            &facts,
+            "",
+            &protected,
+        )
+        .unwrap();
+        assert_eq!(mixed.queries, ["Canada engineer"]);
+        assert_eq!(mixed.omitted_private, 2);
         let explicit_name = protected_identifiers(&json!({"full_name":"Example, Avery"}));
         assert!(generate(
             &mut Fake(json!({"queries":["Example Avery engineer"]})),
