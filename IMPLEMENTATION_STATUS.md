@@ -1097,6 +1097,21 @@ that a relevant title with a long location suffix remains among 12 returned
 candidates; the result remains truncated and requires review. Duplicate tests
 passed (40 passed, 2 ignored), as did web Clippy. No live board was checked.
 
+Duplicate review now warns when both listings carry different requisition IDs;
+the warning also explains that different sites can use different IDs. It is
+computed when pairs are read, including existing pairs, and does not change the
+decision or merge records. A fictional duplicate test passed with SQLCipher.
+For a limited public-data check, a [board page](https://job-boards.eu.greenhouse.io/unframe/)
+showed two similarly titled listings with different IDs, and an [aggregator page](https://www.landthatrole.com/job/gh-unframe-5010248101)
+linked to one of them. The app manually imported three captured records into an
+isolated workspace: both the cross-site pair and the different-ID pair remained
+pending review, with the latter displaying the warning. Input data stayed outside
+Git. This did not exercise automated web search, prove that different IDs mean
+different underlying roles, or submit an application. Crawl4AI 0.9.5+flitzzip.portable2
+returned HTTP 200 for the board and aggregator; extracted Markdown SHA-256 values
+were `597be3de8b976f06f691e57423f2d64c5cf02427cb076d24654c0f18baa642ef`
+and `9515660063333e4de7ffda3d203220ea81c04a12abd6f2deecbafcde4bc685b1`.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

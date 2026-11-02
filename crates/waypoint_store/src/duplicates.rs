@@ -57,6 +57,16 @@ fn expose_recoverable_decision(pair: &mut PossibleDuplicate) {
     }
 }
 
+fn note_different_requisitions(pair: &mut PossibleDuplicate, a: Option<&str>, b: Option<&str>) {
+    let distinct = a
+        .map(str::trim)
+        .zip(b.map(str::trim))
+        .is_some_and(|(a, b)| a.len() >= 3 && b.len() >= 3 && !a.eq_ignore_ascii_case(b));
+    if distinct {
+        pair.reason.push_str(" Requisition identifiers differ; sites may use different identifiers or list distinct positions.");
+    }
+}
+
 fn words(s: &str) -> BTreeSet<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|v| !v.is_empty())
@@ -623,6 +633,11 @@ impl Store {
                 previous_decision,
             };
             expose_recoverable_decision(&mut pair);
+            note_different_requisitions(
+                &mut pair,
+                job.requisition_id.as_deref(),
+                other.requisition_id.as_deref(),
+            );
             result.push(pair);
         }
         self.conn.execute(
@@ -984,7 +999,7 @@ impl Store {
     }
 
     pub fn possible_duplicates(&self) -> rusqlite::Result<Vec<PossibleDuplicate>> {
-        let mut stmt = self.conn.prepare("SELECT job_a,job_b,score,reason,status,preferred_job,revision FROM possible_duplicates WHERE status <> 'different' ORDER BY job_a,job_b")?;
+        let mut stmt = self.conn.prepare("SELECT d.job_a,d.job_b,d.score,d.reason,d.status,d.preferred_job,d.revision,a.requisition_id,b.requisition_id FROM possible_duplicates d LEFT JOIN jobs a ON a.id=d.job_a LEFT JOIN jobs b ON b.id=d.job_b WHERE d.status <> 'different' ORDER BY d.job_a,d.job_b")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -994,11 +1009,23 @@ impl Store {
                 row.get::<_, String>(4)?,
                 row.get(5)?,
                 row.get(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
             ))
         })?;
         let mut result = Vec::new();
         for row in rows {
-            let (job_a, job_b, score, reason, status, preferred_job, revision) = row?;
+            let (
+                job_a,
+                job_b,
+                score,
+                reason,
+                status,
+                preferred_job,
+                revision,
+                requisition_a,
+                requisition_b,
+            ) = row?;
             let previous_decision = if status == "pending"
                 && reason.starts_with("Listing changed after duplicate review;")
             {
@@ -1017,6 +1044,11 @@ impl Store {
                 previous_decision,
             };
             expose_recoverable_decision(&mut pair);
+            note_different_requisitions(
+                &mut pair,
+                requisition_a.as_deref(),
+                requisition_b.as_deref(),
+            );
             result.push(pair);
         }
         Ok(result)
@@ -1083,6 +1115,44 @@ mod tests {
             requisition_id: requisition.map(str::to_owned),
             posted_at: None,
         }
+    }
+
+    #[test]
+    fn similar_titles_with_different_requisitions_surface_the_conflict() {
+        let mut store = Store::in_memory().unwrap();
+        let mut first = job(
+            "a",
+            "Software Engineer (Remote)",
+            "Example Labs",
+            Some("JOB-100"),
+        );
+        let mut second = job(
+            "b",
+            "Software Engineer (Remote)",
+            "Example Labs",
+            Some("JOB-200"),
+        );
+        first.location = "Austin".into();
+        second.location = "Boston".into();
+        store.upsert_job(&first).unwrap();
+        store.find_possible_duplicates(&first).unwrap();
+        store.upsert_job(&second).unwrap();
+        let immediate = store.find_possible_duplicates(&second).unwrap();
+        assert_eq!(immediate.len(), 1);
+        assert!(immediate[0]
+            .reason
+            .contains("Requisition identifiers differ"));
+        let stored = store.possible_duplicates().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].status, "pending");
+        assert!(stored[0]
+            .reason
+            .contains("sites may use different identifiers"));
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
+        store.decide_duplicate("a", "b", false).unwrap();
+        assert!(!store.has_duplicate_hold("a").unwrap());
+        assert!(!store.has_duplicate_hold("b").unwrap());
     }
 
     #[test]
