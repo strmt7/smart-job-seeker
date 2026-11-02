@@ -2045,6 +2045,66 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
 }
 
 #[test]
+#[ignore = "read-only navigation to an explicitly supplied public listing after robots and policy checks"]
+fn public_listing_navigation_probe() {
+    let url = std::env::var("WAYPOINT_NAVIGATION_URL").expect("supply a public listing URL");
+    let parsed = waypoint_net::parse_url(&url).expect("valid HTTPS URL");
+    waypoint_net::resolve_public(&parsed).expect("public DNS addresses");
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    println!("browser version: {}", driver.browser_version().unwrap());
+    match driver.open(&url) {
+        Ok(form) => println!(
+            "navigation succeeded; {} fields and {} review walls",
+            form.schema.fields.len(),
+            form.walls.len()
+        ),
+        Err(error) => panic!("navigation failed: {error}"),
+    }
+    assert!(driver.trace.iter().all(|entry| !entry.contains("clicked")
+        && !entry.contains("submitted")
+        && !entry.contains("typed")));
+}
+
+#[test]
+#[ignore = "read-only navigation to a policy-checked public listing using an identified research client"]
+fn identified_public_navigation_probe() {
+    use serde_json::json;
+    use std::time::Duration;
+    use waypoint_browser::cdp::{BrowserProcess, Cdp};
+
+    let url = std::env::var("WAYPOINT_NAVIGATION_URL").expect("supply a public listing URL");
+    let parsed = waypoint_net::parse_url(&url).expect("valid HTTPS URL");
+    waypoint_net::resolve_public(&parsed).expect("public DNS addresses");
+    let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call("Page.enable", json!({})).unwrap();
+    cdp.call("Network.enable", json!({})).unwrap();
+    cdp.call(
+        "Network.setUserAgentOverride",
+        json!({"userAgent":"WaypointResearch/1.0"}),
+    )
+    .unwrap();
+    let navigation = cdp.call("Page.navigate", json!({"url":url})).unwrap();
+    println!("navigation error: {}", navigation["errorText"]);
+    assert!(navigation["errorText"].as_str().is_none_or(str::is_empty));
+    assert_ne!(navigation["isDownload"], true);
+    cdp.pump(Duration::from_secs(3));
+    let status = cdp.events.iter().find_map(|(name, event)| {
+        (name == "Network.responseReceived"
+            && event.pointer("/params/frameId") == navigation.get("frameId")
+            && event.pointer("/params/loaderId") == navigation.get("loaderId"))
+        .then(|| {
+            event
+                .pointer("/params/status")
+                .and_then(serde_json::Value::as_u64)
+        })
+        .flatten()
+    });
+    println!("document status: {status:?}");
+    assert!(status.is_some_and(|value| (200..300).contains(&value)));
+}
+
+#[test]
 #[ignore = "uses two local browser targets and a loopback WebSocket"]
 fn offline_emulation_target_scope_qualification() {
     use serde_json::{json, Value};

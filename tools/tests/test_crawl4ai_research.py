@@ -11,6 +11,38 @@ from tools import crawl4ai_research as research
 
 
 class CaptureTests(unittest.TestCase):
+    def test_ordinary_launch_removes_upstream_automation_mask(self):
+        masking = '--disable-blink-features=AutomationControlled'
+        options = {'headless': True, 'args': ['--disable-gpu', masking]}
+        filtered = research.ordinary_launch_args(options)
+        self.assertEqual(filtered['args'], ['--disable-gpu'])
+        self.assertEqual(options['args'], ['--disable-gpu', masking])
+        with self.assertRaisesRegex(ValueError, 'review the provider'):
+            research.ordinary_launch_args({'args': ['--disable-gpu']})
+
+    def test_crawler_uses_identified_nonstealth_configuration(self):
+        class Config:
+            def __init__(self, **kwargs):
+                self.options = kwargs
+                self.headers = {'sec-ch-ua': 'fictional old browser'}
+
+        class Crawler:
+            def __init__(self, config):
+                self.config = config
+                manager = SimpleNamespace(_build_browser_args=lambda: {
+                    'args': ['--disable-blink-features=AutomationControlled']
+                })
+                self.crawler_strategy = SimpleNamespace(browser_manager=manager)
+
+        module = SimpleNamespace(AsyncWebCrawler=Crawler, BrowserConfig=Config)
+        with patch.dict(sys.modules, {'crawl4ai': module}), \
+                patch.object(research.importlib.metadata, 'version', return_value=research.VERSION):
+            instance = research.crawler()
+        self.assertFalse(instance.config.options['enable_stealth'])
+        self.assertEqual(instance.config.user_agent, 'WaypointResearch/1.0')
+        self.assertNotIn('sec-ch-ua', instance.config.headers)
+        self.assertEqual(instance.crawler_strategy.browser_manager._build_browser_args()['args'], [])
+
     def test_native_result_and_robots_configuration_are_retained(self):
         text = 'Fictional public page. ' * 15
         result = SimpleNamespace(

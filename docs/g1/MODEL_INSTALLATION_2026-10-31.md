@@ -1,5 +1,8 @@
 # Local model installation — 2026-10-31
 
+> Research evidence note (2026-11-02): Earlier Crawl4AI captures predate correction of an upstream automation-masking default and browser identity. Their compliance with the no-stealth research configuration is not established; reverify source claims before relying on them as qualifying captures. See [implementation status](../../IMPLEMENTATION_STATUS.md).
+
+
 Settings can request one of two reviewed local models from a running Ollama instance. The user chooses the model; the app sends a loopback-only pull request with insecure transport disabled, reads bounded streaming progress on a background thread, and shows progress for the current download part. It holds the local model-operation lease during the request. Existing model names are not intentionally replaced: the inventory is checked before requesting a pull, and an existing different manifest is reported as unchanged. A successful new download is checked against the reviewed manifest digest reported by Ollama; this is not an independent hash of all model bytes. A mismatch or interrupted response is reported and the runtime-managed files are left for inspection. Ollama stores the data in its configured model directory; the app does not know its available disk space and does not start the model after installation.
 
 The operation can be recovered after a browser reload. Its network request has a one-hour limit; an interrupted request may have left partial files or continued in the runtime, so the UI directs the user to check inventory before retrying. Concurrent external clients can change runtime state between checks. Ollama itself still has to be installed and running; this feature does not provision it. No model was downloaded during these checks.

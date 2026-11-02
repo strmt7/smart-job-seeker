@@ -1,5 +1,8 @@
 # Windows GPU memory snapshot — 2026-10-31
 
+> Research evidence note (2026-11-02): Earlier Crawl4AI captures predate correction of an upstream automation-masking default and browser identity. Their compliance with the no-stealth research configuration is not established; reverify source claims before relying on them as qualifying captures. See [implementation status](../../IMPLEMENTATION_STATUS.md).
+
+
 The local settings panel can request a read-only snapshot of dedicated GPU memory. On Windows the `gpuviewer-core` 0.1.1 WDDM backend uses OS adapter information and the system GPU Adapter Memory performance counter. Missing counters, invalid values, and truncated adapter lists are reported as incomplete or unavailable. Other operating systems report the feature as unsupported. The snapshot is not a reservation, a prediction of model memory, or a guarantee against changing load. The snapshot alone does not start a model.
 
 One Windows host check on an AMD Radeon RX 9070 XT observed a complete snapshot and compared its used-memory reading to a separate performance-counter sample within 1 GiB. This single comparison does not establish accuracy across drivers, adapters, multiple GPUs, or rapidly changing workloads.

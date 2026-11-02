@@ -110,15 +110,37 @@ def read_sites(path: Path) -> list[dict[str, str]]:
     return admitted
 
 
+def ordinary_launch_args(options: dict) -> dict:
+    """Remove the upstream automation-masking flag from the pinned launch configuration."""
+    flags = options.get("args")
+    if not isinstance(flags, list) or not all(isinstance(flag, str) for flag in flags):
+        raise ValueError("Unexpected crawler browser launch arguments")
+    masking = "--disable-blink-features=AutomationControlled"
+    if masking not in flags:
+        raise ValueError("Pinned crawler browser flags changed; review the provider before use")
+    return {**options, "args": [flag for flag in flags if flag != masking]}
+
+
 def crawler():
     """Purpose: Construct the source-admitted upstream crawler. Inputs: Installed package. Outputs: Crawler owner."""
     if importlib.metadata.version("crawl4ai") != VERSION:
         raise ValueError("Crawler version does not match the reviewed integration")
     from crawl4ai import AsyncWebCrawler, BrowserConfig
 
-    return AsyncWebCrawler(config=BrowserConfig(headless=True, ignore_https_errors=False,
-                                                 use_persistent_context=False, enable_stealth=False,
-                                                 verbose=False))
+    config = BrowserConfig(headless=True, ignore_https_errors=False,
+                           use_persistent_context=False, enable_stealth=False,
+                           verbose=False)
+    # The pinned upstream defaults also impersonate an old Linux Chrome.
+    # Identify the research client explicitly; the robots parser requires a
+    # nonempty user-agent string.
+    config.user_agent = "WaypointResearch/1.0"
+    config.browser_hint = ""
+    config.headers.pop("sec-ch-ua", None)
+    instance = AsyncWebCrawler(config=config)
+    manager = instance.crawler_strategy.browser_manager
+    upstream = manager._build_browser_args
+    manager._build_browser_args = lambda: ordinary_launch_args(upstream())
+    return instance
 
 
 def inspect_result(result, marker: str = "") -> dict:

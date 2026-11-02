@@ -20,7 +20,7 @@ async function run(current) {
     document:{querySelector:selector=>{if(!nodes.has(selector))nodes.set(selector,node());return nodes.get(selector);}},
     api:async()=>({status:'complete',checked_url:'https://example.org/role',result:'Manual review needed',current}),
   };
-  const execute = vm.runInNewContext(`${helper}\n${source.slice(start,end)}\nrunCandidateBatch`, context);
+  const execute = vm.runInNewContext(`${helper}\n${source.split('\n').find(line=>line.startsWith('function searchTitleNotice('))}\n${source.slice(start,end)}\nrunCandidateBatch`, context);
   await execute();
   return {check:checks.get('job'),status:nodes.get('#candidate-batch-status').textContent};
 }

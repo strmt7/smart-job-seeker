@@ -1,5 +1,8 @@
 # Focused form-field vision check — 2026-10-31
 
+> Research evidence note (2026-11-02): Earlier Crawl4AI captures predate correction of an upstream automation-masking default and browser identity. Their compliance with the no-stealth research configuration is not established; reverify source claims before relying on them as qualifying captures. See [implementation status](../../IMPLEMENTATION_STATUS.md).
+
+
 A fictional native datalist fixture exposes a populated Region field beside an empty field. The original whole-page transcription with `gemma3:4b` missed Region; an initial wider crop also failed. A tighter field-context crop and a prompt naming the field but withholding the expected value produced a matching transcription for Region while leaving the empty adjacent field unobserved in one run. This was an exploratory diagnostic, not a model selection or a reliability measurement.
 
 The same focused fixture passed once using the previously used `qwen3.5:9b` Q4_K_M (`c97eb11d70b1`) at a 4,096-token context. The existing fictional placeholder check also passed once with that model. The model was reported as 100% GPU resident; one point-in-time sample during the run period reported 21.69 GiB free system memory and 12.45 GiB dedicated GPU use across the host. These samples are not peak measurements. The browser used a local fictional fixture and did not submit an application.

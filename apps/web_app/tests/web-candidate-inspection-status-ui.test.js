@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const candidate = source.split('\n').find(line => line.startsWith('function webCandidate('));
+const titleNotice = source.split('\n').find(line => line.startsWith('function searchTitleNotice('));
 assert.ok(candidate);
+assert.ok(titleNotice);
 function node(tag, text = '') {
   return {tag, textContent:text, children:[], listeners:{}, attributes:{},
     append(...items){this.children.push(...items)}, addEventListener(event,fn){this.listeners[event]=fn},
@@ -12,8 +14,9 @@ function node(tag, text = '') {
 const context = {candidateSelectionReady:true, selectedCandidates:new Map(), element:node,
   document:{createElement:node,createTextNode:text=>node('text',text)},
   api:async()=>{throw new Error('The page returned HTTP 404; manual review is required')},
-  notify(){}, offerListingRecovery:async()=>{}, updateCandidateSelection(){}, queueCandidateSelectionSave(){}};
-const render = vm.runInNewContext(`${candidate}\nwebCandidate`, context);
+  notify(){}, offerListingRecovery:async()=>{}, updateCandidateSelection(){}, queueCandidateSelectionSave(){},
+  sessionStorage:{setItem(){}},followListingInspection:async()=>({saved:{existing:false},job:{title:'Different role'}}),showOtherRoles(){},showReinspectionPreview(){}};
+const render = vm.runInNewContext(`${titleNotice}\n${candidate}\nwebCandidate`, context);
 (async()=>{
   const card = render({url:'https://example.org/role',title:'Role',snippet:''});
   const button = card.children.find(item=>item.textContent==='Inspect and add');
@@ -21,5 +24,8 @@ const render = vm.runInNewContext(`${candidate}\nwebCandidate`, context);
   const status = card.children.find(item=>item.attributes?.role==='status');
   assert.match(status.textContent, /HTTP 404.*Review the original link/);
   assert.equal(button.disabled,false);
+  context.api=async()=>({task_id:'fictional'});
+  await button.listeners.click();
+  assert.match(status.textContent, /Inspected page title: Different role.*different roles/);
   console.log('Candidate inspection status UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1});
