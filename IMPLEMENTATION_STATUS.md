@@ -1,3 +1,7 @@
+## Form loading observations — 2026-11-02
+
+- Browser inspection now requires two consecutive unchanged nonempty form snapshots before considering its bounded loading check settled. If the check ends with a nonempty form that has not settled, it marks the page for manual review. This adds approximately 750 ms to the prior first-stable path and still cannot detect fields that appear after the bounded check. A real local browser detected a fictional field added 800 ms after page load; two existing staged-loading browser checks also passed. Browser library tests passed (21 passed, 3 ignored) and browser Clippy passed. No external application was opened or submitted in this check.
+
 ## Local inference memory checks — 2026-11-02
 
 - Guarded local inference now rechecks its cancellation and memory guard while writing a request as well as while waiting for the response. A fictional partial-write and timeout test confirms that the caller stops writing when the guard reports pressure; all inference library tests passed (19 passed, 2 ignored), and its Clippy check passed. Closing the request is not a guarantee that Ollama immediately stops server-side work or unloads its model, and memory checks remain snapshots rather than reservations. Startup VRAM and RAM limits were not changed.

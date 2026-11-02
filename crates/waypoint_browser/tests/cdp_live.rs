@@ -3870,6 +3870,33 @@ fn initially_nonempty_form_is_rechecked_for_later_fields() {
 }
 
 #[test]
+#[ignore = "launches a local browser against a fictional form that changes after an initially stable snapshot"]
+fn initially_stable_form_is_checked_for_late_fields() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_late_after_stable.html"))
+        .unwrap();
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "First name"));
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Last name"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::DYNAMIC_UNSETTLED_REVIEW));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a local browser against a fictional changing form"]
 fn disappearing_loading_field_requires_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

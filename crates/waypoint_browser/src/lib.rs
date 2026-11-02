@@ -5594,6 +5594,7 @@ fn retain_observed_walls(previous: Vec<String>, next: &mut LiveForm) {
 }
 
 pub const DYNAMIC_FIELD_LOSS_REVIEW: &str = "a custom control needs manual review: Fields seen during page loading disappeared; inspect the entire application again";
+pub const DYNAMIC_UNSETTLED_REVIEW: &str = "a custom control needs manual review: The form did not settle during the bounded loading check; inspect the entire application again";
 
 fn retain_loading_observations(previous: LiveForm, next: &mut LiveForm) {
     if previous.schema.fields.iter().any(|field| {
@@ -5663,6 +5664,7 @@ impl BrowserDriver for CdpDriver {
         // changing schema to settle within the same bounded loading window.
         let dynamic_deadline = Instant::now() + Duration::from_secs(3);
         let initial_nonempty = !result.schema.fields.is_empty();
+        let mut stable_observations = 0;
         for observation in 0..3 {
             if Instant::now() >= dynamic_deadline {
                 break;
@@ -5678,11 +5680,15 @@ impl BrowserDriver for CdpDriver {
             );
             let mut next = self.inspect_with_retry()?;
             let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
+            stable_observations = if stable { stable_observations + 1 } else { 0 };
             retain_loading_observations(result, &mut next);
             result = next;
-            if stable {
+            if stable_observations >= 2 {
                 break;
             }
+        }
+        if !result.schema.fields.is_empty() && stable_observations < 2 {
+            result.walls.push(DYNAMIC_UNSETTLED_REVIEW.into());
         }
         // A same-document route has no new loader or HTTP response. For an
         // ordinary HTTP navigation, bind the status to the main frame and

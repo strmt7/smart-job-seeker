@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><body>
+<form>
+  <label for="first">First name</label><input id="first" name="first">
+  <div id="later"></div>
+</form>
+<script>
+setTimeout(() => {
+  document.getElementById('later').innerHTML = '<label for="last">Last name</label><input id="last" name="last">';
+}, 800);
+</script>
+</body></html>
