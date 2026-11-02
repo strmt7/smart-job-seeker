@@ -2937,6 +2937,7 @@ fn compare_preferences_with_source(
     };
     let mut seen = std::collections::HashSet::new();
     let mut updates = Vec::new();
+    let mut review_excerpts = Vec::new();
     for answer in answers {
         let Some(id) = answer["id"].as_u64().and_then(|n| usize::try_from(n).ok()) else {
             return fallback;
@@ -3014,6 +3015,13 @@ fn compare_preferences_with_source(
             || numerical_review
             || missing_numeric_evidence
             || absent_information;
+        if needs_review || status == "unknown" {
+            if let (Some(source), Some(text)) = (verification_text, quote.as_str()) {
+                if let Some(context) = unique_requirement_context(source, text) {
+                    review_excerpts.push((preference.to_owned(), text.to_owned(), context));
+                }
+            }
+        }
         updates.push((
             id - 1,
             if needs_review { "unknown" } else { status }.to_owned(),
@@ -3050,6 +3058,16 @@ fn compare_preferences_with_source(
                     .iter_mut()
                     .filter(|item| item["source"] == "preference")
                 {
+                    if item["status"] == "unknown" {
+                        if let Some((_, quote, context)) =
+                            review_excerpts.iter().find(|(preference, _, _)| {
+                                item["excerpt"].as_str() == Some(preference.as_str())
+                            })
+                        {
+                            item["review_evidence"] = json!(quote);
+                            item["review_evidence_context"] = json!(context);
+                        }
+                    }
                     if let Some(context) = item["qualification"]
                         .as_str()
                         .and_then(|quote| unique_requirement_context(source, quote))
@@ -8284,6 +8302,7 @@ mod tests {
             );
             assert_eq!(result["rubric"][0]["status"], "unknown");
             assert!(result["rubric"][0]["evidence_context"].is_null());
+            assert!(result["rubric"][0]["review_evidence"].is_null());
             assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
             assert!(result["rubric"][0]["explanation"]
                 .as_str()
@@ -8705,6 +8724,9 @@ mod tests {
         let result = compare_preferences(&mut Fixture, raw, fallback, &[], preference, listing);
         assert_eq!(result["rubric"][0]["status"], "unknown");
         assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+        assert_eq!(result["rubric"][0]["review_evidence"], listing);
+        assert!(result["rubric"][0]["qualification"].is_null());
+        assert!(result["evidence"].as_array().unwrap().is_empty());
         assert!(result["rubric"][0]["explanation"]
             .as_str()
             .unwrap()
