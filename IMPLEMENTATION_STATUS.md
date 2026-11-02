@@ -22,6 +22,8 @@
 
 ## PDF template editing — 2026-11-03
 
+- The PDF stream editor also handles the two shorthand text-show operators, preserving their spacing operands. Fictional font-map checks exercised both operators directly, and PDFium selection tests passed through the full document, glyph, geometry and visual checks. Windows web Clippy passed. Real-document coverage and arbitrary font support remain unverified.
+
 - Adjacent-object PDF edits can now attempt a longer replacement when narrower glyphs fit inside the original text areas. Existing whole-document text, glyph, geometry, and rendered-difference checks remain required. Fictional PDF selection and font-mapping tests and Windows web Clippy passed. A first fixture with two identically positioned wide text objects was refused because PDF text changed unexpectedly; a second, narrower final-object replacement passed. This is not proof of general PDF fidelity or support for every font. No real CV or application was used.
 
 ## Duplicate search — 2026-11-03

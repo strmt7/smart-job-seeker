@@ -51,7 +51,7 @@ def edit_pdf_stream(reader, page_index, before, after):
                 current = get_encoding(fonts[operands[0]].get_object())
             except Exception:
                 current = None
-        elif op in (b'Tj', b'TJ') and current is not None:
+        elif op in (b'Tj', b'TJ', b"'", b'"') and current is not None:
             encoding, mapping = current
             if not isinstance(encoding, dict) and encoding != 'charmap':
                 continue

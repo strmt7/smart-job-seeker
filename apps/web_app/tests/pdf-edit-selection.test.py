@@ -89,6 +89,13 @@ assert fallback.returncode == 0, fallback.stdout.decode(errors="replace") + fall
 assert b"selected-span stream fallback" in fallback.stderr
 assert PdfReader(io.BytesIO(fallback.stdout)).pages[0].extract_text() == "PrefixAlphaBetSuffix"
 assert text_object_colours(fallback.stdout) == text_object_colours(base64.b64decode(styled_source))
+# The shorthand text-show operators still pass full text, glyph and visual checks.
+for operator in (b"16 TL (ABCD) '", b'16 TL 2 1 (ABCD) "'):
+    payload = json.dumps({"pdf": fixture(operator), "before": "ABCD", "after": "BAD"}).encode()
+    shorthand = subprocess.run([sys.executable, "-c", program], input=payload,
+                               capture_output=True, timeout=30, check=False)
+    assert shorthand.returncode == 0, shorthand.stdout.decode(errors="replace") + shorthand.stderr.decode(errors="replace")
+    assert PdfReader(io.BytesIO(shorthand.stdout)).pages[0].extract_text() == "BAD"
 # More, narrower glyphs may fit inside the original bounds across objects.
 payload = json.dumps({"pdf": fixture(b"(WWW) Tj (MMM) Tj"), "before": "WWWMMM", "after": "WWWiiiii"}).encode()
 result = subprocess.run([sys.executable, "-c", program], input=payload,
