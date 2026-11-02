@@ -378,8 +378,26 @@ pub(crate) fn relevant_experiences(
             .collect();
         for item in &mut candidates {
             item.same_platform = platform.is_some() && item.experience.platform == platform;
+            // The model sees only the platform relation and opted-in notes.
+            // Normalize the rest before selecting so indistinguishable hints
+            // cannot consume slots needed by other observations.
+            if !item.same_platform {
+                item.experience.platform = None;
+            }
+            if !item.experience.use_note_in_model {
+                item.experience.note = None;
+            }
         }
-        selected.extend(waypoint_workspace::form_experience::select_experience_hints(candidates));
+        for hint in waypoint_workspace::form_experience::select_experience_hints(candidates) {
+            if let Some(original) = experiences
+                .iter()
+                .find(|item| item.id == hint.id && item.revision == hint.revision)
+            {
+                let mut original = original.clone();
+                original.same_platform = hint.same_platform;
+                selected.push(original);
+            }
+        }
     }
     selected
 }
@@ -1244,6 +1262,40 @@ mod tests {
         assert!(selected
             .iter()
             .any(|item| item.experience.outcome == Outcome::DidNotHelp));
+        let mut private_duplicates: Vec<_> = (0..7)
+            .map(|i| {
+                let mut entry = item(
+                    i,
+                    Control::Text,
+                    if i % 2 == 0 {
+                        Platform::Ashby
+                    } else {
+                        Platform::Greenhouse
+                    },
+                    100 + i as i64,
+                );
+                entry.experience.note = Some(format!("private context {i}"));
+                entry
+            })
+            .collect();
+        for i in 7..9 {
+            let mut entry = item(i, Control::Text, Platform::Ashby, i as i64);
+            entry.experience.note = Some(format!("permitted context {i}"));
+            entry.experience.use_note_in_model = true;
+            private_duplicates.push(entry);
+        }
+        let selected = relevant_experiences(&schema, &private_duplicates);
+        assert_eq!(selected.len(), 3);
+        assert_eq!(
+            selected
+                .iter()
+                .filter(|item| item.experience.use_note_in_model)
+                .count(),
+            2
+        );
+        assert!(selected
+            .iter()
+            .any(|item| item.experience.note.as_deref() == Some("private context 6")));
     }
 
     #[cfg(all(windows, feature = "sqlcipher"))]
