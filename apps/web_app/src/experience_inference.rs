@@ -17,7 +17,17 @@ impl<'a> ExperienceInference<'a> {
     pub fn new(inner: &'a mut dyn Inference, experiences: &[ExperienceMatch]) -> Self {
         Self {
             inner,
-            experiences: experiences.iter().take(10).cloned().collect(),
+            experiences: experiences
+                .iter()
+                .filter(|item| {
+                    item.experience.version == 1
+                        && item.experience.reviewed
+                        && item.experience.enabled
+                        && item.experience.observed_at > 0
+                })
+                .take(10)
+                .cloned()
+                .collect(),
             text_batch: false,
             choice_batch: false,
             attempted_with_hints: false,
@@ -164,6 +174,51 @@ pub(crate) mod tests {
         Control, Experience, Observation, Outcome, Platform, Response, Stage,
     };
     struct Capture(Vec<String>);
+
+    #[test]
+    fn unreviewed_or_disabled_experiences_never_enter_the_model_context() {
+        let valid = ExperienceMatch {
+            id: "valid".into(),
+            revision: 1,
+            same_platform: false,
+            experience: Experience {
+                version: 1,
+                reviewed: true,
+                enabled: true,
+                observed_at: 1,
+                platform: None,
+                stage: Stage::EnterInformation,
+                control: Control::Text,
+                observation: Observation::AmbiguousLabel,
+                response: Response::InspectContext,
+                outcome: Outcome::Unknown,
+                note: Some("reviewed fictional note".into()),
+                use_note_in_model: true,
+            },
+        };
+        let mut disabled = valid.clone();
+        disabled.experience.enabled = false;
+        disabled.experience.note = Some("disabled fictional note".into());
+        let mut unreviewed = valid.clone();
+        unreviewed.experience.reviewed = false;
+        unreviewed.experience.note = Some("unreviewed fictional note".into());
+        let mut invalid_version = valid.clone();
+        invalid_version.experience.version = 2;
+        let mut undated = valid.clone();
+        undated.experience.observed_at = 0;
+        let mut input = vec![disabled; 10];
+        input.extend([unreviewed, invalid_version, undated, valid]);
+        let mut capture = Capture(Vec::new());
+        let mut model = ExperienceInference::new(&mut capture, &input);
+        model.set_context_tags(&["form_text"]);
+        model
+            .generate_structured("form_mapping", "fixture", 100)
+            .unwrap();
+        let prompt = &capture.0[0];
+        assert!(prompt.contains("reviewed fictional note"));
+        assert!(!prompt.contains("disabled fictional note"));
+        assert!(!prompt.contains("unreviewed fictional note"));
+    }
     impl Inference for Capture {
         fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
             unreachable!()
