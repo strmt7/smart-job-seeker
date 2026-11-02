@@ -1,3 +1,8 @@
+## PDF setup recovery — 2026-11-02
+
+- If the PDF setup start response is lost, the interface can recover the active or completed-but-uncollected task and follow its result rather than launching another setup. The task ID is available only while that process retains the setup task; app restart recovery is not established. A fictional interface test covered normal and lost-start responses, and focused setup tests and Windows lint passed.
+- The earlier missing-`pypdf` test used a development executable without a neighboring bundled runtime, no configured managed runtime, and four PATH Python candidates without `pypdf`. A separate test used an installed Python to create a temporary isolated PDF environment, install the pinned packages, activate it within that temporary directory and render a fictional PDF successfully. It did not modify the user's active PDF setting or establish clean-host installation without Python.
+
 ## Converted PDF content coverage — 2026-11-02
 
 - Text comparison for converted DOCX and plain-text PDFs now retains the PDF extractor's page coverage. The conversion and template-edit results identify pages containing both selectable text and images, or with an unknown image inventory, because text inside images may be absent from the comparison. A match still does not verify the source's complete content, visual layout or ATS reading order. Existing stored results may lack coverage; extraction failures remain unavailable.

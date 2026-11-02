@@ -20,6 +20,15 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Retain the latest completed result so a lost HTTP response can be retried.
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 
+/// Recover a setup whose start response was lost. Results are retained until polled.
+pub fn pending() -> Result<Option<String>, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "PDF setup unavailable")?
+        .as_ref()
+        .map(|task| task.id.clone()))
+}
+
 pub fn select_python(
     configured: &str,
     discover: impl FnOnce() -> Option<PathBuf>,
@@ -239,10 +248,12 @@ mod tests {
             id: "fixture".into(),
             outcome: Some(Err("fixture failure".into())),
         });
+        assert_eq!(pending().unwrap().as_deref(), Some("fixture"));
         let first = poll("fixture").unwrap();
         assert_eq!(first["status"], "failed");
         assert_eq!(poll("fixture").unwrap(), first);
         assert!(poll("other").is_err());
+        assert!(pending().unwrap().is_none());
     }
 
     #[test]

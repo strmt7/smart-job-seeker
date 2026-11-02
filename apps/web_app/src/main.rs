@@ -4258,6 +4258,9 @@ fn serve(
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", pdf_setup::poll(id)?);
         }
+        "/api/pdf-setup/pending" => {
+            json_reply(stream, "200 OK", json!({"task_id":pdf_setup::pending()?}));
+        }
         "/api/documents/transcribe-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
             let page = body["page"]
