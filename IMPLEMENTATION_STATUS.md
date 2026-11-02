@@ -1,5 +1,6 @@
 ## Job selection recovery — 2026-11-02
 
+- The selection UI checks now also exercise disabled actions before reconciliation, enabled actions afterward and the visible storage-failure message. Both related JavaScript checks passed. An attempted isolated app launch for a rendered browser check was rejected by automatic approval review as blocked by policy; no rendered check was completed in this round.
 - Job checkboxes now retain up to 10,000 job IDs in the current browser tab across reloads. Before enabling shortlist or new selected-job assessment, the app reconciles the restored IDs against the refreshed list and removes missing or no-longer-discovered jobs. A storage failure is displayed; this is tab-session recovery, not durable cross-device selection or application authorization. Fictional JavaScript checks cover restoration, stale IDs, malformed storage, quota failure and the existing selected-assessment limit. No application was submitted.
 
 ## Duplicate explanation evaluation — 2026-11-02
