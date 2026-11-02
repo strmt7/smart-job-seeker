@@ -81,6 +81,8 @@ fn browser_start_failure(error: &waypoint_applications::driver::DriverError) -> 
 
 fn obstacle_message(walls: &[String]) -> String {
     let mut signals = Vec::new();
+    let dialog = walls.iter().any(|wall| wall == "a custom control needs manual review: A dialog covers a form field; resolve it in the visible browser, then inspect again");
+    let obscured = walls.iter().any(|wall| wall == "a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser");
     if walls.iter().any(|wall| wall == "captcha present") {
         signals.push("a possible CAPTCHA or verification challenge");
     }
@@ -96,6 +98,12 @@ fn obstacle_message(walls: &[String]) -> String {
     {
         signals.push("a required hidden control");
     }
+    if dialog {
+        signals.push("a dialog covering form fields");
+    }
+    if obscured {
+        signals.push("fields that may be obscured or clipped");
+    }
     let status_unknown = walls.iter().any(|wall| {
         wall == "The main page response status could not be verified; manual review is required"
     });
@@ -110,6 +118,9 @@ fn obstacle_message(walls: &[String]) -> String {
         message.push_str(&format!(" Observed signals: {}.", signals.join(", ")));
     }
     message.push_str(" Other obstacles may also be present; manual review is needed.");
+    if dialog || obscured {
+        message.push_str(" Inspect the page in a visible browser, resolve any blocking dialog or overlay, then check again.");
+    }
     message
 }
 
@@ -937,6 +948,22 @@ mod tests {
         let mut unchanged = "Existing summary.".to_owned();
         super::report_loading_field_loss(&mut unchanged, &["untrusted page text".into()]);
         assert_eq!(unchanged, "Existing summary.");
+    }
+
+    #[test]
+    fn obstacle_summary_explains_dialog_and_obscured_fields_without_page_text() {
+        let walls = vec![
+            "a custom control needs manual review: A dialog covers a form field; resolve it in the visible browser, then inspect again".to_owned(),
+            "a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".to_owned(),
+            "a required custom control needs manual review: private question".to_owned(),
+        ];
+        let message = super::obstacle_message(&walls);
+        assert!(message.contains("dialog covering form fields"));
+        assert!(message.contains("obscured or clipped"));
+        assert!(message.contains("visible browser"));
+        assert!(!message.contains("private question"));
+        let unrelated = super::obstacle_message(&["untrusted dialog text".to_owned()]);
+        assert!(!unrelated.contains("visible browser"));
     }
 
     #[test]

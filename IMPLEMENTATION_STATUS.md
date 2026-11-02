@@ -2281,6 +2281,20 @@ three responses were structurally usable and all five judgments remained
 unknown. The detailed trace remains outside the repository. These examples do
 not establish general accuracy, and the real-input result remains inconclusive.
 
+### Workable application obstacle explanation (2026-11-02)
+
+A read-only check of one public Workable application observed four fields and
+reported a possible verification challenge, required custom and hidden controls,
+and a dialog and potentially obscured fields. The summary previously omitted
+the latter two signals. It now explains them and advises checking the visible
+page and resolving any blocking overlay before inspecting again. The change uses
+recognized browser signals and does not echo question text. A repeat read-only
+check displayed the new explanation; fictional tests cover the summary. This
+does not establish that the application can be filled or submitted, nor that
+the challenge and hidden-control signals are true positives. No candidate data
+was entered and no application was submitted. Two other search results were
+stale: one led to a closed-job page and one returned HTTP 404.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and
