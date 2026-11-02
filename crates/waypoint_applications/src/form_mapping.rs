@@ -131,10 +131,45 @@ pub fn valid_multi_select(options: &[String], values: &[String]) -> bool {
 /// Validate a finite, unpadded HTML-style numeric answer. Browser constraints
 /// such as min, max and step are checked on the live control before entry.
 pub fn valid_number(value: &str) -> bool {
-    !value.is_empty()
-        && value.trim() == value
-        && !value.starts_with('+')
-        && value.parse::<f64>().is_ok_and(f64::is_finite)
+    let bytes = value.as_bytes();
+    let mut index = usize::from(bytes.first() == Some(&b'-'));
+    let start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    let integer_digits = index - start;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fractional_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == fractional_start {
+            return false;
+        }
+    } else if integer_digits == 0 {
+        return false;
+    }
+    if bytes
+        .get(index)
+        .is_some_and(|byte| matches!(byte, b'e' | b'E'))
+    {
+        index += 1;
+        if bytes
+            .get(index)
+            .is_some_and(|byte| matches!(byte, b'+' | b'-'))
+        {
+            index += 1;
+        }
+        let exponent_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == exponent_start {
+            return false;
+        }
+    }
+    index == bytes.len() && value.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
 /// Accept the year and month syntax used by native month inputs.
@@ -600,10 +635,12 @@ mod tests {
 
     #[test]
     fn numeric_answers_require_finite_unpadded_numbers() {
-        for value in ["0", "5", "-2", "1.5", "1e3"] {
+        for value in ["0", "5", "-2", "1.5", ".5", "1e3", "1e+2"] {
             assert!(valid_number(value), "{value}");
         }
-        for value in ["", "five", "5 years", " 5", "+5", "NaN", "inf", "1e999"] {
+        for value in [
+            "", "-", ".", "1.", "1.e2", "1e", "five", "5 years", " 5", "+5", "NaN", "inf", "1e999",
+        ] {
             assert!(!valid_number(value), "{value}");
         }
     }

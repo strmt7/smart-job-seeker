@@ -4965,7 +4965,7 @@ fn numeric_constraints_are_checked_before_changing_the_field() {
         selector: selector.into(),
         value: PacketValue::Text(value.into()),
     };
-    for value in ["4", "11", "abc"] {
+    for value in ["4", "11", "abc", "1."] {
         assert!(driver.execute(&fill("#years", value)).is_err());
         assert_eq!(driver.text_value_snapshot("#years").unwrap().value, "3");
     }

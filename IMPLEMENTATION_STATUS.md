@@ -30,6 +30,8 @@
 
 ## Native numeric form answers — 2026-11-03
 
+- Numeric answer validation now rejects incomplete browser-invalid forms such as `1.` and `1.e2`, while retaining valid decimal and exponent forms. A focused parser test and a fictional live-browser constraint test passed; the latter verifies that an invalid value leaves the field unchanged. A subsequent local-model test was started, but its result could not be recovered, so it is not counted as a pass. The model is no longer loaded. No application was submitted.
+
 - Numeric input minimum, maximum and step attributes now appear as site-declared guidance in review and are bound into the form schema. Oversized attributes require manual review. A fictional browser test confirmed that changing the maximum invalidates the prior form review before any field is altered; browser constraints remain checked at entry. The web suite passed (648 passed, 354 ignored), application-crate tests, 140 UI fixtures and Windows web Clippy passed. A local-model rerun did not start: available RAM was below the startup threshold (16,414 MiB observed versus 16,538 MiB required); no model was loaded or threshold reduced. No real application was sent.
 
 - In one additional resource-gated numeric-answer case, `qwen3.5:9b` abstained when the only supplied duration concerned unrelated retail work. The same run repeated the fictional supported numeric fill and visual check. A focused scripted regression also confirms that the style-revision pass cannot return prose as a numeric answer after a valid initial draft. Both tests and Windows web Clippy passed; the model unloaded. These are isolated cases, not a general factuality guarantee.
