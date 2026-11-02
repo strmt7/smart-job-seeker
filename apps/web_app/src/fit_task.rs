@@ -4791,6 +4791,36 @@ mod tests {
 
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
+    fn live_evidence_search_respects_specialization_in_surrounding_context() {
+        let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+            .unwrap()
+            .with_context_window(4096)
+            .unwrap();
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            "qwen3.5:9b".into(),
+            crate::resident_model,
+        );
+        let listing = "Required: five years of SQL in regulated banking.";
+        let source = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of SQL","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        for (fact, expected) in [
+            ("Six years of SQL in retail", "unknown"),
+            ("Six years of SQL in regulated banking", "supported"),
+        ] {
+            let facts = vec![fact.to_owned()];
+            let initial = validate(source.clone(), &facts, "", listing).unwrap();
+            let (proposed, report) =
+                find_unknown_qualification_evidence(&mut model, source.clone(), &facts, listing);
+            assert_eq!(report.unwrap()["status"], "completed");
+            let (_, checked) =
+                check_qualification_judgments(&mut model, proposed, initial, &facts, "", listing);
+            println!("fictional context test: {}", checked["rubric"]);
+            assert_eq!(checked["rubric"][0]["status"], expected);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_duration_guard_rejects_a_shorter_cited_fact() {
         let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
             .unwrap()
