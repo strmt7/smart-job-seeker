@@ -2371,3 +2371,14 @@ all eight criteria then entered evidence search. Three were supported after
 independent checking and five remained unknown. The resulting 36–100 range and
 listing-only recovery still require review. This is not a general accuracy
 measurement; the model was unloaded and no application was sent.
+
+### Redirected listing identity (2026-11-02)
+
+When an inspected listing redirects to a different path on the same site, the
+extracted result now starts with a warning that it may describe a different
+position. It asks the user to verify the original listing and destination;
+it does not claim the job is closed or expose redirect query parameters. A
+read-only browser check confirmed the warning on one previously observed public
+job URL that redirected to its employer's careers page. A fictional test covers
+warning order and query privacy. The check does not prove that every redirect
+points to a different role, and no listing was saved or application sent.

@@ -1673,6 +1673,16 @@ fn require_readable_listing(walls: &[String], text: &str) -> Result<(), String> 
     Ok(())
 }
 
+fn warn_same_site_path_redirect(job: &mut Value, original: &url::Url, reached: &url::Url) {
+    if crate::application_check::same_origin_path_redirect_notice(original, reached).is_none() {
+        return;
+    }
+    if job["extraction_warnings"].as_array().is_none() {
+        job["extraction_warnings"] = json!([]);
+    }
+    job["extraction_warnings"].as_array_mut().expect("warnings array").insert(0, json!("The requested listing redirected to a different page on the same site. The extracted position may be different; verify the original job and destination before saving."));
+}
+
 pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(), String> {
     let search_context = match search_context {
         Some(context) => crate::candidate_selection::search_context(&context)?,
@@ -1746,6 +1756,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 job
             };
             ensure_listing_address(&mut browser, &current)?;
+            warn_same_site_path_redirect(&mut job, &original, &reached);
             if !frame_warnings.is_empty() {
                 if job["extraction_warnings"].as_array().is_none() {
                     job["extraction_warnings"] = json!([]);
@@ -2278,6 +2289,45 @@ mod tests {
             require_readable_listing(&[], "The page was not found. Browse current openings.")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn same_site_redirect_warning_is_prominent_and_does_not_expose_queries() {
+        let original = url::Url::parse("https://example.org/jobs/old?token=private").unwrap();
+        let reached = url::Url::parse("https://example.org/careers?token=private").unwrap();
+        let mut job = json!({"extraction_warnings":["Existing warning"]});
+        warn_same_site_path_redirect(&mut job, &original, &reached);
+        let warnings = job["extraction_warnings"].as_array().unwrap();
+        assert!(warnings[0].as_str().unwrap().contains("may be different"));
+        assert!(!warnings[0].as_str().unwrap().contains("private"));
+        assert_eq!(warnings[1], "Existing warning");
+        let mut same = json!({});
+        let same_path = url::Url::parse("https://example.org/jobs/old?other=1").unwrap();
+        warn_same_site_path_redirect(&mut same, &original, &same_path);
+        assert!(same["extraction_warnings"].is_null());
+    }
+
+    #[test]
+    #[ignore = "read-only public listing with a previously observed same-site redirect"]
+    fn live_redirected_listing_gets_a_review_warning() {
+        use waypoint_applications::driver::BrowserDriver;
+        let url = std::env::var("WAYPOINT_REDIRECTED_LISTING_URL").expect("reviewed public URL");
+        let original = url::Url::parse(&url).unwrap();
+        assert_eq!(original.scheme(), "https");
+        assert_eq!(original.host_str(), Some("apply.workable.com"));
+        crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
+        waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        browser.open(&url).unwrap();
+        let reached = url::Url::parse(&browser.current_url().unwrap()).unwrap();
+        let mut job = json!({});
+        warn_same_site_path_redirect(&mut job, &original, &reached);
+        assert!(job["extraction_warnings"][0]
+            .as_str()
+            .is_some_and(|warning| warning.contains("may be different")));
+        assert!(browser.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
     }
 
     #[test]
