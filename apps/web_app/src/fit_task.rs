@@ -789,6 +789,23 @@ fn confirm_isolated_criteria(
     Ok(accepted)
 }
 
+/// An unknown criterion has no cited candidate fact. Do not present an
+/// uncited model explanation as a statement about the candidate's history.
+fn normalize_model_unknown_explanations(value: &mut Value) {
+    if let Some(criteria) = value["criteria"].as_array_mut() {
+        for item in criteria {
+            if item["source"] == "listing"
+                && item["status"] == "unknown"
+                && item["explanation"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty() && text.len() <= 800)
+            {
+                item["explanation"] = json!("No supplied qualification was confirmed to establish this requirement; review the candidate's evidence and the listing.");
+            }
+        }
+    }
+}
+
 fn assess_with_source(
     model: &mut dyn Inference,
     facts: &[String],
@@ -952,7 +969,9 @@ fn assess_with_source(
                     Err("Listing criterion is outside the sampled passages".into())
                 };
                 match validated {
-                    Ok(assessment) => {
+                    Ok(_) => {
+                        normalize_model_unknown_explanations(&mut value);
+                        let assessment = validate(value.clone(), facts, instructions, listing)?;
                         let (value, assessment, preference_audit) = audit_missing_preferences(
                             model,
                             value,
@@ -2302,6 +2321,8 @@ fn compare_preferences_with_source(
                 "A numeric interval in or near the cited text crosses the preference's stated number; check the bounds and units manually.".to_owned()
             } else if absent_information {
                 "The cited text says information is not stated; review the preference manually.".to_owned()
+            } else if status == "unknown" {
+                "The listing evidence did not establish whether this preference is met; review it manually.".to_owned()
             } else {
                 explanation.to_owned()
             },
@@ -3978,6 +3999,33 @@ mod tests {
             assert_eq!(model.calls, 2);
             assert_eq!(assessment["rubric"][0]["status"], status);
         }
+    }
+
+    #[test]
+    fn uncited_unknown_model_explanations_do_not_claim_candidate_experience() {
+        let mut response = json!({"criteria":[
+            {"source":"listing","status":"unknown","explanation":"Candidate has experience resolving scalability bottlenecks."},
+            {"source":"listing","status":"supported","explanation":"The cited fact supports the requirement."},
+            {"source":"preference","status":"unknown","explanation":"Preference context."},
+            {"source":"listing","status":"unknown","explanation":null}
+        ]});
+        normalize_model_unknown_explanations(&mut response);
+        assert!(response["criteria"][0]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("No supplied qualification"));
+        assert_eq!(
+            response["criteria"][1]["explanation"],
+            "The cited fact supports the requirement."
+        );
+        assert_eq!(
+            response["criteria"][2]["explanation"],
+            "Preference context."
+        );
+        assert!(
+            response["criteria"][3]["explanation"].is_null(),
+            "invalid model output must still fail validation"
+        );
     }
 
     #[test]
