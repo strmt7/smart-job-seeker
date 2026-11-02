@@ -35,7 +35,7 @@ pub fn select_python(
 ) -> Result<PathBuf, String> {
     let configured = configured.trim();
     if configured.is_empty() {
-        discover().ok_or_else(|| "No local Python was found. Install a compatible Python or choose its executable for PDF setup.".into())
+        discover().ok_or_else(|| "No compatible local Python with venv and ensurepip was found among the checked candidates. Install a compatible Python or choose its executable for PDF setup.".into())
     } else {
         Ok(PathBuf::from(configured))
     }
@@ -171,9 +171,15 @@ fn install(control: &Path, id: &str, python: &Path) -> Result<String, String> {
         .map_err(|e| format!("Cannot activate PDF tools: {e}"))?;
     Ok(venv_python.display().to_string())
 }
-pub fn start(id: String, python: PathBuf) -> Result<(), String> {
-    if !python.is_absolute() || !python.is_file() {
-        return Err("Choose an existing absolute Python executable path".into());
+pub fn start(id: String, configured: String) -> Result<(), String> {
+    if configured.len() > 32_000 || configured.chars().any(char::is_control) {
+        return Err("Invalid Python executable path".into());
+    }
+    if !configured.trim().is_empty() {
+        let python = PathBuf::from(configured.trim());
+        if !python.is_absolute() || !python.is_file() {
+            return Err("Choose an existing absolute Python executable path".into());
+        }
     }
     let control = crate::storage_settings::control_dir()?;
     let mut task = TASK.lock().map_err(|_| "PDF setup unavailable")?;
@@ -186,8 +192,11 @@ pub fn start(id: String, python: PathBuf) -> Result<(), String> {
     });
     drop(task);
     std::thread::spawn(move || {
-        let outcome = std::panic::catch_unwind(|| install(&control, &id, &python))
-            .unwrap_or_else(|_| Err("PDF setup stopped unexpectedly".into()));
+        let outcome = std::panic::catch_unwind(|| {
+            let python = select_python(&configured, crate::pdf_extract::setup_python)?;
+            install(&control, &id, &python)
+        })
+        .unwrap_or_else(|_| Err("PDF setup stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
             if let Some(t) = task.as_mut().filter(|t| t.id == id) {
                 t.outcome = Some(outcome);
@@ -239,7 +248,13 @@ mod tests {
         );
         assert!(select_python("", || None)
             .unwrap_err()
-            .contains("No local Python"));
+            .contains("No compatible local Python"));
+    }
+
+    #[test]
+    fn setup_rejects_invalid_explicit_paths_before_creating_a_task() {
+        assert!(start("fixture".into(), "relative/python.exe".into()).is_err());
+        assert!(start("fixture".into(), "invalid\npath".into()).is_err());
     }
 
     #[test]

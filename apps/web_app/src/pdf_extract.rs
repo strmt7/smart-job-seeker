@@ -59,6 +59,38 @@ pub fn python_path() -> Option<PathBuf> {
     configured_python().or_else(|| path_pythons().into_iter().next())
 }
 
+// Setup may need venv and ensurepip even when the first PATH interpreter does
+// not provide them. Explicit, managed and bundled runtimes keep precedence.
+// Call only from the setup worker: probes can take up to two seconds each.
+#[cfg(windows)]
+fn supports_pdf_setup(path: &std::path::Path) -> bool {
+    let mut command = Command::new(path);
+    command.args([
+        "-I",
+        "-c",
+        "import sys,venv,ensurepip; sys.exit(0 if sys.version_info >= (3,10) else 1)",
+    ]);
+    crate::pdf_job::run(&command, None, 128 * 1024 * 1024, 2, 0).is_ok_and(|result| result.success)
+}
+
+#[cfg(windows)]
+pub fn setup_python() -> Option<PathBuf> {
+    configured_python().or_else(|| choose_setup_python(path_pythons(), supports_pdf_setup))
+}
+
+#[cfg(any(windows, test))]
+fn choose_setup_python(
+    paths: Vec<PathBuf>,
+    mut supports: impl FnMut(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
+    paths.into_iter().take(4).find(|path| supports(path))
+}
+
+#[cfg(not(windows))]
+pub fn setup_python() -> Option<PathBuf> {
+    python_path()
+}
+
 // Probe only automatic PATH candidates. Explicit, managed and bundled runtimes
 // retain their established precedence and failures remain visible. The first
 // candidate is retained as a fallback so missing-package diagnostics survive.
@@ -128,6 +160,28 @@ mod discovery_tests {
         );
         assert_eq!(count, 4);
         assert!(choose_path_python(Vec::new(), |_| true).is_none());
+        let mut count = 0;
+        assert!(choose_setup_python(paths, |_| {
+            count += 1;
+            false
+        })
+        .is_none());
+        assert_eq!(count, 4);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "probes a user-specified local Python without modifying it"]
+    fn setup_probe_skips_an_incompatible_executable() {
+        let compatible = PathBuf::from(std::env::var_os("WAYPOINT_TEST_SETUP_PYTHON").unwrap());
+        let incompatible =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/where.exe");
+        assert!(!supports_pdf_setup(&incompatible));
+        assert!(supports_pdf_setup(&compatible));
+        assert_eq!(
+            choose_setup_python(vec![incompatible, compatible.clone()], supports_pdf_setup),
+            Some(compatible)
+        );
     }
 }
 

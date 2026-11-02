@@ -4310,10 +4310,7 @@ fn serve(
             json_reply(stream, "200 OK", pdf_probe_task::poll(id)?);
         }
         "/api/pdf-setup/start" => {
-            let python = pdf_setup::select_python(
-                body["python"].as_str().unwrap_or(""),
-                pdf_extract::python_path,
-            )?;
+            let python = body["python"].as_str().unwrap_or("").to_owned();
             let id = random_id()?;
             pdf_setup::start(id.clone(), python)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
