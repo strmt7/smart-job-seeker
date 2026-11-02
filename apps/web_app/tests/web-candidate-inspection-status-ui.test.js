@@ -27,5 +27,9 @@ const render = vm.runInNewContext(`${titleNotice}\n${candidate}\nwebCandidate`, 
   context.api=async()=>({task_id:'fictional'});
   await button.listeners.click();
   assert.match(status.textContent, /Inspected page title: Different role.*different roles/);
+  context.followListingInspection=async()=>({review_only:true,review_reason:'uncertain',saved:null,job:{title:'Role'}});
+  await button.listeners.click();
+  assert.match(status.textContent, /could not confirm this is a vacancy; nothing was saved/);
+  assert.match(status.textContent, /Enter details manually/);
   console.log('Candidate inspection status UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1});

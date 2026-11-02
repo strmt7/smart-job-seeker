@@ -2777,44 +2777,58 @@ mod tests {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
         let _guard = crate::email_worker::TEST_LOCK.lock().unwrap();
-        let (_tx, rx) = mpsc::channel();
-        *TASK.lock().unwrap() = Some(Task {
-            id: "non-vacancy".into(),
-            url: "https://example.org/article".into(),
-            rx,
-            result: Some(Ok(Arc::new(InspectedListing {
-                job: json!({"url":"https://example.org/article","title":"Fictional role","employer":"Example","possible_non_job":true}),
-                capture: ListingCapture {
-                    metadata: json!({}),
-                    segments: vec![],
-                },
-            }))),
-        });
         let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        for _ in 0..2 {
-            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            let body = json!({"task_id":"non-vacancy"}).to_string();
-            write!(client, "POST /api/listing-inspect/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
-            let (mut server, _) = listener.accept().unwrap();
-            crate::serve(
-                &mut server,
-                &mut workspace,
-                &mut None,
-                "fixture-token",
-                port,
-            )
-            .unwrap();
-            drop(server);
-            let mut response = String::new();
-            client.read_to_string(&mut response).unwrap();
-            let result: Value =
-                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
-            assert_eq!(result["status"], "complete");
-            assert_eq!(result["review_only"], true);
-            assert!(result["saved"].is_null());
-            assert_eq!(workspace.job_count().unwrap(), 0);
+        for (id, job, reason) in [
+            (
+                "non-vacancy",
+                json!({"url":"https://example.org/article","title":"Fictional role","employer":"Example","possible_non_job":true}),
+                "not_vacancy",
+            ),
+            (
+                "uncertain",
+                json!({"url":"https://example.org/article","title":"Fictional role","employer":"Example","extraction":"local_model","page_kind":"uncertain"}),
+                "uncertain",
+            ),
+        ] {
+            let (_tx, rx) = mpsc::channel();
+            *TASK.lock().unwrap() = Some(Task {
+                id: id.into(),
+                url: "https://example.org/article".into(),
+                rx,
+                result: Some(Ok(Arc::new(InspectedListing {
+                    job,
+                    capture: ListingCapture {
+                        metadata: json!({}),
+                        segments: vec![],
+                    },
+                }))),
+            });
+            for _ in 0..2 {
+                let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let body = json!({"task_id":id}).to_string();
+                write!(client, "POST /api/listing-inspect/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+                let (mut server, _) = listener.accept().unwrap();
+                crate::serve(
+                    &mut server,
+                    &mut workspace,
+                    &mut None,
+                    "fixture-token",
+                    port,
+                )
+                .unwrap();
+                drop(server);
+                let mut response = String::new();
+                client.read_to_string(&mut response).unwrap();
+                let result: Value =
+                    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+                assert_eq!(result["status"], "complete");
+                assert_eq!(result["review_only"], true);
+                assert_eq!(result["review_reason"], reason);
+                assert!(result["saved"].is_null());
+                assert_eq!(workspace.job_count().unwrap(), 0);
+            }
         }
     }
 
@@ -3550,10 +3564,13 @@ mod tests {
         );
         let article = "Career guide: Laboratory Technician. Example Education publishes articles about science careers. Laboratory technicians often prepare microscope samples and work in hospitals or research labs. This is general career information, not a vacancy. Example Education is not recruiting for this role.";
         let non_job = extract_page_text(&mut model, article, "https://example.org/article");
-        println!("career article accepted={}", non_job.is_ok());
+        println!("career article extracted={}", non_job.is_ok());
         assert!(
-            non_job.is_err(),
-            "career article was incorrectly accepted as a job: {non_job:?}"
+            non_job.is_err()
+                || non_job
+                    .as_ref()
+                    .is_ok_and(|job| job["possible_non_job"] == true),
+            "career article lacked a non-vacancy review warning: {non_job:?}"
         );
         if let Some(path) = std::env::var_os("WAYPOINT_TEST_CAREER_ARTICLE") {
             let article = std::fs::read_to_string(path).expect("cannot read local article capture");
@@ -4187,6 +4204,47 @@ mod tests {
             .unwrap()
             .iter()
             .any(|item| item.as_str().unwrap_or("").contains("non-vacancy")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model and two supplied public text captures"]
+    fn resource_gated_public_article_and_vacancy_classification() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let model = crate::resident_model()
+                .unwrap()
+                .expect("eligible resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let article = std::fs::read_to_string(
+                std::env::var_os("WAYPOINT_TEST_CAREER_ARTICLE").expect("public article capture"),
+            )
+            .unwrap();
+            let vacancy = std::fs::read_to_string(
+                std::env::var_os("WAYPOINT_TEST_VACANCY_TEXT").expect("public vacancy capture"),
+            )
+            .unwrap();
+            let bounded = |text: &str| -> String {
+                text[..text.floor_char_boundary(text.len().min(16_000))].to_owned()
+            };
+            let article_kind = classify_page_kind(&mut llm, &bounded(&article));
+            let vacancy_kind = classify_page_kind(&mut llm, &bounded(&vacancy));
+            println!("public article classification={article_kind}; public vacancy classification={vacancy_kind}");
+            assert_ne!(
+                article_kind, "vacancy",
+                "career article incorrectly accepted as a vacancy"
+            );
+            assert_ne!(
+                vacancy_kind, "not_vacancy",
+                "vacancy incorrectly flagged as an article"
+            );
+        });
     }
 
     #[test]

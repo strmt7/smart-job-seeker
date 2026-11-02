@@ -3129,12 +3129,13 @@ fn serve(
                 }
                 Some(Ok(inspected)) => {
                     let job = &inspected.job;
-                    if job["possible_non_job"] == true {
+                    let uncertain =
+                        job["extraction"] == "local_model" && job["page_kind"] == "uncertain";
+                    if job["possible_non_job"] == true || uncertain {
                         // This classification is fallible. Keep the original
                         // search result available for manual entry, but do not
-                        // turn a suspected article into a saved vacancy.
-                        let response =
-                            json!({"status":"complete","job":job,"saved":null,"review_only":true});
+                        // turn an unconfirmed page into a saved vacancy.
+                        let response = json!({"status":"complete","job":job,"saved":null,"review_only":true,"review_reason":if uncertain {"uncertain"} else {"not_vacancy"}});
                         candidate_task::complete(id, response.clone())?;
                         json_reply(stream, "200 OK", response);
                         return Ok(());

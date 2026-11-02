@@ -2188,3 +2188,17 @@ title and employer into the manual-entry form for correction; it does not save
 them automatically. Fictional tests verify that no further model calls occur
 and that the recovery action uses the original result URL. The revised shortcut
 has not yet been measured on a live page, and model classifications can be wrong.
+
+### Uncertain page classification (2026-11-02)
+
+Local-model extractions classified as uncertain now also remain review-only
+rather than being automatically saved as vacancies. Structured job results
+are unchanged. Users can inspect the original and enter details manually, so
+a genuine vacancy the model cannot classify requires extra review. In one
+resource-gated qwen3.5:9b comparison of two public text captures, a career
+article was classified uncertain and a Greenhouse application page was
+classified vacancy. The test was initially written to expect a stronger
+non-vacancy result and failed; after adopting review-only handling for uncertain
+results, it passed with those same classifications. Three fictional vacancies
+were also classified as vacancies in a separate run. These small samples do
+not establish general accuracy. The model was unloaded and no application sent.
