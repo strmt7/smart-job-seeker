@@ -1146,14 +1146,19 @@ fn validate_suggestions(
                             || hint_matches_applicant_label(&field.label, candidate)
                     })
                 });
-            // A postal autocomplete token can identify the requested component
+            // An autocomplete token can identify the requested component
             // even when the visible label is unfamiliar or in another language.
             // It is still only a hint: matching it does not establish that the
             // label refers to the applicant or that the supplied value is complete.
             if hint.is_some_and(|hint| {
                 matches!(
                     hint,
-                    "address"
+                    "full_name"
+                        | "first_name"
+                        | "last_name"
+                        | "email"
+                        | "website"
+                        | "address"
                         | "address_line1"
                         | "address_line2"
                         | "address_line3"
@@ -1771,6 +1776,42 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn unfamiliar_labels_cannot_override_name_or_email_autocomplete_components() {
+        let mut schema = form();
+        schema.fields = [
+            ("#given", "Vorname", "given-name"),
+            ("#family", "Nachname", "family-name"),
+            ("#email", "E-Mail-Adresse", "email"),
+            ("#web", "Persönliche Webseite", "url"),
+        ]
+        .into_iter()
+        .map(|(selector, label, hint)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some(hint.into()),
+        })
+        .collect();
+        let profile = json!({"first_name":"Avery","last_name":"Example","email":"avery@example.invalid","website":"https://example.invalid"});
+        let bad = json!({"mappings":[{"selector":"#given","profile_key":"last_name"},{"selector":"#family","profile_key":"first_name"},{"selector":"#email","profile_key":"website"},{"selector":"#web","profile_key":"email"}]});
+        let (accepted, invalid, _) =
+            validate_suggestions(&schema, profile.as_object().unwrap(), &bad).unwrap();
+        assert!(accepted.is_empty());
+        assert_eq!(invalid.len(), 4);
+        let correct = json!({"mappings":[{"selector":"#given","profile_key":"first_name"},{"selector":"#family","profile_key":"last_name"},{"selector":"#email","profile_key":"email"},{"selector":"#web","profile_key":"website"}]});
+        let (accepted, invalid, _) =
+            validate_suggestions(&schema, profile.as_object().unwrap(), &correct).unwrap();
+        assert_eq!(accepted.len(), 4);
+        assert!(invalid.is_empty());
     }
 
     #[test]
