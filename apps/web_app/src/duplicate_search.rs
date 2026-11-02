@@ -1,6 +1,12 @@
 //! Bounded local-model duplicate candidate search. Results require user review.
 use serde_json::{json, Value};
-use std::{collections::HashSet, sync::Mutex};
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
 use waypoint_inference::{Inference, OllamaInference};
 
 pub struct Inputs {
@@ -18,6 +24,7 @@ struct Task {
     id: String,
     input: Inputs,
     result: Option<Result<SearchResult, String>>,
+    cancel: Arc<AtomicBool>,
 }
 struct SearchResult {
     matches: Vec<Value>,
@@ -27,6 +34,7 @@ struct SearchResult {
     target_text_shortened: bool,
     candidate_texts_shortened: usize,
     retried_candidates: usize,
+    cancelled: bool,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -65,10 +73,13 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     let job_id = input.job_id.clone();
     let target = input.target.clone();
     let candidates = input.candidates.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
     *task = Some(Task {
         id: id.clone(),
         input,
         result: None,
+        cancel,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -82,7 +93,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                 model,
                 crate::resident_model,
             );
-            search(&mut llm, &target, &candidates)
+            search_with_cancel(&mut llm, &target, &candidates, &worker_cancel)
         })
         .unwrap_or_else(|_| Err("Duplicate search stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
@@ -95,6 +106,18 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
         }
     });
     Ok(())
+}
+pub fn cancel(id: &str) -> Result<bool, String> {
+    let tasks = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
+    let task = tasks
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Duplicate search not found")?;
+    if task.result.is_some() {
+        return Ok(false);
+    }
+    task.cancel.store(true, Ordering::Release);
+    Ok(true)
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let tasks = TASK.lock().map_err(|_| "Duplicate search unavailable")?;
@@ -118,7 +141,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     );
     Ok(match result {
         Ok(result) => {
-            json!({"status":"complete","job_id":job,"digest":digest,"all_jobs":task.input.all_jobs,"page_after":task.input.page_after,"next_cursor":task.input.next_cursor,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"truncated":truncated,"source_texts_shortened":task.input.source_texts_shortened,"target_text_shortened":result.target_text_shortened,"candidate_texts_shortened":result.candidate_texts_shortened,"retried_candidates":result.retried_candidates,"matches":result.matches})
+            json!({"status":"complete","job_id":job,"digest":digest,"all_jobs":task.input.all_jobs,"page_after":task.input.page_after,"next_cursor":task.input.next_cursor,"total_candidates":count,"examined":result.examined,"failed_batches":result.failed_batches,"unexamined":result.unexamined,"cancelled":result.cancelled,"truncated":truncated,"source_texts_shortened":task.input.source_texts_shortened,"target_text_shortened":result.target_text_shortened,"candidate_texts_shortened":result.candidate_texts_shortened,"retried_candidates":result.retried_candidates,"matches":result.matches})
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
@@ -141,16 +164,28 @@ pub fn complete(id: &str, result: Value) -> Result<(), String> {
         Err("Duplicate search not found or still running".into())
     }
 }
+#[cfg(test)]
 fn search(
     model: &mut dyn Inference,
     target: &str,
     candidates: &[(String, String)],
+) -> Result<SearchResult, String> {
+    search_with_cancel(model, target, candidates, &AtomicBool::new(false))
+}
+fn search_with_cancel(
+    model: &mut dyn Inference,
+    target: &str,
+    candidates: &[(String, String)],
+    cancel: &AtomicBool,
 ) -> Result<SearchResult, String> {
     let mut matches = Vec::new();
     let (mut examined, mut failed_batches, mut attempted) = (0, 0, 0);
     let (mut target_text_shortened, mut candidate_texts_shortened) = (false, 0);
     let mut retried_candidates = 0;
     'batches: for batch in candidates.chunks(3) {
+        if cancel.load(Ordering::Acquire) {
+            break;
+        }
         attempted += batch.len();
         let (bounded_target, bounded_batch, prompt) = prepare_batch(target, batch);
         target_text_shortened |= bounded_target.len() < target.len();
@@ -168,6 +203,9 @@ fn search(
                 failed_batches += 1;
                 if batch.len() > 1 {
                     for candidate in batch {
+                        if cancel.load(Ordering::Acquire) {
+                            break 'batches;
+                        }
                         retried_candidates += 1;
                         let single = std::slice::from_ref(candidate);
                         let (target, items, prompt) = prepare_batch(target, single);
@@ -194,7 +232,8 @@ fn search(
             }
         }
     }
-    if !candidates.is_empty() && examined == 0 {
+    let cancelled = cancel.load(Ordering::Acquire) && examined < candidates.len();
+    if !candidates.is_empty() && examined == 0 && !cancelled {
         return Err(format!("No duplicate candidates could be assessed; {failed_batches} batch(es) failed and {} candidates were not attempted", candidates.len() - attempted));
     }
     Ok(SearchResult {
@@ -205,6 +244,7 @@ fn search(
         target_text_shortened,
         candidate_texts_shortened,
         retried_candidates,
+        cancelled,
     })
 }
 
@@ -567,6 +607,7 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "retry-fixture".into(),
             input,
+            cancel: Arc::new(AtomicBool::new(false)),
             result: Some(Ok(SearchResult {
                 matches: vec![
                     json!({"id":second.as_str(),"reason":"Fixture","target_excerpt":"Nurse","candidate_excerpt":"Research scientist"}),
@@ -577,8 +618,21 @@ mod tests {
                 target_text_shortened: false,
                 candidate_texts_shortened: 0,
                 retried_candidates: 0,
+                cancelled: false,
             })),
         });
+        let finished = TASK.lock().unwrap().as_mut().unwrap().result.take();
+        assert!(cancel("retry-fixture").unwrap());
+        assert!(TASK
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .cancel
+            .load(Ordering::Acquire));
+        TASK.lock().unwrap().as_mut().unwrap().result = finished;
+        assert!(!cancel("retry-fixture").unwrap());
+        assert!(cancel("unknown-fixture").is_err());
         assert_eq!(pending().unwrap()["finished"], true);
         assert_eq!(
             poll("retry-fixture").unwrap(),
@@ -631,6 +685,7 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "global-fixture".into(),
             input,
+            cancel: Arc::new(AtomicBool::new(false)),
             result: Some(Ok(SearchResult {
                 matches: vec![
                     json!({"id":second["id"],"reason":"Possible duplicate","target_excerpt":"Engineer","candidate_excerpt":"Developer"}),
@@ -641,6 +696,7 @@ mod tests {
                 target_text_shortened: false,
                 candidate_texts_shortened: 0,
                 retried_candidates: 0,
+                cancelled: false,
             })),
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -727,6 +783,50 @@ mod tests {
             (3, 4, 1)
         );
         assert!(unavailable.0.is_empty());
+    }
+
+    #[test]
+    fn cancellation_stops_after_current_model_batch_and_preserves_results() {
+        struct CancelAfter<'a>(&'a AtomicBool, usize);
+        impl Inference for CancelAfter<'_> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.1 += 1;
+                self.0.store(true, Ordering::Release);
+                Ok((
+                    json!({"matches":[{"index":1,"reason":"Possible match","target_excerpt":"Target","candidate_excerpt":"Candidate"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let cancel = AtomicBool::new(false);
+        let candidates: Vec<_> = (0..7)
+            .map(|i| (format!("job-{i}"), "Candidate".into()))
+            .collect();
+        let mut model = CancelAfter(&cancel, 0);
+        let result = search_with_cancel(&mut model, "Target", &candidates, &cancel).unwrap();
+        assert_eq!(model.1, 1);
+        assert_eq!(
+            (result.examined, result.unexamined, result.cancelled),
+            (3, 4, true)
+        );
+        assert_eq!(result.matches[0]["id"], "job-0");
+        let before = search_with_cancel(&mut model, "Target", &candidates, &cancel).unwrap();
+        assert_eq!(
+            (before.examined, before.unexamined, before.cancelled),
+            (0, 7, true)
+        );
     }
 
     #[test]

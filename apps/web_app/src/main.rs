@@ -2385,6 +2385,14 @@ fn serve(
         "/api/duplicates/search-pending" => {
             json_reply(stream, "200 OK", duplicate_search::pending()?);
         }
+        "/api/duplicates/search-cancel" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"requested":duplicate_search::cancel(id)?}),
+            );
+        }
         "/api/duplicates/search-start" => {
             let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job")?)
                 .map_err(|e| e.to_string())?;

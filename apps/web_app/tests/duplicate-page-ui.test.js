@@ -11,11 +11,11 @@ async function run(initial,result,paged=true,allJobs=false){
  await vm.runInNewContext(`${source.slice(start,end)};runDuplicateSearch`,context)(paged,allJobs);
  return {data,requests,messages};
 }
-async function batchRun(results,stopAfterFirst=false){
+async function batchRun(results,stopAfterFirst=false,stopBeforeStart=false){
  const data=new Map(),messages=[],requests=[];
  const context={job:{id:'fictional'},findDuplicates:{},scanMore:{},scanAll:{},stopScan:{},duplicateBatch:null,setTimeout:fn=>fn(),refresh:async()=>{},notify:value=>messages.push(value),
   sessionStorage:{getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)},
-  api:async(path,body)=>{requests.push({path,body});if(path.endsWith('search-pending'))return {active:false};if(path.endsWith('search-start'))return {task_id:'task'};const next=results.shift();if(stopAfterFirst)context.duplicateBatch.stop=true;return next;}};
+  api:async(path,body)=>{requests.push({path,body});if(path.endsWith('search-pending')){if(stopBeforeStart)context.duplicateBatch.stop=true;return {active:false};}if(path.endsWith('search-start'))return {task_id:'task'};const next=results.shift();if(stopAfterFirst)context.duplicateBatch.stop=true;return next;}};
  await vm.runInNewContext(`${source.slice(start,end)};runDuplicateBatch`,context)();
  return {data,messages,requests,context};
 }
@@ -37,7 +37,7 @@ async function batchRun(results,stopAfterFirst=false){
  assert.match(batch.messages.at(-1),/Three groups checked/);
  const stopped=await batchRun([page('','a')],true);
  assert.equal(stopped.requests.filter(request=>request.path.endsWith('search-start')).length,1);
- assert.match(stopped.messages.at(-1),/stopped after the current group/);
+ assert.match(stopped.messages.at(-1),/stopped after the current model batch/);
  const done=await batchRun([page('',null)]);
  assert.equal(done.requests.filter(request=>request.path.endsWith('search-start')).length,1);
  assert.equal(done.data.has('waypoint-duplicate-all-cursor'),false);
@@ -46,5 +46,10 @@ async function batchRun(results,stopAfterFirst=false){
  assert.equal(incomplete.requests.filter(request=>request.path.endsWith('search-start')).length,1);
  assert.equal(JSON.parse(incomplete.data.get('waypoint-duplicate-all-cursor')).after,'');
  assert.match(incomplete.messages.at(-1),/incomplete group/);
+ const cancelled=await batchRun([{...page('','a'),examined:3,unexamined:9,cancelled:true}],true);
+ assert.equal(JSON.parse(cancelled.data.get('waypoint-duplicate-all-cursor')).after,'');
+ assert.match(cancelled.messages.at(-1),/stopped; retry the incomplete group/);
+ const beforeStart=await batchRun([],false,true);
+ assert.equal(beforeStart.requests.filter(request=>request.path.endsWith('search-start')).length,0);
  console.log('Duplicate page UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
