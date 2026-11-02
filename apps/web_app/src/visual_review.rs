@@ -24,6 +24,12 @@ const COMPLETED_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 static COMPLETED: Mutex<std::collections::VecDeque<(String, Value, std::time::Instant)>> =
     Mutex::new(std::collections::VecDeque::new());
 
+pub fn pending_for_session(session: &str) -> bool {
+    TASK.lock()
+        .map(|task| task.as_ref().is_some_and(|task| task.session == session))
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 pub static TEST_TASK_LOCK: Mutex<()> = Mutex::new(());
 

@@ -26,6 +26,12 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 
+pub fn pending_for_session(session: &str) -> bool {
+    TASK.lock()
+        .map(|task| task.as_ref().is_some_and(|task| task.session_id == session))
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 pub(crate) fn set_completed_fixture(id: &str, input: Inputs, answer: Value) {
     *TASK.lock().unwrap() = Some(Task {

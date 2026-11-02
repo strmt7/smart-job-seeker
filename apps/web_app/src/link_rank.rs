@@ -16,6 +16,14 @@ struct Task {
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 
+pub fn pending_for_session(session: &str) -> Result<bool, String> {
+    Ok(TASK
+        .lock()
+        .map_err(|_| "Link ranking unavailable")?
+        .as_ref()
+        .is_some_and(|task| task.session == session))
+}
+
 pub(crate) struct RankReport {
     pub(crate) links: Vec<PageLink>,
     pub(crate) total: usize,

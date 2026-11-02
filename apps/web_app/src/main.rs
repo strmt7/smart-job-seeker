@@ -29,6 +29,7 @@ pub mod email_worker;
 mod experience_inference;
 mod extract_task;
 mod fit_task;
+mod form_capture_task;
 mod form_links;
 mod form_preview;
 mod form_task;
@@ -243,6 +244,7 @@ fn active_form_review_reasons(
 ) -> Result<Vec<String>, String> {
     let mut reasons = form_links::protected_reasons(job)?;
     reasons.extend(custom_choice_action::protected_reasons(job)?);
+    reasons.extend(form_capture_task::protected_reasons(job)?);
     if let Some(current) = session.as_ref().filter(|current| &current.job_id == job) {
         reasons.push(form_task::pending_reason(&current.inspection_task_id));
     }
@@ -2027,6 +2029,78 @@ fn email_document_reply(stream: &mut TcpStream, body: &[u8], evidence_status: &'
     let _ = stream.write_all(body);
 }
 
+fn settle_form_recapture(
+    ws: &Workspace,
+    session: &mut Option<ReviewSession>,
+    id: &str,
+) -> Result<Value, String> {
+    let pending = form_capture_task::pending()?;
+    let session_id = pending["session_id"].as_str().unwrap_or("").to_owned();
+    let value = match form_capture_task::poll(id)? {
+        form_capture_task::Poll::Running => json!({"status":"running"}),
+        form_capture_task::Poll::Cached(value) => value,
+        form_capture_task::Poll::Lost(job, revision) => {
+            let saved = ws
+                .mark_manual_review(&job, "Application recapture outcome is uncertain", now())
+                .is_ok()
+                && form_capture_task::finish_pending(ws, &job, id, revision).is_ok();
+            let error = if saved {
+                "The review session ended; inspect the application manually"
+            } else {
+                "The review session ended and the review status could not be fully saved; inspect the application manually"
+            };
+            let value = json!({"status":"uncertain","session_id":session_id,"job_id":job.as_str(),"error":error});
+            form_capture_task::remember(id, value.clone())?;
+            value
+        }
+        form_capture_task::Poll::Complete(mut returned, mut value, revision) => {
+            let job = returned.job_id.clone();
+            let context_current = ws.job(&job).ok().flatten().is_some_and(|current_job| {
+                matches!(
+                    current_job.state,
+                    ApplicationState::Shortlisted | ApplicationState::Prepared
+                ) && form_destination_current(
+                    ws,
+                    &current_job,
+                    &returned.url,
+                    returned.route_binding.as_ref(),
+                )
+                .unwrap_or(false)
+            }) && ws
+                .candidate_profile()
+                .ok()
+                .and_then(|value| match value {
+                    Some(profile) => serde_json::from_str::<Value>(&profile).ok(),
+                    None => Some(json!({})),
+                })
+                .is_some_and(|profile| {
+                    Sha256Digest::of(&profile.to_string()) == returned.profile_digest
+                });
+            let context_record_saved = returned.record.as_mut().is_some_and(|record| record.event(json!({"type":"user_recapture_context_checked","time":now(),"context_current":context_current,"note":"Context matching does not prove page correctness or submission."})).is_ok());
+            value["context_current"] = json!(context_current);
+            value["event_saved"] = json!(value["event_saved"] == true && context_record_saved);
+            if !context_current {
+                returned.preview.manual_review.push("Job, destination or profile changed during recapture; inspect the application again".into());
+            }
+            if session.is_some() {
+                value = json!({"status":"uncertain","session_id":session_id,"job_id":job.as_str(),"error":"The review session changed; inspect the application manually"});
+            } else {
+                *session = Some(*returned);
+            }
+            if ws
+                .mark_manual_review(&job, "Application needs manual review", now())
+                .is_err()
+                || form_capture_task::finish_pending(ws, &job, id, revision).is_err()
+            {
+                value = json!({"status":"uncertain","session_id":session_id,"job_id":job.as_str(),"error":"The capture finished but its review status could not be fully saved; inspect the application manually"});
+            }
+            form_capture_task::remember(id, value.clone())?;
+            value
+        }
+    };
+    Ok(value)
+}
+
 fn serve(
     stream: &mut TcpStream,
     ws: &mut Workspace,
@@ -2724,6 +2798,7 @@ fn serve(
                 || candidate_task::busy()
                 || form_links::busy()
                 || custom_choice_action::busy()
+                || form_capture_task::busy()
             {
                 return Err(
                     "Close or finish the active form inspection before checking another page"
@@ -2959,6 +3034,7 @@ fn serve(
                 || candidate_task::busy()
                 || form_links::busy()
                 || custom_choice_action::busy()
+                || form_capture_task::busy()
             {
                 return Err(
                     "Finish the current browser session before inspecting a listing".into(),
@@ -3110,6 +3186,7 @@ fn serve(
                 || candidate_task::busy()
                 || form_links::busy()
                 || custom_choice_action::busy()
+                || form_capture_task::busy()
                 || email_worker::busy()
             {
                 return Err(
@@ -4616,6 +4693,7 @@ fn serve(
                 || candidate_task::busy()
                 || form_links::busy()
                 || custom_choice_action::busy()
+                || form_capture_task::busy()
             {
                 return Err("Wait for the current browser inspection to finish".into());
             }
@@ -7853,6 +7931,77 @@ fn serve(
                 json!({"ok":true,"name":doc.name,"attachment_name":name,"attachment_count":files.len(),"draft_provenance":draft_provenance_status,"provenance_lookup_incomplete":provenance_incomplete,"manual_review":current.preview.manual_review}),
             );
         }
+        "/api/form/recapture-pending" => {
+            json_reply(stream, "200 OK", form_capture_task::pending()?);
+        }
+        "/api/form/recapture-start" => {
+            if application_check::busy()
+                || form_task::busy()
+                || candidate_task::busy()
+                || form_links::busy()
+                || custom_choice_action::busy()
+                || form_capture_task::busy()
+            {
+                return Err("Finish the active browser operation before recapturing".into());
+            }
+            let requested = body["session_id"].as_str().ok_or("missing session")?;
+            let current = session
+                .as_ref()
+                .filter(|current| {
+                    current.id == requested && current.created.elapsed() <= current.ttl
+                })
+                .ok_or("Form session expired")?;
+            if current.record.is_none() {
+                return Err("There is no application record to capture yet".into());
+            }
+            let saved_job = ws
+                .job(&current.job_id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            if !matches!(
+                saved_job.state,
+                ApplicationState::Shortlisted | ApplicationState::Prepared
+            ) || !form_destination_current(
+                ws,
+                &saved_job,
+                &current.url,
+                current.route_binding.as_ref(),
+            )? {
+                return Err("Job or destination changed; inspect the application again".into());
+            }
+            if answer_task::pending_for_session(&current.id)
+                || visual_review::pending_for_session(&current.id)
+                || link_rank::pending_for_session(&current.id)?
+                || current.pending_choice_visual.is_some()
+                || [
+                    control_rank::pending()?,
+                    control_vision::pending()?,
+                    choice_advice::pending()?,
+                ]
+                .iter()
+                .any(|pending| {
+                    pending["active"] == true
+                        && pending["session_id"].as_str() == Some(current.id.as_str())
+                })
+            {
+                return Err("Finish or recover the pending form review before recapturing".into());
+            }
+            let job = current.job_id.clone();
+            let id = random_id()?;
+            let revision = form_capture_task::begin_pending(ws, &job, &id)?;
+            let current = session.take().ok_or("Form session expired")?;
+            if let Err((returned, error)) = form_capture_task::start(id.clone(), current, revision)
+            {
+                *session = Some(*returned);
+                form_capture_task::finish_pending(ws, &job, &id, revision)?;
+                return Err(error);
+            }
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/form/recapture-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", settle_form_recapture(ws, session, id)?);
+        }
         "/api/form/session-status" => {
             let current = session
                 .as_ref()
@@ -7869,7 +8018,7 @@ fn serve(
                         json!({"active":true,"session_id":current.id,"job_id":current.job_id.as_str(),"visible":current.visible,"source_route":current.route_binding.is_some(),"fill_attempted":current.fill_attempted,"completed_selectors":completed})
                     }
                     None => {
-                        json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job})),"navigation":pending_navigation.map(|(task,job)| json!({"task":task,"job":job}))})
+                        json!({"active":false,"inspection":pending_inspection.map(|(task,job)| json!({"task":task,"job":job})),"navigation":pending_navigation.map(|(task,job)| json!({"task":task,"job":job})),"recapture":form_capture_task::pending()?})
                     }
                 },
             );
@@ -8438,6 +8587,17 @@ fn serve_loop(
             }
             if let Err(error) = web_search_batch::collect_background() {
                 eprintln!("Background web search collection failed: {error}");
+            }
+            match form_capture_task::pending() {
+                Ok(pending) if pending["active"] == true => {
+                    if let Some(id) = pending["task_id"].as_str() {
+                        if let Err(error) = settle_form_recapture(&ws, &mut session, id) {
+                            eprintln!("Background form recapture collection failed: {error}");
+                        }
+                    }
+                }
+                Err(error) => eprintln!("Background form recapture unavailable: {error}"),
+                _ => {}
             }
             next_discovery_collect = Instant::now() + Duration::from_secs(1);
         }
