@@ -1,3 +1,8 @@
+## Split street addresses — 2026-11-02
+
+- A fictional browser form with separate address lines exposed a local-model error: with only a combined street-and-apartment address, one `qwen3.5:9b` run suggested the entire value for line 1. The profile now accepts separately entered lines 1 and 2, and the mapper rejects combined or mismatched components for recognized split fields. Unknown line numbers and conflicting label/autocomplete hints require review. Recognition is limited to the supported English labels and HTML autocomplete hints; other phrasing can still need manual review.
+- In two subsequent resource-gated local-model runs, the combined address was not mapped to either split field, while separately supplied lines were mapped correctly in each run. The model was unloaded after testing. The fictional validator and profile restart tests, suggestion suite (40 passed, 18 ignored), profile-picker check and Windows web lint passed. A fictional profile saved and reloaded both lines in an isolated running web app. This is not evidence of broad model accuracy or a real-site autofill test.
+
 ## Employer contact mapping — 2026-11-02
 
 - Form mapping now conservatively treats employer, company and headquarters labels, including selected German, French and Spanish terms, as third-party context. Applicant profile details are not suggested for those fields even if the model or a site-provided autocomplete hint proposes them. This bounded word check can miss other wording and can flag an applicant field that mentions a company; the user must review uncertain fields.

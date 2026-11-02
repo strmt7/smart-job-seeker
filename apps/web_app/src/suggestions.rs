@@ -25,6 +25,8 @@ const AUTOFILL_PROFILE_FIELDS: &[&str] = &[
     "phone_country_code",
     "phone_extension",
     "address",
+    "address_line1",
+    "address_line2",
     "city",
     "region",
     "postal_code",
@@ -131,6 +133,9 @@ fn autocomplete_profile_key(
             "tel-country-code" => Some("phone_country_code"),
             "tel-extension" => Some("phone_extension"),
             "street-address" => Some("address"),
+            "address-line1" => Some("address_line1"),
+            "address-line2" => Some("address_line2"),
+            "address-line3" => Some("address_line3"),
             "address-level2" => Some("city"),
             "address-level1" => Some("region"),
             "postal-code" => Some("postal_code"),
@@ -170,6 +175,8 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
         ),
         "phone_extension" => matches!(plain, "phoneextension" | "telephoneextension" | "extension"),
         "address" => matches!(plain, "address" | "streetaddress" | "homeaddress"),
+        "address_line1" => matches!(plain, "addressline1" | "streetaddressline1"),
+        "address_line2" => matches!(plain, "addressline2" | "streetaddressline2"),
         "city" => matches!(plain, "city" | "town"),
         "region" => matches!(plain, "state" | "region" | "stateorregion" | "province"),
         "postal_code" => matches!(plain, "postalcode" | "postcode" | "zipcode"),
@@ -258,6 +265,41 @@ fn names_third_party(label: &str) -> bool {
         .any(|pair| pair == ["emergency", "contact"])
 }
 
+// A combined street address cannot be safely split into site-specific lines.
+// Treat the site's hint and an explicit line label as independent constraints.
+fn address_line_component(
+    field: &waypoint_applications::form_mapping::FormField,
+) -> Option<&'static str> {
+    let label = normalize_field_name(&field.label);
+    let mut from_label = None;
+    for (index, _) in label.match_indices("addressline") {
+        let digits: String = label[index + "addressline".len()..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let component = match digits.as_str() {
+            "1" => Some("address_line1"),
+            "2" => Some("address_line2"),
+            "3" => Some("address_line3"),
+            "" => None,
+            _ => Some("unknown_address_line"),
+        };
+        if let Some(component) = component {
+            if from_label.is_some_and(|previous| previous != component) {
+                return Some("conflicting_address_lines");
+            }
+            from_label = Some(component);
+        }
+    }
+    let hint = autocomplete_profile_key(field)
+        .filter(|key| matches!(*key, "address_line1" | "address_line2" | "address_line3"));
+    match (from_label, hint) {
+        (Some(a), Some(b)) if a != b => Some("conflicting_address_lines"),
+        (Some(a), _) | (_, Some(a)) => Some(a),
+        _ => None,
+    }
+}
+
 /// Conservative offline fallback using exact labels or standard autocomplete hints.
 pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<ProposedMapping>, String> {
     if schema.fields.len() > MAX_FIELDS {
@@ -297,6 +339,9 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             ([], Some(hint)) if hint_matches_applicant_label(&field.label, hint) => hint,
             _ => continue,
         };
+        if address_line_component(field).is_some_and(|component| component != key) {
+            continue;
+        }
         let Some(value) = profile
             .get(key)
             .and_then(Value::as_str)
@@ -947,6 +992,7 @@ fn validate_suggestions(
             if field.sensitive
                 || names_third_party(&field.label)
                 || !AUTOFILL_PROFILE_FIELDS.contains(&key)
+                || address_line_component(field).is_some_and(|component| component != key)
             {
                 return None;
             }
@@ -976,6 +1022,9 @@ fn validate_suggestions(
                 matches!(
                     hint,
                     "address"
+                        | "address_line1"
+                        | "address_line2"
+                        | "address_line3"
                         | "city"
                         | "region"
                         | "postal_code"
@@ -2456,6 +2505,97 @@ mod tests {
         .unwrap()
         .is_empty());
     }
+    #[test]
+    fn split_address_fields_require_matching_explicit_components() {
+        let mut schema = form();
+        schema.fields[0].label = "Address line 1".into();
+        schema.fields[0].autocomplete = Some("address-line1".into());
+        let profile = json!({"address":"10 Fictional Street, Apartment 6","address_line1":"10 Fictional Street","address_line2":"Apartment 6"});
+        for key in ["address", "address_line2"] {
+            let response = json!({"mappings":[{"selector":"#candidate","profile_key":key}]});
+            let (mapped, invalid, _) =
+                validate_suggestions(&schema, profile.as_object().unwrap(), &response).unwrap();
+            assert!(mapped.is_empty());
+            assert!(invalid.contains("#candidate"));
+        }
+        let response =
+            json!({"mappings":[{"selector":"#candidate","profile_key":"address_line1"}]});
+        assert_eq!(
+            validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
+        assert_eq!(
+            suggest_exact(&schema, &profile).unwrap()[0].value,
+            PacketValue::Text("10 Fictional Street".into())
+        );
+        schema.fields[0].autocomplete = Some("address-line2".into());
+        assert!(
+            validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+        schema.fields[0].label = "Address line 3".into();
+        schema.fields[0].autocomplete = Some("address-line3".into());
+        assert!(
+            validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        schema.fields[0].label = "Address line 10".into();
+        schema.fields[0].autocomplete = None;
+        assert!(
+            validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model and opens a fictional split-address form"]
+    fn local_model_split_address_requires_review() {
+        use waypoint_applications::driver::BrowserDriver;
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../crates/waypoint_browser/tests/fixtures/form_address_lines.html")
+                .canonicalize()
+                .unwrap();
+            let url = url::Url::from_file_path(path).unwrap();
+            let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let schema = driver.open(url.as_str()).unwrap().schema;
+            let name = crate::resident_model().unwrap().unwrap();
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut llm =
+                crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+            let (mappings, warnings, _) = suggest_with_review(
+                &mut llm,
+                &schema,
+                &json!({"address":"10 Fictional Street, Apartment 6","city":"Example City"}),
+            )
+            .unwrap();
+            println!("Fictional split-address mapping: {mappings:?}; warnings: {warnings:?}");
+            assert!(!mappings
+                .iter()
+                .any(|item| matches!(item.field_selector.as_str(), "#line1" | "#line2")));
+            assert!(mappings.iter().any(|item| item.field_selector == "#city"));
+            let (split, warnings, _) = suggest_with_review(&mut llm, &schema, &json!({"address":"10 Fictional Street, Apartment 6","address_line1":"10 Fictional Street","address_line2":"Apartment 6","city":"Example City"})).unwrap();
+            println!("Fictional explicit address lines: {split:?}; warnings: {warnings:?}");
+            assert!(split.iter().any(|item| item.field_selector == "#line1"
+                && item.value == PacketValue::Text("10 Fictional Street".into())));
+            assert!(split.iter().any(|item| item.field_selector == "#line2"
+                && item.value == PacketValue::Text("Apartment 6".into())));
+        });
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "loads a local model after the application resource gate"]
