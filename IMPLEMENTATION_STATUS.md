@@ -2425,8 +2425,13 @@ detection. The existing `WAYPOINT_SOFFICE` environment override takes precedence
 The path must name an existing file when saved and used; the setting does not
 install or execute the converter or prove it works. A temporary-file test covers
 validation, persistence, missing files and clearing; a mocked UI test covers
-the settings request. An actual custom installation and clean-host setup remain
-unverified.
+the settings request. A separate isolated Windows app probe selected a
+nonstandard path linked to the existing LibreOffice installation, uploaded a
+fictional text file and converted it to PDF; extracted text matched. Linking
+only the program directory failed, while linking the complete installation
+worked. This does not verify a separately installed copy or clean-host setup.
+The local probe requires an existing build, LibreOffice and PDF Python runtime;
+it restores its environment and removes only its own temporary workspace.
 
 ### Email contacts on application pages (2026-11-02)
 
