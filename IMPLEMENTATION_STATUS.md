@@ -1,5 +1,6 @@
 ## Attachments and custom choices — 2026-11-02
 
+- A separate fictional browser fixture cleared an uploaded file when the choice opened. The choice worker reported the action as opened but the attachment and prior-field checks as unsuccessful. Attachment failures now also save a specific manual-review reason when detected before an action or in its status result. The worker test and Windows web lint passed; the status endpoint's new reason was not exercised by that worker-only test.
 - Reviewed custom-choice actions now check the current inspection's staged files and browser file controls before and after opening, scrolling or selecting. Missing, changed, unverified or over-budget attachments require review; the interface identifies an attachment check failure. Checks are limited to eight upload controls and a four-second start budget, and do not prove server receipt or prevent a later page change.
 - A fictional local-browser fixture verified that a staged upload is accepted by the check and a replacement file is detected; the existing reviewed-choice workflow, two choice UI checks and Windows web lint passed. This did not test an employer form or submission.
 

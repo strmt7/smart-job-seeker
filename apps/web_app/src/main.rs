@@ -5361,6 +5361,12 @@ fn serve(
                 }
             }
             if !choice_attachments_verified(current) {
+                ws.mark_manual_review(
+                    &current.job_id,
+                    "Previously attached files changed or could not be verified",
+                    now(),
+                )
+                .map_err(|error| error.to_string())?;
                 return Err(
                     "Previously attached files changed or could not be checked; inspect them again"
                         .into(),
@@ -5521,12 +5527,13 @@ fn serve(
                             || value["record_saved"] != true
                             || value["previous_fields_verified"] != true
                         {
-                            ws.mark_manual_review(
-                                &job,
-                                "Custom choice action needs manual review",
-                                now(),
-                            )
-                            .map_err(|error| error.to_string())?;
+                            let reason = if value["attachments_verified"] == false {
+                                "Previously attached files changed or could not be verified"
+                            } else {
+                                "Custom choice action needs manual review"
+                            };
+                            ws.mark_manual_review(&job, reason, now())
+                                .map_err(|error| error.to_string())?;
                         }
                     }
                     custom_choice_action::remember(id, value.clone())?;

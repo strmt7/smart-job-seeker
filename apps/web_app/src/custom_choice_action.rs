@@ -208,6 +208,99 @@ mod tests {
     use waypoint_applications::driver::BrowserDriver;
     use waypoint_domain::{ApplicationState, Sha256Digest};
 
+    #[test]
+    #[ignore = "starts one browser on a fictional form that clears an upload"]
+    fn choice_action_reports_upload_cleared_by_page() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_choice_clears_upload.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let job = JobIdentityId::new("cleared-upload-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job.clone(),
+            title: "Role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let record =
+            crate::attempt_record::AttemptRecord::start(&ws, &job, "cleared-upload", now())
+                .unwrap()
+                .unwrap();
+        let staged = dir.path().join("staged.pdf");
+        std::fs::write(&staged, b"fictional document").unwrap();
+        driver.attach_local_file("#upload", &staged).unwrap();
+        let mut session = ReviewSession {
+            id: "upload-session".into(),
+            job_id: job,
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url: url.to_string(),
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&json!({}).to_string()),
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(120),
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![(
+                "#upload".into(),
+                staged,
+                "upload-session".into(),
+                waypoint_domain::sha256_hex(b"fictional document"),
+            )],
+            pending_choice_visual: None,
+            selected_choices: vec![],
+            last_visual_freshness_key: None,
+            record: Some(record),
+        };
+        let (inventory, _) = crate::custom_choice_snapshot(&mut session.driver).unwrap();
+        let selector = inventory
+            .choices
+            .iter()
+            .find(|choice| choice.label == "Location")
+            .unwrap()
+            .selector
+            .clone();
+        start("upload-choice".into(), session, selector, None, None, 1)
+            .map_err(|(_, error)| error)
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match poll("upload-choice").unwrap() {
+                Poll::Running => {
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Poll::Complete(_session, result, _) => {
+                    assert_eq!(result["opened"], true, "{}", result["error"]);
+                    assert_eq!(result["attachments_verified"], false);
+                    assert_eq!(result["previous_fields_verified"], false);
+                    break;
+                }
+                _ => panic!("choice action did not complete"),
+            }
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "resource-gated visual review and actions on a fictional form"]
