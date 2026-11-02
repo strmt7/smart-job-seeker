@@ -241,20 +241,51 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
             field.required
                 && !preview.suggestions.iter().any(|mapping| {
                     mapping.field_selector == field.selector
-                        && match &mapping.value {
-                            PacketValue::Text(value) | PacketValue::Date(value) => {
-                                !value.trim().is_empty()
-                            }
-                            PacketValue::TextList(values) => !values.is_empty(),
-                            PacketValue::Bool(value) => *value,
-                            PacketValue::FileRef { name } => !name.trim().is_empty(),
-                            PacketValue::None => false,
-                        }
+                        && required_value_valid(field, &mapping.value)
                 })
         })
         .map(|field| field_review_label(&preview.schema, field))
         .collect();
     (filled, remaining)
+}
+
+// A proposed answer is not evidence of a filled page, but an invalid answer
+// must not make a required field disappear from the review list.
+fn required_value_valid(
+    field: &waypoint_applications::form_mapping::FormField,
+    value: &PacketValue,
+) -> bool {
+    use waypoint_applications::form_mapping::{
+        text_fits_field, valid_iso_date, valid_iso_datetime_local, valid_iso_month, valid_iso_time,
+        valid_multi_select,
+    };
+    match (&field.field_type, value) {
+        (
+            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+            PacketValue::Text(text),
+        ) => !text.trim().is_empty() && text_fits_field(field, text),
+        (
+            FormFieldType::Select { options } | FormFieldType::Radio { options },
+            PacketValue::Text(text),
+        ) => {
+            !text.trim().is_empty()
+                && options
+                    .iter()
+                    .filter(|option| option.trim().eq_ignore_ascii_case(text.trim()))
+                    .count()
+                    == 1
+        }
+        (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
+            valid_multi_select(options, values)
+        }
+        (FormFieldType::Checkbox, PacketValue::Bool(value)) => *value,
+        (FormFieldType::Date, PacketValue::Date(value)) => valid_iso_date(value),
+        (FormFieldType::Month, PacketValue::Date(value)) => valid_iso_month(value),
+        (FormFieldType::Time, PacketValue::Date(value)) => valid_iso_time(value),
+        (FormFieldType::DateTimeLocal, PacketValue::Date(value)) => valid_iso_datetime_local(value),
+        (FormFieldType::File, PacketValue::FileRef { name }) => !name.trim().is_empty(),
+        _ => false,
+    }
 }
 
 /// Pair each reviewed value with the original site question before any browser
@@ -3159,6 +3190,9 @@ mod tests {
         );
         preview.manual_review.push("Visual review required".into());
         preview.suggestions[0].value = PacketValue::Text("Ada".into());
+        preview.schema.fields[0].max_length_utf16 = Some(2);
+        assert!(fill_coverage(&preview).1.contains(&"Name".to_owned()));
+        preview.schema.fields[0].max_length_utf16 = None;
         preview.suggestions[2].value = PacketValue::Text(" ".into());
         refresh_required_review(&mut preview);
         assert_eq!(
@@ -3170,6 +3204,56 @@ mod tests {
                 "Required field needs review: Missing",
             ]
         );
+    }
+
+    #[test]
+    fn required_coverage_rejects_invalid_typed_answers() {
+        use waypoint_applications::form_mapping::FormField;
+        let mut field = FormField {
+            selector: "#field".into(),
+            label: "Field".into(),
+            field_type: FormFieldType::Date,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::Text("2026-01-01".into())
+        ));
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::Date("2026-02-30".into())
+        ));
+        assert!(required_value_valid(
+            &field,
+            &PacketValue::Date("2026-02-28".into())
+        ));
+        field.field_type = FormFieldType::MultiSelect {
+            options: vec!["A".into()],
+        };
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::TextList(vec![" ".into()])
+        ));
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::TextList(vec!["B".into()])
+        ));
+        assert!(required_value_valid(
+            &field,
+            &PacketValue::TextList(vec!["A".into()])
+        ));
+        field.field_type = FormFieldType::Text;
+        field.max_length_utf16 = Some(2);
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::Text("long".into())
+        ));
     }
 
     #[test]
