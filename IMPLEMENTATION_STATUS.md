@@ -1,3 +1,8 @@
+## Attempt listing comparison — 2026-11-02
+
+- Attempt history now compares each readable original listing snapshot with the current saved workspace listing, including its description, title, employer, location, source, URL and requisition identifier. Changed or unavailable snapshots are shown for review; a match does not establish that the live vacancy is unchanged or authenticate the plaintext record. Reads are bounded and older, missing, inconsistent or oversized snapshots can report unavailable. The original files are not rewritten.
+- A fictional disk-backed test changed the saved job title and separately checked a changed description, missing description and inconsistent snapshot fingerprint; the original attempt text remained unchanged. The focused test, UI check and Windows lint passed. No employer site was contacted or application submitted.
+
 ## Application-check freshness — 2026-11-02
 
 - The final page check now also compares a fingerprint of up to 32,000 bytes of sampled DOM text taken after navigation and before the result is assembled. A change or an unavailable text check requires manual reinspection and discards the earlier summary and contacts; a truncated sample is disclosed. The sample can change for harmless dynamic content, can include non-visible DOM text, and cannot detect changes outside its bound or before its first observation. It does not prove that a vacancy is open.

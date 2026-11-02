@@ -752,6 +752,63 @@ fn listing_capture_integrity(
     "match"
 }
 
+// A comparison of saved workspace data, not a claim about the live vacancy or
+// authentication of the plaintext attempt files.
+fn listing_snapshot_comparison(
+    dir: &std::path::Path,
+    current: Option<&waypoint_store::StoredJob>,
+    description: Option<&str>,
+    budget: &mut u64,
+) -> &'static str {
+    let (Some(current), Some(description)) = (current, description) else {
+        return "unavailable";
+    };
+    let path = dir.join("original-job.json");
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        return "unavailable";
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > 1024 * 1024
+        || metadata.len() > *budget
+    {
+        return "unavailable";
+    }
+    let mut bytes = Vec::new();
+    let limit = (*budget).min(1024 * 1024);
+    let Ok(file) = fs::File::open(path) else {
+        return "unavailable";
+    };
+    if file.take(limit + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > limit {
+        return "unavailable";
+    }
+    *budget = budget.saturating_sub(bytes.len() as u64);
+    let Ok(saved) = serde_json::from_slice::<Value>(&bytes) else {
+        return "unavailable";
+    };
+    let Some(saved_description) = saved["description"].as_str() else {
+        return "unavailable";
+    };
+    if saved["job_id"].as_str() != Some(current.id.as_str())
+        || saved["description_sha256"].as_str()
+            != Some(Sha256Digest::of(saved_description).as_str())
+    {
+        return "unavailable";
+    }
+    if saved["title"].as_str() == Some(current.title.as_str())
+        && saved["employer"].as_str() == Some(current.employer.as_str())
+        && saved["location"].as_str() == Some(current.location.as_str())
+        && saved["source"].as_str() == Some(current.source.as_str())
+        && saved["source_url"].as_str() == current.canonical_url.as_deref()
+        && saved["requisition_id"].as_str() == current.requisition_id.as_deref()
+        && saved_description == description
+    {
+        "matches"
+    } else {
+        "changed"
+    }
+}
+
 /// List a bounded number of locally saved attempts without reading their materials.
 pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     let root = ws
@@ -836,11 +893,19 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
         truncated = true;
     }
     let mut integrity_budget = 32 * 1024 * 1024u64;
+    let current_job = ws.job(id).ok().flatten();
+    let current_description = ws.job_description(id).ok().flatten();
     for attempt in &mut attempts {
         let Some(folder) = attempt["folder"].as_str() else {
             continue;
         };
         let dir = PathBuf::from(folder);
+        attempt["listing_snapshot_comparison"] = json!(listing_snapshot_comparison(
+            &dir,
+            current_job.as_ref(),
+            current_description.as_deref(),
+            &mut integrity_budget
+        ));
         let original = listing_capture_integrity(&dir, attempt, false, &mut integrity_budget);
         let followup = listing_capture_integrity(&dir, attempt, true, &mut integrity_budget);
         attempt["page_capture_integrity"] = json!(original);
@@ -3808,6 +3873,39 @@ mod tests {
             fs::read_to_string(record.dir.join("original-job.txt")).unwrap(),
             "Fictional job description."
         );
+        let saved_bytes = fs::read(record.dir.join("original-job.json")).unwrap();
+        let current = ws.job(&id).unwrap().unwrap();
+        let mut budget = 2 * 1024 * 1024;
+        assert_eq!(
+            listing_snapshot_comparison(
+                &record.dir,
+                Some(&current),
+                Some("Changed description"),
+                &mut budget
+            ),
+            "changed"
+        );
+        assert_eq!(
+            listing_snapshot_comparison(&record.dir, Some(&current), None, &mut budget),
+            "unavailable"
+        );
+        let mut damaged: Value = serde_json::from_slice(&saved_bytes).unwrap();
+        damaged["description"] = json!("Changed without its fingerprint");
+        fs::write(
+            record.dir.join("original-job.json"),
+            serde_json::to_vec(&damaged).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            listing_snapshot_comparison(
+                &record.dir,
+                Some(&current),
+                Some("Fictional job description."),
+                &mut budget
+            ),
+            "unavailable"
+        );
+        fs::write(record.dir.join("original-job.json"), saved_bytes).unwrap();
         assert_eq!(
             listing["description_sha256"],
             Sha256Digest::of("Fictional job description.").as_str()
@@ -3830,6 +3928,25 @@ mod tests {
         assert_eq!(records["attempts"].as_array().unwrap().len(), 1);
         assert_eq!(records["attempts"][0]["status"], "manual_review");
         assert_eq!(records["attempts"][0]["started_at"], 123);
+        assert_eq!(
+            records["attempts"][0]["listing_snapshot_comparison"],
+            "matches"
+        );
+        let mut changed_job = ws.job(&id).unwrap().unwrap();
+        changed_job.title = "Updated Engineer".into();
+        ws.import_job(changed_job).unwrap();
+        assert_eq!(
+            list(&ws, &id).unwrap()["attempts"][0]["listing_snapshot_comparison"],
+            "changed"
+        );
+        let original: Value =
+            serde_json::from_slice(&fs::read(record.dir.join("original-job.json")).unwrap())
+                .unwrap();
+        assert_eq!(original["title"], "Engineer");
+        assert_eq!(
+            fs::read_to_string(record.dir.join("original-job.txt")).unwrap(),
+            "Fictional job description."
+        );
         assert_eq!(
             records["attempts"][0]["page_capture_coverage"],
             if cfg!(windows) {
