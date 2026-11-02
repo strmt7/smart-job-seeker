@@ -280,10 +280,30 @@ fn greenhouse_remote_title_evidence(
     if conflicting
         .iter()
         .any(|term| title.contains(term) || location.contains(term) || description.contains(term))
+        || [&title, &location, &description]
+            .iter()
+            .any(|text| has_remote_negation(text))
     {
         return None;
     }
     Some(true)
+}
+
+// A title marker is not evidence of remote work when nearby text negates it.
+// Restrict the window so unrelated negatives elsewhere do not hide the signal.
+fn has_remote_negation(text: &str) -> bool {
+    text.split(['.', '!', '?', ';', '\n']).any(|sentence| {
+        let words: Vec<_> = sentence
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect();
+        words.iter().enumerate().any(|(index, word)| {
+            *word == "remote"
+                && words[index.saturating_sub(4)..(index + 5).min(words.len())]
+                    .iter()
+                    .any(|word| matches!(*word, "not" | "no" | "never" | "unavailable"))
+        })
+    })
 }
 
 /// Parse a Greenhouse board JSON payload into raw postings.
@@ -796,6 +816,37 @@ mod tests {
         .to_string();
         assert_eq!(
             super::parse_greenhouse("fictional", &truncated).unwrap()[0].remote_evidence,
+            None
+        );
+    }
+
+    #[test]
+    fn greenhouse_remote_marker_with_nearby_negation_is_unknown() {
+        for description in [
+            "This is not a fully remote position.",
+            "Remote work is not available.",
+            "There is no option to work remote.",
+        ] {
+            assert_eq!(
+                super::greenhouse_remote_title_evidence(
+                    "Engineer (Remote)",
+                    "Berlin",
+                    Some(description)
+                ),
+                None,
+                "{description}"
+            );
+        }
+        assert_eq!(
+            super::greenhouse_remote_title_evidence(
+                "Engineer (Remote)",
+                "Berlin",
+                Some("Remote work is available. No prior management experience is required.")
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            super::greenhouse_remote_title_evidence("Engineer - not (Remote)", "Berlin", None),
             None
         );
     }
