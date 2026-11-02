@@ -450,6 +450,22 @@ fn remember_prior_section(session: &mut ReviewSession) {
     });
 }
 
+fn prior_field_number(
+    schema: &waypoint_applications::form_mapping::FormSchema,
+    selector: &str,
+) -> Option<(usize, usize)> {
+    let mut matches = schema
+        .fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| field.selector == selector);
+    let (index, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some((index + 1, schema.fields.len()))
+}
+
 fn review_prior_section(
     session: &mut ReviewSession,
     preview: &mut form_preview::FormPreview,
@@ -518,7 +534,7 @@ fn review_prior_section(
         .as_ref()
         .is_none_or(|check| check.failed_labels.is_empty() && check.unverified == 0)
     {
-        format!("A possible earlier section has the same form layout; {} filled field(s) matched their recorded values from this review session. This does not prove it is the same section or that the values remain correct; review them manually.", check.as_ref().map_or(0, |check| check.verified))
+        format!("A possible earlier section has the same form layout; browser readback matched {} recorded field value(s) from this review session. This is not a visual check and does not prove it is the same section or that the values remain correct; review them manually.", check.as_ref().map_or(0, |check| check.verified))
     } else {
         let verified = check.as_ref().map_or(0, |check| check.verified);
         format!("A possible earlier section has the same form layout; {} field(s) matched, {} could not be verified or changed. Inspect the answers manually.", verified, section.completed.len().saturating_sub(verified))
@@ -526,11 +542,34 @@ fn review_prior_section(
     if !section.completed.is_empty() || before.is_none() || before != after || !schema_current {
         preview.manual_review.push(label);
     }
+    if before.is_some() && before == after && schema_current {
+        if let Some(check) = &check {
+            if !check.failed_labels.is_empty() || check.unverified > 0 {
+                if let Some((index, total)) = section
+                    .completed
+                    .get(check.verified)
+                    .and_then(|selector| prior_field_number(&preview.schema, selector))
+                {
+                    preview.manual_review.push(format!("Start reviewing at field {index} of {total} in this section's field list; later fields may not have been checked."));
+                }
+            }
+        }
+    }
     if section.attachment_groups > 0 {
         if before.is_none() || before != after || !schema_current {
             preview.manual_review.push("Earlier attachments could not be rechecked on a stable page; inspect them manually.".into());
         } else {
             preview.manual_review.push(format!("For this possible earlier section, {verified_attachments} of {} attachment field(s) matched their staged files. Review the section and attachments manually; this does not establish delivery.", section.attachment_groups));
+            if verified_attachments < section.attachment_groups
+                && groups.len() == section.attachment_groups
+            {
+                if let Some((index, total)) = groups
+                    .get(verified_attachments)
+                    .and_then(|(selector, _)| prior_field_number(&preview.schema, selector))
+                {
+                    preview.manual_review.push(format!("Start reviewing attachments at field {index} of {total} in this section's field list; later attachments may not have been checked."));
+                }
+            }
         }
     }
 }
@@ -1168,7 +1207,7 @@ mod tests {
             .preview
             .manual_review
             .iter()
-            .any(|reason| reason.contains("1 filled field(s) matched")));
+            .any(|reason| reason.contains("browser readback matched 1 recorded field")));
         assert!(returned
             .preview
             .manual_review
@@ -1242,6 +1281,16 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason.contains("0 of 1 attachment field(s) matched")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Start reviewing at field 1 of 2")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Start reviewing attachments at field 2 of 2")));
         assert!(returned
             .preview
             .manual_review
