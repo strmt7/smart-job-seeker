@@ -4151,6 +4151,42 @@ fn multiple_choice_fill_detects_later_changes_and_rejects_unavailable_options() 
 
 #[test]
 #[ignore = "launches a real browser with a local fixture"]
+fn native_choices_reject_ambiguous_values_and_detect_event_mutations() {
+    use waypoint_applications::form_mapping::BrowserCommand;
+    let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
+    driver.open(&file_url("form_optgroups.html")).unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::SelectOptions {
+            selector: "#multi-ambiguous".into(),
+            labels: vec!["Weekends".into()],
+        })
+        .is_err());
+    assert_eq!(
+        driver
+            .read_attribute("#multi-ambiguous", "data-changed")
+            .unwrap(),
+        None
+    );
+    assert!(driver
+        .execute(&BrowserCommand::SelectOption {
+            selector: "#mutating-single".into(),
+            label: "Desired".into(),
+        })
+        .is_err());
+    assert!(driver
+        .execute(&BrowserCommand::SelectOptions {
+            selector: "#mutating-multiple".into(),
+            labels: vec!["Desired".into()],
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches a real browser with a local fixture"]
 fn application_links_use_the_accessible_label_without_navigating() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
     driver

@@ -18,5 +18,17 @@
     <optgroup label="Available"><option value="rust">Rust</option><option value="python">Python</option><option disabled>Unavailable</option></optgroup>
     <optgroup label="Disabled" disabled><option>Hidden choice</option></optgroup>
   </select>
+  <label for="multi-ambiguous">Availability</label>
+  <select id="multi-ambiguous" multiple onchange="this.setAttribute('data-changed', 'yes')">
+    <option value="shared">Weekdays</option><option value="shared">Weekends</option>
+  </select>
+  <label for="mutating-single">Single choice</label>
+  <select id="mutating-single" onchange="this.selectedOptions[0].value = 'changed'">
+    <option value="initial">Choose</option><option value="safe">Desired</option>
+  </select>
+  <label for="mutating-multiple">Multiple choices</label>
+  <select id="mutating-multiple" multiple onchange="this.selectedOptions[0].label = 'Changed'">
+    <option value="safe">Desired</option>
+  </select>
   <button type="submit">Submit</button>
 </form></body></html>
