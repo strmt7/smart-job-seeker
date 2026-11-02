@@ -298,14 +298,14 @@ fn reviewed_link_matches(
 
 const PRIOR_FIELDS_REVIEW: &str = "Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection";
 const PRIOR_MISSING_FIELDS_REVIEW: &str = "a custom control needs manual review: An earlier inspection found fields that disappeared while scrolling. Review the entire application; this inspection may still be incomplete.";
-const PRIOR_CHOICES_REVIEW: &str = "Custom choices from an earlier section cannot be rechecked here; verify them before submitting";
+const PRIOR_CHOICES_REVIEW: &str = "Custom choices from an earlier inspection cannot be rechecked here; verify them in the application before submitting";
 
 fn mark_prior_choices_for_review(
     preview: &mut form_preview::FormPreview,
-    navigating_with_choices: bool,
+    choices: &mut Vec<(String, String)>,
     previous_review: &[String],
 ) {
-    if (navigating_with_choices
+    if (!choices.is_empty()
         || previous_review
             .iter()
             .any(|reason| reason == PRIOR_CHOICES_REVIEW))
@@ -316,6 +316,7 @@ fn mark_prior_choices_for_review(
     {
         preview.manual_review.push(PRIOR_CHOICES_REVIEW.into());
     }
+    choices.clear();
 }
 
 fn mark_prior_fills_for_review(
@@ -507,12 +508,12 @@ pub fn start(
                     preview.manual_review.push(form_preview::POST_CHOICE_VISUAL_REQUIRED.into());
                 }
                 mark_prior_fills_for_review(&mut preview, &session.completed_selectors, &session.preview.manual_review);
-                mark_prior_choices_for_review(&mut preview, navigating && !session.selected_choices.is_empty(), &session.preview.manual_review);
+                // A rescan can follow manual navigation too. Selectors and
+                // their verified choices belong to the old inspection even
+                // when the page happens to reuse the same selector.
+                mark_prior_choices_for_review(&mut preview, &mut session.selected_choices, &session.preview.manual_review);
                 if !session.attachments.is_empty() {
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
-                }
-                if navigating && !session.selected_choices.is_empty() {
-                    session.selected_choices.clear();
                 }
                 session.id = new_id;
                 session.answer_drafts.clear();
@@ -658,13 +659,19 @@ mod tests {
             manual_review: vec![],
             model_review_selectors: Default::default(),
         };
-        mark_prior_choices_for_review(&mut preview, false, &[]);
+        let mut choices = vec![];
+        mark_prior_choices_for_review(&mut preview, &mut choices, &[]);
         assert!(preview.manual_review.is_empty());
-        mark_prior_choices_for_review(&mut preview, true, &[]);
+        choices.push(("#shared-selector".into(), "earlier choice".into()));
+        mark_prior_choices_for_review(&mut preview, &mut choices, &[]);
+        assert!(
+            choices.is_empty(),
+            "an old selector must not carry into the next inspection"
+        );
         let previous = preview.manual_review.clone();
         preview.manual_review.clear();
-        mark_prior_choices_for_review(&mut preview, false, &previous);
-        mark_prior_choices_for_review(&mut preview, false, &previous);
+        mark_prior_choices_for_review(&mut preview, &mut choices, &previous);
+        mark_prior_choices_for_review(&mut preview, &mut choices, &previous);
         assert_eq!(preview.manual_review, vec![PRIOR_CHOICES_REVIEW]);
     }
 
