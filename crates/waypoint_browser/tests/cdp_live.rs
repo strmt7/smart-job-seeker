@@ -4456,7 +4456,68 @@ fn custom_radio_inventory_marks_ambiguous_states_incomplete() {
     assert_eq!(group.options.len(), 3);
     assert_eq!(group.options[2].checked, None);
     assert!(driver
+        .select_custom_radio_option(&group.selector, "Same")
+        .is_err());
+    assert!(driver
         .trace
         .iter()
         .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture without submitting"]
+fn custom_radio_action_checks_state_and_rejects_submit_targets() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_radio_action.html"))
+        .unwrap();
+    let inventory = driver.page_custom_radio_groups().unwrap();
+    let safe = inventory
+        .groups
+        .iter()
+        .find(|group| group.label == "Working arrangement")
+        .unwrap();
+    let danger = inventory
+        .groups
+        .iter()
+        .find(|group| group.label == "Danger")
+        .unwrap();
+    let changing = inventory
+        .groups
+        .iter()
+        .find(|group| group.label == "Changes on hover")
+        .unwrap();
+    assert!(driver
+        .select_custom_radio_option(&changing.selector, "Changing")
+        .is_err());
+    assert_eq!(
+        driver.read_attribute("#changing", "data-clicked").unwrap(),
+        None
+    );
+    assert!(driver
+        .select_custom_radio_option(&danger.selector, "Send application")
+        .is_err());
+    assert!(driver
+        .screenshot_custom_radio_option(&safe.selector, "Remote")
+        .is_ok());
+    driver
+        .select_custom_radio_option(&safe.selector, "Remote")
+        .unwrap();
+    driver
+        .verify_custom_radio_value(&safe.selector, "Remote")
+        .unwrap();
+    assert!(driver
+        .select_custom_radio_option(&safe.selector, "On site")
+        .is_err());
+    assert_eq!(
+        driver
+            .read_attribute("#onsite", "aria-checked")
+            .unwrap()
+            .as_deref(),
+        Some("false")
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
 }

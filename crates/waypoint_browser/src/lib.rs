@@ -155,6 +155,7 @@ pub struct CustomChoices {
 /// the page and must not be treated as independently verified.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CustomRadioGroup {
+    pub selector: String,
     pub label: String,
     pub options: Vec<CustomRadioOption>,
     pub incomplete: bool,
@@ -177,6 +178,10 @@ enum ClickGuard<'a> {
     Ordinary,
     NonSubmit,
     ClosedCombobox,
+    RadioOption {
+        label: &'a str,
+        group_selector: &'a str,
+    },
     ChoiceOption {
         label: &'a str,
         list_id: &'a str,
@@ -663,8 +668,8 @@ impl CdpDriver {
                 incomplete = true;
                 break;
             }
-            let visible = match self.control_visibility_and_path(node) {
-                Ok((v, _, _, _, _)) => v,
+            let (visible, selector) = match self.control_visibility_and_path(node) {
+                Ok((v, selector, _, _, _)) => (v, selector),
                 Err(_) => {
                     incomplete = true;
                     continue;
@@ -724,12 +729,161 @@ impl CdpDriver {
             else {
                 continue;
             };
-            match serde_json::from_value::<CustomRadioGroup>(value.clone()) {
+            let mut value = value.clone();
+            value["selector"] = json!(selector);
+            match serde_json::from_value::<CustomRadioGroup>(value) {
                 Ok(group) => groups.push(group),
                 Err(_) => incomplete = true,
             }
         }
         Ok(CustomRadioGroups { groups, incomplete })
+    }
+
+    /// Select an unselected custom radio option. Callers must independently bind
+    /// the action to fresh visual review, user intent and a stable page snapshot.
+    /// The application does not currently expose this driver operation.
+    pub fn select_custom_radio_option(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<(), DriverError> {
+        let node = self.custom_radio_option_node(selector, label)?;
+        self.click_node_guarded(
+            node,
+            "reviewed custom radio option",
+            ClickGuard::RadioOption {
+                label,
+                group_selector: selector,
+            },
+        )?;
+        for _ in 0..4 {
+            self.cdp.pump(Duration::from_millis(200));
+            if self.verify_custom_radio_value(selector, label).is_ok() {
+                return Ok(());
+            }
+        }
+        Err(DriverError(
+            "Radio choice may have changed but its state could not be verified; review it manually"
+                .into(),
+        ))
+    }
+
+    /// Capture the option before a caller seeks independent visual review.
+    pub fn screenshot_custom_radio_option(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<String, DriverError> {
+        let node = self.custom_radio_option_node(selector, label)?;
+        self.screenshot_node(node, false, true)
+    }
+
+    fn custom_radio_option_node(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<u64, DriverError> {
+        if label.is_empty() || label.len() > 200 || label.trim() != label {
+            return Err(DriverError("Invalid radio option label".into()));
+        }
+        let inventory = self.page_custom_radio_groups()?;
+        let matches: Vec<_> = inventory
+            .groups
+            .iter()
+            .filter(|group| group.selector == selector)
+            .collect();
+        if inventory.incomplete
+            || matches.len() != 1
+            || matches[0].incomplete
+            || matches[0]
+                .options
+                .iter()
+                .any(|option| option.checked != Some(false))
+            || matches[0]
+                .options
+                .iter()
+                .filter(|option| option.label == label && !option.disabled)
+                .count()
+                != 1
+        {
+            return Err(DriverError(
+                "Radio group is incomplete, already selected, or ambiguous; review it manually"
+                    .into(),
+            ));
+        }
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Radio group disappeared".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Radio group disappeared".into()))?;
+        let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label) {
+            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'radiogroup') return null;
+            const root=this.getRootNode(), options=this.querySelectorAll('[role="radio"]'); if(!options.length || options.length>30)return null;
+            const name=item=>{const refs=item.getAttribute('aria-labelledby');if(refs!==null){const ids=refs.trim().split(/\s+/).filter(Boolean);if(!ids.length || ids.length>16 || refs.length>512)return '';const parts=[];for(const id of ids){const found=root.querySelectorAll('#'+CSS.escape(id));if(found.length!==1)return '';parts.push(found[0].textContent || '');}return parts.join(' ').trim().replace(/\s+/g,' ');}return (item.hasAttribute('aria-label')?item.getAttribute('aria-label'):(item.innerText || '')).trim().replace(/\s+/g,' ');};
+            const matches=Array.from(options).filter(item=>item.closest('[role="radiogroup"]')===this && name(item)===label);
+            return matches.length===1 ? matches[0] : null;
+        }"#,"arguments":[{"value":label}],"returnByValue":false}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let found = found.map_err(derr)?;
+        released.map_err(derr)?;
+        let option = found
+            .pointer("/result/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Radio option disappeared or became ambiguous".into()))?;
+        let requested = self.cdp.call("DOM.requestNode", json!({"objectId":option}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":option}));
+        let requested = requested.map_err(derr)?;
+        released.map_err(derr)?;
+        requested
+            .get("nodeId")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(|| DriverError("Radio option disappeared".into()))
+    }
+
+    /// Check the page-reported state after a radio action; visual verification
+    /// remains the caller's responsibility.
+    pub fn verify_custom_radio_value(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<(), DriverError> {
+        let inventory = self.page_custom_radio_groups()?;
+        let matches: Vec<_> = inventory
+            .groups
+            .iter()
+            .filter(|group| group.selector == selector)
+            .collect();
+        if inventory.incomplete
+            || matches.len() != 1
+            || matches[0].incomplete
+            || matches[0].options.iter().any(|option| {
+                option.checked.is_none()
+                    || (option.label == label && (option.checked != Some(true) || option.disabled))
+                    || (option.label != label && option.checked != Some(false))
+            })
+            || matches[0]
+                .options
+                .iter()
+                .filter(|option| option.label == label)
+                .count()
+                != 1
+        {
+            return Err(DriverError(
+                "Radio value could not be verified; review it manually".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Read rendered ARIA comboboxes and their currently rendered options.
@@ -4977,6 +5131,10 @@ impl CdpDriver {
             ClickGuard::Ordinary => json!({"kind":"ordinary"}),
             ClickGuard::NonSubmit => json!({"kind":"non-submit"}),
             ClickGuard::ClosedCombobox => json!({"kind":"combobox"}),
+            ClickGuard::RadioOption {
+                label,
+                group_selector,
+            } => json!({"kind":"radio", "label":label, "group_selector":group_selector}),
             ClickGuard::ChoiceOption {
                 label,
                 list_id,
@@ -4994,6 +5152,18 @@ impl CdpDriver {
             };
             if (guard.kind !== 'ordinary' && unsafeTarget(this)) return false;
             if (guard.kind === 'combobox' && ((this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'false')) return false;
+            if (guard.kind === 'radio') {
+                const root=this.getRootNode(), groups=root.querySelectorAll(guard.group_selector), group=this.closest('[role="radiogroup"]');
+                if (groups.length!==1 || groups[0]!==group || (this.getAttribute('role') || '').toLowerCase()!=='radio' || this.tagName==='INPUT' || this.closest('[aria-hidden="true" i], [aria-readonly="true" i]')) return false;
+                const name = item => {
+                    const refs=item.getAttribute('aria-labelledby');
+                    if (refs!==null) {const ids=refs.trim().split(/\s+/).filter(Boolean); if(!ids.length || ids.length>16 || refs.length>512) return ''; const parts=[]; for(const id of ids){const found=root.querySelectorAll('#'+CSS.escape(id));if(found.length!==1)return '';parts.push(found[0].textContent || '');}return parts.join(' ').trim().replace(/\s+/g,' ');}
+                    return (item.hasAttribute('aria-label') ? item.getAttribute('aria-label') : (item.innerText || '')).trim().replace(/\s+/g,' ');
+                };
+                const options=group.querySelectorAll('[role="radio"]'); if(!options.length || options.length>30) return false;
+                const labels=[]; for(const option of options) {const label=name(option); if(option.closest('[role="radiogroup"]')!==group || option.tagName==='INPUT' || (option.getAttribute('aria-checked') || '').toLowerCase()!=='false' || !label || label.length>200) return false; labels.push(label.toLowerCase());}
+                if(new Set(labels).size!==labels.length || name(this)!==guard.label) return false;
+            }
             if (guard.kind === 'option') {
                 if (this.closest('[aria-hidden="true" i]')) return false;
                 const root = this.getRootNode(), list = this.closest('[role="listbox"]');
