@@ -1017,6 +1017,14 @@ fn extract_page_text_with_hint(
     let mut warnings = vec!["The page may contain multiple roles; verify that the selected title and all details refer to the same vacancy.".to_owned()];
     if possible_non_job {
         warnings.push("A separate local model check suggests this may be an article, training page or other non-vacancy. The model can be wrong; verify the original page.".into());
+        if repaired {
+            warnings.push("The first model response failed exact-source validation; this result came from one retry.".into());
+        }
+        // The user can still review the page and enter it manually. Avoid
+        // extracting and ranking unrelated roles from a suspected article.
+        return Ok(
+            json!({"url":url,"title":title,"employer":employer,"location":"","description":"","deadline_excerpt":"","page_kind":page_kind,"possible_non_job":true,"remote":false,"extraction":"local_model","extraction_warnings":warnings,"employer_audit":{"status":"uncertain","evidence":""},"other_open_roles":[],"other_role_assessments":[],"other_roles_status":"unavailable","rejected_role_suggestions":0}),
+        );
     } else if page_kind == "uncertain" {
         warnings.push("The local model could not determine whether this page is a job vacancy; verify the original page.".into());
     }
@@ -4158,7 +4166,7 @@ mod tests {
                         json!({"title":"Research Engineer","employer":"Example Lab","location":"","description":""})
                     }
                     "job_page_kind" => json!({"kind":"not_vacancy","evidence":"invented quote"}),
-                    _ => json!({}),
+                    _ => panic!("a suspected non-vacancy should not trigger more model calls"),
                 };
                 Ok((
                     output,
@@ -4173,6 +4181,7 @@ mod tests {
         let source = "Example Lab is hiring a Research Engineer for materials research.";
         let job = extract_page_text(&mut Misclassify, source, "https://example.org/job").unwrap();
         assert_eq!(job["possible_non_job"], true);
+        assert_eq!(job["other_open_roles"], json!([]));
         assert!(job["extraction_warnings"]
             .as_array()
             .unwrap()

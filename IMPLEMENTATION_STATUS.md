@@ -2180,3 +2180,11 @@ web search returned an article; qwen3.5:9b flagged it, the UI kept zero jobs,
 and manual entry remained available. No real application was filled or sent.
 This does not prevent false negatives when the classifier says uncertain or
 vacancy, and older mistakenly saved records are not removed.
+
+For a suspected non-vacancy, extraction now stops after classification instead
+of asking the model to rank other roles or audit a purported employer. The
+single-result interface offers an explicit way to place the unverified extracted
+title and employer into the manual-entry form for correction; it does not save
+them automatically. Fictional tests verify that no further model calls occur
+and that the recovery action uses the original result URL. The revised shortcut
+has not yet been measured on a live page, and model classifications can be wrong.
