@@ -2974,3 +2974,24 @@ was started through the app and unloaded after the check. No profile, files,
 form answers or applications were sent. This small observation is not a recall
 or precision benchmark. The empty job list now mentions wider-web search and
 manual URL entry as well as boards.
+
+### Advisory closure evidence (2026-11-02)
+
+Local-model listing extraction now performs a bounded advisory closure check.
+A positive hint must quote exact sampled page text and is shown for review; it
+does not automatically mark a job closed or suppress it. Failed or malformed
+checks are reported as unavailable, and a selected section is used when
+available. Saved captures retain the hint with listing provenance.
+
+An independent Crawl4AI 0.9.5+flitzzip.portable2 capture of a public listing
+returned HTTP 200, 28,532 bytes of extracted markdown and SHA-256
+`9cfa08c7324247bc35ffbb44ac520317f624a574d41b6570e160b7958d9fa44d`; its native
+receipt remains outside Git. Qwen3.5:9b identified closure wording in a bounded
+excerpt from that capture, and produced no closure hint in three fictional
+non-closure cases. A prior strict-format run exposed that the model supplies
+extra text with negative answers; that text is now discarded, not treated as
+a closure claim. The resource-gated test passed after this adjustment. This is
+not an end-to-end retest of the app's browser extraction or a reliability
+benchmark; sampled text and multiple roles can still mislead the model. The
+model was unloaded. Forty-eight candidate tests passed (22 ignored), both
+focused UI tests and web-app Clippy passed.

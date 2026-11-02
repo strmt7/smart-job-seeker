@@ -33,3 +33,7 @@ context.showListingProvenance(panel,{matches_current_url:true,extraction_provena
 text=panel.items.map(item=>item.text).join('\n');
 assert.match(text,/Possible application deadline selected by local AI: Applications close: 30 November 2026.*Verify/);
 console.log('Listing provenance UI checks passed.');
+
+const closurePanel={items:[],append(item){this.items.push(item);}};
+context.showListingProvenance(closurePanel,{matches_current_url:true,extraction_provenance:{kind:'local_model',matches_current_listing:true,possible_closure_evidence:'This fictional vacancy has expired.'}});
+assert.ok(closurePanel.items.some(item=>/Possible closure wording.*expired.*Verify/.test(item.text)));

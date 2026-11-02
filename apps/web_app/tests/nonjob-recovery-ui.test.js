@@ -18,3 +18,6 @@ const external=node('article');context.showReviewOnlyRecovery(external,{url:'htt
 assert.equal(external.children.filter(child=>child.tag==='a').length,0);
 const ordinary=node('article');context.showReviewOnlyRecovery(ordinary,{url:'https://example.org/listing'},{review_only:false,job:{title:'Role',employer:'Example'}});assert.equal(ordinary.children.length,0);
 console.log('Review-only recovery checks passed.');
+
+const closed=node('article');context.showReviewOnlyRecovery(closed,{url:'https://example.org/listing'},{review_only:true,job:{title:'Fictional Engineer',employer:'Example',possible_closure_evidence:'This fictional vacancy has expired.'}});
+assert.ok(closed.children.some(item=>/Possible closure wording.*expired.*Verify/.test(item.textContent)));
