@@ -113,6 +113,17 @@ fn obstacle_message(walls: &[String]) -> String {
     message
 }
 
+fn report_loading_field_loss(message: &mut String, walls: &[String]) {
+    if walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
+    {
+        message.push_str(
+            " Fields seen during loading disappeared; inspect the entire application again.",
+        );
+    }
+}
+
 fn ensure_inspected_page(
     browser: &mut waypoint_browser::CdpDriver,
     expected: &str,
@@ -641,7 +652,7 @@ pub fn start_bound(
                         .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
                 {
                     (
-                        "Fields appeared during loading but are no longer visible; inspect the entire application again.".to_owned(),
+                        "No fields are visible in the latest inspection.".to_owned(),
                         true,
                     )
                 } else if page.schema.fields.is_empty()
@@ -678,6 +689,7 @@ pub fn start_bound(
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
+            report_loading_field_loss(&mut message, &page.walls);
             if let Some(inventory) = contact_inventory {
                 if let Some(note) = email_contact_note_from_inventory(&inventory) {
                     message.push(' ');
@@ -896,6 +908,22 @@ mod tests {
         ]);
         assert!(status.contains("status could not be verified"));
         assert!(status.contains("possible CAPTCHA"));
+    }
+
+    #[test]
+    fn changing_fields_are_reported_alongside_other_obstacles() {
+        let walls = vec![
+            "captcha present".into(),
+            waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW.into(),
+        ];
+        let mut message = super::obstacle_message(&walls);
+        super::report_loading_field_loss(&mut message, &walls);
+        assert!(message.contains("possible CAPTCHA"));
+        assert!(message.contains("Fields seen during loading disappeared"));
+        assert!(message.contains("manual review"));
+        let mut unchanged = "Existing summary.".to_owned();
+        super::report_loading_field_loss(&mut unchanged, &["untrusted page text".into()]);
+        assert_eq!(unchanged, "Existing summary.");
     }
 
     #[test]
@@ -2197,6 +2225,39 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one browser using a fictional changing form"]
+    fn application_check_reports_fields_lost_during_loading() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_disappearing_loading.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        super::start(
+            "fixture-lost-fields".into(),
+            "fictional-job".into(),
+            url,
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some((_, _, message, review)) = poll("fixture-lost-fields").unwrap() {
+                assert!(review, "{message}");
+                assert!(
+                    message.contains("Fields seen during loading disappeared"),
+                    "{message}"
+                );
+                assert!(!message.contains("No form fields detected"), "{message}");
+                acknowledge("fixture-lost-fields").unwrap();
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     #[test]
