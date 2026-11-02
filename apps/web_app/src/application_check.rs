@@ -70,6 +70,40 @@ fn browser_start_failure(error: &waypoint_applications::driver::DriverError) -> 
     }
 }
 
+fn obstacle_message(walls: &[String]) -> String {
+    let mut signals = Vec::new();
+    if walls.iter().any(|wall| wall == "captcha present") {
+        signals.push("a possible CAPTCHA or verification challenge");
+    }
+    if walls.iter().any(|wall| {
+        wall == "a required custom control needs manual review"
+            || wall.starts_with("a required custom control needs manual review: ")
+    }) {
+        signals.push("required custom controls");
+    }
+    if walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review")
+    {
+        signals.push("a required hidden control");
+    }
+    let status_unknown = walls.iter().any(|wall| {
+        wall == "The main page response status could not be verified; manual review is required"
+    });
+    let mut message = if status_unknown {
+        "The main page response status could not be verified.".to_owned()
+    } else if signals.is_empty() {
+        "An obstacle was detected.".to_owned()
+    } else {
+        "Potential obstacles were detected.".to_owned()
+    };
+    if !signals.is_empty() {
+        message.push_str(&format!(" Observed signals: {}.", signals.join(", ")));
+    }
+    message.push_str(" Other obstacles may also be present; manual review is needed.");
+    message
+}
+
 fn ensure_inspected_page(
     browser: &mut waypoint_browser::CdpDriver,
     expected: &str,
@@ -601,11 +635,7 @@ pub fn start(id: String, job_id: String, url: String, allow_external: bool) -> R
                     true,
                 )
             } else if !page.walls.is_empty() {
-                (if page.walls.iter().any(|wall| wall == "The main page response status could not be verified; manual review is required") {
-                    "The main page response status could not be verified; other obstacles may also be present. Manual review needed.".into()
-                } else {
-                    "Sign-in, CAPTCHA or another obstacle detected; manual review needed.".into()
-                }, true)
+                (obstacle_message(&page.walls), true)
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
@@ -791,6 +821,29 @@ mod tests {
     };
 
     #[test]
+    fn obstacle_summary_reports_known_signals_without_echoing_page_content() {
+        let walls = vec![
+            "captcha present".to_owned(),
+            "a required custom control needs manual review: untrusted page text".to_owned(),
+            "a required hidden control needs manual review".to_owned(),
+        ];
+        let message = super::obstacle_message(&walls);
+        assert!(message.contains("possible CAPTCHA"));
+        assert!(message.contains("required custom controls"));
+        assert!(message.contains("required hidden control"));
+        assert!(!message.contains("untrusted page text"));
+        let unknown = super::obstacle_message(&["another obstacle".into()]);
+        assert!(!unknown.contains("CAPTCHA"));
+        assert!(unknown.contains("manual review"));
+        let status = super::obstacle_message(&[
+            "The main page response status could not be verified; manual review is required".into(),
+            "captcha present".into(),
+        ]);
+        assert!(status.contains("status could not be verified"));
+        assert!(status.contains("possible CAPTCHA"));
+    }
+
+    #[test]
     #[ignore = "read-only live browser check; requires a reviewed public URL"]
     fn live_public_application_check_reports_result() {
         let _guard = TASK_TEST_LOCK.lock().unwrap();
@@ -800,6 +853,12 @@ mod tests {
         assert_eq!(address.host_str(), Some("job-boards.greenhouse.io"));
         let parsed = waypoint_net::parse_url(&url).expect("valid HTTPS URL");
         waypoint_net::resolve_public(&parsed).expect("public destination");
+        {
+            let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let page = browser.open(&url).expect("read-only page inspection");
+            println!("Observed review reasons: {:?}", page.walls);
+            println!("Observed fields: {}", page.schema.fields.len());
+        }
         super::start("live-public-check".into(), "test-job".into(), url, false).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let (_, _, result, review) = loop {
