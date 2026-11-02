@@ -505,7 +505,7 @@ fn fit_assessment_digest(
         None => json!({}),
     };
     let full_instructions = profile_fit_instructions(&profile)?;
-    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v49","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
+    let digest = Sha256Digest::of(&json!({"scoring_version":"criteria-v2-semantic-pool-v50","active_facts_digest":facts_digest,"facts":facts,"pool":pool,"instructions":instructions,"listing":listing,"full_description":description,"full_instructions":full_instructions}).to_string()).as_str().to_owned();
     Ok((pool, listing, digest))
 }
 
@@ -548,7 +548,7 @@ fn fit_source_coverage(
     let sampling = if listing != expected_listing {
         "unavailable"
     } else if used_chars < full_listing.chars().count() {
-        "beginning_middle_end"
+        "evenly_spaced"
     } else {
         "complete"
     };
@@ -627,25 +627,36 @@ fn fit_candidate_context(ws: &Workspace) -> Result<(Vec<String>, String), String
     Ok((facts, instructions))
 }
 
-/// Sample the beginning, middle and end without presenting the gaps as source text.
+pub(crate) const FIT_LISTING_GAP: &str = "\n[Listing text omitted; inspect the full original.]\n";
+
+/// Sample four evenly spaced passages without presenting gaps as source text.
 fn fit_listing_excerpt(full: &str) -> (String, usize) {
     const LIMIT: usize = 8000;
-    const TAIL: usize = 2000;
-    const MIDDLE: usize = 2000;
-    const GAP: &str = "\n[Listing text omitted; inspect the full original.]\n";
+    const EDGE: usize = 1600;
+    const GAP: &str = FIT_LISTING_GAP;
     let total = full.chars().count();
     if total <= LIMIT {
         return (full.to_owned(), total);
     }
-    let head = LIMIT - TAIL - MIDDLE - 2 * GAP.chars().count();
-    let omitted = total - (head + MIDDLE + TAIL);
-    let middle_start = head + omitted / 2;
-    let prefix: String = full.chars().take(head).collect();
-    let middle: String = full.chars().skip(middle_start).take(MIDDLE).collect();
-    let suffix: String = full.chars().skip(total - TAIL).collect();
+    let middle_budget = LIMIT - 2 * EDGE - 3 * GAP.chars().count();
+    let first_middle = middle_budget / 2;
+    let second_middle = middle_budget - first_middle;
+    let used = 2 * EDGE + middle_budget;
+    let omitted = total - used;
+    let gap = omitted / 3;
+    let first_start = EDGE + gap;
+    let second_start = first_start + first_middle + gap;
+    let prefix: String = full.chars().take(EDGE).collect();
+    let first: String = full.chars().skip(first_start).take(first_middle).collect();
+    let second: String = full
+        .chars()
+        .skip(second_start)
+        .take(second_middle)
+        .collect();
+    let suffix: String = full.chars().skip(total - EDGE).collect();
     (
-        format!("{prefix}{GAP}{middle}{GAP}{suffix}"),
-        head + MIDDLE + TAIL,
+        format!("{prefix}{GAP}{first}{GAP}{second}{GAP}{suffix}"),
+        used,
     )
 }
 
@@ -10450,7 +10461,7 @@ mod tests {
         assert!(listing.contains("Listing text omitted"));
         let coverage = fit_source_coverage(&ws, &id, &listing, &instructions).unwrap();
         assert!(coverage["listing_used_chars"].as_u64().unwrap() < 8000);
-        assert_eq!(coverage["listing_sampling"], "beginning_middle_end");
+        assert_eq!(coverage["listing_sampling"], "evenly_spaced");
         assert!(
             coverage["listing_used_chars"].as_u64().unwrap()
                 < coverage["listing_total_chars"].as_u64().unwrap()
@@ -10469,10 +10480,24 @@ mod tests {
             excerpt
                 .matches("[Listing text omitted; inspect the full original.]")
                 .count(),
-            2
+            3
         );
         assert!(excerpt.matches('B').count() <= 1);
         assert_eq!(fit_listing_excerpt("short"), ("short".to_string(), 5));
+    }
+
+    #[test]
+    fn long_fit_listing_samples_between_previous_middle_gaps() {
+        let source = format!(
+            "{}Candidate qualifications: Python experience.{}",
+            "a".repeat(7000),
+            "b".repeat(13000)
+        );
+        let (sample, used) = fit_listing_excerpt(&source);
+        assert_eq!(sample.chars().count(), 8000);
+        assert!(sample.contains("Candidate qualifications: Python experience."));
+        assert_eq!(sample.matches(FIT_LISTING_GAP).count(), 3);
+        assert_eq!(used + 3 * FIT_LISTING_GAP.chars().count(), 8000);
     }
 
     #[cfg(windows)]
@@ -10500,7 +10525,7 @@ mod tests {
         assert_eq!(result["status"], "current");
         assert_eq!(
             result["assessment"]["source_coverage"]["listing_sampling"],
-            "beginning_middle_end"
+            "evenly_spaced"
         );
         assert!(
             result["assessment"]["source_coverage"]["listing_used_chars"]
