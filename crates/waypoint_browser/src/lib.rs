@@ -174,6 +174,25 @@ pub struct CustomRadioGroups {
     pub incomplete: bool,
 }
 
+// All referenced IDs must resolve uniquely and exactly one must identify a
+// listbox. The same fixed resolver is used for observation and actions.
+const CHOICE_LIST_RESOLVER: &str = r#"const resolveChoiceList = owner => {
+    const raw = owner.getAttribute('aria-controls') || owner.getAttribute('aria-owns') || '';
+    if (!raw || raw.length > 256) return null;
+    const ids = raw.trim().split(/\s+/).filter(Boolean);
+    if (!ids.length || ids.length > 8 || new Set(ids).size !== ids.length) return null;
+    const root = owner.getRootNode(); let list = null;
+    for (const id of ids) {
+        const nodes = root.querySelectorAll('#' + CSS.escape(id));
+        if (nodes.length !== 1) return null;
+        if ((nodes[0].getAttribute('role') || '').toLowerCase() === 'listbox') {
+            if (list) return null;
+            list = nodes[0];
+        }
+    }
+    return list;
+};"#;
+
 enum ClickGuard<'a> {
     Ordinary,
     NonSubmit,
@@ -1024,16 +1043,14 @@ impl CdpDriver {
             let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
                 const expanded = (this.getAttribute('aria-expanded') || '').toLowerCase() === 'true';
                 if (!this.isConnected || !expanded) return {expanded:false,options:[],incomplete:true};
-                const id = this.getAttribute('aria-controls') || this.getAttribute('aria-owns') || '';
-                if (!id || id.length > 256 || /\s/.test(id)) return {expanded:true,options:[],incomplete:true};
-                const root = this.getRootNode();
-                const lists = root.querySelectorAll('#' + CSS.escape(id));
-                if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return {expanded:true,options:[],incomplete:true};
-                const nodes = lists[0].querySelectorAll('[role="option"]');
+                /*CHOICE_LIST_RESOLVER*/
+                const root = this.getRootNode(), list = resolveChoiceList(this);
+                if (!list) return {expanded:true,options:[],incomplete:true};
+                const nodes = list.querySelectorAll('[role="option"]');
                 // A virtualized list can omit options even when every rendered
                 // item fits inside our cap, so completeness is never assumed.
                 const options = []; let incomplete = true;
-                const list = lists[0], listBounds = list.getBoundingClientRect(), listStyle = getComputedStyle(list);
+                const listBounds = list.getBoundingClientRect(), listStyle = getComputedStyle(list);
                 for (let i = 0; i < Math.min(nodes.length, 500) && options.length < 30; i++) {
                     const node = nodes[i];
                     let visible = node.getClientRects().length > 0;
@@ -1059,7 +1076,7 @@ impl CdpDriver {
                     options.push(text);
                 }
                 return {expanded:true,options,incomplete};
-            }"#, "returnByValue":true}));
+            }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER), "returnByValue":true}));
             let released = self
                 .cdp
                 .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -1239,16 +1256,15 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Choice disappeared".into()))?;
         let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
             if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'true') return null;
-            const id = this.getAttribute('aria-controls') || this.getAttribute('aria-owns') || '';
-            if (!id || id.length > 256 || /\s/.test(id)) return null;
-            const root = this.getRootNode(), lists = root.querySelectorAll('#' + CSS.escape(id));
-            if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return null;
-            const list = lists[0], style = getComputedStyle(list), rect = list.getBoundingClientRect();
+            /*CHOICE_LIST_RESOLVER*/
+            const root = this.getRootNode(), list = resolveChoiceList(this);
+            if (!list) return null;
+            const style = getComputedStyle(list), rect = list.getBoundingClientRect();
             if (!['auto','scroll'].includes(style.overflowY) || list.scrollHeight <= list.clientHeight || rect.width < 8 || rect.height < 8 || rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) return null;
             const hit = root.elementFromPoint((rect.left + rect.right)/2, (rect.top + rect.bottom)/2);
             if (!hit || !(hit === list || list.contains(hit))) return null;
             return list;
-        }"#, "returnByValue":false}));
+        }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER), "returnByValue":false}));
         let release_owner = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -1354,17 +1370,6 @@ impl CdpDriver {
                 "Choice option is unavailable or ambiguous; review it manually".into(),
             ));
         }
-        let controls = self
-            .read_attribute(selector, "aria-controls")?
-            .filter(|id| !id.is_empty());
-        let list_id = match controls {
-            Some(id) => Some(id),
-            None => self.read_attribute(selector, "aria-owns")?,
-        }
-        .filter(|id| !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_whitespace))
-        .ok_or_else(|| {
-            DriverError("Choice list cannot be identified; review it manually".into())
-        })?;
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Choice disappeared; review it manually".into()))?;
@@ -1376,11 +1381,36 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Choice disappeared; review it manually".into()))?;
+        let list_id_result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() { /*CHOICE_LIST_RESOLVER*/ const list=resolveChoiceList(this); return list ? list.id : null; }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER),"returnByValue":true}));
+        let list_id = match list_id_result {
+            Ok(value) => match value
+                .pointer("/result/value")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                Some(id) => id.to_owned(),
+                None => {
+                    let _ = self
+                        .cdp
+                        .call("Runtime.releaseObject", json!({"objectId":object}));
+                    return Err(DriverError(
+                        "Choice list cannot be identified; review it manually".into(),
+                    ));
+                }
+            },
+            Err(error) => {
+                let _ = self
+                    .cdp
+                    .call("Runtime.releaseObject", json!({"objectId":object}));
+                return Err(derr(error));
+            }
+        };
         let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label,id) {
-            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'true' || (this.getAttribute('aria-controls') || this.getAttribute('aria-owns')) !== id) return null;
-            const lists = this.getRootNode().querySelectorAll('#' + CSS.escape(id));
-            if (lists.length !== 1 || lists[0].getAttribute('role') !== 'listbox') return null;
-            const nodes = lists[0].querySelectorAll('[role="option"]');
+            /*CHOICE_LIST_RESOLVER*/
+            if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'true') return null;
+            const list = resolveChoiceList(this);
+            if (!list || list.id !== id) return null;
+            const nodes = list.querySelectorAll('[role="option"]');
             if (nodes.length > 500) return null;
             let result = null, count = 0;
             for (const option of nodes) {
@@ -1388,7 +1418,7 @@ impl CdpDriver {
                 if (text === label) { count++; result = option; }
             }
             return count === 1 ? result : null;
-        }"#, "arguments":[{"value":label},{"value":list_id}],"returnByValue":false}));
+        }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER), "arguments":[{"value":label},{"value":list_id}],"returnByValue":false}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -5405,11 +5435,12 @@ impl CdpDriver {
                 if(new Set(labels).size!==labels.length || name(this)!==guard.label) return false;
             }
             if (guard.kind === 'option') {
+                /*CHOICE_LIST_RESOLVER*/
                 if (this.closest('[aria-hidden="true" i]')) return false;
                 const root = this.getRootNode(), list = this.closest('[role="listbox"]');
                 const label = (this.getAttribute('aria-label') || this.innerText || '').trim().replace(/\s+/g,' ');
                 const owners = root.querySelectorAll(guard.owner_selector), lists = root.querySelectorAll('#' + CSS.escape(guard.list_id));
-                if ((this.getAttribute('role') || '').toLowerCase() !== 'option' || label !== guard.label || !list || list.id !== guard.list_id || lists.length !== 1 || owners.length !== 1 || (owners[0].getAttribute('role') || '').toLowerCase() !== 'combobox' || (owners[0].getAttribute('aria-expanded') || '').toLowerCase() !== 'true' || (owners[0].getAttribute('aria-controls') || owners[0].getAttribute('aria-owns')) !== guard.list_id) return false;
+                if ((this.getAttribute('role') || '').toLowerCase() !== 'option' || label !== guard.label || !list || list.id !== guard.list_id || lists.length !== 1 || owners.length !== 1 || (owners[0].getAttribute('role') || '').toLowerCase() !== 'combobox' || (owners[0].getAttribute('aria-expanded') || '').toLowerCase() !== 'true' || resolveChoiceList(owners[0]) !== list) return false;
                 const options = list.querySelectorAll('[role="option"]');
                 if (options.length > 500) return false;
                 let matches = 0;
@@ -5441,7 +5472,7 @@ impl CdpDriver {
                 view = view.parent;
             }
             return false;
-        }"#, "arguments":[{"value":guard_value}], "returnByValue":true}));
+        }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER), "arguments":[{"value":guard_value}], "returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));

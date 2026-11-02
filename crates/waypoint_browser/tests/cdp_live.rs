@@ -1386,6 +1386,95 @@ fn prepared_for(url: &str, fact: &str) -> (Workspace, JobIdentityId) {
 }
 
 #[test]
+#[ignore = "launches one browser against fictional multiple-reference choices"]
+fn custom_choice_resolves_a_unique_listbox_in_id_references() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_idrefs.html"))
+        .unwrap();
+    let inventory = driver.page_custom_choices().unwrap();
+    let location = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Location")
+        .unwrap()
+        .selector
+        .clone();
+    let ambiguous = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Ambiguous")
+        .unwrap()
+        .selector
+        .clone();
+    let work_mode = inventory
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Work mode")
+        .unwrap()
+        .selector
+        .clone();
+    let uncertain: Vec<_> = ["Missing reference", "Duplicate reference"]
+        .iter()
+        .map(|label| {
+            inventory
+                .choices
+                .iter()
+                .find(|choice| choice.label == *label)
+                .unwrap()
+                .selector
+                .clone()
+        })
+        .collect();
+    let opened = driver.open_custom_choice(&location).unwrap();
+    assert_eq!(opened.options, ["Berlin", "Lisbon", "Changing reference"]);
+    assert!(opened.options_incomplete);
+    driver
+        .select_custom_choice_option(&location, "Berlin")
+        .unwrap();
+    driver
+        .verify_custom_choice_value(&location, "Berlin")
+        .unwrap();
+    assert!(driver
+        .select_custom_choice_option(&location, "Changing reference")
+        .is_err());
+    driver
+        .verify_custom_choice_value(&location, "Berlin")
+        .unwrap();
+    assert_eq!(
+        driver.open_custom_choice(&work_mode).unwrap().options,
+        ["Remote"]
+    );
+    driver
+        .select_custom_choice_option(&work_mode, "Remote")
+        .unwrap();
+    driver
+        .verify_custom_choice_value(&work_mode, "Remote")
+        .unwrap();
+    let opened = driver.open_custom_choice(&ambiguous).unwrap();
+    assert!(opened.options.is_empty() && opened.options_incomplete);
+    assert!(driver
+        .select_custom_choice_option(&ambiguous, "One")
+        .is_err());
+    for selector in uncertain {
+        let opened = driver.open_custom_choice(&selector).unwrap();
+        assert!(opened.options.is_empty() && opened.options_incomplete);
+        assert!(driver
+            .select_custom_choice_option(&selector, "Berlin")
+            .is_err());
+    }
+    assert!(driver
+        .page_text_bounded(2000)
+        .unwrap()
+        .0
+        .contains("NOT SUBMITTED"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
 fn unannotated_choice_with_hidden_companion_requires_manual_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
@@ -1688,6 +1777,46 @@ fn unlabelled_radio_groups_are_deduplicated_but_require_manual_review() {
         .walls
         .iter()
         .any(|wall| wall == "ambiguous form controls need manual review"));
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
+fn scroll_choice_with_multiple_id_references() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_choice_scroll_idrefs.html"))
+        .unwrap();
+    let choice = driver
+        .page_custom_choices()
+        .unwrap()
+        .choices
+        .into_iter()
+        .find(|choice| choice.label == "City")
+        .unwrap();
+    let mut later = choice.clone();
+    for _ in 0..12 {
+        later = driver
+            .scroll_custom_choice_options(&choice.selector, true)
+            .unwrap();
+        if later.options.iter().any(|option| option == "City 35") {
+            break;
+        }
+    }
+    assert!(later.options.iter().any(|option| option == "City 35"));
+    assert!(driver
+        .screenshot_custom_choice_option(&choice.selector, "City 35")
+        .is_ok());
+    driver
+        .select_custom_choice_option(&choice.selector, "City 35")
+        .unwrap();
+    driver
+        .verify_custom_choice_value(&choice.selector, "City 35")
+        .unwrap();
+    assert!(driver
+        .page_text_bounded(5000)
+        .unwrap()
+        .0
+        .contains("NOT SUBMITTED"));
 }
 
 #[test]

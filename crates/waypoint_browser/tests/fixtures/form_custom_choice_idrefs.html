@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><body>
+<form onsubmit="document.querySelector('#status').textContent='SUBMITTED';return false">
+  <div id="help">Choose a location.</div>
+  <button type="button" role="combobox" aria-label="Location" aria-expanded="false" aria-controls="help locations" onclick="this.setAttribute('aria-expanded','true');document.querySelector('#locations').hidden=false">Choose location</button>
+  <div id="locations" role="listbox" hidden><div role="option" onclick="document.querySelector('[aria-label=Location]').textContent=this.textContent">Berlin</div><div role="option" onclick="document.querySelector('[aria-label=Location]').textContent=this.textContent">Lisbon</div><div role="option" onmouseenter="document.querySelector('[aria-label=Location]').setAttribute('aria-controls','help second')" onclick="document.querySelector('[aria-label=Location]').textContent='WRONG'">Changing reference</div></div>
+  <button type="button" role="combobox" aria-label="Ambiguous" aria-expanded="false" aria-controls="first second" onclick="this.setAttribute('aria-expanded','true');document.querySelector('#first').hidden=false;document.querySelector('#second').hidden=false">Choose</button>
+  <div id="first" role="listbox" hidden><div role="option">One</div></div><div id="second" role="listbox" hidden><div role="option">Two</div></div>
+  <button id="mode" type="button" role="combobox" aria-label="Work mode" aria-expanded="false" aria-owns="help modes" onclick="this.setAttribute('aria-expanded','true');document.querySelector('#modes').hidden=false">Choose work mode</button>
+  <div id="modes" role="listbox" hidden><div role="option" onclick="document.getElementById('mode').textContent=this.textContent">Remote</div></div>
+  <button type="button" role="combobox" aria-label="Missing reference" aria-expanded="false" aria-controls="missing locations" onclick="this.setAttribute('aria-expanded','true')">Choose</button>
+  <button type="button" role="combobox" aria-label="Duplicate reference" aria-expanded="false" aria-controls="help help locations" onclick="this.setAttribute('aria-expanded','true')">Choose</button>
+  <button type="submit">Submit</button><output id="status">NOT SUBMITTED</output>
+</form></body></html>
