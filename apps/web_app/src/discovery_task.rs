@@ -22,7 +22,7 @@ struct Task {
 }
 enum Message {
     Board(DiscoveryTarget, String, Result<String, FetchFailure>),
-    Done,
+    Done(Option<&'static str>),
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -143,6 +143,7 @@ fn start_with_fetcher(
     drop(task);
     std::thread::spawn(move || {
         let registry = waypoint_workspace::default_registry();
+        let mut stopped = None;
         for target in targets {
             if worker_cancel.load(Ordering::Acquire) {
                 break;
@@ -150,12 +151,17 @@ fn start_with_fetcher(
             match waypoint_connectors::discovery_plan(&registry, &target.source, &target.board) {
                 Ok(plan) => {
                     let result = fetcher.get(&plan.url);
+                    let rate_limited = matches!(&result, Err(FetchFailure::Network(message)) if message == "http 429");
                     if !send_bounded(
                         &tx,
                         Message::Board(target, plan.url, result),
                         &worker_cancel,
                     ) {
                         return;
+                    }
+                    if rate_limited {
+                        stopped = Some("rate_limited");
+                        break;
                     }
                 }
                 Err(e) => {
@@ -170,7 +176,7 @@ fn start_with_fetcher(
                 }
             }
         }
-        let _ = send_bounded(&tx, Message::Done, &AtomicBool::new(false));
+        let _ = send_bounded(&tx, Message::Done(stopped), &AtomicBool::new(false));
     });
     Ok(())
 }
@@ -244,11 +250,11 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
                 json!({"status":"running","source":report["source"],"board":report["board"],"processed":task.processed,"total":task.total,"summary":report["summary"],"coverage":report["coverage"],"has_more":more,"history":task.history}),
             )
         }
-        Ok(Message::Done) => {
+        Ok(Message::Done(stopped)) => {
             let processed = task.processed;
             let total = task.total;
             let cancelled = task.cancel.load(Ordering::Acquire);
-            let result = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"history":task.history});
+            let result = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"stopped_reason":stopped,"history":task.history});
             *COMPLETED.lock().map_err(|_| "Discovery task unavailable")? =
                 Some((id.to_owned(), result.clone()));
             *tasks = None;
@@ -299,6 +305,44 @@ pub fn cancel(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rate_limit_stops_remaining_boards_and_reports_coverage() {
+        use std::sync::atomic::AtomicUsize;
+        struct RateLimited(Arc<AtomicUsize>);
+        impl Fetcher for RateLimited {
+            fn get(&self, _: &str) -> Result<String, FetchFailure> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Err(FetchFailure::Network("http 429".into()))
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        start_with_fetcher(
+            "rate-limit".into(),
+            vec![
+                DiscoveryTarget::new("greenhouse", "one"),
+                DiscoveryTarget::new("lever", "two"),
+            ],
+            Arc::new(RateLimited(calls.clone())),
+            None,
+            None,
+        )
+        .unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = poll("rate-limit", &mut ws).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["stopped_reason"], "rate_limited");
+                assert_eq!(result["processed"], 1);
+                assert_eq!(result["total"], 2);
+                assert_eq!(result["history"].as_array().unwrap().len(), 1);
+                assert_eq!(calls.load(Ordering::Relaxed), 1);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     #[test]
     fn listing_response_checks_exact_url_without_guessing_closure() {
         let target = DiscoveryTarget::new("greenhouse", "fixture");
