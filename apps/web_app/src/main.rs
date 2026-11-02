@@ -103,6 +103,8 @@ struct PriorSection {
     preview: form_preview::FormPreview,
     completed: Vec<String>,
     profile_digest: Sha256Digest,
+    inspection_id: String,
+    attachment_groups: usize,
 }
 
 struct ReviewSession {

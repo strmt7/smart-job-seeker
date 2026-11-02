@@ -411,7 +411,9 @@ fn recheck_navigation_preview(
 }
 
 fn remember_prior_section(session: &mut ReviewSession) {
-    if session.completed_selectors.is_empty() {
+    let attachment_groups =
+        crate::current_attachment_groups(&session.attachments, &session.id).len();
+    if session.completed_selectors.is_empty() && attachment_groups == 0 {
         return;
     }
     let suggestions: Vec<_> = session
@@ -443,6 +445,8 @@ fn remember_prior_section(session: &mut ReviewSession) {
         },
         completed: session.completed_selectors.clone(),
         profile_digest: session.profile_digest.clone(),
+        inspection_id: session.id.clone(),
+        attachment_groups,
     });
 }
 
@@ -468,16 +472,41 @@ fn review_prior_section(
         }
         return;
     };
-    let Some(first) = section.completed.first() else {
-        return;
-    };
     if section.profile_digest != waypoint_domain::Sha256Digest::of(&profile.to_string()) {
         preview.manual_review.push("The profile changed after an earlier section was filled; review its answers against the current profile.".into());
     }
     let before = session.driver.current_url().ok();
-    let check = session.driver.with_review_timeout(|driver| {
-        form_preview::verify_completed_fields(driver, &section.preview, &section.completed, first)
+    let check = section.completed.first().map(|first| {
+        session.driver.with_review_timeout(|driver| {
+            form_preview::verify_completed_fields(
+                driver,
+                &section.preview,
+                &section.completed,
+                first,
+            )
+        })
     });
+    let groups = crate::current_attachment_groups(&session.attachments, &section.inspection_id);
+    let mut verified_attachments = 0usize;
+    if groups.len() == section.attachment_groups && groups.len() <= 8 {
+        let started = std::time::Instant::now();
+        for (selector, paths) in &groups {
+            if started.elapsed() >= std::time::Duration::from_secs(4)
+                || !crate::staged_attachments_unchanged(
+                    &session.attachments,
+                    &section.inspection_id,
+                    selector,
+                )
+                || session
+                    .driver
+                    .with_review_timeout(|driver| driver.verify_local_files(selector, paths))
+                    .is_err()
+            {
+                break;
+            }
+            verified_attachments += 1;
+        }
+    }
     let schema_current = session
         .driver
         .with_review_timeout(|driver| driver.inspect_current())
@@ -485,12 +514,25 @@ fn review_prior_section(
     let after = session.driver.current_url().ok();
     let label = if before.is_none() || before != after || !schema_current {
         "A possible earlier section changed or could not be rechecked during verification; inspect its answers manually.".to_owned()
-    } else if check.failed_labels.is_empty() && check.unverified == 0 {
-        format!("A possible earlier section has the same form layout; {} filled field(s) matched their recorded values from this review session. This does not prove it is the same section or that the values remain correct; review them manually.", check.verified)
+    } else if check
+        .as_ref()
+        .is_none_or(|check| check.failed_labels.is_empty() && check.unverified == 0)
+    {
+        format!("A possible earlier section has the same form layout; {} filled field(s) matched their recorded values from this review session. This does not prove it is the same section or that the values remain correct; review them manually.", check.as_ref().map_or(0, |check| check.verified))
     } else {
-        format!("A possible earlier section has the same form layout; {} field(s) matched, {} could not be verified or changed. Inspect the answers manually.", check.verified, section.completed.len().saturating_sub(check.verified))
+        let verified = check.as_ref().map_or(0, |check| check.verified);
+        format!("A possible earlier section has the same form layout; {} field(s) matched, {} could not be verified or changed. Inspect the answers manually.", verified, section.completed.len().saturating_sub(verified))
     };
-    preview.manual_review.push(label);
+    if !section.completed.is_empty() || before.is_none() || before != after || !schema_current {
+        preview.manual_review.push(label);
+    }
+    if section.attachment_groups > 0 {
+        if before.is_none() || before != after || !schema_current {
+            preview.manual_review.push("Earlier attachments could not be rechecked on a stable page; inspect them manually.".into());
+        } else {
+            preview.manual_review.push(format!("For this possible earlier section, {verified_attachments} of {} attachment field(s) matched their staged files. Review the section and attachments manually; this does not establish delivery.", section.attachment_groups));
+        }
+    }
 }
 
 pub fn start(
@@ -703,7 +745,7 @@ fn start_with_destination_check(
                 // when the page happens to reuse the same selector.
                 mark_prior_choices_for_review(&mut preview, &mut session.selected_choices, &session.preview.manual_review);
                 if !session.attachments.is_empty() {
-                    preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
+                    preview.manual_review.push("Attachments from earlier inspections require review; a matching-layout check is only advisory. Check them in the application before submitting".into());
                 }
                 session.id = new_id;
                 session.answer_drafts.clear();
@@ -927,26 +969,53 @@ mod tests {
         };
         use waypoint_domain::{JobIdentityId, Sha256Digest};
         fn local_fixture_only(origin: &str, _: waypoint_policy::Operation) -> Result<(), String> {
-            if origin == "file://" {
+            if origin.starts_with("http://127.0.0.1:") {
                 Ok(())
             } else {
                 Err("Unexpected fixture origin".into())
             }
         }
         let _lease = crate::doc_suggest::lease().unwrap();
-        let temp = tempfile::tempdir_in(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
-        )
-        .unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix("waypoint-wizard-fixture-")
+            .tempdir()
+            .unwrap();
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/form-local-model-wizard.html"),
         )
         .unwrap();
-        let source = source.replace("<label for=\"email\">", "<p>Do not use AI tools.</p><button type=\"button\" id=\"back\" onclick=\"document.getElementById('step-two').hidden=true;document.getElementById('step-one').hidden=false\">Back</button><label for=\"email\">").replace("<button type=\"button\" id=\"next\"", "<button type=\"button\" id=\"mutate\" onclick=\"document.getElementById('given').value='Changed'\">Change saved answer</button><button type=\"button\" id=\"next\"");
-        let fixture = temp.path().join("wizard.html");
-        std::fs::write(&fixture, source).unwrap();
-        let url = url::Url::from_file_path(&fixture).unwrap().to_string();
+        let source = source.replace("<label for=\"email\">", "<p>Do not use AI tools.</p><button type=\"button\" id=\"back\" onclick=\"document.getElementById('step-two').hidden=true;document.getElementById('step-one').hidden=false\">Back</button><label for=\"email\">").replace("<button type=\"button\" id=\"next\"", "<label for=\"resume\">Resume</label><input type=\"file\" id=\"resume\" accept=\".pdf\"><button type=\"button\" id=\"clear-file\" onclick=\"document.getElementById('resume').value=''\">Clear file</button><button type=\"button\" id=\"mutate\" onclick=\"document.getElementById('given').value='Changed'\">Change saved answer</button><button type=\"button\" id=\"next\"");
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_worker = stop.clone();
+        let server = std::thread::spawn(move || {
+            while !stop_worker.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                        let mut request = [0u8; 4096];
+                        let _ = stream.read(&mut request);
+                        let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", source.len(), source);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(20))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let staged = temp.path().join("fictional.pdf");
+        let file_bytes = b"%PDF-fictional attachment";
+        std::fs::write(&staged, file_bytes).unwrap();
+        let url = format!("http://127.0.0.1:{port}/wizard");
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
         let profile = serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"});
@@ -965,6 +1034,7 @@ mod tests {
                 value: PacketValue::Text("Avery".into()),
             })
             .unwrap();
+        driver.attach_local_file("#resume", &staged).unwrap();
         driver
             .execute(&BrowserCommand::Click {
                 selector: "#next".into(),
@@ -991,7 +1061,12 @@ mod tests {
             answer_drafts: Default::default(),
             visible: false,
             staged_files: vec![],
-            attachments: vec![],
+            attachments: vec![(
+                "#resume".into(),
+                staged.clone(),
+                "wizard-session".into(),
+                waypoint_domain::sha256_hex(file_bytes),
+            )],
             pending_choice_visual: None,
             last_visual_freshness_key: None,
             record: None,
@@ -1099,6 +1174,20 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason.contains("does not prove it is the same section")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("1 of 1 attachment field(s) matched")));
+        std::fs::write(&staged, b"%PDF-changed attachment").unwrap();
+        let mut changed_file_view = returned.preview.clone();
+        changed_file_view.manual_review.clear();
+        super::review_prior_section(&mut returned, &mut changed_file_view, &profile);
+        assert!(changed_file_view
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("0 of 1 attachment field(s) matched")));
+        std::fs::write(&staged, file_bytes).unwrap();
         let mut revised_profile_view = returned.preview.clone();
         revised_profile_view.manual_review.clear();
         super::review_prior_section(
@@ -1114,6 +1203,12 @@ mod tests {
             .driver
             .execute(&BrowserCommand::Click {
                 selector: "#mutate".into(),
+            })
+            .unwrap();
+        returned
+            .driver
+            .execute(&BrowserCommand::Click {
+                selector: "#clear-file".into(),
             })
             .unwrap();
         assert!(super::start_with_destination_check(
@@ -1146,6 +1241,11 @@ mod tests {
             .preview
             .manual_review
             .iter()
+            .any(|reason| reason.contains("0 of 1 attachment field(s) matched")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
             .all(|reason| !reason.contains("Avery")));
         returned.preview = returned.prior_sections[0].preview.clone();
         returned.completed_selectors = vec!["#given".into()];
@@ -1169,11 +1269,31 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason.contains("exceeded the in-memory review limit")));
+        returned.prior_sections.clear();
+        returned.prior_sections_omitted = false;
+        returned.completed_selectors.clear();
+        returned.attachments[0].2 = returned.id.clone();
+        super::remember_prior_section(&mut returned);
+        assert_eq!(returned.prior_sections.len(), 1);
+        assert!(returned.prior_sections[0].completed.is_empty());
+        let mut attachment_only = returned.preview.clone();
+        attachment_only.manual_review.clear();
+        super::review_prior_section(
+            &mut returned,
+            &mut attachment_only,
+            &serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"}),
+        );
+        assert!(attachment_only
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("0 of 1 attachment field(s) matched")));
         assert!(returned
             .driver
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
     }
 
     #[test]
