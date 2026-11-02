@@ -2106,3 +2106,14 @@ The same gated wizard test can select an installed model through
 the startup gate reported 20,159 MiB available and required at least
 20,206 MiB. The model was not started and no comparison result was obtained.
 The gate was not relaxed; available memory is a changing snapshot.
+
+### Multilingual contact context (2026-11-02)
+
+The resource-gated multilingual contact test now obtains its six field labels
+from a fictional page in a local browser rather than constructing the schema
+directly. In one qwen3.5:9b run, the model suggested the candidate email for
+the German, French and Spanish applicant fields and marked all three reference
+email fields for review. The test did not fill fields or submit. The model was
+unloaded after the test; free system memory sampled afterward was about 19.6 GiB.
+This single mapping check does not establish visual verification or performance
+on real applications.

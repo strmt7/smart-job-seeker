@@ -796,9 +796,8 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
     fn resource_gated_multilingual_third_party_contacts() {
-        use waypoint_applications::form_mapping::{
-            FormField, FormFieldType, FormSchema, PacketValue,
-        };
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::PacketValue;
         with_resource_gated_model(|| {
             let model = crate::resident_model()
                 .unwrap()
@@ -811,40 +810,17 @@ pub(crate) mod tests {
                 model,
                 crate::resident_model,
             );
-            let rows = [
-                ("#applicant-de", "E-Mail der bewerbenden Person"),
-                ("#reference-de", "E-Mail der Referenzperson"),
-                ("#applicant-fr", "Adresse e-mail du candidat"),
-                (
-                    "#reference-fr",
-                    "Adresse e-mail de la personne de référence",
-                ),
-                ("#applicant-es", "Correo electrónico del candidato"),
-                (
-                    "#reference-es",
-                    "Correo electrónico de la persona de referencia",
-                ),
-            ];
-            let schema = FormSchema {
-                origin: "https://example.invalid".into(),
-                multi_step: false,
-                steps: 1,
-                fields: rows
-                    .iter()
-                    .map(|(selector, label)| FormField {
-                        selector: (*selector).into(),
-                        label: (*label).into(),
-                        field_type: FormFieldType::Email,
-                        required: false,
-                        sensitive: false,
-                        editing_mode: None,
-                        max_length_utf16: None,
-                        min_length_utf16: None,
-                        pattern: None,
-                        autocomplete: Some("email".into()),
-                    })
-                    .collect(),
-            };
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/form-multilingual-contacts.html")
+                .canonicalize()
+                .unwrap();
+            let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let form = browser
+                .open(url::Url::from_file_path(fixture).unwrap().as_str())
+                .unwrap();
+            assert!(form.walls.is_empty(), "{:?}", form.walls);
+            let schema = form.schema;
+            assert_eq!(schema.fields.len(), 6);
             let (mappings, warnings, _) = crate::suggestions::suggest_with_review(
                 &mut llm,
                 &schema,
@@ -872,6 +848,10 @@ pub(crate) mod tests {
                     "missing applicant mapping {selector}"
                 );
             }
+            assert!(browser
+                .trace
+                .iter()
+                .all(|event| !event.contains("typed") && !event.contains("submitted")));
         });
     }
 
