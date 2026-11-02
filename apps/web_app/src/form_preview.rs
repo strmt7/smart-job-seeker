@@ -596,6 +596,10 @@ pub fn apply_reviewed_text_fields_with_replacements(
     }
     let payload_digest = fill_payload_digest(preview, replacements)?;
     let schema_digest = Sha256Digest::of(&fresh.schema.schema_hash_input());
+    let mut network_count = driver
+        .observed_non_read_requests()
+        .map_err(|_| "Network observation was unavailable before filling".to_string())?
+        .ok_or("Network observation was unavailable before filling")?;
     grant
         .authorize(
             intent,
@@ -617,9 +621,6 @@ pub fn apply_reviewed_text_fields_with_replacements(
         created_at: timestamp,
     })
     .map_err(|e| e.to_string())?;
-    let mut network_count = driver.observed_non_read_requests().map_err(|_| {
-        "Network observation was unavailable during filling; requests may have occurred".to_string()
-    })?;
     for mapping in &preview.suggestions {
         let field = fresh
             .schema
@@ -653,18 +654,25 @@ pub fn apply_reviewed_text_fields_with_replacements(
             },
         };
         execute_and_verify_field(driver, preview, field, &command, completed)?;
-        if let Some(before) = network_count {
-            let after = driver.observed_non_read_requests().map_err(|_| {
-                "Network observation was unavailable during filling; requests may have occurred".to_string()
-            })?.ok_or("Network observation was unavailable during filling; requests may have occurred")?;
-            if after > before {
-                return Err("A non-GET/HEAD request was observed during filling; stopped before the next field. Its purpose and delivery are unknown".into());
-            }
-            if after < before {
-                return Err("Network observation was unavailable during filling; requests may have occurred".into());
-            }
-            network_count = Some(after);
+        let after = driver
+            .observed_non_read_requests()
+            .map_err(|_| {
+                "Network observation was unavailable during filling; requests may have occurred"
+                    .to_string()
+            })?
+            .ok_or(
+                "Network observation was unavailable during filling; requests may have occurred",
+            )?;
+        if after > network_count {
+            return Err("A non-GET/HEAD request was observed during filling; stopped before the next field. Its purpose and delivery are unknown".into());
         }
+        if after < network_count {
+            return Err(
+                "Network observation was unavailable during filling; requests may have occurred"
+                    .into(),
+            );
+        }
+        network_count = after;
     }
     // Check again after all writes because later fields can change earlier ones.
     for mapping in &preview.suggestions {
@@ -1195,6 +1203,7 @@ mod tests {
             live: LiveForm,
             written: String,
             reveal_on_fill: bool,
+            network_available: bool,
         }
         impl BrowserDriver for FixtureDriver {
             fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
@@ -1230,6 +1239,9 @@ mod tests {
                 } else {
                     Err(DriverError("mismatch".into()))
                 }
+            }
+            fn observed_non_read_requests(&mut self) -> Result<Option<u64>, DriverError> {
+                Ok(self.network_available.then_some(0))
             }
             fn commit(&mut self) -> Result<SiteAck, DriverError> {
                 panic!("must not submit")
@@ -1283,6 +1295,7 @@ mod tests {
             },
             written: String::new(),
             reveal_on_fill: true,
+            network_available: false,
         };
         let intent = IntentId::new("fixture-route").unwrap();
         let packet = Sha256Digest::of("fictional profile");
@@ -1329,6 +1342,14 @@ mod tests {
         assert!(!grant.consumed);
         let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &body);
         ws.discover(&target, &fetcher, 103);
+        let error = attempt(&mut ws, &mut driver, &mut grant).unwrap_err();
+        assert!(
+            error.contains("Network observation was unavailable before filling"),
+            "{error}"
+        );
+        assert!(driver.written.is_empty());
+        assert!(!grant.consumed);
+        driver.network_available = true;
         let error = attempt(&mut ws, &mut driver, &mut grant).unwrap_err();
         assert!(error.contains("form changed after filling"), "{error}");
         assert_eq!(driver.written, "Fictional");
