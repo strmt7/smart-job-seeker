@@ -298,6 +298,25 @@ fn reviewed_link_matches(
 
 const PRIOR_FIELDS_REVIEW: &str = "Fields filled before this inspection must be reviewed again; their earlier verification does not apply to the new inspection";
 const PRIOR_MISSING_FIELDS_REVIEW: &str = "a custom control needs manual review: An earlier inspection found fields that disappeared while scrolling. Review the entire application; this inspection may still be incomplete.";
+const PRIOR_CHOICES_REVIEW: &str = "Custom choices from an earlier section cannot be rechecked here; verify them before submitting";
+
+fn mark_prior_choices_for_review(
+    preview: &mut form_preview::FormPreview,
+    navigating_with_choices: bool,
+    previous_review: &[String],
+) {
+    if (navigating_with_choices
+        || previous_review
+            .iter()
+            .any(|reason| reason == PRIOR_CHOICES_REVIEW))
+        && !preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == PRIOR_CHOICES_REVIEW)
+    {
+        preview.manual_review.push(PRIOR_CHOICES_REVIEW.into());
+    }
+}
 
 fn mark_prior_fills_for_review(
     preview: &mut form_preview::FormPreview,
@@ -488,11 +507,11 @@ pub fn start(
                     preview.manual_review.push(form_preview::POST_CHOICE_VISUAL_REQUIRED.into());
                 }
                 mark_prior_fills_for_review(&mut preview, &session.completed_selectors, &session.preview.manual_review);
+                mark_prior_choices_for_review(&mut preview, navigating && !session.selected_choices.is_empty(), &session.preview.manual_review);
                 if !session.attachments.is_empty() {
                     preview.manual_review.push("Attachments from an earlier inspection cannot be verified on this section; check them in the application before submitting".into());
                 }
                 if navigating && !session.selected_choices.is_empty() {
-                    preview.manual_review.push("Custom choices from an earlier section cannot be rechecked here; verify them before submitting".into());
                     session.selected_choices.clear();
                 }
                 session.id = new_id;
@@ -624,6 +643,29 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn earlier_custom_choices_remain_a_review_obligation_across_rescans() {
+        let mut preview = form_preview::FormPreview {
+            schema: waypoint_applications::form_mapping::FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: true,
+                steps: 2,
+            },
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        mark_prior_choices_for_review(&mut preview, false, &[]);
+        assert!(preview.manual_review.is_empty());
+        mark_prior_choices_for_review(&mut preview, true, &[]);
+        let previous = preview.manual_review.clone();
+        preview.manual_review.clear();
+        mark_prior_choices_for_review(&mut preview, false, &previous);
+        mark_prior_choices_for_review(&mut preview, false, &previous);
+        assert_eq!(preview.manual_review, vec![PRIOR_CHOICES_REVIEW]);
     }
 
     #[test]
