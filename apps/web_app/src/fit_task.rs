@@ -729,6 +729,24 @@ fn assess_with_source(
                         }
                     }
                 }
+                // A model can copy a candidate fact into the listing criteria.
+                // On the final attempt, remove only exact, unambiguous copies
+                // absent from the listing. Other invalid output still fails.
+                let mut removed_candidate_criteria = 0usize;
+                if attempt == 1 {
+                    if let Some(criteria) = value["criteria"].as_array_mut() {
+                        criteria.retain(|item| {
+                            let copied = item["source"] == "listing"
+                                && item["excerpt"].as_str().is_some_and(|quote| {
+                                    !quote.trim().is_empty()
+                                        && !listing.contains(quote)
+                                        && facts.iter().any(|fact| fact.contains(quote))
+                                });
+                            removed_candidate_criteria += usize::from(copied);
+                            !copied
+                        });
+                    }
+                }
                 let sampled_evidence_valid = !sampled_retry
                     || value["criteria"].as_array().is_some_and(|criteria| {
                         let excerpts = selection_listing_excerpts(listing);
@@ -800,6 +818,13 @@ fn assess_with_source(
                             verification_text,
                         );
                         assessment["initial_listing_sampled"] = json!(sampled_retry);
+                        assessment["removed_candidate_criteria"] =
+                            json!(removed_candidate_criteria);
+                        if removed_candidate_criteria > 0 {
+                            if let Some(concerns) = assessment["concerns"].as_array_mut() {
+                                concerns.push(json!("The model misidentified candidate facts as job requirements. Those criteria were removed; review the full listing before relying on this score."));
+                            }
+                        }
                         assessment["requirement_audit"] = completeness;
                         assessment["preference_audit"] = preference_audit;
                         assessment["preference_coverage"] = json!(preference_coverage(&assessment));
@@ -1004,6 +1029,10 @@ pub(crate) fn requirement_audit_incomplete(assessment: &Value) -> bool {
     let rubric = assessment["rubric"].as_array();
     rubric.is_none_or(|items| items.is_empty() || items.len() >= 12)
         || assessment["initial_listing_sampled"] == true
+        || assessment["removed_candidate_criteria"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
         || assessment["criteria_limit_reached"] == true
         || assessment["requirement_audit"]["status"] != "completed"
         || assessment["requirement_audit"]["listing_truncated"] != false
@@ -2750,6 +2779,78 @@ mod tests {
                 .unwrap_err()
                 .contains("outside the sampled passages")
         );
+    }
+
+    #[test]
+    fn copied_candidate_criteria_are_removed_only_after_retry_and_flagged() {
+        struct Fixture {
+            calls: usize,
+            bad_quote: &'static str,
+        }
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                if task == "job_fit" {
+                    self.calls += 1;
+                }
+                let response = match task {
+                    "job_fit" => json!({"summary":"Review","criteria":[
+                        {"source":"listing","excerpt":"Python","importance":"required","status":"unknown","fact_index":null,"explanation":"Unknown"},
+                        {"source":"listing","excerpt":self.bad_quote,"importance":"required","status":"unknown","fact_index":null,"explanation":"Unknown"}
+                    ]}),
+                    "fit_requirement_audit" => json!({"missing":[]}),
+                    _ => json!({}),
+                };
+                Ok((
+                    response,
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let facts = ["Candidate previously coached engineers".into()];
+        let mut model = Fixture {
+            calls: 0,
+            bad_quote: "previously coached engineers",
+        };
+        let mut result = assess(&mut model, &facts, "", "Python required").unwrap();
+        assert_eq!(model.calls, 2);
+        assert_eq!(result["removed_candidate_criteria"], 1);
+        assert_eq!(result["rubric"].as_array().unwrap().len(), 1);
+        assert!(result["concerns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str().unwrap_or("").contains("misidentified")));
+        result["source_coverage"] =
+            json!({"description_present":true,"listing_used_chars":15,"listing_total_chars":15});
+        result["requirement_audit"] = json!({"status":"completed","listing_truncated":false,"criterion_limit_reached":false,"audit_limit_reached":false});
+        assert!(requirement_audit_incomplete(&result));
+        let short_facts = ["Candidate has C++ experience".into()];
+        let mut short = Fixture {
+            calls: 0,
+            bad_quote: "C++",
+        };
+        assert_eq!(
+            assess(&mut short, &short_facts, "", "Python required").unwrap()
+                ["removed_candidate_criteria"],
+            1
+        );
+        let mut invented = Fixture {
+            calls: 0,
+            bad_quote: "Imaginary qualification",
+        };
+        assert!(assess(&mut invented, &facts, "", "Python required").is_err());
     }
 
     #[test]
