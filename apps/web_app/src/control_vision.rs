@@ -523,6 +523,68 @@ mod tests {
             };
             assert_eq!(observed, "label_observed");
         }
+        let varied = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../crates/waypoint_browser/tests/fixtures/form_custom_radio_vision_varied.html",
+        );
+        let url = url::Url::from_file_path(varied.canonicalize().unwrap()).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let inventory = driver.page_custom_radio_groups().unwrap();
+        let cases = [
+            ("What is your preferred working arrangement?", "Hybrid"),
+            ("Are you legally authorized to work in this country?", "Yes"),
+            ("Êtes-vous disponible pour voyager ?", "Oui"),
+        ];
+        let mut observed_count = 0;
+        let mut checked_count = 0;
+        for (question, option) in cases {
+            let group = inventory
+                .groups
+                .iter()
+                .find(|group| group.label == question)
+                .unwrap();
+            for (expected, image, is_option) in [
+                (
+                    question,
+                    driver
+                        .screenshot_custom_radio_question(&group.selector)
+                        .unwrap(),
+                    false,
+                ),
+                (
+                    option,
+                    driver
+                        .screenshot_custom_radio_option(&group.selector, option)
+                        .unwrap(),
+                    true,
+                ),
+            ] {
+                let value = crate::visual_review::generate_vision(
+                    "127.0.0.1:11434".parse().unwrap(),
+                    model,
+                    &image,
+                    visual_prompt(true, is_option, false),
+                )
+                .unwrap();
+                let labels = validate(&value).unwrap();
+                let result = if is_option {
+                    comparison(expected, false, &labels)
+                } else {
+                    choice_label_comparison(expected, false, &labels)
+                };
+                println!("varied fictional radio target={expected:?} observed={labels:?} comparison={result}");
+                checked_count += 1;
+                if result == "label_observed" {
+                    observed_count += 1;
+                } else {
+                    assert_eq!(
+                        result, "not_observed",
+                        "uncertain transcription must require review"
+                    );
+                }
+            }
+        }
+        println!("varied fictional radio visual checks observed={observed_count}/6");
+        assert_eq!(checked_count, 6);
         assert!(driver
             .trace
             .iter()
@@ -660,6 +722,18 @@ mod tests {
         let labels = validate(&value).unwrap();
         println!("fictional later option vision: {labels:?}");
         assert_eq!(comparison("Sydney", false, &labels), "label_observed");
+    }
+
+    #[test]
+    fn radio_question_accent_mismatch_requires_review() {
+        assert_eq!(
+            choice_label_comparison(
+                "Êtes-vous disponible pour voyager ?",
+                false,
+                &["Étes-vous disponible pour voyager ?".into()]
+            ),
+            "not_observed"
+        );
     }
 
     #[test]
