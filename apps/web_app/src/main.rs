@@ -7938,19 +7938,67 @@ fn serve(
                 created_at: now(),
             })
             .map_err(|e| e.to_string())?;
-            current.staged_files.push(dir);
-            if let Err(error) = current
+            let network_before = match current
                 .driver
-                .attach_local_files_if_unchanged(selector, &files, &previous)
+                .with_review_timeout(|driver| driver.observed_non_read_requests())
             {
+                Ok(count) => count,
+                Err(_) => {
+                    let reason = "Network observation was unavailable before attachment. Waypoint did not attach this file; the site may have sent requests. Check the employer site before retrying.";
+                    if let Some(record) = &mut current.record {
+                        record.event(json!({"type":"attachment_network_preflight_unavailable","time":now(),"note":reason}))?;
+                    }
+                    ws.mark_manual_review(&current.job_id, reason, now())
+                        .map_err(|e| e.to_string())?;
+                    return Err(reason.into());
+                }
+            };
+            current.staged_files.push(dir);
+            let attachment_result = current
+                .driver
+                .attach_local_files_if_unchanged(selector, &files, &previous);
+            let network_after = current
+                .driver
+                .with_review_timeout(|driver| driver.observed_non_read_requests())
+                .ok();
+            let network_observation =
+                classify_fill_network_observation(Some(network_before), network_after);
+            let network_warning = match network_observation {
+                FillNetworkObservation::Observed => Some(("attachment_network_request_observed", "A non-GET/HEAD request was observed during attachment. Uploads can cause requests; its purpose and delivery are unknown. Check the employer site before continuing. Other requests or transports may not have been observed.")),
+                FillNetworkObservation::Unavailable => Some(("attachment_network_observation_unavailable", "Network observation was unavailable during attachment. Requests may have occurred; check the employer site before continuing.")),
+                FillNetworkObservation::NoneObserved => None,
+            };
+            let mut network_record_error = None;
+            if let Some((event_type, reason)) = network_warning {
+                current.preview.manual_review.push(reason.into());
+                if let Some(record) = &mut current.record {
+                    if let Err(error) =
+                        record.event(json!({"type":event_type,"time":now(),"note":reason}))
+                    {
+                        network_record_error = Some(error);
+                    }
+                }
+                if let Err(error) = ws.mark_manual_review(&current.job_id, reason, now()) {
+                    network_record_error = Some(error.to_string());
+                }
+            }
+            if let Err(error) = attachment_result {
                 if let Some(record) = &mut current.record {
                     let _ = record.event(json!({"type":"attachment_incomplete","time":now(),"selector":selector,"error":error.to_string()}));
                 }
-                ws.mark_manual_review(&current.job_id, "Application needs manual review", now())
-                    .map_err(|e| e.to_string())?;
-                return Err(format!(
-                    "Document attachment may be incomplete; review the form: {error}"
-                ));
+                let review_error = ws
+                    .mark_manual_review(&current.job_id, "Application needs manual review", now())
+                    .err();
+                let network_note = network_warning
+                    .map(|(_, reason)| format!(" {reason}"))
+                    .unwrap_or_default();
+                let save_note = network_record_error
+                    .or_else(|| review_error.map(|error| error.to_string()))
+                    .map(|error| {
+                        format!(" The review status or event could not be saved: {error}.")
+                    })
+                    .unwrap_or_default();
+                return Err(format!("Document attachment may be incomplete; review the form: {error}.{network_note}{save_note}"));
             }
             if !staged_file_matches(&path, &document_sha256)
                 || !staged_attachments_unchanged(&current.attachments, &current.id, selector)
@@ -7972,6 +8020,9 @@ fn serve(
                 current.id.clone(),
                 document_sha256,
             ));
+            if let Some(error) = network_record_error {
+                return Err(format!("Document attachment may have occurred, but its network review status or event could not be saved: {error}. Check the employer site before continuing."));
+            }
             let field_label = capture_field_label(&current.preview.schema, selector);
             if let Some(record) = &mut current.record {
                 record.event(json!({"type":"document_attached","time":now(),"selector":selector,"name":doc.name,"attachment_name":name}))?;
@@ -13527,6 +13578,280 @@ mod tests {
         let events =
             std::fs::read_to_string(std::path::Path::new(folder).join("events.jsonl")).unwrap();
         assert!(events.contains("non_read_request_observed_during_fill"));
+        assert!(!events.contains("/fixture"));
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+        drop(session);
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "starts one browser and a loopback server for a fictional attachment-triggered request"]
+    fn reviewed_attachment_reports_observed_non_read_request() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_store::StoredJob;
+        let fixture = TcpListener::bind("127.0.0.1:0").unwrap();
+        fixture.set_nonblocking(true).unwrap();
+        let fixture_port = fixture.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            while !worker_stop.load(Ordering::Relaxed) {
+                match fixture.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                        let mut bytes = [0u8; 8192];
+                        let count = stream.read(&mut bytes).unwrap_or(0);
+                        if bytes[..count].starts_with(b"POST ") {
+                            let _ = tx.send(());
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        } else {
+                            let page = "<!doctype html><label for='upload'>Resume</label><input id='upload' type='file' onchange=\"let x=new XMLHttpRequest();x.open('POST','/fixture',false);x.send('fictional')\">";
+                            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", page.len(), page);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let temp = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        let mut ws = Workspace::open(temp.path()).unwrap();
+        let id = JobIdentityId::new("fictional-attachment-network-observation").unwrap();
+        let url = format!("http://127.0.0.1:{fixture_port}/");
+        ws.import_job(StoredJob {
+            id: id.clone(),
+            title: "Fictional".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        let profile = json!({"first_name":"ABCD", "last_name":"B"});
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        ws.add_document("fictional-doc", "resume.pdf", b"%PDF-fictional", 1)
+            .unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut session = Some(ReviewSession {
+            id: "fictional-session".into(),
+            job_id: id.clone(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url,
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = json!({"session_id":"fictional-session","reviewed":true,"selector":"#upload","document_id":"fictional-doc"}).to_string();
+        write!(client, "POST /api/form/attach HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        let result = serve(&mut stream, &mut ws, &mut session, "fixture-token", port);
+        drop(stream);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("fixture request was not received");
+        assert!(result.is_ok(), "{result:?}");
+        assert!(response.contains("non-GET/HEAD request"), "{response}");
+        assert_eq!(session.as_ref().unwrap().attachments.len(), 1);
+        assert!(ws
+            .manual_reviews()
+            .unwrap()
+            .iter()
+            .any(|review| review.reason.contains("non-GET/HEAD request")));
+        let attempts = attempt_record::list(&ws, &id).unwrap();
+        let folder = attempts["attempts"][0]["folder"].as_str().unwrap();
+        let events =
+            std::fs::read_to_string(std::path::Path::new(folder).join("events.jsonl")).unwrap();
+        assert!(events.contains("attachment_network_request_observed"));
+        assert!(!events.contains("/fixture"));
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+        drop(session);
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "starts one browser and a loopback server for a fictional attachment-triggered request"]
+    fn failed_attachment_still_reports_observed_non_read_request() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_store::StoredJob;
+        let fixture = TcpListener::bind("127.0.0.1:0").unwrap();
+        fixture.set_nonblocking(true).unwrap();
+        let fixture_port = fixture.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            while !worker_stop.load(Ordering::Relaxed) {
+                match fixture.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                        let mut bytes = [0u8; 8192];
+                        let count = stream.read(&mut bytes).unwrap_or(0);
+                        if bytes[..count].starts_with(b"POST ") {
+                            let _ = tx.send(());
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        } else {
+                            let page = "<!doctype html><label for='upload'>Resume</label><input id='upload' type='file' onchange=\"let x=new XMLHttpRequest();x.open('POST','/fixture',false);x.send('fictional');this.value=''\">";
+                            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", page.len(), page);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let temp = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        let mut ws = Workspace::open(temp.path()).unwrap();
+        let id = JobIdentityId::new("fictional-failed-attachment-network-observation").unwrap();
+        let url = format!("http://127.0.0.1:{fixture_port}/");
+        ws.import_job(StoredJob {
+            id: id.clone(),
+            title: "Fictional".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        let profile = json!({"first_name":"ABCD", "last_name":"B"});
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        ws.add_document("fictional-doc", "resume.pdf", b"%PDF-fictional", 1)
+            .unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut session = Some(ReviewSession {
+            id: "fictional-session".into(),
+            job_id: id.clone(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url,
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = json!({"session_id":"fictional-session","reviewed":true,"selector":"#upload","document_id":"fictional-doc"}).to_string();
+        write!(client, "POST /api/form/attach HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        let result = serve(&mut stream, &mut ws, &mut session, "fixture-token", port);
+        drop(stream);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("fixture request was not received");
+        let error = result.expect_err("cleared file must not be reported as attached");
+        assert!(error.contains("non-GET/HEAD request"), "{error}");
+        assert!(session.as_ref().unwrap().attachments.is_empty());
+        assert!(ws
+            .manual_reviews()
+            .unwrap()
+            .iter()
+            .any(|review| review.reason.contains("non-GET/HEAD request")));
+        let attempts = attempt_record::list(&ws, &id).unwrap();
+        let folder = attempts["attempts"][0]["folder"].as_str().unwrap();
+        let events =
+            std::fs::read_to_string(std::path::Path::new(folder).join("events.jsonl")).unwrap();
+        assert!(events.contains("attachment_network_request_observed"));
         assert!(!events.contains("/fixture"));
         assert!(session
             .as_ref()
