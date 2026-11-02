@@ -2242,3 +2242,16 @@ formatting were recovered and six criteria survived. The separate candidate
 evidence search was unavailable, however, so all six remained unknown and the
 score range was 0–100. This is not a successful fit judgment; improving bounded
 evidence comparison remains necessary. The model was unloaded afterwards.
+
+### Bounded evidence comparison (2026-11-02)
+
+Oversized comparisons now split requirements and selected facts into at most
+12 bounded model requests. Every selected requirement is compared against every
+selected fact, and invalid responses, cross-batch references, conflicting
+judgments, and incomplete batches cannot silently establish evidence. The
+separate qualification check remains necessary before a proposal affects the
+score. On the same single public résumé and vacancy diagnostic, two batches
+completed, one of six criteria was supported, and five remained unknown; the
+score range was 25–100 and requirement coverage still needed review. This is one
+unverified input pair, not a general accuracy measurement. The model was
+unloaded and no application was sent.
