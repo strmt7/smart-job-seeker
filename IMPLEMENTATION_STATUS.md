@@ -2960,3 +2960,17 @@ prove a vacancy is open, and earlier legacy timestamps are not corrected.
 A disk-backed re-inspection test also confirms that the refreshed timestamp
 survives reopening the workspace and that stale snapshots cannot overwrite a
 newer observation or a changed location.
+
+### Isolated wider-web discovery check (2026-11-02)
+
+A fresh local workspace searched FreeSerp through the application for a generic
+optical-engineering query. It displayed 10 unverified candidate links, including
+non-job pages. Three listings were inspected: one needed an eligible model and
+then remained unconfirmed, one redirected to another site and was not saved,
+and one was saved with an incomplete-capture warning and application-route
+review. The saved listing's reported location differed from the search query,
+illustrating why search snippets cannot establish geographic fit. Qwen3.5:9b
+was started through the app and unloaded after the check. No profile, files,
+form answers or applications were sent. This small observation is not a recall
+or precision benchmark. The empty job list now mentions wider-web search and
+manual URL entry as well as boards.
