@@ -1094,6 +1094,17 @@ impl Workspace {
                 match dedup_decision(&existing.id, &id, existing.content_hash.as_deref(), &hash) {
                     DedupDecision::SameObservation => {
                         outcome.unchanged += 1;
+                        // Older Greenhouse imports stored the update timestamp as
+                        // a publication date. Refresh that field even when the
+                        // listing content itself has not changed.
+                        if existing.source == "greenhouse"
+                            && posting.source == "greenhouse"
+                            && existing.posted_at != posting.posted_at
+                        {
+                            let mut corrected = existing.clone();
+                            corrected.posted_at = posting.posted_at.clone();
+                            self.store.upsert_job(&corrected)?;
+                        }
                         // Repair a missing description if a previous import
                         // stopped after writing the job row but before its text.
                         self.store

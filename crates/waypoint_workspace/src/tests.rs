@@ -40,6 +40,28 @@ fn fetcher_all() -> StaticFetcher {
 }
 
 #[test]
+fn rediscovery_clears_legacy_greenhouse_update_date_without_changing_state() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let targets = [DiscoveryTarget::new("greenhouse", "vercel")];
+    let fetcher = StaticFetcher::default().route(GH_URL, &greenhouse_payload("Engineer"));
+    assert_eq!(ws.discover(&targets, &fetcher, 100).inserted, 2);
+    let mut job = ws
+        .jobs()
+        .unwrap()
+        .into_iter()
+        .find(|j| j.title == "Engineer")
+        .unwrap();
+    job.posted_at = Some("2026-09-20T10:00:00Z".into());
+    job.state = ApplicationState::Shortlisted;
+    ws.store.upsert_job(&job).unwrap();
+    assert_eq!(ws.discover(&targets, &fetcher, 101).unchanged, 2);
+    let refreshed = ws.store.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(refreshed.posted_at, None);
+    assert_eq!(refreshed.state, ApplicationState::Shortlisted);
+    assert_eq!(refreshed.content_hash, job.content_hash);
+}
+
+#[test]
 fn ranked_remote_role_keeps_location_eligibility_unknown() {
     let mut ws = Workspace::in_memory().unwrap();
     ws.test_insert_job("remote-fixture", "Engineer", "Example");

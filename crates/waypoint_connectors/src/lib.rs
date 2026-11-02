@@ -58,7 +58,7 @@ struct GreenhouseJob {
     #[serde(default)]
     absolute_url: String,
     #[serde(default)]
-    updated_at: Option<String>,
+    first_published: Option<String>,
     #[serde(default)]
     content: Option<String>,
 }
@@ -259,7 +259,8 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
                 location: j.location.name,
                 remote: false,
                 remote_evidence: None,
-                posted_at: j.updated_at,
+                // An update is not evidence of the original publication date.
+                posted_at: j.first_published,
                 description: j.content.as_deref().map(description_text),
                 content_hash_source: format!("gh://{board}/{}", req.unwrap_or_default()),
             }
@@ -680,10 +681,18 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].identity, "greenhouse::req::482731");
         assert_eq!(out[0].requisition_id.as_deref(), Some("482731"));
+        assert_eq!(out[0].posted_at, None);
         assert_eq!(
             out[0].source_url,
             "https://boards.greenhouse.io/acme/jobs/482731"
         );
+    }
+
+    #[test]
+    fn greenhouse_distinguishes_publication_from_update() {
+        let payload = r#"{"jobs":[{"id":1,"title":"Engineer","first_published":"2025-01-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z"}]}"#;
+        let out = parse_greenhouse("acme", payload).unwrap();
+        assert_eq!(out[0].posted_at.as_deref(), Some("2025-01-01T00:00:00Z"));
     }
 
     #[test]
