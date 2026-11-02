@@ -102,6 +102,20 @@ fn existing_model(ps: &Value, requested: &str) -> Result<Option<Value>, String> 
     Err("A model is already loaded with a different identity, context, or resource state; it was left unchanged".into())
 }
 
+#[cfg(any(windows, test))]
+fn verify_started_model(ps: &Value, requested: &str) -> Result<Value, String> {
+    let state = crate::model_diagnostics(ps).map_err(|_| {
+        "Model startup could not be verified; a model may remain loaded. Check local model status before retrying".to_owned()
+    })?;
+    if state["model"].as_str() != Some(requested) || state["context_length"].as_u64() != Some(4096)
+    {
+        return Err("The requested model was not reported as the single fully GPU-resident model with the requested 4096 context; a model may remain loaded. Check local model status before retrying".into());
+    }
+    Ok(
+        json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":4096,"already_running":false}),
+    )
+}
+
 #[cfg(windows)]
 fn run(model: &str) -> Result<Value, String> {
     use waypoint_inference::ollama::http_request;
@@ -140,13 +154,8 @@ fn run(model: &str) -> Result<Value, String> {
     if response["done"] != true {
         return Err("Model startup was not confirmed; check status before trying again".into());
     }
-    let state = crate::model_diagnostics(&get("/api/ps")?)?;
-    if state["model"].as_str() != Some(model) {
-        return Err("The requested model is not reported as the single fully GPU-resident model; inspect local model status".into());
-    }
-    Ok(
-        json!({"model":model,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":state["context_length"],"already_running":false}),
-    )
+    let status = get("/api/ps").map_err(|_| "Model startup could not be verified; a model may remain loaded. Check local model status before retrying")?;
+    verify_started_model(&status, model)
 }
 #[cfg(not(windows))]
 fn run(_model: &str) -> Result<Value, String> {
@@ -232,6 +241,23 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(existing_model(&json!({}), "fixture").is_err());
+    }
+    #[test]
+    fn new_start_must_report_requested_context_and_safe_residency() {
+        let valid = json!({"models":[{"name":"fixture","size":6*GIB,"size_vram":6*GIB,"context_length":4096}]});
+        assert_eq!(
+            verify_started_model(&valid, "fixture").unwrap()["context_length"],
+            4096
+        );
+        let mut wrong_context = valid.clone();
+        wrong_context["models"][0]["context_length"] = json!(8192);
+        for status in [wrong_context, json!({"models":[]}), json!({})] {
+            let error = verify_started_model(&status, "fixture").unwrap_err();
+            assert!(error.contains("may remain loaded"));
+        }
+        let mut partial = valid;
+        partial["models"][0]["size_vram"] = json!(GIB);
+        assert!(verify_started_model(&partial, "fixture").is_err());
     }
     #[cfg(windows)]
     #[test]
