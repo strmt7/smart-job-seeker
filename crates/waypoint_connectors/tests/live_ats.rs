@@ -42,6 +42,40 @@ fn live_ashby_board_parses() {
 }
 
 #[test]
+#[ignore = "requires a separately captured public Ashby API response"]
+fn captured_ashby_locations_preserve_all_alternatives() {
+    let path = std::env::var("WAYPOINT_ASHBY_CAPTURE").expect("capture path");
+    let body = std::fs::read_to_string(path).unwrap();
+    let raw: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let jobs = raw["jobs"].as_array().unwrap();
+    let parsed = parse_ashby("ashby", &body).unwrap();
+    assert_eq!(parsed.len(), jobs.len());
+    let mut with_secondary = 0;
+    for (row, source) in parsed.iter().zip(jobs) {
+        let Some(locations) = source["secondaryLocations"].as_array() else {
+            continue;
+        };
+        if !locations.is_empty() {
+            with_secondary += 1;
+        }
+        for location in locations
+            .iter()
+            .filter_map(|item| item["location"].as_str())
+        {
+            let normalized = location.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !normalized.is_empty() {
+                assert!(row
+                    .location
+                    .lines()
+                    .any(|actual| actual.eq_ignore_ascii_case(&normalized)));
+            }
+        }
+    }
+    assert!(with_secondary > 0);
+    println!("Checked {with_secondary} captured listings with secondary locations");
+}
+
+#[test]
 #[ignore = "network test; run explicitly with --ignored"]
 fn live_lever_board_parses() {
     // Verified live board (cloudflare/netflix 404 on this endpoint).

@@ -125,6 +125,8 @@ struct AshbyPosting {
     title: String,
     #[serde(default)]
     location: Option<String>,
+    #[serde(default, rename = "secondaryLocations")]
+    secondary_locations: Option<Vec<AshbyLocation>>,
     #[serde(default, rename = "jobUrl")]
     job_url: Option<String>,
     #[serde(default, rename = "publishedAt")]
@@ -136,6 +138,12 @@ struct AshbyPosting {
     is_remote: Option<bool>,
     #[serde(default, rename = "descriptionPlain")]
     description_plain: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AshbyLocation {
+    #[serde(default)]
+    location: Option<String>,
 }
 
 /// Bounded, best-effort text for matching, not a general HTML renderer.
@@ -381,11 +389,21 @@ fn lever_description(job: &LeverPosting) -> Option<String> {
 }
 
 fn lever_locations(categories: &LeverCategories) -> String {
+    normalized_locations(
+        std::iter::once(categories.location.as_str()).chain(
+            categories
+                .all_locations
+                .iter()
+                .flatten()
+                .map(String::as_str),
+        ),
+    )
+}
+
+fn normalized_locations<'a>(values: impl Iterator<Item = &'a str>) -> String {
     let mut locations = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for value in
-        std::iter::once(&categories.location).chain(categories.all_locations.iter().flatten())
-    {
+    for value in values {
         // Preserve each source location as one line; whitespace in a source
         // value cannot manufacture an additional alternative.
         let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -465,7 +483,14 @@ pub fn parse_ashby(org: &str, payload: &str) -> Result<Vec<RawPosting>, Connecto
             employer_namespace: org.to_string(),
             title: j.title,
             employer: org.to_string(),
-            location: j.location.clone().unwrap_or_default(),
+            location: normalized_locations(
+                j.location.as_deref().into_iter().chain(
+                    j.secondary_locations
+                        .iter()
+                        .flatten()
+                        .filter_map(|location| location.location.as_deref()),
+                ),
+            ),
             remote: j.is_remote.unwrap_or(false),
             remote_evidence: j.is_remote,
             posted_at: j.published_at,
@@ -726,6 +751,13 @@ mod tests {
         let payload = r#"[{"id":"a","text":"Engineer","categories":{"location":"New York, NY","allLocations":["New York, NY","San Francisco, CA","  san francisco, CA "]}}]"#;
         let rows = parse_lever("example", payload).unwrap();
         assert_eq!(rows[0].location, "New York, NY\nSan Francisco, CA");
+    }
+
+    #[test]
+    fn ashby_preserves_distinct_secondary_locations() {
+        let payload = r#"{"jobs":[{"id":"a","title":"Engineer","location":"Berlin","secondaryLocations":[{"location":"Paris"},{"location":"  paris  "},{"location":"New\nYork"},{"location":null},{}]}]}"#;
+        let rows = parse_ashby("example", payload).unwrap();
+        assert_eq!(rows[0].location, "Berlin\nParis\nNew York");
     }
 
     #[test]

@@ -134,6 +134,26 @@ fn lever_secondary_location_can_satisfy_location_filter() {
 }
 
 #[test]
+fn ashby_secondary_location_can_satisfy_location_filter() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let payload = r#"{"jobs":[{"id":"fixture","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/fixture","isRemote":false,"location":"Berlin","secondaryLocations":[{"location":"Paris"}]}]}"#;
+    let fetcher = StaticFetcher::default().route(ASHBY_URL, payload);
+    assert_eq!(
+        ws.discover(&[DiscoveryTarget::new("ashby", "ashby")], &fetcher, 100)
+            .inserted,
+        1
+    );
+    let constraints = CampaignConstraints {
+        locations: vec!["Paris".into()],
+        ..Default::default()
+    };
+    let ranked = ws.ranked(&constraints, &[], 100).unwrap();
+    assert_eq!(ranked.strict.len(), 1);
+    assert!(ranked.strict[0].unknown_constraints.is_empty());
+    assert!(ranked.excluded.is_empty());
+}
+
+#[test]
 fn lever_requirement_lists_contribute_to_ranked_evidence() {
     let mut ws = Workspace::in_memory().unwrap();
     let payload = r#"[{"id":"fixture-list","text":"Engineer","hostedUrl":"https://jobs.lever.co/spotify/fixture-list","descriptionPlain":"Join our team.","lists":[{"text":"Requirements","content":"<ul><li>Rust systems development</li></ul>"}]}]"#;
