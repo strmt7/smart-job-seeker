@@ -6,4 +6,9 @@ assert.match(notice('matches'),/current workspace listing.*live vacancy may have
 assert.match(notice('changed'),/differs.*saved listing/);
 assert.match(notice('unavailable'),/could not be compared/);
 assert.match(notice(undefined),/could not be compared/);
+const materialLine=source.split('\n').find(item=>item.startsWith('function materialArchiveNotice('));assert.ok(materialLine);
+const materialNotice=vm.runInNewContext(`(${materialLine})`);
+assert.match(materialNotice(true),/manifest entry is incomplete.*Inspect the materials folder/);
+assert.equal(materialNotice(false),null);assert.equal(materialNotice(undefined),null);
+assert.match(source,/materialArchiveNotice\(record\.material_manifest_incomplete\)/);
 console.log('Listing snapshot comparison UI checks passed.');

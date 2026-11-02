@@ -955,7 +955,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -1888,6 +1888,15 @@ impl AttemptRecord {
         }
     }
     pub fn status(&mut self, status: &str, timestamp: i64) -> Result<(), String> {
+        self.update_status(status, timestamp, false)
+    }
+
+    fn update_status(
+        &mut self,
+        status: &str,
+        timestamp: i64,
+        material_manifest_incomplete: bool,
+    ) -> Result<(), String> {
         if !matches!(
             status,
             "preparation_in_progress" | "manual_review" | "review_session_closed"
@@ -1905,6 +1914,9 @@ impl AttemptRecord {
         }
         if meta["status"] == "preparation_in_progress" {
             meta["note"] = json!("External submission is not monitored; this record does not prove whether an application was submitted.");
+        }
+        if material_manifest_incomplete {
+            meta["material_manifest_incomplete"] = json!(true);
         }
         meta["updated_at"] = json!(timestamp);
         let mut tmp = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
@@ -2089,7 +2101,7 @@ impl AttemptRecord {
             // Keep it for recovery and independently mark the attempt for review.
             let timestamp = crate::now();
             let event_error = self.event(json!({"type":"material_manifest_incomplete","time":timestamp,"stored_name":filename,"note":"Material was saved but its manifest entry could not be completed; inspect the archive."})).err();
-            let status_error = self.status("manual_review", timestamp).err();
+            let status_error = self.update_status("manual_review", timestamp, true).err();
             let mut details = error;
             if let Some(error) = event_error {
                 details.push_str(&format!("; archive event could not be saved: {error}"));
@@ -3311,6 +3323,11 @@ mod tests {
         let metadata: Value =
             serde_json::from_slice(&fs::read(dir.path().join("attempt.json")).unwrap()).unwrap();
         assert_eq!(metadata["status"], "manual_review");
+        assert_eq!(metadata["material_manifest_incomplete"], true);
+        record.status("review_session_closed", 0).unwrap();
+        let after: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("attempt.json")).unwrap()).unwrap();
+        assert_eq!(after["material_manifest_incomplete"], true);
         let event: Value =
             serde_json::from_slice(&fs::read(dir.path().join("events.jsonl")).unwrap()).unwrap();
         assert_eq!(event["type"], "material_manifest_incomplete");
@@ -3332,6 +3349,25 @@ mod tests {
             error.contains("attempt review status could not be saved"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn attempt_listing_exposes_material_manifest_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(root.path()).unwrap();
+        let job = JobIdentityId::new("fictional-manifest-listing").unwrap();
+        let hash = Sha256Digest::of(job.as_str());
+        let dir = root
+            .path()
+            .join("application-records")
+            .join(format!("{}-fixture", &hash.as_str()[..16]));
+        fs::create_dir_all(dir.join("materials/manifest.jsonl")).unwrap();
+        fs::write(dir.join("attempt.json"), serde_json::to_vec(&json!({"job_id":job.as_str(),"attempt_id":"fixture","status":"preparation_in_progress","started_at":1})).unwrap()).unwrap();
+        let mut record = AttemptRecord { dir, sequence: 0 };
+        assert!(record.material("resume.pdf", b"fictional PDF").is_err());
+        let result = list(&ws, &job).unwrap();
+        assert_eq!(result["attempts"][0]["material_manifest_incomplete"], true);
+        assert_eq!(result["attempts"][0]["status"], "manual_review");
     }
 
     #[test]

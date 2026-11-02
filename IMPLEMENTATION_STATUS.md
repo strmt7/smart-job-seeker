@@ -2871,3 +2871,9 @@ now retains the file, independently attempts to record the failure and mark the
 attempt for manual review, and reports any failure of those recovery writes.
 Focused tests cover manifest, event and status write failures as well as normal
 material preservation. A partially written manifest still requires inspection.
+
+Newly detected material-manifest failures also set a persistent attempt flag.
+The application-record list displays an actionable warning to inspect the
+materials folder and manifest. Focused archive and interface tests passed.
+Older records without this flag are not retrospectively audited, and absence of
+the warning does not prove that an archive is complete.
