@@ -149,34 +149,48 @@ fn tracking_comparison_key(raw: &str) -> String {
 /// Keep the global result cap visible when the final provider page has more
 /// valid links than the remaining budget. Previously the page could appear
 /// complete even though some of its parsed links were discarded here.
-fn retain_batch_budget(data: &mut Value, seen: &mut HashSet<String>) -> bool {
+#[derive(Default)]
+struct BatchSeen {
+    originals: HashSet<String>,
+    comparison_keys: HashSet<String>,
+}
+
+fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
     let mut omitted = 0usize;
-    let mut tracking_equivalent = 0usize;
+    let mut repeated = 0usize;
+    let mut potentially_related = 0usize;
     if let Some(items) = data["results"].as_array_mut() {
-        items.retain(|item| {
-            let Some(url) = item["url"].as_str() else {
+        items.retain_mut(|item| {
+            let Some(url) = item["url"].as_str().map(str::to_owned) else {
                 return false;
             };
-            let comparison = tracking_comparison_key(url);
-            if seen.contains(&comparison) {
-                tracking_equivalent += 1;
+            if seen.originals.contains(&url) {
+                repeated += 1;
                 return false;
             }
-            if seen.len() >= 600 {
+            if seen.originals.len() >= 600 {
                 omitted += 1;
                 return false;
             }
-            seen.insert(comparison)
+            let comparison = tracking_comparison_key(&url);
+            if !seen.comparison_keys.insert(comparison) {
+                item["possible_tracking_variant"] = json!(true);
+                potentially_related += 1;
+            }
+            seen.originals.insert(url)
         });
     }
-    if tracking_equivalent > 0 {
-        data["tracking_equivalent_omitted"] = json!(tracking_equivalent);
+    if repeated > 0 {
+        data["exact_repeated_omitted"] = json!(repeated);
+    }
+    if potentially_related > 0 {
+        data["possible_tracking_variants"] = json!(potentially_related);
     }
     if omitted > 0 {
         data["limited"] = json!(true);
         data["batch_limit_omitted"] = json!(omitted);
     }
-    seen.len() >= 600
+    seen.originals.len() >= 600
 }
 
 pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> Result<(), String> {
@@ -238,7 +252,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
     });
     drop(task);
     std::thread::spawn(move || {
-        let mut seen = HashSet::new();
+        let mut seen = BatchSeen::default();
         let mut limit_reached = false;
         for (index, (query, page, url)) in requests.into_iter().enumerate() {
             if stop.load(Ordering::Acquire) {
@@ -258,7 +272,8 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             let (result, provider_stop) =
                 std::panic::catch_unwind(|| match crate::web_search::fetch(&url) {
                     Ok(body) => {
-                        let parsed = crate::web_search::parse_provider(&body, &url, &seen);
+                        let parsed =
+                            crate::web_search::parse_provider(&body, &url, &seen.originals);
                         // An unusable response indicates that this provider is
                         // not delivering the requested search. Surface the
                         // failure and leave the rest of the plan unattempted.
@@ -765,12 +780,15 @@ mod tests {
     }
     #[test]
     fn batch_cap_reports_links_dropped_from_a_provider_page() {
-        let mut seen: HashSet<String> = (0..598)
-            .map(|i| format!("https://example.org/{i}"))
-            .collect();
+        let mut seen = BatchSeen {
+            originals: (0..598)
+                .map(|i| format!("https://example.org/{i}"))
+                .collect(),
+            ..Default::default()
+        };
         let mut page = json!({"results":(598..602).map(|i| json!({"url":format!("https://example.org/{i}")})).collect::<Vec<_>>(),"limited":false});
         assert!(retain_batch_budget(&mut page, &mut seen));
-        assert_eq!(seen.len(), 600);
+        assert_eq!(seen.originals.len(), 600);
         assert_eq!(page["results"].as_array().unwrap().len(), 2);
         assert_eq!(page["batch_limit_omitted"], 2);
         assert_eq!(page["limited"], true);
@@ -1111,8 +1129,8 @@ mod tests {
         assert_eq!(recover["last"]["result"], done);
     }
     #[test]
-    fn batch_deduplicates_tracking_variants_without_losing_job_identity() {
-        let mut seen = HashSet::new();
+    fn batch_retains_tracking_variants_without_losing_job_identity() {
+        let mut seen = BatchSeen::default();
         let mut page = json!({"results":[
             {"url":"https://example.org/job?id=1&utm_source=first"},
             {"url":"https://example.org/job?id=1&utm_source=second"},
@@ -1121,12 +1139,14 @@ mod tests {
             {"url":"https://example.org/job?id=1&ref=other"}
         ]});
         assert!(!retain_batch_budget(&mut page, &mut seen));
-        assert_eq!(page["results"].as_array().unwrap().len(), 4);
+        assert_eq!(page["results"].as_array().unwrap().len(), 5);
         assert_eq!(
             page["results"][0]["url"],
             "https://example.org/job?id=1&utm_source=first"
         );
-        assert_eq!(page["tracking_equivalent_omitted"], 1);
+        assert_eq!(page["possible_tracking_variants"], 1);
+        assert_eq!(page["results"][1]["possible_tracking_variant"], true);
+        assert!(page["results"][2]["possible_tracking_variant"].is_null());
     }
 
     #[test]

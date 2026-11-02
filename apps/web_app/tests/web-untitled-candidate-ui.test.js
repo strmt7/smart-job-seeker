@@ -17,3 +17,5 @@ assert.ok(attributed.children.some(item=>item.textContent.includes('one, two')))
 assert.ok(attributed.children.some(item=>item.textContent.includes('2026-10-02') && item.textContent.includes('may conflict')));
 assert.ok(attributed.children.some(item=>item.textContent.includes('additional entries may be omitted')));
 console.log('Untitled candidate UI checks passed.');
+const variant=render({url:'https://example.org/job?utm_source=other',title:'Role',snippet:'',possible_tracking_variant:true});
+assert.ok(variant.children.some(item=>item.textContent.includes('Compare both listings')));

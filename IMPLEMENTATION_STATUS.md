@@ -1914,3 +1914,12 @@ those parameters substantive meaning could have a distinct link suppressed.
 It does not establish that different domains advertise different jobs or prevent
 all duplicate applications. Fictional batch and coverage tests passed, as did
 web Clippy; no live provider or application was contacted in this check.
+
+The tracking-variant search heuristic was revised after recognizing that a site
+may use a tracking-looking parameter to identify a different role. New batches
+keep the original variants as separately selectable candidates and label later
+variants for comparison; exact repeated URLs remain deduplicated. These variants
+count toward the existing 600-link cap. Previously completed batches cannot
+recover links omitted by the earlier implementation; their coverage notice now
+identifies that earlier omission. Fictional batch and UI checks and web Clippy
+passed. No live provider or application was contacted in this check.

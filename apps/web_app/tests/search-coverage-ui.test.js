@@ -40,4 +40,5 @@ assert.match(bounded.children[2].text,/one, two.*engine list limited.*2026-10-01
 assert.equal(repeated({previously_seen:1}),null);
 console.log('Search coverage UI checks passed.');
 
-assert.match(render({results_examined:4,tracking_equivalent_omitted:1,unresponsive_engines:0}), /1 repeated links after removing common tracking parameters/);
+assert.match(render({results_examined:4,possible_tracking_variants:1,unresponsive_engines:0}), /1 potentially related links kept for review/);
+assert.match(render({results_examined:4,tracking_equivalent_omitted:1,unresponsive_engines:0}), /1 links were omitted by an earlier tracking comparison/);
