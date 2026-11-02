@@ -2710,7 +2710,7 @@ fn serve(
                         if !input.candidates.iter().any(|(id, _)| id == candidate) {
                             return Err("Candidate changed; search again".into());
                         }
-                        let reason=format!("Local AI flagged a possible duplicate (review required): {}. Listing excerpts: {} / {}",item["reason"].as_str().unwrap_or(""),item["target_excerpt"].as_str().unwrap_or(""),item["candidate_excerpt"].as_str().unwrap_or(""));
+                        let reason=format!("Local AI flagged a possible duplicate; its explanation may be inaccurate. Compare both complete listings: {}. Listing excerpts: {} / {}",item["reason"].as_str().unwrap_or(""),item["target_excerpt"].as_str().unwrap_or(""),item["candidate_excerpt"].as_str().unwrap_or(""));
                         flagged.push((candidate.to_owned(), reason));
                     }
                     let added = ws.add_ai_duplicates(&job, &flagged).map_err(|e| {

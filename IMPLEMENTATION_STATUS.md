@@ -1,3 +1,7 @@
+## Duplicate explanation evaluation — 2026-11-02
+
+- In a fictional three-candidate comparison without requisition IDs, `qwen3.5:9b` flagged the similar Berlin research role and omitted a different role and Munich role, but incorrectly described the different titles as identical. The duplicate-search prompt now asks the model to distinguish similar wording from identical wording, and newly saved AI duplicate reasons explicitly warn that explanations can be inaccurate. On one repeat the same candidates were selected, but the explanation still contained contradictory wording about the titles; the prompt change does not solve this model limitation. Users must compare both complete listings. The live regression, duplicate-search tests (11 passed, 8 ignored) and Windows web Clippy passed; the test-owned model was unloaded. No application was submitted.
+
 ## Form experience context — 2026-11-02
 
 - The form-mapping model wrapper now independently excludes disabled, unreviewed, unsupported-version and undated experiences before applying its ten-item limit. Normal workspace selection already enforced these conditions; this closes an assumption at the wrapper boundary and prevents rejected records from consuming the limit. Fictional context tests passed (5 passed, 7 ignored), as did Windows web Clippy. No local model or application was used in this check.
