@@ -638,6 +638,16 @@ pub fn start_bound(
                     && page
                         .walls
                         .iter()
+                        .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
+                {
+                    (
+                        "Fields appeared during loading but are no longer visible; inspect the entire application again.".to_owned(),
+                        true,
+                    )
+                } else if page.schema.fields.is_empty()
+                    && page
+                        .walls
+                        .iter()
                         .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW)
                 {
                     (

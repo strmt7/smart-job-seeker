@@ -5530,6 +5530,25 @@ fn retain_observed_walls(previous: Vec<String>, next: &mut LiveForm) {
     }
 }
 
+pub const DYNAMIC_FIELD_LOSS_REVIEW: &str = "a custom control needs manual review: Fields seen during page loading disappeared; inspect the entire application again";
+
+fn retain_loading_observations(previous: LiveForm, next: &mut LiveForm) {
+    if previous.schema.fields.iter().any(|field| {
+        !next
+            .schema
+            .fields
+            .iter()
+            .any(|current| current.selector == field.selector)
+    }) && !next
+        .walls
+        .iter()
+        .any(|wall| wall == DYNAMIC_FIELD_LOSS_REVIEW)
+    {
+        next.walls.push(DYNAMIC_FIELD_LOSS_REVIEW.into());
+    }
+    retain_observed_walls(previous.walls, next);
+}
+
 impl BrowserDriver for CdpDriver {
     fn current_url(&mut self) -> Result<String, DriverError> {
         CdpDriver::current_url(self)
@@ -5587,7 +5606,7 @@ impl BrowserDriver for CdpDriver {
                 );
                 let mut next = self.inspect_with_retry()?;
                 let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
-                retain_observed_walls(result.walls, &mut next);
+                retain_loading_observations(result, &mut next);
                 result = next;
                 if stable {
                     break;
@@ -6831,6 +6850,44 @@ mod traversal_tests {
             &mut next,
         );
         assert_eq!(next.walls, vec!["other wall", "captcha present"]);
+    }
+
+    #[test]
+    fn loading_field_loss_remains_visible_after_recovery() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
+        let page = |selectors: &[&str]| LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: selectors
+                    .iter()
+                    .map(|selector| FormField {
+                        selector: (*selector).into(),
+                        label: "Field".into(),
+                        field_type: FormFieldType::Text,
+                        required: true,
+                        sensitive: false,
+                        editing_mode: None,
+                        max_length_utf16: None,
+                        min_length_utf16: None,
+                        pattern: None,
+                        autocomplete: None,
+                    })
+                    .collect(),
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let mut grown = page(&["#a", "#b"]);
+        retain_loading_observations(page(&["#a"]), &mut grown);
+        assert!(grown.walls.is_empty());
+        let mut disappeared = page(&["#b"]);
+        retain_loading_observations(grown, &mut disappeared);
+        assert_eq!(disappeared.walls, vec![DYNAMIC_FIELD_LOSS_REVIEW]);
+        let mut recovered = page(&["#a", "#b"]);
+        retain_loading_observations(disappeared, &mut recovered);
+        assert_eq!(recovered.walls, vec![DYNAMIC_FIELD_LOSS_REVIEW]);
     }
 
     #[test]

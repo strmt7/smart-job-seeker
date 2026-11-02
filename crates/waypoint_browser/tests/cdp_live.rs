@@ -3583,6 +3583,24 @@ fn staged_form_is_inspected_until_the_schema_settles() {
 }
 
 #[test]
+#[ignore = "launches a local browser against a fictional changing form"]
+fn disappearing_loading_field_requires_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_disappearing_loading.html"))
+        .unwrap();
+    assert!(live.schema.fields.is_empty());
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser against a fictional delayed form"]
 fn delayed_form_is_inspected_without_clearing_review_walls() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

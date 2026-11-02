@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><body>
+<form id="application"></form>
+<script>
+setTimeout(() => {
+  document.querySelector('#application').innerHTML =
+    '<label for="first">First name</label><input id="first" required>';
+}, 400);
+setTimeout(() => {
+  document.querySelector('#application').replaceChildren();
+}, 1200);
+</script>
+</body></html>

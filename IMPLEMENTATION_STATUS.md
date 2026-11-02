@@ -2024,3 +2024,14 @@ check also reported obstacles and required manual review. This variation is not
 enough to establish its cause or reliable Workable support. No candidate details
 were entered and no application was submitted. This observation does not verify
 filling, visual verification or multi-step completion.
+
+### Fields disappearing during initial loading (2026-11-02)
+
+When an initially empty page is inspected again during its bounded loading
+window, fields that disappear between snapshots now create a persistent manual
+review reason. The latest snapshot remains authoritative for fill targets; an
+earlier field is not reused. If no fields remain, the application check reports
+the disappearance rather than stating simply that none were detected. A unit
+test covers field growth, loss and recovery, and a fictional local browser
+fixture reproduces loss during loading. This does not establish the cause of the
+varying Workable observations or detect changes outside the loading window.
