@@ -5182,6 +5182,15 @@ fn serve(
             {
                 return Err("Open an unambiguous, labelled choice before requesting advice".into());
             }
+            if let Some(advice) = choice_advice::exact_advice(answer, &matches[0].options)? {
+                current.created = Instant::now();
+                json_reply(
+                    stream,
+                    "200 OK",
+                    json!({"status":"complete","session_id":current.id,"radio":false,"advice":advice,"method":"exact"}),
+                );
+                return Ok(());
+            }
             let model = resident_model()?.ok_or(
                 "No single fully GPU-resident Ollama model is available within the 14 GiB budget",
             )?;

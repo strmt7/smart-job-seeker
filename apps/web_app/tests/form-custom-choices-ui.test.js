@@ -22,8 +22,8 @@ const api = async (path, body) => {
   if(path==='/api/form/custom-choices'){assert.equal(body.session_id,'session');return inventory;}
   if(path==='/api/form/control-vision-pending')return {active:false};
   if(path==='/api/form/custom-choice-advice-pending')return {active:false};
-  if(path==='/api/form/custom-choice-advice-start'){assert.equal(body.answer,'I prefer Berlin');return {task_id:'advice'};}
-  if(path==='/api/form/custom-choice-advice-status')return {status:'complete',session_id:'session',advice:{option:'Berlin',evidence:'Berlin'}};
+  if(path==='/api/form/custom-choice-advice-start'){if(body.answer==='Berlin')return {status:'complete',session_id:'session',radio:false,method:'exact',advice:{option:'Berlin',evidence:'Berlin'}};assert.equal(body.answer,'I prefer Berlin');return {task_id:'advice'};}
+  if(path==='/api/form/custom-choice-advice-status')return {status:'complete',session_id:'session',radio:false,advice:{option:'Berlin',evidence:'Berlin'}};
   if(path==='/api/form/custom-choice-option-vision-start'){assert.equal(body.selector,'#location');assert.equal(body.option,'Berlin');return {task_id:'option-vision'};}
   if(path==='/api/form/custom-choice-vision-start'){assert.equal(body.selector,'#location');assert.equal(body.snapshot_digest,inventory.snapshot_digest);return {task_id:'vision'};}
   if(path==='/api/form/control-vision-status')return body.task_id==='option-vision'?{status:'complete',rank_task_id:'custom-choice-option',session_id:'session',label:'Berlin',comparison:'label_observed',capture_saved:true,result_saved:true}:{status:'complete',choice:true,session_id:'session',label:'Job location',comparison:'label_observed',capture_saved:true,result_saved:true};
@@ -55,6 +55,7 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   answer.value='I prefer Berlin';await suggest.listeners.click();
   assert.match(advice.children[0].text,/Berlin/);assert.equal(stored.size,0);
   assert.match(advice.children[1].text,/I prefer Berlin/);await advice.children[3].listeners.click();assert.match(optionRow.children[1].textContent,/observed this option/);
+  const beforeExact=calls.filter(path=>path==='/api/form/custom-choice-advice-status').length;answer.value='Berlin';await suggest.listeners.click();assert.match(advice.children[0].text,/Berlin/);assert.equal(calls.filter(path=>path==='/api/form/custom-choice-advice-status').length,beforeExact);assert.equal(stored.size,0);
   answer.value='I prefer Lisbon';answer.listeners.input();assert.equal(advice.children.length,0);
   const actionCalls=[];
   const closed={choices:[{label:'Job location',selector:'#location',expanded:false,options:[]}],incomplete:false,snapshot_digest:'b'.repeat(64),can_open:true};

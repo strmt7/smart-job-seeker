@@ -630,6 +630,14 @@ mod tests {
         for option in ["Missing", "Duplicate"] {
             assert!(request(&mut ws, &mut session, "/api/form/custom-choice-option-vision-start", json!({"session_id":"choice-session","selector":selector,"option":option,"snapshot_digest":digest})).is_err());
         }
+        let exact = request(&mut ws, &mut session, "/api/form/custom-choice-advice-start", json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest,"answer":" Berlin "})).unwrap();
+        assert_eq!(exact["status"], "complete");
+        assert_eq!(exact["method"], "exact");
+        assert_eq!(exact["radio"], false);
+        assert_eq!(exact["advice"]["option"], "Berlin");
+        assert!(exact["task_id"].is_null());
+        assert!(request(&mut ws, &mut session, "/api/form/custom-choice-advice-start", json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest,"answer":"Duplicate"})).is_err());
+        assert!(request(&mut ws, &mut session, "/api/form/custom-choice-advice-start", json!({"session_id":"choice-session","selector":selector,"snapshot_digest":"0".repeat(64),"answer":"Berlin"})).is_err());
         let advice_task = if std::env::var("WAYPOINT_CHOICE_ADVICE_LIVE").as_deref() == Ok("1") {
             request(&mut ws, &mut session, "/api/form/custom-choice-advice-start", json!({"session_id":"choice-session","selector":selector,"snapshot_digest":digest,"answer":"I prefer Berlin"})).unwrap()["task_id"].as_str().unwrap().to_owned()
         } else {
