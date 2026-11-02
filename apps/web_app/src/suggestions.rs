@@ -100,6 +100,24 @@ fn normalize_field_name(text: &str) -> String {
         .collect()
 }
 
+pub(crate) fn credential_autocomplete(
+    field: &waypoint_applications::form_mapping::FormField,
+) -> bool {
+    field.autocomplete.as_deref().is_some_and(|hint| {
+        hint.split_ascii_whitespace().any(|token| {
+            [
+                "webauthn",
+                "username",
+                "current-password",
+                "new-password",
+                "one-time-code",
+            ]
+            .iter()
+            .any(|credential| token.eq_ignore_ascii_case(credential))
+        })
+    })
+}
+
 pub(crate) fn missing_full_name_for_form(schema: &FormSchema, profile: &Value) -> bool {
     let missing = profile
         .get("full_name")
@@ -312,7 +330,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
     let profile = profile.as_object().ok_or("Profile must be an object")?;
     let mut result = Vec::new();
     for field in &schema.fields {
-        if field.sensitive || names_third_party(&field.label) {
+        if field.sensitive || credential_autocomplete(field) || names_third_party(&field.label) {
             continue;
         }
         let keys: Vec<_> = profile
@@ -431,13 +449,27 @@ pub fn suggest_with_review(
             HashSet::new(),
         ));
     }
+    let mut model_review_selectors: HashSet<String> = schema
+        .fields
+        .iter()
+        .filter(|field| credential_autocomplete(field))
+        .map(|field| field.selector.clone())
+        .collect();
+    let credential_count = model_review_selectors.len();
     let fields: Vec<_> = schema
         .fields
         .iter()
-        .filter(|field| !field.sensitive)
+        .filter(|field| !field.sensitive && !credential_autocomplete(field))
         .collect();
     if fields.is_empty() {
-        return Ok((vec![], vec![], HashSet::new()));
+        let warnings = if credential_count > 0 {
+            vec![format!(
+                "{credential_count} sign-in or authentication field(s) need manual review"
+            )]
+        } else {
+            vec![]
+        };
+        return Ok((vec![], warnings, model_review_selectors));
     }
     let mut selectors = HashSet::new();
     if schema
@@ -450,7 +482,6 @@ pub fn suggest_with_review(
     let mut mappings = Vec::new();
     let mut invalid_selectors = HashSet::new();
     let mut repairable_selectors = HashSet::new();
-    let mut model_review_selectors = HashSet::new();
     let mut unclassified_selectors = HashSet::new();
     let mut unidentified = false;
     let mut failed_batches = 0usize;
@@ -805,6 +836,11 @@ pub fn suggest_with_review(
         }
     }
     let mut warnings = Vec::new();
+    if credential_count > 0 {
+        warnings.push(format!(
+            "{credential_count} sign-in or authentication field(s) need manual review"
+        ));
+    }
     if failed_batches > 0 {
         warnings.push(format!("{failed_batches} form mapping batch(es) could not be interpreted; affected fields may need manual review"));
     }
@@ -1122,6 +1158,7 @@ fn validate_suggestions(
                 .iter()
                 .find(|field| field.selector == selector)?;
             if field.sensitive
+                || credential_autocomplete(field)
                 || names_third_party(&field.label)
                 || !AUTOFILL_PROFILE_FIELDS.contains(&key)
                 || address_line_component(field).is_some_and(|component| component != key)
@@ -1812,6 +1849,46 @@ mod tests {
             validate_suggestions(&schema, profile.as_object().unwrap(), &correct).unwrap();
         assert_eq!(accepted.len(), 4);
         assert!(invalid.is_empty());
+    }
+
+    #[test]
+    fn credential_autocomplete_stays_for_manual_review_even_with_email_label() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        let field = &mut schema.fields[0];
+        field.label = "Email".into();
+        field.field_type = FormFieldType::Email;
+        field.autocomplete = Some("section-login email WEBAUTHN".into());
+        let profile = json!({"email":"avery@example.invalid"});
+        assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+        let forged = json!({"mappings":[{"selector":"#candidate","profile_key":"email"}]});
+        let (mappings, invalid, _) =
+            validate_suggestions(&schema, profile.as_object().unwrap(), &forged).unwrap();
+        assert!(mappings.is_empty());
+        assert!(invalid.contains("#candidate"));
+        let mut inference = FakeInference {
+            response: json!({}),
+            last_prompt: String::new(),
+        };
+        let (mappings, warnings, review) =
+            suggest_with_review(&mut inference, &schema, &profile).unwrap();
+        assert!(mappings.is_empty());
+        assert!(review.contains("#candidate"));
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("authentication")));
+        assert!(inference.last_prompt.is_empty());
+        for token in [
+            "username",
+            "current-password",
+            "new-password",
+            "one-time-code",
+        ] {
+            schema.fields[0].autocomplete = Some(token.into());
+            assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+        }
+        schema.fields[0].autocomplete = Some("email".into());
+        assert_eq!(suggest_exact(&schema, &profile).unwrap().len(), 1);
     }
 
     #[test]

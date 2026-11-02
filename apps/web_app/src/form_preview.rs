@@ -948,7 +948,16 @@ fn build_preview(
     if live.schema.multi_step {
         manual_review.push("A possible multi-step application was detected. Inspect each section manually; later steps and submission status are unknown".into());
     }
-    let mut model_review_selectors = std::collections::HashSet::new();
+    let mut model_review_selectors: std::collections::HashSet<String> = live
+        .schema
+        .fields
+        .iter()
+        .filter(|field| crate::suggestions::credential_autocomplete(field))
+        .map(|field| field.selector.clone())
+        .collect();
+    if !model_review_selectors.is_empty() {
+        manual_review.push("Sign-in or authentication fields require manual review.".into());
+    }
     let mut suggestions = if !blocked {
         let mapped = match inference {
             Some(inference) => {
@@ -958,7 +967,7 @@ fn build_preview(
         };
         match mapped {
             Ok((items, warnings, model_review)) => {
-                model_review_selectors = model_review;
+                model_review_selectors.extend(model_review);
                 manual_review.extend(warnings);
                 items
             }
@@ -1117,6 +1126,45 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn authentication_hint_is_reviewed_without_a_model() {
+        let field = waypoint_applications::form_mapping::FormField {
+            selector: "#login".into(),
+            label: "Email".into(),
+            field_type: FormFieldType::Email,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some("email webauthn".into()),
+        };
+        let live = LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![field],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let preview = suggest_without_model(
+            live,
+            &json!({"email":"avery@example.invalid"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        assert!(preview.suggestions.is_empty());
+        assert!(preview.model_review_selectors.contains("#login"));
+        assert!(preview.fields_for_review()[0].sensitive);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("authentication")));
+    }
 
     #[test]
     fn phone_picker_requires_manual_review_without_affecting_other_fields() {
