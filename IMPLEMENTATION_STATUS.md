@@ -2417,6 +2417,18 @@ when the source provides no unique byte. On ten first-page objects of this
 résumé, the change did not alter which stream edits matched (three before and
 after); it is not a demonstrated fix for the remaining résumé failures.
 
+### Post-fill form changes (2026-11-02)
+
+After filling reviewed answers and checking their retained values, Waypoint now
+inspects the current form again. A changed origin, field inventory, step
+structure or review-relevant wall makes the fill incomplete and flags the job
+for manual review through the existing failure path. Answers already entered
+are not rolled back. A fictional driver test exercises a required field that
+appears after filling; a separate local-browser fixture confirms an unchanged
+form still fills without submission. This is a point-in-time inspection, not a
+guarantee against later asynchronous page changes, and has not been tested on
+a live employer form.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the

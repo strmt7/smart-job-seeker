@@ -656,7 +656,26 @@ pub fn apply_reviewed_text_fields_with_replacements(
         verify_filled_field(driver, preview, &mapping.field_selector)
             .map_err(|error| format!("After filling, {error}"))?;
     }
+    verify_postfill_structure(driver, preview)?;
     Ok(preview.suggestions.len())
+}
+
+fn verify_postfill_structure(
+    driver: &mut dyn BrowserDriver,
+    preview: &FormPreview,
+) -> Result<(), String> {
+    let fresh = driver.inspect_current().map_err(|error| {
+        format!("After filling, the form could not be inspected; review it manually: {error}")
+    })?;
+    if fresh.origin != preview.schema.origin
+        || fresh.schema != preview.schema
+        || !same_reviewable_walls(preview, &fresh.walls)
+    {
+        return Err(
+            "The form changed after filling; inspect the new fields and review it again".into(),
+        );
+    }
+    Ok(())
 }
 
 fn execute_and_verify_field(
@@ -1157,6 +1176,7 @@ mod tests {
         struct FixtureDriver {
             live: LiveForm,
             written: String,
+            reveal_on_fill: bool,
         }
         impl BrowserDriver for FixtureDriver {
             fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
@@ -1172,6 +1192,12 @@ mod tests {
                 } = command
                 {
                     self.written = value.clone();
+                    if self.reveal_on_fill {
+                        let mut extra = self.live.schema.fields[0].clone();
+                        extra.selector = "#additional".into();
+                        extra.label = "Additional question".into();
+                        self.live.schema.fields.push(extra);
+                    }
                     Ok(())
                 } else {
                     Err(DriverError("unexpected command".into()))
@@ -1238,6 +1264,7 @@ mod tests {
                 walls: vec![],
             },
             written: String::new(),
+            reveal_on_fill: true,
         };
         let intent = IntentId::new("fixture-route").unwrap();
         let packet = Sha256Digest::of("fictional profile");
@@ -1284,8 +1311,70 @@ mod tests {
         assert!(!grant.consumed);
         let fetcher = waypoint_workspace::StaticFetcher::default().route(board, &body);
         ws.discover(&target, &fetcher, 103);
-        assert_eq!(attempt(&mut ws, &mut driver, &mut grant).unwrap(), 1);
+        let error = attempt(&mut ws, &mut driver, &mut grant).unwrap_err();
+        assert!(error.contains("form changed after filling"), "{error}");
         assert_eq!(driver.written, "Fictional");
+        assert!(grant.consumed);
+    }
+
+    #[test]
+    fn postfill_inspection_requires_review_for_new_fields_and_walls() {
+        struct InspectDriver(LiveForm);
+        impl BrowserDriver for InspectDriver {
+            fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
+                unreachable!()
+            }
+            fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
+                Ok(self.0.clone())
+            }
+            fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+                panic!("inspection must not write")
+            }
+            fn commit(&mut self) -> Result<SiteAck, DriverError> {
+                panic!("inspection must not submit")
+            }
+        }
+        let schema = FormSchema {
+            origin: "https://example.invalid".into(),
+            fields: vec![],
+            multi_step: false,
+            steps: 1,
+        };
+        let preview = FormPreview {
+            schema: schema.clone(),
+            suggestions: vec![],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut driver = InspectDriver(LiveForm {
+            origin: schema.origin.clone(),
+            schema,
+            walls: vec![],
+        });
+        assert!(verify_postfill_structure(&mut driver, &preview).is_ok());
+        driver
+            .0
+            .schema
+            .fields
+            .push(waypoint_applications::form_mapping::FormField {
+                selector: "#new".into(),
+                label: "New required question".into(),
+                field_type: FormFieldType::Text,
+                required: true,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: None,
+                min_length_utf16: None,
+                pattern: None,
+                autocomplete: None,
+            });
+        assert!(verify_postfill_structure(&mut driver, &preview).is_err());
+        driver.0.schema = preview.schema.clone();
+        driver
+            .0
+            .walls
+            .push("a required custom control needs manual review".into());
+        assert!(verify_postfill_structure(&mut driver, &preview).is_err());
     }
 
     #[test]
