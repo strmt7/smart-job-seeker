@@ -57,7 +57,10 @@ fn report_inspected_page(mut message: String, inspected_url: Option<String>) -> 
 
 /// Preserve only a validated HTTP status from a driver error. Other browser
 /// errors may contain URLs or sensitive query parameters and stay generic.
-fn navigation_failure(stage: &str, error: &waypoint_applications::driver::DriverError) -> String {
+pub(crate) fn navigation_failure(
+    stage: &str,
+    error: &waypoint_applications::driver::DriverError,
+) -> String {
     let status = error
         .0
         .strip_prefix("The page returned HTTP ")

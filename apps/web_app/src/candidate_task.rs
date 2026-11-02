@@ -1760,6 +1760,15 @@ pub(crate) fn redirect_review_destination(metadata: &Value) -> Option<String> {
     Some(reached.into())
 }
 
+fn open_listing(
+    browser: &mut dyn BrowserDriver,
+    url: &str,
+) -> Result<waypoint_applications::driver::LiveForm, String> {
+    browser
+        .open(url)
+        .map_err(|error| crate::application_check::navigation_failure("listing page", &error))
+}
+
 pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(), String> {
     let search_context = match search_context {
         Some(context) => crate::candidate_selection::search_context(&context)?,
@@ -1783,7 +1792,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
             waypoint_net::resolve_public(&parsed).map_err(|e| e.to_string())?;
             let mut browser =
                 waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
-            let page = browser.open(&url).map_err(|e| e.to_string())?;
+            let page = open_listing(&mut browser, &url)?;
             let frame_warnings = listing_embedded_warnings(&page.walls)?;
             let current = browser.current_url().map_err(|e| e.to_string())?;
             let original = url::Url::parse(&url).map_err(|_| "Invalid URL")?;
@@ -2041,6 +2050,32 @@ mod tests {
             listing_email_contacts(None, Some(&long)).unwrap()["listing_text_status"],
             "truncated"
         );
+    }
+
+    #[test]
+    #[ignore = "starts a browser against a fictional local HTTP error page"]
+    fn listing_open_reports_missing_page_without_claiming_closure() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let body = "<html><body><input name='email'></body></html>";
+            let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        });
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let error =
+            open_listing(&mut browser, &format!("http://127.0.0.1:{port}/fixture")).unwrap_err();
+        assert!(error.contains("HTTP 404"), "{error}");
+        assert!(
+            error.contains("does not establish whether the vacancy is closed"),
+            "{error}"
+        );
+        assert!(!error.contains("/fixture"));
+        drop(browser);
+        server.join().unwrap();
     }
 
     #[test]
