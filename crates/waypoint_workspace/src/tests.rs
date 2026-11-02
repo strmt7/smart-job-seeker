@@ -408,31 +408,58 @@ fn discovery_persists_parses_and_dedups_across_runs() {
 }
 
 #[test]
+fn same_requisition_from_different_sources_does_not_overwrite_job() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let lever = parse_payload("lever", "shared", r#"[{"id":"same-id","text":"Backend Engineer","hostedUrl":"https://jobs.lever.co/shared/same-id","categories":{"location":"Berlin"}}]"#).unwrap().remove(0);
+    let ashby = parse_payload("ashby", "shared", r#"{"jobs":[{"id":"same-id","title":"Data Engineer","jobUrl":"https://jobs.ashbyhq.com/shared/same-id","location":"Berlin"}]}"#).unwrap().remove(0);
+    let mut outcome = DiscoveryOutcome::default();
+    ws.persist_posting(&lever, 100, &mut outcome).unwrap();
+    let mut existing = ws.jobs().unwrap().remove(0);
+    existing.state = ApplicationState::Shortlisted;
+    ws.store.upsert_job(&existing).unwrap();
+    ws.persist_posting(&ashby, 101, &mut outcome).unwrap();
+    ws.persist_posting(&ashby, 102, &mut outcome).unwrap();
+    let jobs = ws.jobs().unwrap();
+    assert_eq!(jobs.len(), 2);
+    let lever_job = jobs.iter().find(|job| job.source == "lever").unwrap();
+    let ashby_job = jobs.iter().find(|job| job.source == "ashby").unwrap();
+    assert_eq!(lever_job.title, "Backend Engineer");
+    assert_eq!(lever_job.state, ApplicationState::Shortlisted);
+    assert_eq!(ashby_job.title, "Data Engineer");
+    assert_ne!(lever_job.id, ashby_job.id);
+    assert_eq!(ashby_job.last_seen.as_deref(), Some("102"));
+    assert_eq!(outcome.inserted, 2);
+    assert_eq!(outcome.unchanged, 1);
+}
+
+#[test]
 fn changed_posting_content_creates_a_new_observation_not_a_duplicate() {
     let mut ws = Workspace::in_memory().unwrap();
     let f1 = fetcher_all();
     ws.discover(&targets(), &f1, 1_758_900_000);
 
-    // Same requisition id 401, revised title → new observation, same job row.
+    // Same listing id 401, revised title → new observation, same job row.
     let f2 = StaticFetcher::default().route(GH_URL, &greenhouse_payload("Senior Backend Engineer"));
     let second = ws.discover(
         &[DiscoveryTarget::new("greenhouse", "vercel")],
         &f2,
         1_758_906_400,
     );
-    assert_eq!(second.updated, 1, "only req 401's content changed");
-    assert_eq!(second.unchanged, 1, "req 402 is byte-identical");
+    assert_eq!(second.updated, 1, "only listing 401's content changed");
+    assert_eq!(second.unchanged, 1, "listing 402 is byte-identical");
     assert_eq!(
         ws.job_count().unwrap(),
         4,
-        "identity is the requisition, not the text"
+        "identity is the listing identifier, not the text"
     );
 
     let all = ws.jobs().unwrap();
     let j401 = all
         .iter()
-        .find(|j| j.requisition_id.as_deref() == Some("401"))
-        .expect("req 401 present");
+        .find(|j| {
+            j.canonical_url.as_deref() == Some("https://boards.greenhouse.io/vercel/jobs/401")
+        })
+        .expect("listing 401 present");
     assert_eq!(j401.title, "Senior Backend Engineer");
     assert_eq!(j401.last_seen.as_deref(), Some("1758906400"));
 }
@@ -447,7 +474,9 @@ fn re_discovery_never_regresses_an_advanced_application() {
         .jobs()
         .unwrap()
         .into_iter()
-        .find(|j| j.requisition_id.as_deref() == Some("401"))
+        .find(|j| {
+            j.canonical_url.as_deref() == Some("https://boards.greenhouse.io/vercel/jobs/401")
+        })
         .unwrap()
         .id;
     assert!(ws.set_state(&id, ApplicationState::Shortlisted).unwrap());

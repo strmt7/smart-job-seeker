@@ -1052,12 +1052,24 @@ impl Workspace {
             },
             &posting.source_url,
         );
-        let id = match JobIdentityId::new(key) {
+        let scoped_key = format!(
+            "source-scoped::{}",
+            sha256_hex(format!("{}:{}{}", posting.source.len(), posting.source, key).as_bytes())
+        );
+        let primary = match JobIdentityId::new(key) {
             Ok(id) => id,
             Err(_) => {
                 outcome.rejected_urls += 1;
                 return Ok(false);
             }
+        };
+        let scoped = JobIdentityId::new(scoped_key).expect("nonempty derived identity");
+        let primary_job = self.store.get_job(&primary)?;
+        let id = match primary_job.as_ref() {
+            Some(job) if job.source == posting.source => primary,
+            Some(_) => scoped,
+            None if self.store.get_job(&scoped)?.is_some() => scoped,
+            None => primary,
         };
         // Content hash covers the posting's *content* (with the source ref for
         // provenance), so "same requisition, changed title/location" is

@@ -2077,3 +2077,14 @@ including on changed listings. Fictional multi-source rediscovery and
 shortlisted-job tests passed. Last seen means the listing was observed in the
 source response; it does not establish that an application page is open or that
 the role remains available.
+
+### Source-local identifier collisions (2026-11-02)
+
+When two sources produce the same employer namespace and requisition key,
+discovery now keeps the second source in a separate, stable source-scoped
+record instead of overwriting the first. Subsequent observations reuse that
+record; possible duplicates still go through the existing review process. A
+fictional Lever/Ashby collision test covers rediscovery and preservation of a
+shortlisted state. Existing records already overwritten by an earlier collision
+are not reconstructed. This does not establish that every cross-source duplicate
+will be detected.
