@@ -1851,3 +1851,11 @@ expected mapping. Invalid suggestions with a recognized autocomplete component
 now show the component in their review message; a hint does not prove whose
 information the field requests. Focused suggestion tests and web Clippy passed;
 the model was unloaded. No application was submitted.
+
+A follow-up fixed a regression introduced by the detailed invalid-suggestion
+message: after a user entered a replacement, the old review-refresh logic did
+not recognize the expanded warning and left it active. The message generator
+and refresh logic now share the same warning format; duplicate labels remain
+flagged until each matching field has an answer. The web-app suite passed 536
+tests (286 ignored) with two test threads, and web Clippy passed. This does not
+resolve the local model's national-phone mapping failure described above.

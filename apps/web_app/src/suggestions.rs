@@ -179,6 +179,19 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
     }
 }
 
+pub(crate) fn invalid_suggestion_warning(
+    field: &waypoint_applications::form_mapping::FormField,
+) -> String {
+    let prefix = format!(
+        "Invalid or duplicate suggestion needs review: {}",
+        field.label
+    );
+    match autocomplete_profile_key(field) {
+        Some(hint) => format!("{prefix}. The field has an autocomplete hint for {}; check the requested value and whose information it is.", hint.replace('_', " ")),
+        None => prefix,
+    }
+}
+
 fn is_preferred_name_label(label: &str) -> bool {
     let normalized = normalize_field_name(label);
     ["preferredname", "chosenname", "nickname", "nameyougoby"]
@@ -635,14 +648,7 @@ pub fn suggest_with_review(
                 field.label
             ));
         } else if invalid_selectors.contains(&field.selector) && !field.sensitive {
-            if let Some(hint) = autocomplete_profile_key(field) {
-                warnings.push(format!("Invalid or duplicate suggestion needs review: {}. The field has an autocomplete hint for {}; check the requested value and whose information it is.", field.label, hint.replace('_', " ")));
-            } else {
-                warnings.push(format!(
-                    "Invalid or duplicate suggestion needs review: {}",
-                    field.label
-                ));
-            }
+            warnings.push(invalid_suggestion_warning(field));
         }
     }
     if unidentified

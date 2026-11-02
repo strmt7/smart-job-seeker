@@ -896,9 +896,33 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
         if field_warnings.contains(reason) {
             return false;
         }
+        // Match the entire generated warning to a field, then require every
+        // same-label field to be answered before clearing it.
+        if let Some(field) = preview.schema.fields.iter().find(|field| {
+            *reason == crate::suggestions::invalid_suggestion_warning(field)
+                || *reason
+                    == format!(
+                        "Invalid or duplicate suggestion needs review: {}",
+                        field.label
+                    )
+        }) {
+            let all_answered = preview
+                .schema
+                .fields
+                .iter()
+                .filter(|other| other.label == field.label)
+                .all(|other| {
+                    preview
+                        .suggestions
+                        .iter()
+                        .any(|mapping| mapping.field_selector == other.selector)
+                });
+            if all_answered {
+                return false;
+            }
+        }
         for prefix in [
             "Conflicting suggestions need review: ",
-            "Invalid or duplicate suggestion needs review: ",
             "Suggested value exceeds field limit: ",
             "Suggested value is shorter than field minimum: ",
         ] {
@@ -2630,10 +2654,8 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason == "Required field needs review: First name"));
-        assert!(preview
-            .manual_review
-            .iter()
-            .any(|reason| reason == "Invalid or duplicate suggestion needs review: First name"));
+        assert!(preview.manual_review.iter().any(|reason| reason
+            == &crate::suggestions::invalid_suggestion_warning(&preview.schema.fields[0])));
         preview.suggestions.push(ProposedMapping {
             field_selector: "#first".into(),
             value: PacketValue::Text("Example".into()),
@@ -4160,6 +4182,47 @@ mod tests {
             .manual_review
             .iter()
             .any(|item| item.contains("First name")));
+    }
+
+    #[test]
+    fn edited_hinted_field_clears_warning_only_after_all_duplicate_labels_are_answered() {
+        let field = |selector: &str| waypoint_applications::form_mapping::FormField {
+            selector: selector.into(),
+            label: "Phone number".into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some("tel-national".into()),
+        };
+        let fields = vec![field("#first"), field("#second")];
+        let warning = crate::suggestions::invalid_suggestion_warning(&fields[0]);
+        let mut preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields,
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![],
+            manual_review: vec![warning.clone()],
+            model_review_selectors: Default::default(),
+        };
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#first".into(),
+            value: PacketValue::Text("2025550123".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(preview.manual_review.contains(&warning));
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#second".into(),
+            value: PacketValue::Text("2025550123".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(!preview.manual_review.contains(&warning));
     }
 
     #[test]
