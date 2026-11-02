@@ -1,9 +1,9 @@
-<!doctype html><html><body><form id="form"><script>
+<!doctype html><html><body><form id="form"><label for="early">First name</label><input id="early"><script>
 let parent = document.getElementById('form');
-for (let index = 0; index < 35; index++) {
+for (let index = 0; index < 80; index++) {
   const section = document.createElement('div'), heading = document.createElement('h4');
   heading.textContent = 'Fictional section ' + index;
-  section.append(heading); for(let i=0; i<100; i++) section.append(document.createElement('span'));
+  section.append(heading); for(let i=0; i<25; i++) section.append(document.createElement('span'));
   parent.append(section); parent = section;
 }
 const label = document.createElement('label'); label.textContent = 'Email'; label.htmlFor = 'email';

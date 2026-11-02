@@ -9,7 +9,7 @@ waypoint_applications = { path = "../waypoint_applications" }
 waypoint_domain = { path = "../waypoint_domain" }
 waypoint_net = { path = "../waypoint_net" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["unbounded_depth"] }
 tungstenite = "0.30"
 
 [lints]

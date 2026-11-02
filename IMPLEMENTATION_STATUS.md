@@ -1992,3 +1992,22 @@ scan. Earlier fixture variants with 80 and 330 nested containers failed during
 DOM response decoding (the Rust JSON recursion limit and Chromium's protocol
 stack limit, respectively); those depths are not supported by this check. The
 focused browser fixture and browser Clippy passed. No application was submitted.
+
+### Moderately deeper form responses (2026-11-02)
+
+DOM replies that hit the default JSON recursion limit now receive one fallback
+parse on an 8 MiB stack after a string-aware 224-level nesting check; protocol
+messages remain capped at 16 MiB. Non-DOM replies retain the standard decoder.
+If a field's visibility cannot be established, the browser leaves that field
+out and reports manual review rather than discarding other inspected fields.
+In a fictional 80-container fixture, the shallower field was retained and the
+deeper field was reported unavailable. This does not overcome Chromium's own
+protocol stack limit observed at 330 containers, prove total memory bounds, or
+establish live-site behavior. Browser unit tests, focused browser checks and
+Clippy passed; no application was submitted.
+
+The required workspace checks were also run after enabling serde_json's
+`unbounded_depth` feature. `Cargo.lock` did not change. `cargo audit` reported
+three zip advisories and five denied warnings in the existing lockfile;
+`cargo deny check licenses bans sources` reported license failures while bans
+and sources passed. These workspace gates were not repaired in this change.

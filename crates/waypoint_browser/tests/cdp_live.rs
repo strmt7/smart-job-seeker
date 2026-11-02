@@ -878,7 +878,16 @@ fn deeply_nested_headings_report_context_budget() {
         .schema
         .fields
         .iter()
+        .any(|field| field.selector == "#early"));
+    assert!(!form
+        .schema
+        .fields
+        .iter()
         .any(|field| field.selector == "#email"));
+    assert!(form
+        .walls
+        .iter()
+        .any(|wall| wall == "an unavailable field needs manual review"));
     assert!(driver
         .trace
         .iter()

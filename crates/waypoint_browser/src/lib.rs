@@ -3857,7 +3857,17 @@ impl CdpDriver {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
                 let (rendered, path, available, needs_review, dialog_obscured) =
-                    self.control_visibility_and_path(control.node_id)?;
+                    match self.control_visibility_and_path(control.node_id) {
+                        Ok(result) => result,
+                        Err(error)
+                            if error.0
+                                == "Field visibility is unavailable; manual review is needed" =>
+                        {
+                            wall_flags.push("an unavailable field needs manual review".into());
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
                 if rendered && available {
                     css_paths.insert(control.node_id, path);
                     visible.push(control);

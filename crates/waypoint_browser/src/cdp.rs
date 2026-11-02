@@ -17,8 +17,77 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tungstenite::{Message, WebSocket};
+
+// Only the DOM reply may use the deeper decoder, and only after a lexical
+// nesting check. The separate bounded stack avoids exhausting the caller's
+// stack during parsing; other uses of Value still require the depth ceiling.
+const MAX_DOM_JSON_DEPTH: usize = 224;
+fn bounded_json_depth(raw: &str, limit: usize) -> bool {
+    let mut depth = 0usize;
+    let mut string = false;
+    let mut escaped = false;
+    for byte in raw.bytes() {
+        if string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                string = false;
+            }
+        } else {
+            match byte {
+                b'"' => string = true,
+                b'{' | b'[' => {
+                    depth += 1;
+                    if depth > limit {
+                        return false;
+                    }
+                }
+                b'}' | b']' => {
+                    let Some(next) = depth.checked_sub(1) else {
+                        return false;
+                    };
+                    depth = next;
+                }
+                _ => {}
+            }
+        }
+    }
+    !string && depth == 0
+}
+
+fn parse_protocol_message(raw: &str, allow_deeper_dom: bool) -> Result<Value, String> {
+    match serde_json::from_str(raw) {
+        Ok(value) => Ok(value),
+        Err(error)
+            if allow_deeper_dom && error.to_string().contains("recursion limit exceeded") =>
+        {
+            if raw.len() > MAX_PROTOCOL_MESSAGE || !bounded_json_depth(raw, MAX_DOM_JSON_DEPTH) {
+                return Err("browser response exceeds the bounded DOM nesting limit".into());
+            }
+            std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .name("waypoint-dom-decode".into())
+                    .stack_size(8 * 1024 * 1024)
+                    .spawn_scoped(scope, || {
+                        let mut decoder = serde_json::Deserializer::from_str(raw);
+                        decoder.disable_recursion_limit();
+                        let value = Value::deserialize(&mut decoder).map_err(|e| e.to_string())?;
+                        decoder.end().map_err(|e| e.to_string())?;
+                        Ok(value)
+                    })
+                    .map_err(|_| "could not start bounded DOM decoder".to_owned())?
+                    .join()
+                    .map_err(|_| "bounded DOM decoder failed".to_owned())?
+            })
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
 
 pub type Ws = WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
 const MAX_PROTOCOL_MESSAGE: usize = 16 * 1024 * 1024;
@@ -589,11 +658,12 @@ impl Cdp {
                 Ok(_) => continue,
                 Err(e) => return err(format!("{method}: read: {e}")),
             };
-            let value: Value = serde_json::from_str(&raw).map_err(|error| {
-                CdpError(format!(
-                    "{method}: invalid or too deeply nested browser response: {error}"
-                ))
-            })?;
+            let value =
+                parse_protocol_message(&raw, method == "DOM.getDocument").map_err(|error| {
+                    CdpError(format!(
+                        "{method}: invalid or too deeply nested browser response: {error}"
+                    ))
+                })?;
             if value.get("id").and_then(|v| v.as_u64()) == Some(id) {
                 if let Some(e) = value.get("error") {
                     return err(format!("{method}: protocol error {e}"));
@@ -647,6 +717,26 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deeper_dom_decoder_is_bounded_and_ignores_brackets_in_strings() {
+        let quoted = r#"{"value":"[{}] \" ["}"#;
+        assert!(bounded_json_depth(quoted, 1));
+        assert!(parse_protocol_message(quoted, true).is_ok());
+        let nested = format!("{}0{}", "[".repeat(160), "]".repeat(160));
+        assert!(parse_protocol_message(&nested, false).is_err());
+        assert!(parse_protocol_message(&nested, true).is_ok());
+        let excessive = format!(
+            "{}0{}",
+            "[".repeat(MAX_DOM_JSON_DEPTH + 1),
+            "]".repeat(MAX_DOM_JSON_DEPTH + 1)
+        );
+        assert!(parse_protocol_message(&excessive, true)
+            .unwrap_err()
+            .contains("nesting limit"));
+        assert!(!bounded_json_depth("[}", 224) || parse_protocol_message("[}", true).is_err());
+        assert!(!bounded_json_depth("[\"unterminated", 224));
+    }
 
     #[cfg(windows)]
     #[test]
