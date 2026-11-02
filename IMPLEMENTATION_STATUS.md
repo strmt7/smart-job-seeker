@@ -1091,6 +1091,11 @@ older listings for bounded rechecking. A fictional migration test covered the
 previously missed pair and conservative exclusions; the store suite passed
 (93 passed, 2 ignored), the focused SQLCipher test and web Clippy passed. No
 live-board duplicate accuracy or peak resources were measured.
+The bounded neighbor ranking used for duplicate review now applies the same
+location-aware title comparison. A fictional crowded-employer test verified
+that a relevant title with a long location suffix remains among 12 returned
+candidates; the result remains truncated and requires review. Duplicate tests
+passed (40 passed, 2 ignored), as did web Clippy. No live board was checked.
 
 The table below records a historical checkpoint, not current release evidence.
 

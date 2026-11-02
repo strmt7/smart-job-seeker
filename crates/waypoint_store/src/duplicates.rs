@@ -116,6 +116,13 @@ fn title_without_location<'a>(title: &'a str, location: &str) -> &'a str {
     core
 }
 
+fn job_title_score(a: &StoredJob, b: &StoredJob) -> u32 {
+    title_score(&a.title, &b.title).max(title_score(
+        title_without_location(&a.title, &a.location),
+        title_without_location(&b.title, &b.location),
+    ))
+}
+
 fn title_terms(title: &str) -> BTreeSet<String> {
     title
         .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
@@ -822,7 +829,6 @@ impl Store {
         let mut ranked: Vec<_> = counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         truncated |= ranked.len() > 12;
-        let source_title = source.as_ref().map(|job| job.title.as_str()).unwrap_or("");
         let prioritize = ranked.len() > 12;
         let mut result = Vec::new();
         let mut candidates = Vec::new();
@@ -833,7 +839,9 @@ impl Store {
                         result.push(job);
                         continue;
                     }
-                    let title = title_score(source_title, &job.title);
+                    let title = source
+                        .as_ref()
+                        .map_or(0, |source| job_title_score(source, &job));
                     let requisition = source_requisition.is_some_and(|source| {
                         job.requisition_id
                             .as_deref()
@@ -2459,6 +2467,46 @@ mod tests {
         }
         assert!(store.possible_duplicates().unwrap().is_empty());
     }
+    #[test]
+    fn crowded_neighbors_prioritize_title_with_matching_location_suffix() {
+        let mut store = Store::in_memory().unwrap();
+        let source = job("source", "Senior Platform Engineer", "Acme Research", None);
+        store.upsert_job(&source).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                [source.id.as_str()],
+            )
+            .unwrap();
+        for index in 0..20 {
+            let id = format!("candidate-{index:02}");
+            let mut candidate = job(&id, "Platform Engineer", "Acme Research", None);
+            if index == 19 {
+                candidate.title =
+                    "Senior Platform Engineer - Berlin, Germany, Central Europe".into();
+                candidate.location = "Berlin, Germany, Central Europe".into();
+                assert!(title_score(&source.title, &candidate.title) < 80);
+                assert_eq!(job_title_score(&source, &candidate), 100);
+            }
+            store.upsert_job(&candidate).unwrap();
+            store
+                .conn
+                .execute(
+                    "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'acme')",
+                    [candidate.id.as_str()],
+                )
+                .unwrap();
+        }
+        let (neighbors, truncated) = store.duplicate_neighbors("source").unwrap();
+        assert!(truncated);
+        assert_eq!(neighbors.len(), 12);
+        assert!(neighbors
+            .iter()
+            .any(|item| item.id.as_str() == "candidate-19"));
+        assert!(store.possible_duplicates().unwrap().is_empty());
+    }
+
     #[test]
     fn crowded_employer_keeps_matching_requisition_despite_changed_title() {
         let mut store = Store::in_memory().unwrap();
