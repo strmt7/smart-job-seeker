@@ -1607,6 +1607,29 @@ fn require_readable_listing(walls: &[String], text: &str) -> Result<(), String> 
     if walls.iter().any(|wall| wall == "captcha present") && text.trim().chars().count() < 300 {
         return Err("CAPTCHA obscures the listing text; review it manually".into());
     }
+    // Some sites return HTTP 200 for their not-found page. Require both a
+    // standalone status and a nearby explanatory phrase; never assert that
+    // the vacancy itself is closed based on this page alone.
+    let words: Vec<_> = text.split_whitespace().take(3000).collect();
+    for (index, word) in words.iter().enumerate() {
+        if word.trim_matches(|c: char| !c.is_ascii_alphanumeric()) != "404" {
+            continue;
+        }
+        let nearby = words[index + 1..words.len().min(index + 24)]
+            .join(" ")
+            .to_lowercase();
+        if [
+            "page not found",
+            "page was not found",
+            "we couldn't find what you're looking for",
+            "we could not find what you are looking for",
+        ]
+        .iter()
+        .any(|phrase| nearby.starts_with(phrase))
+        {
+            return Err("The page appears to be a not-found page despite a successful response; it may have moved or been removed. Review the original link manually".into());
+        }
+    }
     Ok(())
 }
 
@@ -2206,6 +2229,18 @@ mod tests {
     }
 
     #[test]
+    fn soft_not_found_page_is_reported_without_claiming_job_closure() {
+        let error = require_readable_listing(&[], "Home Menu 404 We couldn't find what you're looking for, but it's probably in here somewhere! Careers").unwrap_err();
+        assert!(error.contains("may have moved or been removed"));
+        assert!(!error.contains("closed"));
+        assert!(require_readable_listing(&[], "Engineer role 404. Build systems that return a page not found response for missing files.").is_ok());
+        assert!(
+            require_readable_listing(&[], "The page was not found. Browse current openings.")
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn listing_preserves_form_warnings_but_stops_on_other_walls() {
         let walls = vec![
             waypoint_browser::UNINSPECTED_FRAME_REVIEW.to_owned(),
@@ -2231,6 +2266,28 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    #[ignore = "read-only public listing; requires a previously reviewed soft-404 URL"]
+    fn live_soft_missing_listing_is_reported_before_extraction() {
+        use waypoint_applications::driver::BrowserDriver;
+        let url = std::env::var("WAYPOINT_SOFT_MISSING_URL").expect("public soft-404 URL");
+        let parsed = url::Url::parse(&url).unwrap();
+        crate::form_links::check_job_and_destination(
+            crate::manual_job::source(parsed.host_str().unwrap()),
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let page = browser.open(&url).unwrap();
+        let (text, _) = browser.page_text_bounded(16_000).unwrap();
+        let error = require_readable_listing(&page.walls, &text).unwrap_err();
+        assert!(error.contains("not-found page"), "{error}");
+        assert!(browser.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
 
     #[test]
     #[ignore = "read-only public listing; requires a real browser and a previously verified HTTP 404 URL"]
