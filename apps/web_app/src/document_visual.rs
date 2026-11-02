@@ -194,6 +194,7 @@ pub fn start(
         let _lease = lease;
         let outcome = std::panic::catch_unwind(|| {
             let prompt = visual_prompt(&context);
+            let mut guard = crate::visual_review::VisionIdentityGuard::new(&model);
             let addr = "127.0.0.1:11434"
                 .parse()
                 .map_err(|_| "Invalid local runtime address")?;
@@ -204,8 +205,7 @@ pub fn start(
                     if crate::resident_model()?.as_deref() != Some(model.as_str()) {
                         return Err("Resident model changed during visual review".into());
                     }
-                    let value =
-                        crate::visual_review::generate_vision(addr, &model, image, &prompt)?;
+                    let value = guard.generate(addr, image, &prompt)?;
                     page_findings(&value)?;
                     if let Ok(mut task) = TASK.lock() {
                         if let Some(task) = task.as_mut().filter(|t| t.id == id) {

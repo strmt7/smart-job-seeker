@@ -812,11 +812,21 @@ pub fn start(
             let addr = "127.0.0.1:11434"
                 .parse()
                 .map_err(|_| "Invalid local runtime address")?;
-            let mut result = if let Some((_, label)) = &target {
-                analyze_targeted_with_context(addr, &model, &image, label, &expected.values, None)?
-            } else {
-                analyze(addr, &model, &image, &expected.values)?
-            };
+            let mut guard = VisionIdentityGuard::new(&model);
+            let mut result = guard.checked(|| {
+                if let Some((_, label)) = &target {
+                    analyze_targeted_with_context(
+                        addr,
+                        &model,
+                        &image,
+                        label,
+                        &expected.values,
+                        None,
+                    )
+                } else {
+                    analyze(addr, &model, &image, &expected.values)
+                }
+            })?;
             mark_ambiguous(&mut result, &expected.ambiguous_labels);
             Ok(result)
         })
@@ -876,13 +886,75 @@ fn analyze_targeted_with_context(
     Ok(compare(&observed, expected))
 }
 
+pub(crate) struct VisionIdentityGuard {
+    model: String,
+    bound: Option<crate::resident_inference::ResidentIdentity>,
+}
+
+impl VisionIdentityGuard {
+    pub(crate) fn new(model: &str) -> Self {
+        Self {
+            model: model.to_owned(),
+            bound: None,
+        }
+    }
+
+    fn check_snapshot(
+        &mut self,
+        identity: Option<crate::resident_inference::ResidentIdentity>,
+    ) -> Result<(), String> {
+        let identity = identity
+            .filter(|identity| identity.name == self.model)
+            .ok_or("The eligible resident model changed; visual review stopped")?;
+        match &self.bound {
+            Some(bound) if bound != &identity => {
+                Err("The resident model digest changed; visual review stopped".into())
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.bound = Some(identity);
+                Ok(())
+            }
+        }
+    }
+
+    fn checked_with<T>(
+        &mut self,
+        mut identity: impl FnMut()
+            -> Result<Option<crate::resident_inference::ResidentIdentity>, String>,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.check_snapshot(identity()?)?;
+        let value = operation()?;
+        self.check_snapshot(identity()?)?;
+        Ok(value)
+    }
+
+    fn checked<T>(&mut self, operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        self.checked_with(crate::resident_model_identity, operation)
+    }
+
+    pub(crate) fn generate(
+        &mut self,
+        addr: std::net::SocketAddr,
+        image: &str,
+        prompt: &str,
+    ) -> Result<Value, String> {
+        if addr != "127.0.0.1:11434".parse().expect("literal address") {
+            return Err("Visual inference requires the verified local runtime".into());
+        }
+        let model = self.model.clone();
+        self.checked(|| generate_vision_with_context(addr, &model, image, prompt, None))
+    }
+}
+
 pub(crate) fn generate_vision(
     addr: std::net::SocketAddr,
     model: &str,
     image: &str,
     prompt: &str,
 ) -> Result<Value, String> {
-    generate_vision_with_context(addr, model, image, prompt, None)
+    VisionIdentityGuard::new(model).generate(addr, image, prompt)
 }
 
 #[cfg(test)]
@@ -1037,6 +1109,54 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visual_guard_discards_changed_identity_and_binds_multiple_pages() {
+        use std::cell::Cell;
+        let checks = Cell::new(0);
+        let identity = || {
+            let n = checks.get();
+            checks.set(n + 1);
+            Ok(Some(crate::resident_inference::ResidentIdentity {
+                name: "fixture".into(),
+                digest: if n < 2 {
+                    "a".repeat(64)
+                } else {
+                    "b".repeat(64)
+                },
+            }))
+        };
+        let mut guard = VisionIdentityGuard::new("fixture");
+        assert_eq!(
+            guard.checked_with(identity, || Ok("first page")).unwrap(),
+            "first page"
+        );
+        let called = Cell::new(false);
+        assert!(guard
+            .checked_with(identity, || {
+                called.set(true);
+                Ok("second page")
+            })
+            .is_err());
+        assert!(!called.get());
+        let checks = Cell::new(0);
+        let mut guard = VisionIdentityGuard::new("fixture");
+        let changed = || {
+            let n = checks.get();
+            checks.set(n + 1);
+            Ok(Some(crate::resident_inference::ResidentIdentity {
+                name: "fixture".into(),
+                digest: if n == 0 {
+                    "a".repeat(64)
+                } else {
+                    "b".repeat(64)
+                },
+            }))
+        };
+        assert!(guard
+            .checked_with(changed, || Ok("discarded result"))
+            .is_err());
+    }
 
     #[test]
     fn freshness_spans_the_live_value_checks() {
