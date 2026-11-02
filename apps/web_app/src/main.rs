@@ -3136,7 +3136,14 @@ fn serve(
                         // This classification is fallible. Keep the original
                         // search result available for manual entry, but do not
                         // turn an unconfirmed page into a saved vacancy.
-                        let response = json!({"status":"complete","job":job,"saved":null,"review_only":true,"review_reason":if redirected {"redirect"} else if uncertain {"uncertain"} else {"not_vacancy"}});
+                        let destination = redirected
+                            .then(|| {
+                                candidate_task::redirect_review_destination(
+                                    &inspected.capture.metadata,
+                                )
+                            })
+                            .flatten();
+                        let response = json!({"status":"complete","job":job,"saved":null,"review_only":true,"review_reason":if redirected {"redirect"} else if uncertain {"uncertain"} else {"not_vacancy"},"review_destination":destination});
                         candidate_task::complete(id, response.clone())?;
                         json_reply(stream, "200 OK", response);
                         return Ok(());

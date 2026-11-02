@@ -1684,6 +1684,22 @@ fn warn_same_site_path_redirect(job: &mut Value, original: &url::Url, reached: &
     job["extraction_warnings"].as_array_mut().expect("warnings array").insert(0, json!("The requested listing redirected to a different page on the same site. The extracted position may be different; verify the original job and destination before saving."));
 }
 
+pub(crate) fn redirect_review_destination(metadata: &Value) -> Option<String> {
+    let original = url::Url::parse(metadata["requested_url"].as_str()?).ok()?;
+    let reached = url::Url::parse(metadata["source_url"].as_str()?).ok()?;
+    if original.scheme() != "https"
+        || reached.scheme() != "https"
+        || !original.username().is_empty()
+        || original.password().is_some()
+        || !reached.username().is_empty()
+        || reached.password().is_some()
+        || crate::application_check::same_origin_path_redirect_notice(&original, &reached).is_none()
+    {
+        return None;
+    }
+    Some(reached.into())
+}
+
 pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(), String> {
     let search_context = match search_context {
         Some(context) => crate::candidate_selection::search_context(&context)?,
@@ -2307,6 +2323,13 @@ mod tests {
         let same_path = url::Url::parse("https://example.org/jobs/old?other=1").unwrap();
         warn_same_site_path_redirect(&mut same, &original, &same_path);
         assert!(same["extraction_warnings"].is_null());
+        let metadata = json!({"requested_url":"https://example.org/old","source_url":"https://example.org/careers?source=fixture"});
+        assert_eq!(
+            redirect_review_destination(&metadata).as_deref(),
+            Some("https://example.org/careers?source=fixture")
+        );
+        assert!(redirect_review_destination(&json!({"requested_url":"https://example.org/old","source_url":"https://other.example.org/careers"})).is_none());
+        assert!(redirect_review_destination(&json!({"requested_url":"https://example.org/old","source_url":"https://user@example.org/careers"})).is_none());
     }
 
     #[test]
@@ -2402,6 +2425,11 @@ mod tests {
             if response["status"] == "complete" {
                 assert_eq!(response["review_reason"], "redirect");
                 assert!(response["saved"].is_null());
+                assert!(response["review_destination"]
+                    .as_str()
+                    .is_some_and(
+                        |destination| destination.starts_with("https://apply.workable.com/")
+                    ));
                 assert_eq!(workspace.job_count().unwrap(), 0);
                 println!(
                     "Status endpoint retained the redirected result for review; no job was saved"

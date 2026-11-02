@@ -2391,3 +2391,11 @@ for inspection without creating a job record. A repeat against that public URL
 confirmed zero saved jobs; a fictional endpoint test also checks replay. This
 conservative rule can require review for legitimate canonical redirects and
 does not by itself prove that a job is closed. The model was unloaded.
+
+Redirect review now exposes the captured destination only after validating it
+as a same-origin HTTPS path, so a user can inspect it separately. Manual entry
+starts with the original URL but leaves title and employer empty rather than
+copying potentially unrelated extracted details. A live status check returned
+the destination without saving a job; focused backend and interface tests cover
+cross-origin rejection and blank manual entry. This remains a manual review,
+including for legitimate canonical redirects.
