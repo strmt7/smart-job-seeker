@@ -22,6 +22,8 @@
 
 ## Document context feedback — 2026-11-02
 
+- Duration evidence checks also recognize hyphenated quantity-unit adjectives such as “three-year” and “3-year”, including compound number words. Focused fictional document and answer tests and Windows web Clippy passed; live model tests were not run. This remains a limited numeric guard, not a semantic proof of experience.
+
 - The shared document and answer evidence guard now recognizes common English number words in durations and compares their units, including simple digit/word equivalents. Compound or hyphenated number phrases are compared conservatively as phrases; a mismatch downgrades a model-supported claim to uncertain. This is not semantic verification, does not cover every language or numeric expression, and equivalent compound spellings may require review. Focused fictional document and answer tests and Windows web Clippy passed; live model tests were not run.
 
 - Before DOCX-to-PDF conversion, revision inspection now checks bounded XML parts across the package and linked note parts even when their names or extensions are nonstandard. Unresolved referenced notes prevent conversion instead of silently skipping inspection. The check remains bounded to 128 parts and 8 MiB of XML and cannot guarantee coverage of every possible non-XML Wordprocessing part. A fictional custom-named note with a deleted revision was rejected; related unit tests passed (6 passed, 2 ignored), and an existing fictional styled DOCX converted using the installed LibreOffice. One initial conversion-test invocation failed because its fixture environment variables were absent; the subsequent styled-fixture check passed. Windows web Clippy passed. Clean-host installation remains unverified.

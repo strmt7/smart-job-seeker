@@ -835,7 +835,9 @@ fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
             break;
         }
         let suffix = text[index..].trim_start();
-        let word: String = suffix
+        // A hyphen can join a quantity and its unit (for example, 3-year).
+        let unit_suffix = suffix.strip_prefix('-').unwrap_or(suffix);
+        let word: String = unit_suffix
             .chars()
             .take_while(char::is_ascii_alphabetic)
             .collect::<String>()
@@ -884,9 +886,19 @@ fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
     }
     let words: Vec<String> = text
         .split_whitespace()
-        .map(|word| {
-            word.trim_matches(|c: char| !c.is_alphanumeric())
-                .to_ascii_lowercase()
+        .flat_map(|word| {
+            let word = word
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_ascii_lowercase();
+            if let Some((number, suffix)) = word.rsplit_once('-') {
+                if matches!(
+                    unit(suffix),
+                    "second" | "minute" | "hour" | "day" | "week" | "month" | "year"
+                ) {
+                    return vec![number.to_owned(), suffix.to_owned()];
+                }
+            }
+            vec![word]
         })
         .collect();
     for (position, pair) in words.windows(2).enumerate() {
@@ -1439,6 +1451,24 @@ mod tests {
                 "uncertain"
             );
         }
+        for claim in [
+            "A ten-year tenure.",
+            "A 10-year tenure.",
+            "A twenty-one-year tenure.",
+        ] {
+            assert_eq!(
+                check(claim, "One year of experience.")["items"][0]["status"],
+                "uncertain"
+            );
+        }
+        assert_eq!(
+            check("A three-year tenure.", "3 years of experience.")["items"][0]["status"],
+            "supported"
+        );
+        assert_eq!(
+            check("A 3-year tenure.", "3 months of experience.")["items"][0]["status"],
+            "uncertain"
+        );
         assert_eq!(
             check("Three months of experience.", "Three years of experience.")["items"][0]
                 ["status"],
