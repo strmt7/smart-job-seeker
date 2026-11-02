@@ -2380,6 +2380,11 @@ recovered a late remote-work statement and rejected a gap marker as evidence.
 The fit test group passed (70 passed, 39 ignored); no local model or real job
 was tested in this change, and the sample still cannot establish full coverage
 or the correctness of a model's judgment.
+The sampler also excludes partial omission markers when a sample starts or
+ends inside one, and limits the number of separate passages to 16. A fictional
+boundary test covers both cases; preference tests passed (12 passed, 5 ignored).
+The input version changed again, so earlier assessments need refreshing. No
+model was loaded for this check.
 
 ### Partial-edge edits across PDF text objects (2026-11-02)
 
