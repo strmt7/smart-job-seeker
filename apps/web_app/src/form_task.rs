@@ -1148,7 +1148,17 @@ mod tests {
             },
         };
         let mut items: Vec<_> = (0..6)
-            .map(|i| item(i, Control::Text, Platform::Greenhouse, 100 + i as i64))
+            .map(|i| {
+                let mut entry = item(i, Control::Text, Platform::Greenhouse, 100 + i as i64);
+                entry.experience.observation = match i % 5 {
+                    0 => Observation::AmbiguousLabel,
+                    1 => Observation::ValueChanged,
+                    2 => Observation::ValidationError,
+                    3 => Observation::HiddenControl,
+                    _ => Observation::UnexpectedNavigation,
+                };
+                entry
+            })
             .collect();
         items.push(item(6, Control::Text, Platform::Lever, 1));
         items.push(item(7, Control::Choice, Platform::Lever, 1));
@@ -1187,7 +1197,7 @@ mod tests {
         assert!(workable_selected[0].same_platform);
         let mut full: Vec<_> = (0..500)
             .map(|i| {
-                item(
+                let mut entry = item(
                     i,
                     if i < 250 {
                         Control::Text
@@ -1196,7 +1206,15 @@ mod tests {
                     },
                     Platform::Greenhouse,
                     i as i64,
-                )
+                );
+                entry.experience.observation = match i % 5 {
+                    0 => Observation::AmbiguousLabel,
+                    1 => Observation::ValueChanged,
+                    2 => Observation::ValidationError,
+                    3 => Observation::HiddenControl,
+                    _ => Observation::UnexpectedNavigation,
+                };
+                entry
             })
             .collect();
         full[0].experience.platform = Some(Platform::Lever);

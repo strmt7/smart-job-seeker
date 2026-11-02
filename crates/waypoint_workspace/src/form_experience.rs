@@ -249,6 +249,19 @@ impl Workspace {
 /// Select bounded, diverse reports; outcomes are user reports, not causal proof.
 /// The input is already filtered for the current stage and control.
 pub fn select_experience_hints(mut matches: Vec<ExperienceMatch>) -> Vec<ExperienceMatch> {
+    // Repeated saves of the same report do not establish independent evidence.
+    // Keep distinct contexts and user notes, but never send identical hints
+    // multiple times merely to fill the prompt budget.
+    fn same_hint(a: &Experience, b: &Experience) -> bool {
+        a.platform == b.platform
+            && a.stage == b.stage
+            && a.control == b.control
+            && a.observation == b.observation
+            && a.response == b.response
+            && a.outcome == b.outcome
+            && a.note == b.note
+            && a.use_note_in_model == b.use_note_in_model
+    }
     matches.sort_by(|a, b| {
         b.same_platform
             .cmp(&a.same_platform)
@@ -305,7 +318,10 @@ pub fn select_experience_hints(mut matches: Vec<ExperienceMatch>) -> Vec<Experie
         {
             continue;
         }
-        if !selected.iter().any(|previous| previous.id == item.id) {
+        if !selected
+            .iter()
+            .any(|previous| same_hint(&previous.experience, &item.experience))
+        {
             selected.push(item);
         }
     }
@@ -429,7 +445,7 @@ mod tests {
                 Some(Platform::Lever),
             )
             .unwrap();
-        assert_eq!(found.len(), 5);
+        assert_eq!(found.len(), 3);
         assert!(found
             .iter()
             .any(|item| item.experience.response == Response::StopAndReview));
@@ -563,6 +579,43 @@ mod tests {
         assert!(selected
             .iter()
             .any(|item| !item.same_platform && item.experience.outcome == Outcome::DidNotHelp));
+    }
+
+    #[test]
+    fn repeated_identical_reports_do_not_fill_the_hint_budget() {
+        let make = |id: u64| {
+            let mut experience = lesson();
+            experience.observed_at = id as i64;
+            ExperienceMatch {
+                id: format!("{id:032x}"),
+                revision: 1,
+                same_platform: true,
+                experience,
+            }
+        };
+        let mut reports: Vec<_> = (1..=8).map(make).collect();
+        let mut different_note = make(9);
+        different_note.experience.note = Some("A different context".into());
+        different_note.experience.use_note_in_model = true;
+        reports.push(different_note);
+        let mut different_outcome = make(10);
+        different_outcome.experience.outcome = Outcome::DidNotHelp;
+        reports.push(different_outcome);
+        let selected = select_experience_hints(reports);
+        assert_eq!(selected.len(), 3);
+        assert_eq!(
+            selected
+                .iter()
+                .filter(|item| item.experience.note.is_some())
+                .count(),
+            1
+        );
+        assert!(selected
+            .iter()
+            .any(|item| item.experience.outcome == Outcome::DidNotHelp));
+        assert!(selected
+            .iter()
+            .any(|item| item.experience.outcome == Outcome::Unknown));
     }
 
     #[test]
