@@ -1400,7 +1400,9 @@ pub(crate) fn preference_coverage(assessment: &Value) -> &'static str {
         _ => None,
     };
     if audit["status"] == "no_instructions" {
-        return if instruction_coverage == Some(0) {
+        return if instruction_coverage == Some(0)
+            && !rubric.is_some_and(|items| items.iter().any(|item| item["source"] == "preference"))
+        {
             "not_requested"
         } else {
             "needs_review"
@@ -3804,6 +3806,10 @@ mod tests {
         assessment["source_coverage"]["instructions_total_chars"] = json!(0);
         assessment["source_coverage"]["instructions_used_chars"] = json!(0);
         assert_eq!(preference_coverage(&assessment), "not_requested");
+        // A stored rubric with a preference contradicts the no-instructions
+        // report, even if its instruction length metadata says zero.
+        assessment["rubric"] = json!([{"source":"preference","status":"supported"}]);
+        assert_eq!(preference_coverage(&assessment), "needs_review");
     }
 
     #[test]

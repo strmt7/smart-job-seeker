@@ -20,6 +20,10 @@
 - Required-criteria coverage now treats missing or invalid listing-sampling, removed-criteria and criterion-limit metadata as incomplete. Current saved assessments recompute this coverage when read; the score itself is unchanged. This can make older assessments show incomplete coverage rather than supported. Fictional fit tests passed (76 passed, 41 ignored), as did Windows web Clippy. No live model or application was used.
 - Qualification-coverage reporting now treats missing or invalid selection-limit metadata as unavailable rather than assuming no facts were omitted. Direct all-facts selections are recognized separately and must have internally consistent counts. This can make older or incomplete saved assessments show coverage unavailable; it does not change their score or prove model judgments correct. Fictional coverage and saved-assessment checks passed. The first full web-suite run also exposed a stale GPU-startup test expectation from the bounded-offload change; that test now checks both sides of the current estimate. The rerun passed (621 passed, 344 ignored), and Windows web Clippy passed. No live model or external application was used.
 
+## Fit preference coverage — 2026-11-03
+
+- A stored fit assessment that reports zero instructions but also contains a preference criterion now shows preference coverage as needing review instead of not requested. The numeric score is unchanged. Focused fit tests passed (76 passed, 43 ignored) and Windows web Clippy passed; no live model was used.
+
 ## Form experience budget — 2026-11-03
 
 - When the full lesson context exceeds the form-mapping budget, the agent now first omits optional user notes and retains the categorical lessons if they fit. If even those cannot fit, it sends the current-page prompt alone. Omitted-note counts reflect the reduced request. Fictional experience tests passed (7 passed, 7 ignored) and Windows web Clippy passed; an initial compile failed due to an outdated test call and passed after correction. No live model or employer was used.
