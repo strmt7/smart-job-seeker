@@ -6,7 +6,7 @@ function node(tag,text='',className=''){return {tag,text,className,children:[],l
 const list=node('ul'),count=node('span'),startButton=node('button');
 const checkbox={checked:true,getAttribute:()=> 'https://example.org/job'};
 const selected=new Map([['https://example.org/job',{url:'https://example.org/job',title:'Fictional engineer'}]]);let saves=0;
-const context={selectedCandidates:selected,candidateSelectionReady:true,candidateBatchRunning:false,candidateBatch:null,element:node,queueCandidateSelectionSave:()=>saves++,document:{querySelector:id=>({'#selected-candidates-list':list,'#candidate-selected-count':count,'#candidate-batch-start':startButton})[id],querySelectorAll:()=>[checkbox]}};
+const context={selectedCandidates:selected,candidateSelectionReady:true,candidateSelectionCanSave:true,candidateSelectionSaving:false,candidateSelectionSaved:0,candidateSelectionRevision:0,candidateBatchRunning:false,candidateBatch:null,element:node,queueCandidateSelectionSave:()=>saves++,document:{querySelector:id=>({'#selected-candidates-list':list,'#candidate-selected-count':count,'#candidate-batch-start':startButton})[id],querySelectorAll:()=>[checkbox]}};
 vm.runInNewContext(source.slice(start,end),context);
 context.updateCandidateSelection();assert.equal(list.children.length,1);const row=list.children[0];assert.equal(row.children[0].children[0].text,'Fictional engineer');assert.equal(row.children[0].children[1].text,'https://example.org/job');assert.equal(row.children[1].disabled,false);
 context.candidateBatch={};context.updateCandidateSelection();assert.equal(list.children[0].children[1].disabled,true);
