@@ -1640,6 +1640,26 @@ The local search planner now asks for some general-web job-intent phrases while 
 On 2026-11-02, the actual web-search batch worker sent three non-personal planner-style phrases to Wiby's public JSON API. Two runs each reported zero results for microscopy, ten for remote Rust (seven eligible HTTPS links) and one for payroll accounting (no eligible HTTPS link). The seven retained titles did not obviously describe job listings; the pages were not inspected, so their content and application availability remain unknown. All three requests completed without provider errors. This small sample demonstrates a practical limitation of Wiby for these searches, not general web coverage; no applications were contacted or submitted.
 # Optional FreeSerp web search — 2026-11-02
 
+In a later isolated running-app check, three generic phrases covering data
+engineering, museum work and network technicians each returned ten candidate
+links through the rendered wider-web form. Visible results included search
+pages, courses and unrelated places; the provider did not report engine
+availability. These are candidates, not 30 verified vacancies. A university
+course result was captured with Crawl4AI (HTTP 200; Markdown SHA-256
+`aec3dd165e6b79826ff9816cd642df4e511b2feb1697ffb3d373c96800eeb`). Its
+structured data included a Course. When no local model is resident and no
+structured job was found, inspection now reports that course metadata is an
+advisory non-vacancy signal and requires manual review; it does not save the
+page as a job. A repeat through the rendered form showed that message. An
+apparent vacancy returned a 403 access challenge to the crawler (native
+capture SHA-256 `b2f8b8e55d40f58879cf0babd6204e1b05b390bea8d5efd771ab97da89d61293`)
+and was not inspected further. The first UI attempt stopped at a closed
+disclosure panel; a second automation attempt hit the app's CSP while using
+`waitForFunction`; both were corrected before the successful run. Browser
+plugin was unavailable, so local Edge and Playwright Core were used. Candidate
+tests passed (44 passed, 20 ignored), as did web Clippy. No model was loaded,
+the apparent vacancy was not verified, and no application was submitted.
+
 The wider-web search accepts `https://freeserp.ai/` as an optional provider.
 The adapter requests the provider's web index, maps its offset pagination, and
 rejects an explicitly reported fallback to the sites index. Returned links are

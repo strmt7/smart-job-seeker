@@ -568,6 +568,49 @@ fn parse(scripts: &[String], url: &str) -> Result<Option<Value>, String> {
     parse_structured(scripts, url, false)
 }
 
+/// An advisory signal only: a page can contain course metadata alongside a
+/// vacancy. Inspect top-level and graph entries, not arbitrary nested objects.
+fn structured_course_hint(scripts: &[String]) -> bool {
+    for script in scripts {
+        let Ok(data) = serde_json::from_str::<Value>(script) else {
+            continue;
+        };
+        let mut pending = vec![&data];
+        let mut visited = 0;
+        while let Some(value) = pending.pop() {
+            visited += 1;
+            if visited > 200 {
+                break;
+            }
+            if let Some(array) = value.as_array() {
+                pending.extend(array.iter());
+                continue;
+            }
+            let Some(object) = value.as_object() else {
+                continue;
+            };
+            if let Some(graph) = object.get("@graph") {
+                pending.push(graph);
+            }
+            let is_course = |value: &str| {
+                matches!(
+                    value.rsplit('/').next(),
+                    Some("Course" | "EducationalOccupationalProgram")
+                )
+            };
+            let kind = object.get("@type");
+            if kind.and_then(Value::as_str).is_some_and(is_course)
+                || kind
+                    .and_then(Value::as_array)
+                    .is_some_and(|values| values.iter().filter_map(Value::as_str).any(is_course))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn parse_structured(
     scripts: &[String],
     url: &str,
@@ -1757,7 +1800,13 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 // A short challenge page is not evidence of a job listing.
                 // Longer pages still require exact-source extraction and review.
                 require_readable_listing(&page.walls, &page_text)?;
-                let model = crate::resident_model()?.ok_or("No structured job found and no eligible local model is loaded; review manually")?;
+                let model = crate::resident_model()?.ok_or_else(|| {
+                    if incomplete_structured.is_none() && structured_course_hint(&scripts) {
+                        "No structured job found. The page includes course metadata and may not be a vacancy; no eligible local model is loaded. Review manually"
+                    } else {
+                        "No structured job found and no eligible local model is loaded; review manually"
+                    }
+                })?;
                 let _lease = crate::doc_suggest::lease()?;
                 let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
                 let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
@@ -1854,6 +1903,21 @@ pub fn complete(id: &str, value: Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn structured_course_hint_is_advisory_and_ignores_nested_related_objects() {
+        assert!(super::structured_course_hint(&[
+            r#"{"@type":"Course","name":"Fictional training"}"#.into()
+        ]));
+        assert!(super::structured_course_hint(&[r#"{"@graph":[{"@type":["Thing","https://schema.org/EducationalOccupationalProgram"]}]}"#.into()]));
+        assert!(!super::structured_course_hint(&[
+            r#"{"@type":"WebPage","related":{"@type":"Course"}}"#.into()
+        ]));
+        assert!(!super::structured_course_hint(&[
+            r#"{"@type":"JobPosting"}"#.into(),
+            "not json".into()
+        ]));
+    }
+
     #[cfg(all(windows, feature = "sqlcipher"))]
     #[test]
     #[ignore = "requires a supplied isolated encrypted workspace and local reference sections"]
