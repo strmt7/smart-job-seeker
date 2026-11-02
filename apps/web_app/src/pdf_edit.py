@@ -34,8 +34,8 @@ try:
             return 0
         return 2 if text.find(needle, first + 1) >= 0 else 1
     def edit_adjacent_objects(document, page_index, original_text, before, after):
-        # Only whole, consecutive text objects whose character order is exactly
-        # represented by PDFium are eligible. More complex layouts stay manual.
+        # Only consecutive text objects whose character order is exactly
+        # represented by PDFium are eligible. Preserve untouched edge text.
         if not after or len(after) > len(before):
             return None
         page = document[page_index]
@@ -62,8 +62,19 @@ try:
         if not 2 <= len(groups) <= 8 or len(after) < len(groups):
             return None
         objects = {ctypes.cast(obj.raw, ctypes.c_void_p).value: obj for obj in page.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=textpage)}
-        if any(address not in objects or objects[address].extract() != text for address, text in groups):
-            return None
+        edges = []
+        for i, (address, text) in enumerate(groups):
+            if address not in objects:
+                return None
+            full = objects[address].extract()
+            if i == 0 and full.endswith(text):
+                edges.append((full[:-len(text)], ''))
+            elif i == len(groups) - 1 and full.startswith(text):
+                edges.append(('', full[len(text):]))
+            elif full == text:
+                edges.append(('', ''))
+            else:
+                return None
         bounds = [objects[address].get_bounds() for address, _ in groups]
         parts = []
         remaining = after
@@ -73,19 +84,41 @@ try:
             if size <= 0:
                 return None
             part, remaining = remaining[:size], remaining[size:]
+            part = edges[index][0] + part + edges[index][1]
             parts.append(part)
+        if remaining:
+            return None
+        # Prefer preserving the original font encoding and text operators. A
+        # stream edit is accepted only if every changed object maps uniquely;
+        # otherwise retry with PDFium and retain the same post-edit checks.
+        streamed = source
+        for (address, _), part in zip(groups, parts):
+            full = objects[address].extract()
+            if full == part:
+                continue
+            try:
+                candidate = edit_pdf_stream(PdfReader(io.BytesIO(streamed), strict=True), page_index, full, part)
+            except (AttributeError, KeyError, TypeError, ValueError, NotImplementedError):
+                candidate = None
+            if candidate is None:
+                streamed = None
+                break
+            streamed = candidate
+        if streamed is not None:
+            textpage.close()
+            page.close()
+            return streamed, bounds, parts, len(edges[0][0])
+        for (address, _), part in zip(groups, parts):
             encoded = part.encode('utf-16-le') + b'\0\0'
             chars = (ctypes.c_ushort * (len(encoded) // 2)).from_buffer_copy(encoded)
             if not raw.FPDFText_SetText(objects[address], chars):
                 return None
-        if remaining:
-            return None
         textpage.close()
         page.gen_content()
         out = io.BytesIO()
         document.save(out)
         page.close()
-        return out.getvalue(), bounds, parts
+        return out.getvalue(), bounds, parts, len(edges[0][0])
     originals, targets = [], []
     for index in range(len(doc)):
         page = doc[index]
@@ -111,7 +144,7 @@ try:
         multi = edit_adjacent_objects(doc, index, originals[index], before, after)
         if multi is None:
             raise ValueError('The selected passage spans PDF text objects or is ambiguous; choose a shorter passage or review manually')
-        edited, old_bounds, expected_parts = multi
+        edited, old_bounds, expected_parts, unchanged_prefix = multi
         doc.close()
     else:
         index, old_object, bounds, _ = targets[0]
@@ -197,7 +230,9 @@ try:
                 decoded = ''.join(chr(raw.FPDFText_GetUnicode(t, i)) for i in range(count))
                 if decoded != actual:
                     raise ValueError('Edited character mapping could not be verified; review manually')
-                start = originals[index].find(before)
+                start = originals[index].find(before) - unchanged_prefix
+                if start < 0:
+                    raise ValueError('Edited character mapping could not be verified; review manually')
                 by_address = {ctypes.cast(o.raw, ctypes.c_void_p).value: o for o in objects}
                 selected = []
                 used_addresses = set()

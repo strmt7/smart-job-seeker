@@ -1,5 +1,6 @@
 """Check actionable PDF passage errors with fictional text and real PDFium."""
 import base64
+import ctypes
 import io
 import json
 from pathlib import Path
@@ -8,6 +9,8 @@ import sys
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+import pypdfium2 as pdfium
+import pypdfium2.raw as raw
 
 src = Path(__file__).resolve().parents[1] / "src"
 program = "\n".join((src / name).read_text(encoding="utf-8") for name in (
@@ -41,12 +44,32 @@ def refused(operators, passage, expected):
 
 refused(b"(Alpha Beta) Tj", "Missing", "was not found")
 refused(b"(Alpha Alpha) Tj", "Alpha", "occurs more than once")
-refused(b"(PrefixAlpha) Tj (Beta) Tj", "AlphaBeta", "spans PDF text objects")
+refused(b"(A) Tj (B) Tj (C) Tj (D) Tj (E) Tj (F) Tj", "ABCDEF", "spans PDF text objects")
 payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBet"}).encode()
 result = subprocess.run([sys.executable, "-c", program], input=payload,
                         capture_output=True, timeout=30, check=False)
 assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
 assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "AlphaBet"
+styled_source = fixture(b"(PrefixAlpha) Tj 0 0 1 rg (BetaSuffix) Tj")
+payload = json.dumps({"pdf": styled_source,
+                      "before": "AlphaBeta", "after": "AlphaBet"}).encode()
+result = subprocess.run([sys.executable, "-c", program], input=payload,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
+assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "PrefixAlphaBetSuffix"
+def text_object_colours(data):
+    document = pdfium.PdfDocument(data)
+    page = document[0]
+    colours = []
+    for obj in page.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1):
+        red, green, blue, alpha = (ctypes.c_uint() for _ in range(4))
+        assert raw.FPDFPageObj_GetFillColor(obj, ctypes.byref(red), ctypes.byref(green), ctypes.byref(blue), ctypes.byref(alpha))
+        colours.append((red.value, green.value, blue.value, alpha.value))
+    page.close()
+    document.close()
+    return colours
+
+assert text_object_colours(result.stdout) == text_object_colours(base64.b64decode(styled_source))
 # Expansion is deliberately refused for multi-object edits.
 payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBetaLong"})
 result = subprocess.run([sys.executable, "-c", program], input=payload, text=True,

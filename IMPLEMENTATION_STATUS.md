@@ -2372,6 +2372,22 @@ independent checking and five remained unknown. The resulting 36–100 range and
 listing-only recovery still require review. This is not a general accuracy
 measurement; the model was unloaded and no application was sent.
 
+### Partial-edge edits across PDF text objects (2026-11-02)
+
+The guarded PDF editor can now attempt a replacement that begins inside the
+first text object and ends inside the last of a consecutive group, preserving
+the untouched prefix and suffix. It first tries the existing encoding-preserving
+stream editor and falls back to PDFium; either path must pass the existing
+whole-document text, glyph, bounds and rendered-difference checks. A fictional
+mixed-color example preserved surrounding text and text-object colors and was
+rendered for visual inspection. Expanding replacements and other complex layouts
+remain restricted.
+
+Ten candidate boundaries from one public ten-page résumé were tried locally.
+All were refused by existing text or visual checks, so this does not establish
+that the new path works on that résumé or on arbitrary PDFs. The source and any
+derived material remain outside the repository; no application was sent.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the
