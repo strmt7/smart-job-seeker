@@ -1774,19 +1774,25 @@ mod tests {
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_prefills_and_visually_checks_fictional_form() {
-        exercise_local_model_form_pipeline(false, false);
+        exercise_local_model_form_pipeline(false, false, false);
     }
 
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_detects_a_changed_fictional_field() {
-        exercise_local_model_form_pipeline(true, false);
+        exercise_local_model_form_pipeline(true, false, false);
     }
 
     #[test]
     #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
     fn live_local_model_prefills_and_visually_checks_multilingual_form() {
-        exercise_local_model_form_pipeline(false, true);
+        exercise_local_model_form_pipeline(false, true, false);
+    }
+
+    #[test]
+    #[ignore = "starts a local browser and requires preloaded local qwen3.5:9b and resource preflight"]
+    fn local_model_fills_and_visually_checks_source_bound_fictional_form() {
+        exercise_local_model_form_pipeline(false, false, true);
     }
 
     #[test]
@@ -2158,7 +2164,7 @@ mod tests {
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
     }
 
-    fn exercise_local_model_form_pipeline(altered: bool, multilingual: bool) {
+    fn exercise_local_model_form_pipeline(altered: bool, multilingual: bool, source_bound: bool) {
         use base64::Engine;
         use waypoint_domain::GrantId;
         struct FictionalTrace<I>(I);
@@ -2239,23 +2245,50 @@ mod tests {
             .iter()
             .any(|item| item.field_selector == "#permit"));
         let mut ws = Workspace::in_memory().unwrap();
-        let job_id = JobIdentityId::new("model-pipeline-fixture").unwrap();
-        ws.import_job(waypoint_store::StoredJob {
-            id: job_id.clone(),
-            title: "Fictional role".into(),
-            employer: "Fixture".into(),
-            location: String::new(),
-            state: ApplicationState::Shortlisted,
-            canonical_url: Some(url.clone()),
-            content_hash: None,
-            first_seen: None,
-            last_seen: None,
-            remote: false,
-            source: "user_supplied_url".into(),
-            requisition_id: None,
-            posted_at: None,
-        })
-        .unwrap();
+        let (job_id, fill_url, binding) = if source_bound {
+            let listing = "https://jobs.ashbyhq.com/ashby/fictional";
+            let route = "https://jobs.ashbyhq.com/ashby/fictional/application";
+            let body = format!(
+                r#"{{"jobs":[{{"id":"fictional","title":"Role","jobUrl":"{listing}","applyUrl":"{route}"}}]}}"#
+            );
+            let fetcher = waypoint_workspace::StaticFetcher::default()
+                .route("https://api.ashbyhq.com/posting-api/job-board/ashby", &body);
+            assert_eq!(
+                ws.discover(
+                    &[waypoint_workspace::DiscoveryTarget::new("ashby", "ashby")],
+                    &fetcher,
+                    1
+                )
+                .inserted,
+                1
+            );
+            let id = ws.jobs().unwrap().remove(0).id;
+            ws.set_state(&id, ApplicationState::Shortlisted).unwrap();
+            (
+                id,
+                route.to_owned(),
+                Some(("ashby".to_owned(), listing.to_owned())),
+            )
+        } else {
+            let job_id = JobIdentityId::new("model-pipeline-fixture").unwrap();
+            ws.import_job(waypoint_store::StoredJob {
+                id: job_id.clone(),
+                title: "Fictional role".into(),
+                employer: "Fixture".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some(url.clone()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            })
+            .unwrap();
+            (job_id, url.clone(), None)
+        };
         let intent = IntentId::new("model-pipeline-intent").unwrap();
         let packet = Sha256Digest::of("fictional profile");
         let mut grant = ApprovalGrant {
@@ -2275,12 +2308,12 @@ mod tests {
             expired: false,
         };
         let mut completed = Vec::new();
-        let filled = apply_reviewed_text_fields(
+        let filled = apply_reviewed_text_fields_with_replacements(
             &mut ws,
             &job_id,
             &mut driver,
-            &url,
-            &preview,
+            &fill_url,
+            (&preview, &ReviewedReplacements::new(), binding.as_ref()),
             &mut grant,
             FillContext {
                 intent: &intent,

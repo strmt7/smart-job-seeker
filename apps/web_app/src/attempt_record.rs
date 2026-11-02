@@ -1738,6 +1738,29 @@ impl AttemptRecord {
             timestamp,
         )
     }
+
+    pub fn source_application_route(
+        &mut self,
+        source: &str,
+        route: &str,
+        timestamp: i64,
+    ) -> Result<(), String> {
+        let parsed = url::Url::parse(route).map_err(|_| "Invalid source application route")?;
+        if source.is_empty()
+            || source.len() > 80
+            || source.chars().any(char::is_control)
+            || route.len() > 2048
+            || parsed.scheme() != "https"
+            || !waypoint_connectors::is_public_host_url(route)
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err("Invalid source application route".into());
+        }
+        self.event(json!({"type":"source_application_route","time":timestamp,"source":source,"url":route,"note":"Source-reported starting route; this does not establish a usable form or submission."}))
+    }
     pub fn email_draft(&mut self, bytes: &[u8]) -> Result<(), String> {
         fs::write(self.dir.join("email-draft.eml"), bytes).map_err(|e| e.to_string())
     }
@@ -2263,6 +2286,37 @@ mod tests {
         assert!(fs::read_to_string(record.dir.join("events.jsonl"))
             .unwrap()
             .contains("fill_incomplete"));
+    }
+
+    #[test]
+    fn source_application_route_record_omits_tokenized_or_invalid_urls() {
+        let root = tempfile::tempdir().unwrap();
+        let mut record = AttemptRecord {
+            dir: root.path().to_owned(),
+            sequence: 0,
+        };
+        let route = "https://jobs.ashbyhq.com/example/fixture/application";
+        record
+            .source_application_route("ashby", route, 123)
+            .unwrap();
+        for invalid in [
+            "https://jobs.ashbyhq.com/example?token=secret",
+            "http://jobs.ashbyhq.com/example",
+            "https://user@jobs.ashbyhq.com/example",
+        ] {
+            assert!(record
+                .source_application_route("ashby", invalid, 124)
+                .is_err());
+        }
+        let events = fs::read_to_string(root.path().join("events.jsonl")).unwrap();
+        let rows: Vec<Value> = events
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["type"], "source_application_route");
+        assert_eq!(rows[0]["url"], route);
+        assert!(!events.contains("secret"));
     }
 
     #[test]

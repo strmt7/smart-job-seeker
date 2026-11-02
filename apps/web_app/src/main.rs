@@ -4674,6 +4674,13 @@ fn serve(
                 }
             };
             if let Some(record) = &mut record {
+                if let Some((source, _)) = &route_binding {
+                    if let Err(error) = record.source_application_route(source, &url, now()) {
+                        preview
+                            .manual_review
+                            .push(format!("Source route record incomplete: {error}"));
+                    }
+                }
                 if let Err(error) = attempt_record::capture_inspection(
                     &mut driver,
                     record,
