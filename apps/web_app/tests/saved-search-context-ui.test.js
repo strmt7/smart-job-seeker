@@ -11,8 +11,8 @@ show(panel,{search_context_matches_url:true,search_context:{engines:['one','two'
 assert.match(panel.items[0].text,/one, two.*2026-10-01.*2026-10-02.*unverified/);
 assert.match(panel.items[1].text,/bounded/);
 const indexed={items:[],append(item){this.items.push(item)}};
-show(indexed,{search_context_matches_url:true,search_context:{engines:[],published_date:'',indexed_date:'2026-10-03',alternative_published_dates:[],engines_limited:false,dates_limited:false}});
-assert.match(indexed.items[1].text,/index capture: 2026-10-03.*does not confirm/);
+show(indexed,{search_context_matches_url:true,search_context:{engines:[],published_date:'',indexed_date:'2026-10-03',alternative_indexed_dates:['2026-10-04'],alternative_published_dates:[],engines_limited:false,dates_limited:false}});
+assert.match(indexed.items[1].text,/index captures: 2026-10-03, 2026-10-04.*do not confirm/);
 const limited={items:[],append(item){this.items.push(item)}};
 show(limited,{search_context_matches_url:true,search_context:{engines:[],published_date:'',alternative_published_dates:[],engines_limited:false,dates_limited:false,coverage_limited:true}});
 assert.match(limited.items[1].text,/additional reports may be missing/);

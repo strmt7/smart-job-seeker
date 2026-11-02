@@ -33,6 +33,11 @@ pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
         .transpose()?
         .unwrap_or_default();
     let dates = array(&value["alternative_published_dates"], 4)?;
+    let indexed_dates = value
+        .get("alternative_indexed_dates")
+        .map(|value| array(value, 4))
+        .transpose()?
+        .unwrap_or_default();
     let engines_limited = value["engines_limited"]
         .as_bool()
         .ok_or("Invalid search context flag")?;
@@ -47,6 +52,7 @@ pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
         && date.is_empty()
         && indexed_date.is_empty()
         && dates.is_empty()
+        && indexed_dates.is_empty()
         && !engines_limited
         && !dates_limited
         && !coverage_limited
@@ -56,6 +62,9 @@ pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
     let mut context = json!({"engines":engines,"published_date":date,"alternative_published_dates":dates,"engines_limited":engines_limited,"dates_limited":dates_limited,"coverage_limited":coverage_limited});
     if !indexed_date.is_empty() {
         context["indexed_date"] = json!(indexed_date);
+    }
+    if !indexed_dates.is_empty() {
+        context["alternative_indexed_dates"] = json!(indexed_dates);
     }
     Ok(Some(context))
 }
@@ -156,6 +165,16 @@ mod tests {
             validate(&json!([indexed.clone()])).unwrap()[0]["search_context"]["indexed_date"],
             "2026-10-03"
         );
+        indexed["search_context"]["alternative_indexed_dates"] =
+            json!(["2026-10-04", "2026-10-05"]);
+        assert_eq!(
+            validate(&json!([indexed.clone()])).unwrap()[0]["search_context"]
+                ["alternative_indexed_dates"],
+            json!(["2026-10-04", "2026-10-05"])
+        );
+        let mut too_many = indexed.clone();
+        too_many["search_context"]["alternative_indexed_dates"] = json!(["1", "2", "3", "4", "5"]);
+        assert!(validate(&json!([too_many])).is_err());
         indexed["search_context"]["indexed_date"] = json!("bad\nvalue");
         assert!(validate(&json!([indexed])).is_err());
         let mut limited = saved[0].clone();

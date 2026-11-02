@@ -2159,3 +2159,10 @@ its date attribution as limited rather than silently presenting the retained
 date as the only report. The flag carries through multi-page result selection
 and saved search context. Fictional parser and interface tests passed. Only one
 index date is currently retained; this change does not establish listing freshness.
+
+The result parser and selection flow were subsequently extended to retain up
+to four additional distinct index dates. They are displayed and preserved in
+saved search context; further dates set the existing limited-attribution flag.
+Older saved contexts without the new field remain readable. Fictional parser,
+selection, persistence and interface tests passed, as did web Clippy. Provider
+index dates remain unverified and do not establish that a listing is open.

@@ -417,9 +417,19 @@ pub(crate) fn parse_excluding(
                 } else if !indexed_date.trim().is_empty()
                     && earlier["indexed_date"].as_str() != Some(indexed_date.trim())
                 {
-                    // Only one index date is retained. Do not imply the
-                    // provider's other reports were preserved.
-                    earlier["dates_limited"] = json!(true);
+                    let dates = earlier["alternative_indexed_dates"]
+                        .as_array_mut()
+                        .expect("search result index dates");
+                    if !dates
+                        .iter()
+                        .any(|date| date.as_str() == Some(indexed_date.trim()))
+                    {
+                        if dates.len() < 4 {
+                            dates.push(json!(indexed_date.trim()));
+                        } else {
+                            earlier["dates_limited"] = json!(true);
+                        }
+                    }
                 }
             }
             continue;
@@ -427,12 +437,12 @@ pub(crate) fn parse_excluding(
         if excluded.contains(url.as_str()) {
             previously_seen += 1;
             if repeated.len() < 10 {
-                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
             }
             continue;
         }
         if links.len() < 100 {
-            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
         } else {
             result_limit_omitted += 1;
         }
@@ -923,17 +933,24 @@ mod tests {
     }
 
     #[test]
-    fn conflicting_index_dates_report_omitted_provenance() {
+    fn repeated_index_dates_are_preserved_with_a_limit() {
         let rows = json!([
             {"url":"https://example.org/job", "indexedDate":"2026-10-01"},
             {"url":"https://example.org/job", "indexedDate":"2026-10-02"}
         ]);
         let data = parse(&json!({"results": rows}).to_string()).unwrap();
         assert_eq!(data["results"][0]["indexed_date"], "2026-10-01");
-        assert_eq!(data["results"][0]["dates_limited"], true);
+        assert_eq!(
+            data["results"][0]["alternative_indexed_dates"],
+            json!(["2026-10-02"])
+        );
+        assert_eq!(data["results"][0]["dates_limited"], false);
         let excluded = std::collections::HashSet::from(["https://example.org/job".to_owned()]);
         let repeated = parse_excluding(&json!({"results": rows}).to_string(), &excluded).unwrap();
-        assert_eq!(repeated["repeated_references"][0]["dates_limited"], true);
+        assert_eq!(
+            repeated["repeated_references"][0]["alternative_indexed_dates"],
+            json!(["2026-10-02"])
+        );
         let same = json!({"results": [
             {"url":"https://example.org/job", "indexedDate":"2026-10-01"},
             {"url":"https://example.org/job", "indexedDate":"2026-10-01"}
@@ -942,6 +959,16 @@ mod tests {
             parse(&same.to_string()).unwrap()["results"][0]["dates_limited"],
             false
         );
+        let many: Vec<_> = (1..=7).map(|day| json!({"url":"https://example.org/job", "indexedDate":format!("2026-10-{day:02}")})).collect();
+        let bounded = parse(&json!({"results":many}).to_string()).unwrap();
+        assert_eq!(
+            bounded["results"][0]["alternative_indexed_dates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(bounded["results"][0]["dates_limited"], true);
     }
 
     #[test]
