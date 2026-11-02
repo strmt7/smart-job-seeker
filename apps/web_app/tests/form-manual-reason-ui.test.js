@@ -6,7 +6,7 @@ const line = source.split('\n').find(value => value.startsWith('function formFie
 assert.ok(line);
 const notice = vm.runInNewContext(`(${line})`);
 const phone = {selector:'#phone', label:'Phone', sensitive:true, required:true};
-assert.match(notice(phone, {model_review_selectors:['#phone']}), /AI review requires attention or was unavailable/);
+assert.match(notice(phone, {model_review_selectors:['#phone']}), /This field needs additional review/);
 assert.match(notice(phone, {model_review_selectors:['#phone'],visible:false}), /browser is hidden; close this review and inspect again with a visible browser/);
 assert.doesNotMatch(notice(phone, {model_review_selectors:['#phone'],visible:true}), /browser is hidden/);
 assert.doesNotMatch(notice(phone, {model_review_selectors:['#phone']}), /browser is hidden/);

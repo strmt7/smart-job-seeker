@@ -686,9 +686,9 @@ pub fn start_bound(
             if merge_final_inspection(&mut preview, &fresh, &profile, &initial_walls)? {
                 used_revisions.clear();
             }
-            if preview.suggestions.iter().any(|mapping| matches!(&mapping.value, waypoint_applications::form_mapping::PacketValue::Text(value) if value.trim_start().starts_with('+'))) {
+            if form_preview::has_phone_mapping(&preview) {
                 let controls = driver.page_controls();
-                form_preview::guard_international_phone_picker(&mut preview, controls);
+                form_preview::guard_phone_country_picker(&mut preview, controls);
             }
             if let Some(warning) = navigation_warning {
                 preview.manual_review.push(warning);

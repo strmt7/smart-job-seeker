@@ -7009,13 +7009,16 @@ fn serve(
             verify_selected_choices(current)?;
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
             let mut phone_check = prepared.clone();
-            if phone_check.suggestions.iter().any(|mapping| matches!(&mapping.value, waypoint_applications::form_mapping::PacketValue::Text(value) if value.trim_start().starts_with('+'))) {
+            if form_preview::has_phone_mapping(&phone_check) {
                 let before = current.driver.current_url().map_err(|e| e.to_string())?;
                 let controls = current.driver.page_controls();
                 if current.driver.current_url().map_err(|e| e.to_string())? != before {
-                    return Err("The application changed while checking its phone controls; inspect again".into());
+                    return Err(
+                        "The application changed while checking its phone controls; inspect again"
+                            .into(),
+                    );
                 }
-                if form_preview::guard_international_phone_picker(&mut phone_check, controls) {
+                if form_preview::guard_phone_country_picker(&mut phone_check, controls) {
                     return Err("The phone-country control needs manual review; inspect again before filling".into());
                 }
             }

@@ -514,14 +514,16 @@ pub fn start(
                 manual_review: vec![error],
             },
         };
-        if preview.suggestions.iter().any(|mapping| matches!(&mapping.value, waypoint_applications::form_mapping::PacketValue::Text(value) if value.trim_start().starts_with('+'))) {
+        if form_preview::has_phone_mapping(&preview) {
             let before = session.driver.current_url().ok();
             let controls = session.driver.page_controls();
             if before.is_none() || session.driver.current_url().ok() != before {
                 preview.suggestions.clear();
-                preview.manual_review.push(form_preview::CHANGED_INFORMATIONAL_PREVIEW.into());
+                preview
+                    .manual_review
+                    .push(form_preview::CHANGED_INFORMATIONAL_PREVIEW.into());
             } else {
-                form_preview::guard_international_phone_picker(&mut preview, controls);
+                form_preview::guard_phone_country_picker(&mut preview, controls);
             }
         }
         if let Some(warning) = navigation_capture_warning {

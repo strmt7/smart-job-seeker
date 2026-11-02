@@ -2354,6 +2354,12 @@ manual review. No field was filled, no application was sent, and the model was
 unloaded. Focused fictional tests cover the recognized control, unrelated
 controls and incomplete inspection; this does not prove detection on all forms.
 
+The same review now applies to national-format phone suggestions, since their
+meaning also depends on the selected country. The field notice uses neutral
+review language rather than attributing this rule to an AI judgment. A
+fictional test covers the national-number case; this extension has not been
+tested by filling a live form.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and

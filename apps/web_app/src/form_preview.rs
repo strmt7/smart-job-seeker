@@ -20,20 +20,15 @@ pub struct FormPreview {
     pub model_review_selectors: std::collections::HashSet<String>,
 }
 
-/// A separate country picker can make an international number ambiguous.
-/// Do not guess the selected country or how the site's widget combines values.
-pub(crate) fn guard_international_phone_picker(
-    preview: &mut FormPreview,
-    inventory: Result<waypoint_browser::PageControls, waypoint_applications::driver::DriverError>,
-) -> bool {
-    let phone_selectors: Vec<String> = preview
+fn proposed_phone_selectors(preview: &FormPreview) -> Vec<String> {
+    preview
         .suggestions
         .iter()
         .filter_map(|mapping| {
             let PacketValue::Text(value) = &mapping.value else {
                 return None;
             };
-            if !value.trim_start().starts_with('+') {
+            if value.trim().is_empty() {
                 return None;
             }
             let field = preview
@@ -48,9 +43,9 @@ pub(crate) fn guard_international_phone_picker(
                 .flat_map(char::to_lowercase)
                 .collect();
             let telephone_hint = field.autocomplete.as_deref().is_some_and(|hint| {
-                hint.split_ascii_whitespace()
-                    .last()
-                    .is_some_and(|token| token.eq_ignore_ascii_case("tel"))
+                hint.split_ascii_whitespace().last().is_some_and(|token| {
+                    matches!(token.to_ascii_lowercase().as_str(), "tel" | "tel-national")
+                })
             });
             if telephone_hint
                 || [
@@ -69,7 +64,20 @@ pub(crate) fn guard_international_phone_picker(
                 None
             }
         })
-        .collect();
+        .collect()
+}
+
+pub(crate) fn has_phone_mapping(preview: &FormPreview) -> bool {
+    !proposed_phone_selectors(preview).is_empty()
+}
+
+/// A separate country picker can make any phone number ambiguous.
+/// Do not guess the selected country or how the site's widget combines values.
+pub(crate) fn guard_phone_country_picker(
+    preview: &mut FormPreview,
+    inventory: Result<waypoint_browser::PageControls, waypoint_applications::driver::DriverError>,
+) -> bool {
+    let phone_selectors = proposed_phone_selectors(preview);
     if phone_selectors.is_empty() {
         return false;
     }
@@ -110,7 +118,7 @@ pub(crate) fn guard_international_phone_picker(
     preview.manual_review.push(if unknown {
         "The phone-country controls could not be fully inspected. Check the selected country and enter the phone number manually.".into()
     } else {
-        "A separate phone-country control is present. Check its selected country and enter the phone number manually; do not assume the widget accepts a full international number.".into()
+        "A separate phone-country control is present. Check its selected country and enter the phone number manually in the format the site expects.".into()
     });
     true
 }
@@ -1063,7 +1071,7 @@ mod tests {
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
 
     #[test]
-    fn international_phone_picker_requires_manual_review_without_affecting_other_fields() {
+    fn phone_picker_requires_manual_review_without_affecting_other_fields() {
         let field = |selector: &str, label: &str, hint: Option<&str>| {
             waypoint_applications::form_mapping::FormField {
                 selector: selector.into(),
@@ -1110,7 +1118,7 @@ mod tests {
             incomplete,
         };
         let mut selected = preview.clone();
-        assert!(guard_international_phone_picker(
+        assert!(guard_phone_country_picker(
             &mut selected,
             Ok(controls(
                 "Change country for phone number, currently selected Example (+41)",
@@ -1122,13 +1130,22 @@ mod tests {
         assert_eq!(selected.suggestions[0].field_selector, "#name");
         assert!(!selected.manual_review[0].contains("Example"));
         let mut unrelated = preview.clone();
-        assert!(!guard_international_phone_picker(
+        assert!(!guard_phone_country_picker(
             &mut unrelated,
             Ok(controls("Country of residence", false))
         ));
         assert_eq!(unrelated.suggestions.len(), 2);
+        let mut national = preview.clone();
+        national.suggestions[0].value = PacketValue::Text("2025550123".into());
+        national.schema.fields[0].autocomplete = Some("tel-national".into());
+        assert!(has_phone_mapping(&national));
+        assert!(guard_phone_country_picker(
+            &mut national,
+            Ok(controls("Change country for phone number", false))
+        ));
+        assert!(national.model_review_selectors.contains("#phone"));
         let mut incomplete = preview;
-        assert!(guard_international_phone_picker(
+        assert!(guard_phone_country_picker(
             &mut incomplete,
             Ok(controls("Other", true))
         ));
