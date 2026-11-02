@@ -1167,6 +1167,143 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts one local browser with fictional fields; does not submit"]
+    fn browser_keeps_authentication_field_for_manual_review() {
+        use waypoint_domain::GrantId;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-auth-and-contact.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        assert_eq!(
+            live.schema
+                .fields
+                .iter()
+                .find(|f| f.selector == "#login")
+                .unwrap()
+                .autocomplete
+                .as_deref(),
+            Some("email webauthn")
+        );
+        let preview = suggest_without_model(
+            live,
+            &json!({"email":"avery@example.invalid"}),
+            "Model unavailable",
+        )
+        .unwrap();
+        assert!(preview.model_review_selectors.contains("#login"));
+        assert!(!preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#login"));
+        assert!(preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#contact"));
+        assert!(
+            preview
+                .fields_for_review()
+                .iter()
+                .find(|f| f.selector == "#login")
+                .unwrap()
+                .sensitive
+        );
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("auth-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("auth-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        let grant_for = |candidate: &FormPreview, id: &str| ApprovalGrant {
+            id: GrantId::new(id).unwrap(),
+            intent_id: intent.clone(),
+            bound_payload_sha256: Sha256Digest::of(
+                &serde_json::to_string(&candidate.suggestions).unwrap(),
+            ),
+            profile_revision: 1,
+            packet_sha256: packet.clone(),
+            form_schema_sha256: Sha256Digest::of(&candidate.schema.schema_hash_input()),
+            destination_origin: candidate.schema.origin.clone(),
+            operation: GrantOperation::Prefill,
+            nonce: "fixture".into(),
+            explicit_user_gesture: true,
+            consumed: false,
+            expired: false,
+        };
+        let mut forged = preview.clone();
+        forged.suggestions.push(ProposedMapping {
+            field_selector: "#login".into(),
+            value: PacketValue::Text("avery@example.invalid".into()),
+        });
+        let mut grant = grant_for(&forged, "auth-forged");
+        let mut completed = Vec::new();
+        assert!(apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &forged,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed
+            }
+        )
+        .is_err());
+        assert!(!grant.consumed);
+        assert!(completed.is_empty());
+        driver.verify_text_value("#login", "").unwrap();
+        driver.verify_text_value("#contact", "").unwrap();
+        let mut grant = grant_for(&preview, "auth-valid");
+        assert_eq!(
+            apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                url.as_str(),
+                &preview,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 2,
+                    completed: &mut completed
+                }
+            )
+            .unwrap(),
+            1
+        );
+        driver.verify_text_value("#login", "").unwrap();
+        driver
+            .verify_text_value("#contact", "avery@example.invalid")
+            .unwrap();
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
     fn phone_picker_requires_manual_review_without_affecting_other_fields() {
         let field = |selector: &str, label: &str, hint: Option<&str>| {
             waypoint_applications::form_mapping::FormField {
