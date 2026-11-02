@@ -2818,3 +2818,16 @@ fictional browser workflow passed with live vision and choice advice. The model
 was unloaded after each run. These small, development-set observations are not
 a held-out reliability or resource-peak measurement; broader evaluation remains
 necessary. One intervening model start was refused by the unchanged RAM gate.
+
+### Adversarial choice evaluation (2026-11-02)
+
+A separate nine-case fictional choice evaluation found that qwen3.5:9b
+selected an option when the supplied answer contained only an instruction to
+the assistant, without a candidate preference. The other eight cases matched
+the expected outcome, including uncertainty, negation, and an explicit
+preference followed by a conflicting instruction. A prompt-only refinement
+did not fix the failure and was discarded. This is a known model limitation,
+not evidence of robust prompt-injection resistance; the resource-gated test
+remains ignored by default and fails until that case is resolved. An initial
+eight-case run incorrectly expected abstention despite an explicit preference;
+the expected result was corrected and a separate instruction-only case added.
