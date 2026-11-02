@@ -602,7 +602,7 @@ mod tests {
             ExperienceMatch {
                 id: format!("{id:032x}"),
                 revision: 1,
-                same_platform: platform == Platform::Lever,
+                same_platform: platform == Platform::Greenhouse,
                 experience,
             }
         };
@@ -625,6 +625,7 @@ mod tests {
         let selected = select_experience_hints(items);
         assert!(selected.iter().any(|item| item.id == format!("{:032x}", 1)));
         assert!(selected.iter().any(|item| item.id == format!("{:032x}", 2)));
+        assert!(!selected.iter().any(|item| item.id == format!("{:032x}", 3)));
         assert!(selected.iter().any(|item| !item.same_platform));
         assert!(selected.len() <= 5);
     }
