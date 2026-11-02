@@ -373,6 +373,43 @@ fn mark_prior_fills_for_review(
     }
 }
 
+fn recheck_navigation_preview(
+    driver: &mut waypoint_browser::CdpDriver,
+    preview: &mut form_preview::FormPreview,
+    profile: &serde_json::Value,
+    observed_url: &str,
+    initial_walls: &[String],
+) -> Result<bool, String> {
+    let fresh = driver
+        .with_review_timeout(|browser| browser.inspect_current())
+        .map_err(|e| format!("Final form check failed; inspect it again: {e}"))?;
+    if driver.current_url().map_err(|e| e.to_string())? != observed_url {
+        return Err("The application changed while preparing its review; inspect it again".into());
+    }
+    let changed =
+        crate::form_task::merge_final_inspection(preview, &fresh, profile, initial_walls)?;
+    match driver.with_review_timeout(|browser| browser.page_text_bounded(32_000)) {
+        Ok((text, truncated)) => {
+            if crate::form_task::possible_no_ai_instruction(&text) {
+                preview.manual_review.push("The page may ask candidates to answer without AI assistance. Read the original instructions and answer the affected questions yourself; this notice does not identify their scope.".into());
+            }
+            if truncated {
+                preview.manual_review.push("Only part of the page text was checked for employer instructions; review the full page.".into());
+            }
+        }
+        Err(_) => preview.manual_review.push(
+            "Page text could not be checked for employer instructions; review the original page."
+                .into(),
+        ),
+    }
+    if driver.current_url().map_err(|e| e.to_string())? != observed_url {
+        return Err(
+            "The application changed while checking page instructions; inspect it again".into(),
+        );
+    }
+    Ok(changed)
+}
+
 pub fn start(
     id: String,
     mut session: ReviewSession,
@@ -463,8 +500,10 @@ pub fn start(
                     check_destination(&fresh.origin, Operation::Read)?;
                     fresh
                 };
+                let observed_url = session.driver.current_url().map_err(|e| e.to_string())?;
+                let initial_walls = live.walls.clone();
                 let model = crate::form_resident_model();
-                if let Ok(Some(model)) = model {
+                let mut preview = if let Ok(Some(model)) = model {
                     match crate::doc_suggest::lease() {
                         Ok(_lease) => {
                             let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
@@ -496,7 +535,11 @@ pub fn start(
                 } else {
                     let reason = model_unavailable_reason(model);
                     form_preview::suggest_without_model(live, &profile, &reason)
+                }?;
+                if recheck_navigation_preview(&mut session.driver, &mut preview, &profile, &observed_url, &initial_walls)? {
+                    used_revisions.clear();
                 }
+                Ok(preview)
             },
         ))
         .unwrap_or_else(|_| Err("Application navigation stopped unexpectedly".into()));
@@ -680,6 +723,88 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    #[ignore = "opens a local fictional form to recheck a changed navigation preview"]
+    fn navigation_preview_rechecks_changed_fields_and_page_instructions() {
+        use waypoint_applications::{
+            driver::BrowserDriver,
+            form_mapping::{BrowserCommand, PacketValue, ProposedMapping},
+        };
+        let temp = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/form-controlled-change.html"),
+        )
+        .unwrap();
+        let fixture = temp.path().join("fictional.html");
+        std::fs::write(
+            &fixture,
+            source.replace("</body>", "<p>Do not use AI tools.</p></body>"),
+        )
+        .unwrap();
+        let url = url::Url::from_file_path(&fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let observed_url = driver.current_url().unwrap();
+        let walls = live.walls.clone();
+        let mut preview = form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#first".into(),
+                value: PacketValue::Text("Fictional".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        assert!(!super::recheck_navigation_preview(
+            &mut driver,
+            &mut preview,
+            &serde_json::json!({"first_name":"Fictional"}),
+            &observed_url,
+            &walls
+        )
+        .unwrap());
+        assert_eq!(preview.suggestions.len(), 1);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("without AI assistance")));
+        preview.manual_review.clear();
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#change".into(),
+            })
+            .unwrap();
+        assert!(super::recheck_navigation_preview(
+            &mut driver,
+            &mut preview,
+            &serde_json::json!({"first_name":"Fictional"}),
+            &observed_url,
+            &walls
+        )
+        .unwrap());
+        assert!(preview.suggestions.is_empty());
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("form changed during inspection")));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("without AI assistance")));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "captcha present"));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
     }
 
     #[test]

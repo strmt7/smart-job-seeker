@@ -345,7 +345,7 @@ fn schema_change_summary(
     format!("Inspection field changes: added {added}, removed {removed}, modified {changed}; order {}, step structure {}. No entered values are included.", if order_changed { "changed" } else { "unchanged" }, if structure_changed { "changed" } else { "unchanged" })
 }
 
-fn merge_final_inspection(
+pub(crate) fn merge_final_inspection(
     preview: &mut form_preview::FormPreview,
     fresh: &waypoint_applications::driver::LiveForm,
     profile: &serde_json::Value,

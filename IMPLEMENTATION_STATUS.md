@@ -1,3 +1,8 @@
+## Later-section form reinspection — 2026-11-02
+
+- Reviewed-link navigation and manual rescans now recheck the live form after model mapping, using the initial-inspection merge logic. If the schema changes, stale suggestions are discarded and the new form requires review; a changed destination stops the inspection. The new section's bounded page text is also checked for possible instructions against AI assistance, with truncated or unavailable text reported. These checks do not prove that a page is stable or that the instruction detector covers every wording.
+- A fictional browser test covered unchanged and changed fields, a newly detected challenge and page instructions. Its first run compared the browser's normalized file URL with the fixture's unnormalized URL and failed; using the observed browser URL fixed the test. The focused navigation suite passed (14 passed, 4 ignored) and Windows lint passed. This exercised the recheck directly, not the complete web flow or an employer site; no application was submitted.
+
 ## Attempt listing comparison — 2026-11-02
 
 - Attempt history now compares each readable original listing snapshot with the current saved workspace listing, including its description, title, employer, location, source, URL and requisition identifier. Changed or unavailable snapshots are shown for review; a match does not establish that the live vacancy is unchanged or authenticate the plaintext record. Reads are bounded and older, missing, inconsistent or oversized snapshots can report unavailable. The original files are not rewritten.
