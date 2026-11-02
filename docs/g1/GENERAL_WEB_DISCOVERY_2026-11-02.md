@@ -18,3 +18,9 @@ The fallback inspects at most 32 segments and reports when that limit leaves sou
 The fallback can now select a single contiguous range of up to 12 indexed segments and 6,000 bytes, preserving the exact source text between the chosen boundaries. Invalid, reversed, incomplete and oversized selections are rejected. The original one-index response remains accepted as a single segment. Results are still partial model-selected excerpts and require review against the original listing.
 
 On the same saved public listing, an initial four-segment limit rejected the model's nine-segment selection. With the revised bounds, one resource-gated 9B run recovered a 4,003-byte exact source excerpt. This was an offline test against the earlier capture, not a new application or a measurement of general extraction accuracy. The model was unloaded afterward.
+
+### Role association check (2026-11-02)
+
+A resource-gated local `qwen3.5:9b` evaluation used three fictional multi-role page layouts. The initial role identity and vacancy classification were seeded, so this isolates description selection rather than measuring end-to-end discovery. Before the change, a reversed layout yielded an excerpt combining duties from different roles, and role enumeration did not reliably catch it. With an additional model association review, one layout retained a 927-byte excerpt and two were withheld for review. An unbounded explicitly selected role section is also withheld. A previously captured public single-vacancy listing retained a 4,003-byte source-bound excerpt; no new employer request was made.
+
+The association review uses the same local model and is not independent proof of correctness. Retained excerpts still require review; these examples do not establish general accuracy across sites.
