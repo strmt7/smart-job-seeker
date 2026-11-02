@@ -1805,3 +1805,10 @@ comparison; the application does not yet automatically verify these hashes, and
 the manifest does not authenticate the files or their origin. Existing archives
 are not modified. The Windows attempt-record tests and web-app lint passed with
 fictional captures.
+
+Attempt history now compares new capture manifests with the saved metadata and
+screenshot bytes, with a shared 32 MiB read budget per response and streaming
+hashing. It reports matches, differences, unavailable or legacy manifests, and
+budget exhaustion. The hashes remain unsigned and do not establish authenticity;
+older captures have no manifest. A Windows archive test covered a match and
+altered screenshot, and focused tests covered missing files and the read limit.

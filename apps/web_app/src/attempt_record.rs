@@ -1,7 +1,12 @@
 //! Local, human-readable preparation-attempt evidence. Records are plaintext.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
-use std::{fs, io::Write, path::PathBuf};
+use sha2::{Digest, Sha256};
+use std::{
+    fs,
+    io::{Read, Write},
+    path::PathBuf,
+};
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_workspace::Workspace;
 
@@ -638,6 +643,115 @@ fn listing_capture_files(dir: &std::path::Path, value: &Value, followup: bool) -
     }
 }
 
+// The manifest is unsigned. Matching means only that the present bytes match
+// the present manifest; it cannot authenticate either one. Reads share a budget
+// across the history response, and the manifest cannot name arbitrary paths.
+fn listing_capture_integrity(
+    dir: &std::path::Path,
+    value: &Value,
+    followup: bool,
+    budget: &mut u64,
+) -> &'static str {
+    let (available, count_key, folder) = if followup {
+        (
+            "followup_capture_available",
+            "followup_capture_segment_count",
+            "followup-job-page",
+        )
+    } else {
+        (
+            "page_capture_available",
+            "page_capture_segment_count",
+            "original-job-page",
+        )
+    };
+    if value[available] != true {
+        return "unavailable";
+    }
+    let Some(count) = value[count_key].as_u64().filter(|n| (1..=5).contains(n)) else {
+        return "unavailable";
+    };
+    let capture = dir.join(folder);
+    if !fs::symlink_metadata(&capture).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
+        return "unavailable";
+    }
+    let manifest_path = capture.join("capture-hashes.json");
+    let meta = match fs::symlink_metadata(&manifest_path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return "legacy",
+        Ok(m) if m.is_file() && !m.file_type().is_symlink() && m.len() <= 8192 => m,
+        _ => return "unavailable",
+    };
+    if meta.len() > *budget {
+        return "budget_exhausted";
+    }
+    let mut bytes = Vec::new();
+    if fs::File::open(manifest_path)
+        .and_then(|f| f.take(8193).read_to_end(&mut bytes))
+        .is_err()
+        || bytes.len() > 8192
+    {
+        return "unavailable";
+    }
+    *budget = budget.saturating_sub(bytes.len() as u64);
+    let Ok(manifest) = serde_json::from_slice::<Value>(&bytes) else {
+        return "unavailable";
+    };
+    let Some(files) = manifest["files"]
+        .as_object()
+        .filter(|m| m.len() == count as usize + 1)
+    else {
+        return "unavailable";
+    };
+    if manifest["algorithm"] != "SHA-256" {
+        return "unavailable";
+    }
+    let names = std::iter::once("capture.json".to_owned())
+        .chain((1..=count).map(|i| format!("{i:04}.png")));
+    for name in names {
+        let Some(expected) = files.get(&name).and_then(Value::as_str).filter(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        }) else {
+            return "unavailable";
+        };
+        let path = capture.join(name);
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            return "unavailable";
+        };
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            return "unavailable";
+        }
+        if meta.len() > *budget {
+            return "budget_exhausted";
+        }
+        let Ok(mut file) = fs::File::open(path) else {
+            return "unavailable";
+        };
+        let mut digest = Sha256::new();
+        let mut buffer = [0u8; 32768];
+        loop {
+            let remaining = *budget;
+            if remaining == 0 {
+                return "budget_exhausted";
+            }
+            let limit = usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
+            let Ok(n) = file.read(&mut buffer[..limit]) else {
+                return "unavailable";
+            };
+            if n == 0 {
+                break;
+            }
+            *budget -= n as u64;
+            digest.update(&buffer[..n]);
+        }
+        if format!("{:x}", digest.finalize()) != expected {
+            return "mismatch";
+        }
+    }
+    "match"
+}
+
 /// List a bounded number of locally saved attempts without reading their materials.
 pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     let root = ws
@@ -714,12 +828,23 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
         attempts.truncate(50);
         truncated = true;
+    }
+    let mut integrity_budget = 32 * 1024 * 1024u64;
+    for attempt in &mut attempts {
+        let Some(folder) = attempt["folder"].as_str() else {
+            continue;
+        };
+        let dir = PathBuf::from(folder);
+        let original = listing_capture_integrity(&dir, attempt, false, &mut integrity_budget);
+        let followup = listing_capture_integrity(&dir, attempt, true, &mut integrity_budget);
+        attempt["page_capture_integrity"] = json!(original);
+        attempt["followup_capture_integrity"] = json!(followup);
     }
     Ok(json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable}))
 }
@@ -3252,6 +3377,57 @@ mod tests {
     }
 
     #[test]
+    fn capture_integrity_reports_changes_legacy_and_read_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("original-job-page");
+        fs::create_dir(&dir).unwrap();
+        let info = json!({"page_capture_available":true,"page_capture_segment_count":1});
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "legacy"
+        );
+        fs::write(dir.join("capture.json"), b"metadata").unwrap();
+        fs::write(dir.join("0001.png"), b"image").unwrap();
+        let manifest = json!({"algorithm":"SHA-256","files":{
+            "capture.json":waypoint_domain::sha256_hex(b"metadata"),
+            "0001.png":waypoint_domain::sha256_hex(b"image")}});
+        fs::write(
+            dir.join("capture-hashes.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "match"
+        );
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 1),
+            "budget_exhausted"
+        );
+        fs::write(dir.join("0001.png"), b"changed").unwrap();
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "mismatch"
+        );
+        fs::remove_file(dir.join("0001.png")).unwrap();
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "unavailable"
+        );
+        let mut invalid = manifest;
+        invalid["files"]["../other"] = json!("a".repeat(64));
+        fs::write(
+            dir.join("capture-hashes.json"),
+            serde_json::to_vec(&invalid).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "unavailable"
+        );
+    }
+
+    #[test]
     fn capture_coverage_requires_valid_complete_nonoverlapping_geometry() {
         let mut capture = json!({"page_width": 2000, "page_height": 1000,
         "full_dimensions_captured": true, "segment_rectangles": [
@@ -3530,6 +3706,16 @@ mod tests {
         {
             assert_eq!(records["attempts"][0]["followup_capture_available"], true);
             assert_eq!(records["attempts"][0]["followup_capture_files"], "present");
+            assert_eq!(
+                records["attempts"][0]["followup_capture_integrity"],
+                "match"
+            );
+            assert_eq!(records["attempts"][0]["page_capture_integrity"], "match");
+            fs::write(record.dir.join("followup-job-page/0001.png"), b"changed").unwrap();
+            assert_eq!(
+                list(&ws, &id).unwrap()["attempts"][0]["followup_capture_integrity"],
+                "mismatch"
+            );
             fs::remove_file(record.dir.join("followup-job-page/0001.png")).unwrap();
             assert_eq!(
                 list(&ws, &id).unwrap()["attempts"][0]["followup_capture_files"],
