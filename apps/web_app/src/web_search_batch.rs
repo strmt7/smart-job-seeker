@@ -1,7 +1,7 @@
 //! Sequential, user-approved web-search phrases. Results are unverified candidates.
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
@@ -152,7 +152,7 @@ fn tracking_comparison_key(raw: &str) -> String {
 #[derive(Default)]
 struct BatchSeen {
     originals: HashSet<String>,
-    comparison_keys: HashSet<String>,
+    comparison_keys: HashMap<String, String>,
 }
 
 fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
@@ -173,9 +173,12 @@ fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
                 return false;
             }
             let comparison = tracking_comparison_key(&url);
-            if !seen.comparison_keys.insert(comparison) {
+            if let Some(first) = seen.comparison_keys.get(&comparison) {
                 item["possible_tracking_variant"] = json!(true);
+                item["possible_tracking_variant_of"] = json!(first);
                 potentially_related += 1;
+            } else {
+                seen.comparison_keys.insert(comparison, url.clone());
             }
             seen.originals.insert(url)
         });
@@ -1146,7 +1149,66 @@ mod tests {
         );
         assert_eq!(page["possible_tracking_variants"], 1);
         assert_eq!(page["results"][1]["possible_tracking_variant"], true);
+        assert_eq!(
+            page["results"][1]["possible_tracking_variant_of"],
+            "https://example.org/job?id=1&utm_source=first"
+        );
         assert!(page["results"][2]["possible_tracking_variant"].is_null());
+    }
+
+    #[test]
+    fn tracking_variants_survive_provider_pages_and_batch_recovery() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let provider = std::thread::spawn(move || {
+            for suffix in ["first", "second"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                let received = stream.read(&mut request).unwrap();
+                assert!(received > 0);
+                let body = json!({"results":[{"title":"Fictional role","url":format!("https://example.org/job?id=1&utm_source={suffix}")}]}).to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        start(
+            "tracking-recovery".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec!["one".into(), "two".into()],
+            1,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut pages = Vec::new();
+        loop {
+            let result = poll("tracking-recovery", pages.len()).unwrap();
+            if result["status"] == "complete" {
+                let history = result["history"].as_array().unwrap();
+                assert_eq!(history.len(), 2);
+                assert_eq!(
+                    history[1]["data"]["results"][0]["possible_tracking_variant_of"],
+                    "https://example.org/job?id=1&utm_source=first"
+                );
+                break;
+            }
+            if result.get("data").is_some() {
+                pages.push(result);
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(pages.len(), 2);
+        assert_eq!(
+            pages[1]["data"]["results"][0]["possible_tracking_variant"],
+            true
+        );
+        assert_eq!(pages[1]["data"]["possible_tracking_variants"], 1);
+        provider.join().unwrap();
     }
 
     #[test]

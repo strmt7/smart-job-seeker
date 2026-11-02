@@ -1923,3 +1923,11 @@ count toward the existing 600-link cap. Previously completed batches cannot
 recover links omitted by the earlier implementation; their coverage notice now
 identifies that earlier omission. Fictional batch and UI checks and web Clippy
 passed. No live provider or application was contacted in this check.
+
+Related search variants now retain the first matching URL and offer a direct
+comparison link on the later candidate. A fictional two-page loopback provider
+confirmed that both variants and the comparison reference remain available in
+completed batch history; simulated UI checks covered the link and rejected a
+non-HTTPS reference. This does not prove that the listings are duplicates or
+restore links omitted by older batches. Web Clippy passed; no live provider or
+application was contacted.
