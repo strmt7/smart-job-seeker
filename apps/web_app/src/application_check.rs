@@ -178,6 +178,30 @@ fn ensure_inspected_form(
     Ok(())
 }
 
+fn inspected_text_fingerprint(
+    browser: &mut waypoint_browser::CdpDriver,
+) -> Result<(String, bool), String> {
+    let (text, truncated) = browser
+        .page_text_bounded(32_000)
+        .map_err(|_| "The application page text could not be checked; inspect it manually.")?;
+    Ok((
+        waypoint_domain::Sha256Digest::of(&text).as_str().to_owned(),
+        truncated,
+    ))
+}
+
+fn ensure_inspected_text(
+    browser: &mut waypoint_browser::CdpDriver,
+    previous: &(String, bool),
+) -> Result<(), String> {
+    if inspected_text_fingerprint(browser)? != *previous {
+        return Err(
+            "The sampled application page text changed during the check; inspect it again.".into(),
+        );
+    }
+    Ok(())
+}
+
 /// The model's judgment is advisory. A matching DOM excerpt supports where
 /// its evidence came from, but does not prove visibility or interpretation.
 fn visual_page_advice(
@@ -714,6 +738,7 @@ pub fn start_bound(
                 }
             }
             ensure_inspected_page(&mut browser, &current)?;
+            let page_text_fingerprint = inspected_text_fingerprint(&mut browser)?;
             let (mut message, review) = if !page.walls.is_empty()
                 && page
                     .walls
@@ -810,6 +835,11 @@ pub fn start_bound(
                 }
             }
             ensure_inspected_form(&mut browser, &current, &page)?;
+            ensure_inspected_text(&mut browser, &page_text_fingerprint)?;
+            ensure_inspected_page(&mut browser, &current)?;
+            if page_text_fingerprint.1 {
+                message.push_str(" The text freshness check covered only the first 32,000 bytes; later content may have changed.");
+            }
             Ok((report_inspected_page(message, inspected_url), review))
         })();
         if result.is_err() {
@@ -1025,6 +1055,34 @@ mod tests {
         assert_eq!(browser.current_url().unwrap(), url);
         let error = super::ensure_inspected_form(&mut browser, &url, &original).unwrap_err();
         assert!(error.contains("changed during the check"));
+        assert!(browser
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "opens a local fictional listing with changing text"]
+    fn sampled_page_text_change_requires_another_check() {
+        use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/application-check-changing-text.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let original = browser.open(&url).unwrap();
+        let fingerprint = super::inspected_text_fingerprint(&mut browser).unwrap();
+        super::ensure_inspected_text(&mut browser, &fingerprint).unwrap();
+        browser
+            .execute(&BrowserCommand::Click {
+                selector: "#change".into(),
+            })
+            .unwrap();
+        super::ensure_inspected_form(&mut browser, &url, &original).unwrap();
+        assert!(super::ensure_inspected_text(&mut browser, &fingerprint)
+            .unwrap_err()
+            .contains("text changed"));
         assert!(browser
             .trace
             .iter()
