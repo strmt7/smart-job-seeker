@@ -657,8 +657,47 @@ pub fn suggest_with_review(
             requested_choices - resolved_choices
         ));
     }
+    if has_split_phone_review(schema, &resolved, profile) {
+        warnings.push("This form has a separate calling-code field and the suggested phone number starts with +. Check whether the number field expects a national number; do not duplicate the country code.".into());
+    }
     warnings.extend(missing_required_warnings(schema, &resolved));
     Ok((resolved, warnings, model_review_selectors))
+}
+
+// A calling-code control may mean the adjacent phone input expects only the
+// national part. Do not guess how to split an international number.
+fn has_split_phone_review(
+    schema: &FormSchema,
+    mappings: &[ProposedMapping],
+    profile: &serde_json::Map<String, Value>,
+) -> bool {
+    let has_code = schema.fields.iter().any(|field| {
+        let label = normalize_field_name(&field.label);
+        [
+            "countrycallingcode",
+            "callingcode",
+            "countrydialcode",
+            "dialingcode",
+            "diallingcode",
+        ]
+        .iter()
+        .any(|suffix| label.ends_with(suffix))
+            || field.autocomplete.as_deref().is_some_and(|hint| {
+                hint.split_ascii_whitespace()
+                    .last()
+                    .is_some_and(|token| token.eq_ignore_ascii_case("tel-country-code"))
+            })
+    });
+    let phone = profile
+        .get("phone")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    has_code
+        && phone.starts_with('+')
+        && mappings.iter().any(
+            |mapping| matches!(&mapping.value, PacketValue::Text(value) if value.trim() == phone),
+        )
 }
 
 fn missing_required_warnings(schema: &FormSchema, mappings: &[ProposedMapping]) -> Vec<String> {
@@ -1620,6 +1659,86 @@ mod tests {
             driver.verify_text_value(selector, "").unwrap();
         }
         assert!(driver.trace.iter().all(|line| !line.contains("submitted")));
+    }
+
+    #[test]
+    fn split_phone_warning_requires_international_phone_and_code_field() {
+        let mut schema = form();
+        schema.fields[0].label = "Country calling code".into();
+        let mappings = vec![ProposedMapping {
+            field_selector: "#phone".into(),
+            value: PacketValue::Text("+12025550123".into()),
+        }];
+        let profile = json!({"phone":"+12025550123"});
+        assert!(has_split_phone_review(
+            &schema,
+            &mappings,
+            profile.as_object().unwrap()
+        ));
+        schema.fields[0].label = "Country".into();
+        assert!(!has_split_phone_review(
+            &schema,
+            &mappings,
+            profile.as_object().unwrap()
+        ));
+        schema.fields[0].autocomplete = Some("tel-country-code".into());
+        assert!(has_split_phone_review(
+            &schema,
+            &mappings,
+            profile.as_object().unwrap()
+        ));
+        assert!(!has_split_phone_review(
+            &schema,
+            &[],
+            profile.as_object().unwrap()
+        ));
+    }
+
+    #[test]
+    #[ignore = "loads a resource-gated local model for a fictional split phone form"]
+    fn resource_gated_split_phone_mapping() {
+        let mut schema = form();
+        schema.fields = [
+            ("#phone", "Phone number"),
+            ("#extension", "Phone extension"),
+            ("#calling-code", "Country calling code"),
+        ]
+        .into_iter()
+        .map(|(selector, label)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        })
+        .collect();
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let model = crate::resident_model().unwrap().expect("resident model");
+            let llm =
+                waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", model.clone())
+                    .unwrap()
+                    .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let (mappings, warnings, review) =
+                suggest_with_review(&mut llm, &schema, &json!({"phone":"+12025550123"})).unwrap();
+            println!("Fictional split phone: mappings={mappings:?}; warnings={warnings:?}; review={review:?}");
+            assert!(mappings.iter().any(|m| m.field_selector == "#phone"));
+            assert!(warnings
+                .iter()
+                .any(|warning| warning.contains("separate calling-code field")));
+            assert!(!mappings
+                .iter()
+                .any(|m| m.field_selector == "#extension" || m.field_selector == "#calling-code"));
+        });
     }
 
     #[test]

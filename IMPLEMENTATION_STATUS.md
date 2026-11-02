@@ -1812,3 +1812,14 @@ hashing. It reports matches, differences, unavailable or legacy manifests, and
 budget exhaustion. The hashes remain unsigned and do not establish authenticity;
 older captures have no manifest. A Windows archive test covered a match and
 altered screenshot, and focused tests covered missing files and the read limit.
+
+### Split phone fields (2026-11-02)
+
+In one fictional local-model run, qwen3.5:9b proposed the stored international
+phone number for a phone field while leaving separate calling-code and extension
+fields for review. A recognized calling-code label or `tel-country-code` hint now
+adds a warning when the proposed profile phone starts with `+`: the user should
+check whether the form expects a national number. This heuristic does not cover
+all languages or layouts, split numbers, or prove the resulting format is valid.
+The same local-model scenario passed after the change; the model was unloaded.
+Focused suggestion tests and web Clippy passed. No application was submitted.
