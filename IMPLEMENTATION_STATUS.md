@@ -2429,6 +2429,12 @@ test checked listing contacts, and a mocked UI checked the page label and the
 two-page contact limit. Automatic link following and destination collection
 were not tested together against a live employer site; no email was sent.
 
+Contact actions now also appear for a checked board-provided application URL
+when both its listing URL and application URL still match the current job.
+Previously the interface only allowed a direct listing URL, hiding those
+contacts. A mocked UI test covers the current route and rejects changed or
+missing route bindings; this does not verify recipient suitability.
+
 ### Post-fill form changes (2026-11-02)
 
 After filling reviewed answers and checking their retained values, Waypoint now
