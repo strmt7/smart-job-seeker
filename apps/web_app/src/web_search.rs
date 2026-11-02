@@ -315,9 +315,21 @@ pub(crate) fn parse_excluding(
             .and_then(Value::as_str)
             .unwrap_or("")
             .chars()
-            .filter(|c| !c.is_control())
+            .filter_map(|c| {
+                if c.is_control() && c.is_whitespace() {
+                    Some(' ')
+                } else if c.is_control() {
+                    None
+                } else {
+                    Some(c)
+                }
+            })
             .take(200)
             .collect();
+        let cleaned_title = cleaned_title
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         let title_missing = cleaned_title.trim().is_empty();
         let title = if title_missing {
             format!(
@@ -331,8 +343,14 @@ pub(crate) fn parse_excluding(
             .get("content")
             .and_then(Value::as_str)
             .unwrap_or("")
+            .replace("\r\n", "\n")
             .chars()
-            .filter(|c| !c.is_control() || *c == '\n')
+            .filter_map(|c| match c {
+                '\n' => Some('\n'),
+                _ if c.is_control() && c.is_whitespace() => Some(' '),
+                _ if c.is_control() => None,
+                _ => Some(c),
+            })
             .take(1000)
             .collect();
         let mut engines = Vec::new();
@@ -518,6 +536,23 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn search_text_preserves_word_boundaries_when_controls_are_removed() {
+        let payload = json!({"results":[
+            {"url":"https://example.org/job","title":" Senior\nStaff\tEngineer\r\n Berlin ","content":"Build\tplatforms\r\nacross teams\u{0000}"},
+            {"url":"https://example.org/empty","title":"\n\t"}
+        ]}).to_string();
+        let result = parse(&payload).unwrap();
+        assert_eq!(
+            result["results"][0]["title"],
+            "Senior Staff Engineer Berlin"
+        );
+        assert_eq!(
+            result["results"][0]["snippet"],
+            "Build platforms\nacross teams"
+        );
+        assert_eq!(result["results"][1]["title_missing"], true);
+    }
     #[test]
     fn forbidden_provider_stops_batch_and_explains_possible_configuration() {
         use std::io::{Read, Write};
