@@ -1,3 +1,7 @@
+## Local choice-advice evaluation — 2026-11-02
+
+- In a resource-gated Qwen 3.5 9B evaluation, the existing choice verifier selected an option from an instruction-only fictional answer (8/9 cases passed, one wrong). An experimental extra classifier avoided that wrong choice but unnecessarily abstained on a separate clear preference (8/9, one unexpected abstention), so it was not enabled. The existing verification prompt now explicitly distinguishes instructions from personal evidence; on one rerun the same model passed 9/9 adversarial cases and 10/10 existing fictional radio/location examples (two exact matches and eight model cases). The focused choice tests and Windows Clippy passed. These small fixed sets do not establish robustness to other wording or models; advice remains subject to user review. No real form was filled or application submitted.
+
 ## Form loading observations — 2026-11-02
 
 - Browser inspection now requires two consecutive unchanged nonempty form snapshots before considering its bounded loading check settled. If the check ends with a nonempty form that has not settled, it marks the page for manual review. This adds approximately 750 ms to the prior first-stable path and still cannot detect fields that appear after the bounded check. A real local browser detected a fictional field added 800 ms after page load; two existing staged-loading browser checks also passed. Browser library tests passed (21 passed, 3 ignored) and browser Clippy passed. No external application was opened or submitted in this check.
