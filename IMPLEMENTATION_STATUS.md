@@ -2202,3 +2202,16 @@ non-vacancy result and failed; after adopting review-only handling for uncertain
 results, it passed with those same classifications. Three fictional vacancies
 were also classified as vacancies in a separate run. These small samples do
 not establish general accuracy. The model was unloaded and no application sent.
+
+### Bounded fallback for long page classification (2026-11-02)
+
+When the first local classification of a page longer than 6,000 bytes is
+uncertain, Waypoint makes one additional classification using bounded excerpts
+from the beginning, middle and end. Only a non-vacancy result changes the
+review reason; a sampled vacancy does not turn an uncertain page into an
+automatically saved job. The interface warns when the negative judgment used
+excerpts, since omitted text can change the meaning. On one public article and
+one public application-page capture, qwen3.5:9b returned non-vacancy and vacancy
+respectively after this change; earlier the article returned uncertain. Fictional
+tests cover the no-upgrade rule and warning propagation. These examples do not
+establish general accuracy or prove why the longer input was uncertain.

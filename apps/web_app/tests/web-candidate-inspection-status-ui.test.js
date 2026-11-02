@@ -31,5 +31,8 @@ const render = vm.runInNewContext(`${titleNotice}\n${candidate}\nwebCandidate`, 
   await button.listeners.click();
   assert.match(status.textContent, /could not confirm this is a vacancy; nothing was saved/);
   assert.match(status.textContent, /Enter details manually/);
+  context.followListingInspection=async()=>({review_only:true,review_reason:'not_vacancy',saved:null,job:{title:'Role',classification_sampled:true}});
+  await button.listeners.click();
+  assert.match(status.textContent, /used excerpts; omitted text/);
   console.log('Candidate inspection status UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -822,17 +822,46 @@ fn extract_page_text(
     extract_page_text_with_hint(inference, source, url, None, None)
 }
 
-fn classify_page_kind(inference: &mut dyn Inference, source: &str) -> String {
+fn sampled_page_kind_text(source: &str) -> String {
+    if source.len() <= 6000 {
+        return source.to_owned();
+    }
+    let head = source.floor_char_boundary(2000);
+    let middle = source.floor_char_boundary(source.len() / 2);
+    let middle_end = source.floor_char_boundary((middle + 2000).min(source.len()));
+    let tail = source.floor_char_boundary(source.len() - 2000);
+    format!(
+        "{}\n[Excerpt omitted]\n{}\n[Excerpt omitted]\n{}",
+        &source[..head],
+        &source[middle..middle_end],
+        &source[tail..]
+    )
+}
+
+fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -> (String, bool) {
     let initial = classify_page_segment(inference, source);
+    if initial == "uncertain" && source.len() > 6000 {
+        let sample = sampled_page_kind_text(source);
+        if classify_page_segment(inference, &sample) == "not_vacancy" {
+            // A partial sample cannot prove a vacancy. This negative remains
+            // review-only, and the UI identifies the sampling limitation.
+            return ("not_vacancy".into(), true);
+        }
+    }
     if initial != "not_vacancy" || source.len() <= 4000 {
-        return initial;
+        return (initial, false);
     }
     let start = source.floor_char_boundary(source.len() - 4000);
     if classify_page_segment(inference, &source[start..]) == "vacancy" {
-        "uncertain".into()
+        ("uncertain".into(), false)
     } else {
-        initial
+        (initial, false)
     }
+}
+
+#[cfg(test)]
+fn classify_page_kind(inference: &mut dyn Inference, source: &str) -> String {
+    classify_page_kind_with_sample(inference, source).0
 }
 
 fn classify_page_segment(inference: &mut dyn Inference, source: &str) -> String {
@@ -1012,18 +1041,21 @@ fn extract_page_text_with_hint(
         return Err("The local model selected a different title than the requested page section; review manually".into());
     }
     let employer = field("employer", 200, true)?;
-    let page_kind = classify_page_kind(inference, source);
+    let (page_kind, classification_sampled) = classify_page_kind_with_sample(inference, source);
     let possible_non_job = page_kind == "not_vacancy";
     let mut warnings = vec!["The page may contain multiple roles; verify that the selected title and all details refer to the same vacancy.".to_owned()];
     if possible_non_job {
         warnings.push("A separate local model check suggests this may be an article, training page or other non-vacancy. The model can be wrong; verify the original page.".into());
+        if classification_sampled {
+            warnings.push("The non-vacancy check used excerpts from the page; omitted text may change its meaning.".into());
+        }
         if repaired {
             warnings.push("The first model response failed exact-source validation; this result came from one retry.".into());
         }
         // The user can still review the page and enter it manually. Avoid
         // extracting and ranking unrelated roles from a suspected article.
         return Ok(
-            json!({"url":url,"title":title,"employer":employer,"location":"","description":"","deadline_excerpt":"","page_kind":page_kind,"possible_non_job":true,"remote":false,"extraction":"local_model","extraction_warnings":warnings,"employer_audit":{"status":"uncertain","evidence":""},"other_open_roles":[],"other_role_assessments":[],"other_roles_status":"unavailable","rejected_role_suggestions":0}),
+            json!({"url":url,"title":title,"employer":employer,"location":"","description":"","deadline_excerpt":"","page_kind":page_kind,"possible_non_job":true,"classification_sampled":classification_sampled,"remote":false,"extraction":"local_model","extraction_warnings":warnings,"employer_audit":{"status":"uncertain","evidence":""},"other_open_roles":[],"other_role_assessments":[],"other_roles_status":"unavailable","rejected_role_suggestions":0}),
         );
     } else if page_kind == "uncertain" {
         warnings.push("The local model could not determine whether this page is a job vacancy; verify the original page.".into());
@@ -4236,6 +4268,34 @@ mod tests {
             let article_kind = classify_page_kind(&mut llm, &bounded(&article));
             let vacancy_kind = classify_page_kind(&mut llm, &bounded(&vacancy));
             println!("public article classification={article_kind}; public vacancy classification={vacancy_kind}");
+            let article = bounded(&article);
+            let head = &article[..article.floor_char_boundary(article.len().min(4000))];
+            let tail = &article[article.floor_char_boundary(article.len().saturating_sub(4000))..];
+            println!(
+                "article head={} tail={}",
+                classify_page_segment(&mut llm, head),
+                classify_page_segment(&mut llm, tail)
+            );
+            let sampled = |text: &str| -> String {
+                if text.len() <= 6000 {
+                    return text.into();
+                }
+                let head = text.floor_char_boundary(2000);
+                let middle = text.floor_char_boundary(text.len() / 2);
+                let middle_end = text.floor_char_boundary((middle + 2000).min(text.len()));
+                let tail = text.floor_char_boundary(text.len() - 2000);
+                format!(
+                    "{}\n[Excerpt omitted]\n{}\n[Excerpt omitted]\n{}",
+                    &text[..head],
+                    &text[middle..middle_end],
+                    &text[tail..]
+                )
+            };
+            println!(
+                "sampled article={} vacancy={}",
+                classify_page_segment(&mut llm, &sampled(&article)),
+                classify_page_segment(&mut llm, &sampled(&bounded(&vacancy)))
+            );
             assert_ne!(
                 article_kind, "vacancy",
                 "career article incorrectly accepted as a vacancy"
@@ -4284,6 +4344,108 @@ mod tests {
         let mut model = Contradict(0);
         assert_eq!(classify_page_kind(&mut model, "short page"), "not_vacancy");
         assert_eq!(model.0, 1);
+    }
+
+    #[test]
+    fn sampled_classification_cannot_upgrade_an_uncertain_page_to_vacancy() {
+        struct Model {
+            responses: Vec<&'static str>,
+            calls: usize,
+        }
+        impl Inference for Model {
+            fn probe(
+                &mut self,
+            ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError>
+            {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
+            {
+                if self.calls == 1 {
+                    assert!(prompt.contains("[Excerpt omitted]"));
+                }
+                let kind = self.responses[self.calls];
+                self.calls += 1;
+                Ok((
+                    json!({"kind":kind}),
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let source = "é".repeat(4000);
+        let mut negative = Model {
+            responses: vec!["uncertain", "not_vacancy"],
+            calls: 0,
+        };
+        assert_eq!(
+            classify_page_kind_with_sample(&mut negative, &source),
+            ("not_vacancy".into(), true)
+        );
+        let mut positive = Model {
+            responses: vec!["uncertain", "vacancy"],
+            calls: 0,
+        };
+        assert_eq!(
+            classify_page_kind_with_sample(&mut positive, &source),
+            ("uncertain".into(), false)
+        );
+        assert!(sampled_page_kind_text(&source).len() < source.len());
+    }
+
+    #[test]
+    fn sampled_non_vacancy_preserves_review_warning() {
+        struct Model(usize);
+        impl Inference for Model {
+            fn probe(
+                &mut self,
+            ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError>
+            {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
+            {
+                let value = match schema {
+                    "job_page_extraction" => {
+                        json!({"title":"Engineer", "employer":"Example", "location":"", "description":""})
+                    }
+                    "job_page_kind" => {
+                        self.0 += 1;
+                        json!({"kind":if self.0 == 1 {"uncertain"} else {"not_vacancy"}})
+                    }
+                    _ => panic!("unexpected follow-up"),
+                };
+                Ok((
+                    value,
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let source = format!("Example Engineer {}", "career information ".repeat(400));
+        let job = extract_page_text(&mut Model(0), &source, "https://example.org/article").unwrap();
+        assert_eq!(job["classification_sampled"], true);
+        assert!(job["extraction_warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap_or("").contains("excerpts")));
     }
 
     #[test]
