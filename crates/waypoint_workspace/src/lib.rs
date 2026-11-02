@@ -1122,15 +1122,20 @@ impl Workspace {
                         // Older Greenhouse imports mislabeled update time and
                         // listing ID as publication date and requisition number.
                         // Correct these even when listing content is unchanged.
-                        if existing.source == "greenhouse"
+                        let mut corrected = existing.clone();
+                        corrected.last_seen = latest_seen(existing.last_seen.as_deref(), now_unix);
+                        let metadata_changed = existing.source == "greenhouse"
                             && posting.source == "greenhouse"
                             && (existing.posted_at != posting.posted_at
-                                || existing.requisition_id != posting.requisition_id)
-                        {
-                            let mut corrected = existing.clone();
+                                || existing.requisition_id != posting.requisition_id);
+                        if metadata_changed {
                             corrected.posted_at = posting.posted_at.clone();
                             corrected.requisition_id = posting.requisition_id.clone();
+                        }
+                        if corrected.last_seen != existing.last_seen || metadata_changed {
                             self.store.upsert_job(&corrected)?;
+                        }
+                        if metadata_changed {
                             self.store.find_possible_duplicates(&corrected)?;
                         }
                         // Repair a missing description if a previous import
@@ -1153,7 +1158,7 @@ impl Workspace {
                         merged.location = posting.location.clone();
                         merged.canonical_url = Some(posting.source_url.clone());
                         merged.content_hash = Some(hash.clone());
-                        merged.last_seen = Some(now.clone());
+                        merged.last_seen = latest_seen(existing.last_seen.as_deref(), now_unix);
                         merged.remote = posting.remote;
                         merged.source = posting.source.clone();
                         merged.requisition_id = posting.requisition_id.clone();
@@ -1277,6 +1282,16 @@ impl Workspace {
 pub fn default_registry() -> PermissionRegistry {
     PermissionRegistry::from_json(waypoint_policy::INITIAL_REGISTRY_JSON)
         .expect("shipped source registry must always parse")
+}
+
+fn latest_seen(previous: Option<&str>, observed_at: i64) -> Option<String> {
+    if observed_at <= 0 {
+        return previous.map(str::to_owned);
+    }
+    match previous.and_then(|value| value.parse::<i64>().ok()) {
+        Some(value) if value >= observed_at => previous.map(str::to_owned),
+        _ => Some(observed_at.to_string()),
+    }
 }
 
 fn parse_payload(source: &str, board: &str, body: &str) -> Result<Vec<RawPosting>, String> {

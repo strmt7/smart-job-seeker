@@ -2067,3 +2067,13 @@ from the same employer the same blank-requisition key. Nonblank identifiers keep
 their original bytes to avoid silently changing existing identities. Search unit
 tests cover empty, ASCII-whitespace and nonbreaking-space identifiers and
 distinct listing URLs. Existing records are not repaired or split by this change.
+
+### Unchanged listings refresh their observation time (2026-11-02)
+
+When a source returns an unchanged listing, discovery now advances its saved
+last-seen time without changing the original first-seen time or application
+state. Older or nonpositive timestamps cannot move the last-seen value backward,
+including on changed listings. Fictional multi-source rediscovery and
+shortlisted-job tests passed. Last seen means the listing was observed in the
+source response; it does not establish that an application page is open or that
+the role remains available.

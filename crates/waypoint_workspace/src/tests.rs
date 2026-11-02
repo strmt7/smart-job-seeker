@@ -389,6 +389,18 @@ fn discovery_persists_parses_and_dedups_across_runs() {
     assert_eq!(second.inserted, 0);
     assert_eq!(second.unchanged, 4);
     assert_eq!(ws.job_count().unwrap(), 4, "re-run must not duplicate rows");
+    for job in ws.jobs().unwrap() {
+        assert_eq!(job.first_seen.as_deref(), Some("1758900000"));
+        assert_eq!(job.last_seen.as_deref(), Some("1758900600"));
+    }
+    // An older or invalid observation time cannot make a job appear older.
+    ws.discover(&targets(), &f, 1_758_900_100);
+    ws.discover(&targets(), &f, 0);
+    assert!(ws
+        .jobs()
+        .unwrap()
+        .iter()
+        .all(|job| job.last_seen.as_deref() == Some("1758900600")));
 
     // The summary always carries a denominator.
     let summary = second.summary();
