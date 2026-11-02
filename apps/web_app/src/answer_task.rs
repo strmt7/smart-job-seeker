@@ -680,6 +680,35 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|source| source == "Built production services using Rust for three years."));
+            let negative = Inputs {
+                session_id: "fictional".into(), selector: "#postgres".into(), digest: "fixture".into(),
+                question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have experience with the following stack? — PostgreSQL".into(),
+                listing: "Fictional software role".into(), facts: vec!["Built production services using Rust for three years.".into()], available_facts: 1,
+                instructions: String::new(), max_length_utf16: None, min_length_utf16: None,
+            };
+            let negative_result = generate_with_selection(&mut llm, negative);
+            println!("Fictional unrelated qualification diagnostic: {negative_result:?}");
+            assert_eq!(
+                negative_result.unwrap_err(),
+                "The model returned no answer; review this question manually"
+            );
+            let nuanced = Inputs {
+                session_id: "fictional".into(), selector: "#production".into(), digest: "fixture".into(),
+                question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have production PostgreSQL experience?".into(),
+                listing: "Fictional software role".into(), facts: vec!["Studied PostgreSQL in coursework but have no production PostgreSQL experience.".into()], available_facts: 1,
+                instructions: String::new(), max_length_utf16: None, min_length_utf16: None,
+            };
+            let nuanced_result = generate_with_selection(&mut llm, nuanced);
+            println!("Fictional qualified-experience diagnostic: {nuanced_result:?}");
+            let nuanced_text = nuanced_result.unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .to_lowercase();
+            assert!(
+                nuanced_text.contains("no production")
+                    || nuanced_text.contains("without production"),
+                "The explanation must preserve the limitation: {nuanced_text}"
+            );
         });
     }
 
