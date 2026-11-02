@@ -3042,6 +3042,13 @@ fn serve(
                         ws.mark_manual_review(&job_id, "Some listing details are missing or could not be verified against the page", now())
                             .map_err(|e| e.to_string())?;
                     }
+                    if matches!(
+                        job["employer_audit"]["status"].as_str(),
+                        Some("conflict" | "uncertain")
+                    ) {
+                        ws.mark_manual_review(&job_id, "Verify the hiring organization: the extracted employer may be a department, client, recruiter or platform", now())
+                            .map_err(|e| e.to_string())?;
+                    }
                     if capture["saved"] == false || capture["complete"] == false {
                         ws.mark_manual_review(
                             &job_id,

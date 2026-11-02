@@ -162,10 +162,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
     let mut requests = Vec::new();
     for page in 1..=pages {
         for (query, url) in &phrases {
-            let mut page_url = url.clone();
-            page_url
-                .query_pairs_mut()
-                .append_pair(crate::web_search::page_parameter(url), &page.to_string());
+            let page_url = crate::web_search::page_url(url, page);
             requests.push((query.clone(), page, page_url));
         }
     }
@@ -221,7 +218,14 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             }
             let (result, provider_stop) =
                 std::panic::catch_unwind(|| match crate::web_search::fetch(&url) {
-                    Ok(body) => (crate::web_search::parse_provider(&body, &url, &seen), false),
+                    Ok(body) => {
+                        let parsed = crate::web_search::parse_provider(&body, &url, &seen);
+                        // An unusable response indicates that this provider is
+                        // not delivering the requested search. Surface the
+                        // failure and leave the rest of the plan unattempted.
+                        let stop = parsed.is_err();
+                        (parsed, stop)
+                    }
                     Err(error) => (Err(error.message), error.stop_batch),
                 })
                 .unwrap_or_else(|_| (Err("Search stopped unexpectedly".into()), false));
@@ -897,6 +901,55 @@ mod tests {
         );
     }
     #[test]
+    fn unusable_provider_response_stops_remaining_pages() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = listener.try_clone().unwrap();
+        let provider = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = "<html>Search is unavailable</html>";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        start(
+            "invalid-provider".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec!["first role".into(), "second role".into()],
+            2,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = poll("invalid-provider", acknowledged).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["coverage"]["attempted_pages"], 1);
+                assert_eq!(result["coverage"]["failed_pages"], 1);
+                assert_eq!(result["coverage"]["unattempted_pages"], 3);
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        provider.join().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
     fn results_are_replayed_until_acknowledged_and_completion_is_recoverable() {
         let _lock = TEST_LOCK.lock().unwrap();
         let (tx, rx) = mpsc::sync_channel(2);
@@ -1134,6 +1187,50 @@ mod tests {
             assert!(Instant::now() < deadline, "public search did not finish");
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    #[test]
+    #[ignore = "sends fictional search phrases to the public FreeSerp API"]
+    fn live_freeserp_batch_searches_multiple_phrases_and_pages() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        start(
+            "freeserp-batch-evaluation".into(),
+            "https://freeserp.ai/".into(),
+            vec![
+                "microscopy technician careers".into(),
+                "payroll accountant careers".into(),
+            ],
+            2,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut pages = 0;
+        let mut retained = 0;
+        loop {
+            let result = poll("freeserp-batch-evaluation", pages).unwrap();
+            if result["status"] == "complete" {
+                println!("coverage: {}; retained: {retained}", result["coverage"]);
+                assert_eq!(result["coverage"]["succeeded_pages"], 4);
+                assert_eq!(result["coverage"]["failed_pages"], 0);
+                break;
+            }
+            assert_ne!(result["status"], "failed", "{result}");
+            if result.get("query").is_some() {
+                assert!(result.get("error").is_none(), "{result}");
+                assert_eq!(result["data"]["provider"], "freeserp");
+                let count = result["data"]["results"].as_array().unwrap().len();
+                retained += count;
+                println!(
+                    "query={} page={} retained={count}",
+                    result["query"], result["page"]
+                );
+                pages += 1;
+            }
+            assert!(Instant::now() < deadline, "public search did not finish");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(pages, 4);
+        assert!(retained > 0, "no candidates were returned");
     }
 
     #[test]

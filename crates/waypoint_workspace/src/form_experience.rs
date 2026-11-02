@@ -251,7 +251,17 @@ impl Workspace {
         // Keep distinct observation/response pairs before repeating a pattern,
         // so several similar memories do not crowd out a conflicting response.
         let mut selected: Vec<ExperienceMatch> = Vec::new();
+        // Reserve space for other contexts when available. A platform match is
+        // only a hint: tenant layouts can differ and contrary observations
+        // must not disappear behind a run of same-platform records.
+        let has_other_context = matches.iter().any(|item| !item.same_platform);
         for item in &matches {
+            if has_other_context
+                && item.same_platform
+                && selected.iter().filter(|entry| entry.same_platform).count() >= 3
+            {
+                continue;
+            }
             if !selected.iter().any(|previous| {
                 previous.experience.observation == item.experience.observation
                     && previous.experience.response == item.experience.response
@@ -264,6 +274,13 @@ impl Workspace {
             }
         }
         for item in matches {
+            if has_other_context
+                && item.same_platform
+                && selected.iter().filter(|entry| entry.same_platform).count() >= 3
+                && !selected.iter().any(|entry| !entry.same_platform)
+            {
+                continue;
+            }
             if !selected.iter().any(|previous| previous.id == item.id) {
                 selected.push(item);
                 if selected.len() == 5 {
@@ -394,6 +411,45 @@ mod tests {
         assert!(found
             .iter()
             .any(|item| item.experience.outcome == Outcome::DidNotHelp));
+    }
+
+    #[test]
+    fn platform_matches_cannot_crowd_out_other_contexts() {
+        let mut ws = Workspace::in_memory().unwrap();
+        ws.store = Store::in_memory()
+            .unwrap()
+            .with_sealer(waypoint_seal::platform_sealer().unwrap());
+        for i in 1..=7 {
+            let mut item = lesson();
+            item.observed_at = i;
+            if i == 1 {
+                item.platform = Some(Platform::Ashby);
+                item.response = Response::StopAndReview;
+                item.outcome = Outcome::DidNotHelp;
+            } else {
+                item.observation = match i {
+                    2 => Observation::AmbiguousLabel,
+                    3 => Observation::ValueChanged,
+                    4 => Observation::ValidationError,
+                    5 => Observation::HiddenControl,
+                    _ => Observation::UnexpectedNavigation,
+                };
+            }
+            ws.save_form_experience(&format!("{i:032x}"), 0, &item)
+                .unwrap();
+        }
+        let found = ws
+            .related_form_experiences(
+                Stage::EnterInformation,
+                Control::Text,
+                Some(Platform::Lever),
+            )
+            .unwrap();
+        assert!(found
+            .iter()
+            .any(|item| item.experience.platform == Some(Platform::Ashby)));
+        assert_eq!(found.len(), 5);
+        assert!(found.iter().filter(|item| item.same_platform).count() <= 4);
     }
 
     #[test]

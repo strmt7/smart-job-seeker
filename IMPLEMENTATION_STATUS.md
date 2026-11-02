@@ -1544,3 +1544,49 @@ Local search-plan validation now includes the saved preferred name among protect
 The local search planner now asks for some general-web job-intent phrases while keeping others broad and avoiding unsupported specialties. In a resource-gated qwen3.5:9b probe, the prior prompt omitted job-intent wording for a fictional Rust profile and introduced architect; an intermediate prompt introduced clinical, biology, diagnostic and quality specialties for a general lab profile. The final prompt passed the fixture's explicit job-intent and unsupported-term checks for lab, Rust and accounting profiles in one run each. Planner unit tests and web Clippy passed; the model was unloaded. These checks do not prove all generated roles are appropriate or establish search-provider recall, and users must review the phrases.
 
 On 2026-11-02, the actual web-search batch worker sent three non-personal planner-style phrases to Wiby's public JSON API. Two runs each reported zero results for microscopy, ten for remote Rust (seven eligible HTTPS links) and one for payroll accounting (no eligible HTTPS link). The seven retained titles did not obviously describe job listings; the pages were not inspected, so their content and application availability remain unknown. All three requests completed without provider errors. This small sample demonstrates a practical limitation of Wiby for these searches, not general web coverage; no applications were contacted or submitted.
+# Optional FreeSerp web search — 2026-11-02
+
+The wider-web search accepts `https://freeserp.ai/` as an optional provider.
+The adapter requests the provider's web index, maps its offset pagination, and
+rejects an explicitly reported fallback to the sites index. Returned links are
+unverified candidates; the provider's top-100 query limit and potentially stale
+index do not represent complete internet coverage. Existing request and candidate
+budgets still apply. Provider documentation: https://freeserp.ai/docs.php.
+
+In a bounded direct API sample, three public, fictional-query phrases returned
+10 results each. Their titles included apparent individual vacancies and many
+career articles or job-board result pages. No result page was inspected in this
+sample, so neither vacancy availability nor application accessibility was proven.
+The native responses remain in ignored `target/freeserp-quality-*-20261102.json`.
+An additional live test through Waypoint's batch worker searched two phrases
+over two pages each: all four requests succeeded and retained 40 distinct
+candidate links. This did not inspect the returned pages or test the web UI.
+An unusable provider response now stops the batch and reports the remaining
+pages as unattempted instead of repeating the same failure.
+When FreeSerp supplies an index capture date, Waypoint shows it separately from
+the provider's page date and retains it with selected search attribution. It is
+not evidence that the listing is current or that an application form is open.
+An isolated Windows workspace was exercised through the rendered UI on
+2026-11-02 using the query `microscopy technician careers`. It displayed ten
+unverified candidates and the provider's capture dates. Inspection of one
+apparent vacancy returned HTTP 404 and was marked for manual review. A second
+returned no structured job and could not use model extraction because no
+eligible local model was loaded; it also required manual review. No application
+page was reached or submitted. This small sample is not a provider quality
+estimate or a demonstration of end-to-end job classification.
+In a follow-up on the second result, the app's resource-gated startup loaded
+`qwen3.5:9b`; Ollama reported 100% GPU residency and the system reported at least
+approximately 13 GiB available memory in the sampled checks. The local model
+extracted a candidate listing, which was saved with incomplete-capture and
+unverified-details warnings. The application check reported no detected form
+fields, flagged a possible login, and required manual review. It did not fill or
+submit anything. The model and isolated app process started for the test were
+stopped afterward. This is one page and does not establish general accuracy.
+Locally extracted listings now receive a separate model assessment of whether
+the proposed employer is the hiring organization, backed by a bounded exact
+page excerpt when available. Conflict or insufficient evidence adds a specific
+manual-review reason. In one fictional local-model test, `qwen3.5:9b` selected
+the stated employer; when the initial extraction was forced to name the lab,
+the model returned a conflict with the exact employer sentence. The assessment
+is advisory and has not been qualified on the real listing or a representative
+corpus.

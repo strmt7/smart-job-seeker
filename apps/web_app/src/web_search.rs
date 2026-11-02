@@ -38,12 +38,35 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
         search.query_pairs_mut().append_pair("q", query.trim());
         return Ok(search);
     }
+    if is_freeserp_base(&url) {
+        let mut search = url.join("api.php").map_err(|_| "Invalid provider path")?;
+        search
+            .query_pairs_mut()
+            .append_pair("index", "web")
+            .append_pair("size", "10")
+            .append_pair("q", query.trim());
+        return Ok(search);
+    }
     let mut search = url.join("search").map_err(|_| "Invalid provider path")?;
     search
         .query_pairs_mut()
         .append_pair("q", query.trim())
         .append_pair("format", "json");
     Ok(search)
+}
+
+fn is_freeserp_base(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("freeserp.ai")
+        && url.port().is_none()
+        && url.path() == "/"
+}
+
+fn is_freeserp_request(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("freeserp.ai")
+        && url.port().is_none()
+        && url.path() == "/api.php"
 }
 
 fn is_wiby(url: &Url) -> bool {
@@ -68,11 +91,46 @@ pub(crate) fn page_parameter(url: &Url) -> &'static str {
     }
 }
 
+pub(crate) fn page_url(url: &Url, page: u8) -> Url {
+    let mut result = url.clone();
+    if is_freeserp_request(url) {
+        result.query_pairs_mut().append_pair(
+            "from",
+            &(u16::from(page.saturating_sub(1)) * 10).to_string(),
+        );
+    } else {
+        result
+            .query_pairs_mut()
+            .append_pair(page_parameter(url), &page.to_string());
+    }
+    result
+}
+
 pub(crate) fn parse_provider(
     payload: &str,
     url: &Url,
     excluded: &std::collections::HashSet<String>,
 ) -> Result<Value, String> {
+    if is_freeserp_request(url) {
+        let data: Value =
+            serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
+        if data["ok"] != true {
+            return Err("FreeSerp did not report a successful search".into());
+        }
+        if data["index"] != "web" || data["engine_fallback"] == true {
+            return Err("FreeSerp's general web index was unavailable; fallback results were not treated as web search".into());
+        }
+        let entries = data["results"]
+            .as_array()
+            .ok_or("Provider returned no results array")?;
+        if entries.len() > 500 {
+            return Err("Provider returned too many results".into());
+        }
+        let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("url"),"title":item.get("title"),"content":item.get("snippet"),"publishedDate":item.get("published_at"),"indexedDate":item.get("crawled_at"),"engine":"FreeSerp Global"})).collect();
+        let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
+        parsed["provider"] = json!("freeserp");
+        return Ok(parsed);
+    }
     if !is_wiby_request(url) {
         return parse_excluding(payload, excluded);
     }
@@ -310,6 +368,14 @@ pub(crate) fn parse_excluding(
             .filter(|c| !c.is_control())
             .take(80)
             .collect();
+        let indexed_date: String = item
+            .get("indexedDate")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(80)
+            .collect();
         if !seen.insert(url.to_string()) {
             within_page_duplicates += 1;
             if let Some(earlier) = links
@@ -326,18 +392,21 @@ pub(crate) fn parse_excluding(
                     engines_limited,
                     published_date.trim(),
                 );
+                if earlier["indexed_date"] == "" && !indexed_date.trim().is_empty() {
+                    earlier["indexed_date"] = json!(indexed_date.trim());
+                }
             }
             continue;
         }
         if excluded.contains(url.as_str()) {
             previously_seen += 1;
             if repeated.len() < 10 {
-                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
             }
             continue;
         }
         if links.len() < 100 {
-            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
+            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"dates_limited":false}));
         } else {
             result_limit_omitted += 1;
         }
@@ -522,6 +591,44 @@ mod tests {
             page_parameter(&request_url("https://example.org/", "role").unwrap()),
             "pageno"
         );
+    }
+
+    #[test]
+    fn freeserp_uses_web_index_offsets_and_rejects_fallback() {
+        let url = request_url("https://freeserp.ai/", "fictional engineer").unwrap();
+        assert_eq!(url.path(), "/api.php");
+        let pairs: std::collections::HashMap<_, _> =
+            page_url(&url, 5).query_pairs().into_owned().collect();
+        assert_eq!(pairs.get("index").map(String::as_str), Some("web"));
+        assert_eq!(pairs.get("from").map(String::as_str), Some("40"));
+        let payload = json!({"ok":true,"index":"web","results":[{"url":"https://example.org/job","title":"Fictional role","snippet":"A role","published_at":"2026-10-01","crawled_at":"2026-10-03"}]}).to_string();
+        let result = parse_provider(&payload, &url, &Default::default()).unwrap();
+        assert_eq!(result["provider"], "freeserp");
+        assert_eq!(result["results"][0]["published_date"], "2026-10-01");
+        assert_eq!(result["results"][0]["indexed_date"], "2026-10-03");
+        for payload in [
+            json!({"ok":true,"index":"sites","results":[]}),
+            json!({"ok":true,"index":"web","engine_fallback":true,"results":[]}),
+            json!({"ok":false,"index":"web","results":[]}),
+        ] {
+            assert!(parse_provider(&payload.to_string(), &url, &Default::default()).is_err());
+        }
+        assert_eq!(
+            request_url("https://freeserp.ai.example/", "role")
+                .unwrap()
+                .path(),
+            "/search"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires live FreeSerp network access"]
+    fn live_freesp_search_returns_unverified_candidates() {
+        let url = request_url("https://freeserp.ai/", "microscopy technician careers").unwrap();
+        let body = fetch(&url).map_err(|error| error.message).unwrap();
+        let parsed = parse_provider(&body, &url, &Default::default()).unwrap();
+        assert_eq!(parsed["provider"], "freeserp");
+        assert!(parsed["results"].is_array());
     }
     #[test]
     fn html_provider_response_reports_actionable_failure_without_page_contents() {
