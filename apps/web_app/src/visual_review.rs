@@ -1217,6 +1217,15 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "opens a public application read-only with a resource-gated local vision model"]
+    fn resource_gated_public_empty_field_visual_review() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_public_empty_field_visual_review_is_read_only,
+        );
+    }
+
     #[test]
     #[ignore = "read-only public application and resource-gated local vision model"]
     fn live_public_empty_field_visual_review_is_read_only() {
@@ -1264,7 +1273,12 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|item| item["label"] == label)
+            .filter(|item| {
+                item["label"].as_str().is_some_and(|observed| {
+                    let normalized = normalized_label(observed);
+                    normalized.rsplit('—').next().unwrap_or("").trim() == normalized_label(&label)
+                })
+            })
             .collect();
         assert_eq!(
             observations.len(),
