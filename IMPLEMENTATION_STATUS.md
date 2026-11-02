@@ -2790,3 +2790,14 @@ copying potentially unrelated extracted details. A live status check returned
 the destination without saving a job; focused backend and interface tests cover
 cross-origin rejection and blank manual entry. This remains a manual review,
 including for legitimate canonical redirects.
+
+### Choice advice evaluation accounting (2026-11-02)
+
+The fictional radio-advice evaluation now runs all seven cases and reports
+incorrect suggestions, unexpected abstentions and inference errors separately;
+two cases use the deterministic exact-match path and five exercise the model.
+Previously inference errors could be silently ignored. The non-live advice tests
+pass, but this change has not been qualified with the live model. A separate
+live custom-choice attempt stopped before loading a model because the resource
+gate observed 9,572 MiB GPU memory free against its 9,605 MiB minimum. The
+previous natural-language custom-choice abstention therefore remains unresolved.

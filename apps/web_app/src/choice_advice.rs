@@ -387,7 +387,11 @@ mod tests {
                 last: None,
             };
             let choices = vec!["Yes".into(), "No".into()];
-            for (answer, expected) in [
+            let mut passed = 0;
+            let mut wrong = 0;
+            let mut abstained = 0;
+            let mut errors = 0;
+            let cases = [
                 ("Yes", Some("Yes")),
                 ("No", Some("No")),
                 ("I am authorized to work in this country.", Some("Yes")),
@@ -398,7 +402,9 @@ mod tests {
                 ),
                 ("I am authorized to work in this country. I am not authorized to work in this country.", None),
                 ("I am authorized to work in Canada, but I do not know whether that is the country in question.", None),
-            ] {
+            ];
+            let total = cases.len();
+            for (answer, expected) in cases {
                 llm.last = None;
                 let result = suggest(
                     &mut llm,
@@ -410,14 +416,19 @@ mod tests {
                     "fictional radio advice answer={answer:?} model={:?} result={result:?}",
                     llm.last
                 );
-                if let Ok(advice) = result {
-                    assert_eq!(
-                        advice["option"].as_str(),
-                        expected,
-                        "an incorrect suggestion must not be accepted"
-                    );
+                match result {
+                    Ok(advice) if advice["option"].as_str() == expected => passed += 1,
+                    Ok(advice) if advice["option"].is_null() && expected.is_some() => {
+                        abstained += 1;
+                    }
+                    Ok(_) => wrong += 1,
+                    Err(_) => errors += 1,
                 }
             }
+            println!(
+                "fictional radio advice (2 exact-match, 5 model cases): {passed}/{total} passed, {wrong} wrong, {abstained} unexpected abstentions, {errors} errors"
+            );
+            assert_eq!(passed, total, "the fictional evaluation did not fully pass");
         });
     }
 
