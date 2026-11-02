@@ -9,6 +9,8 @@ Waypoint is a Windows-first, local job-search and application-assistance prototy
 
 **Current status:** See [the web prototype checkpoint](docs/WEB_PROTOTYPE_CHECKPOINT.md) for the latest verified capabilities and limitations. Earlier gate documents describe historical work and do not establish current end-to-end readiness. No hiring-uplift, superiority or "undetectable AI" claims are made.
 
+The [completion plan](docs/COMPLETION_PLAN.md) records the remaining product work and evidence gates; implementation is ongoing and no readiness date is established.
+
 ## Quick start
 
 On Windows, build the local web prototype from the repository root:

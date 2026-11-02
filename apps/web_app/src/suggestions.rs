@@ -233,6 +233,19 @@ fn names_third_party(label: &str) -> bool {
                 | "manager"
                 | "supervisor"
                 | "recruiter"
+                | "employer"
+                | "employers"
+                | "company"
+                | "companies"
+                | "organization"
+                | "organisation"
+                | "headquarters"
+                | "arbeitgeber"
+                | "unternehmen"
+                | "employeur"
+                | "entreprise"
+                | "empleador"
+                | "empresa"
                 | "referenzperson"
                 | "referenzpersonen"
                 | "référence"
@@ -2443,6 +2456,82 @@ mod tests {
         .unwrap()
         .is_empty());
     }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the application resource gate"]
+    fn local_model_respects_employer_and_applicant_address_context() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let mut schema = form();
+            let mut applicant = schema.fields[0].clone();
+            applicant.selector = "#home".into();
+            applicant.label = "Your street address".into();
+            applicant.autocomplete = Some("street-address".into());
+            let mut employer = applicant.clone();
+            employer.selector = "#employer".into();
+            employer.label = "Current employer address".into();
+            let mut headquarters = applicant.clone();
+            headquarters.selector = "#headquarters".into();
+            headquarters.label = "Company headquarters address".into();
+            schema.fields = vec![applicant, employer, headquarters];
+            let model = crate::resident_model().unwrap().unwrap();
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let (mappings, warnings, _) =
+                suggest_with_review(&mut llm, &schema, &json!({"address":"10 Fictional Street"}))
+                    .unwrap();
+            println!("Fictional address mapping: {mappings:?}; warnings: {warnings:?}");
+            assert!(mappings
+                .iter()
+                .any(|mapping| mapping.field_selector == "#home"));
+            assert!(!mappings.iter().any(|mapping| matches!(
+                mapping.field_selector.as_str(),
+                "#employer" | "#headquarters"
+            )));
+        });
+    }
+
+    #[test]
+    fn model_cannot_map_applicant_contact_to_employer_fields() {
+        let mut schema = form();
+        schema.fields[0].field_type = FormFieldType::Text;
+        schema.fields[0].autocomplete = Some("street-address".into());
+        let profile = json!({"address":"10 Fictional Street"});
+        let response = json!({"mappings":[{"selector":"#candidate","profile_key":"address"}]});
+        for label in [
+            "Current employer address",
+            "Company street address",
+            "Employer's address",
+            "Headquarters address",
+            "Arbeitgeber Adresse",
+            "Adresse de l'employeur",
+            "Dirección del empleador",
+        ] {
+            schema.fields[0].label = label.into();
+            let (mapped, invalid, _) =
+                validate_suggestions(&schema, profile.as_object().unwrap(), &response).unwrap();
+            assert!(mapped.is_empty(), "{label}");
+            assert!(invalid.contains("#candidate"), "{label}");
+            assert!(
+                suggest_exact(&schema, &profile).unwrap().is_empty(),
+                "{label}"
+            );
+        }
+        schema.fields[0].label = "Your street address".into();
+        assert_eq!(
+            validate_suggestions(&schema, profile.as_object().unwrap(), &response)
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
+    }
+
     #[test]
     fn offline_autocomplete_does_not_replace_a_third_party_contact() {
         let mut schema = form();

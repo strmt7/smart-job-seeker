@@ -1,3 +1,8 @@
+## Employer contact mapping — 2026-11-02
+
+- Form mapping now conservatively treats employer, company and headquarters labels, including selected German, French and Spanish terms, as third-party context. Applicant profile details are not suggested for those fields even if the model or a site-provided autocomplete hint proposes them. This bounded word check can miss other wording and can flag an applicant field that mentions a company; the user must review uncertain fields.
+- A fictional adversarial validator case and the form-suggestion suite passed (39 passed, 17 ignored). In one resource-gated `qwen3.5:9b` run, the model mapped a fictional home address and marked two employer-address fields for manual review. This one run does not establish general accuracy. The test-owned model was unloaded; no real form was filled or submitted.
+
 ## Listing observation age — 2026-11-02
 
 - A card-initiated board refresh now reports whether that saved listing's exact URL appeared in the parsed response, was not seen, could not be checked, or changed before processing. This is a response-time observation, not a closure or application-access determination; alternate URLs can produce a non-match. Fictional tests covered exact matches, missing URLs, malformed responses and fetch failures. An isolated UI check against the public `unframe` board reported that a deliberately fictional URL was not in its 33 returned listings. No employer application was opened or submitted. Windows web lint and focused discovery tests passed.
