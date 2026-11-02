@@ -1022,6 +1022,15 @@ fn assess_with_source(
                             listing,
                             verification_text,
                         );
+                        if assessment["unknown_qualification_search"]["lexical_candidates"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            > 0
+                        {
+                            if let Some(concerns) = assessment["concerns"].as_array_mut() {
+                                concerns.push(json!("Some candidate facts were retrieved by exact-term and duration matching. A separate model check is required before they affect the score; review the evidence and full context."));
+                            }
+                        }
                         assessment["initial_listing_sampled"] = json!(sampled_retry || isolated);
                         assessment["listing_only_fallback"] = json!(isolated);
                         assessment["isolated_rejected_quotes"] = json!(rejected_isolated);
@@ -1705,6 +1714,7 @@ fn find_unknown_qualification_evidence(
     };
     let mut seen = std::collections::HashSet::new();
     let mut proposals = Vec::new();
+    let mut unknown_ids = Vec::new();
     for answer in answers {
         let Some(id) = answer["id"].as_u64() else {
             return (original, Some(report));
@@ -1722,6 +1732,7 @@ fn find_unknown_qualification_evidence(
             return (original, Some(report));
         };
         if status == "unknown" && answer["fact_index"].is_null() {
+            unknown_ids.push(id);
             continue;
         }
         if !matches!(status, "supported" | "contradicted") {
@@ -1741,13 +1752,38 @@ fn find_unknown_qualification_evidence(
         }
         proposals.push((id as usize - 1, index, status.to_owned()));
     }
+    // Retrieve, but do not accept, one exact-term duration candidate the
+    // model may have missed. Every candidate still goes through the blind
+    // qualification check and its duration guard before affecting the score.
+    let mut lexical_candidates = 0;
+    let mut lexical_indices = std::collections::HashSet::new();
+    for id in unknown_ids {
+        let Some(item) = items.iter().find(|item| item["id"] == id) else {
+            continue;
+        };
+        let (Some(excerpt), Some(context)) =
+            (item["requirement"].as_str(), item["job_context"].as_str())
+        else {
+            continue;
+        };
+        if let Some(fact_index) = unique_duration_candidate(excerpt, context, facts) {
+            proposals.push((id as usize - 1, fact_index as u64, "supported".into()));
+            lexical_indices.insert(id as usize - 1);
+            lexical_candidates += 1;
+        }
+    }
     for (index, fact_index, status) in &proposals {
         original["criteria"][*index]["status"] = json!(status);
         original["criteria"][*index]["fact_index"] = json!(fact_index);
-        original["criteria"][*index]["explanation"] = json!("A second pass identified a candidate fact for this requirement; review it against the job context.");
+        original["criteria"][*index]["explanation"] = json!(if lexical_indices.contains(index) {
+            "An exact-term and duration search identified a candidate fact; the model comparison and full context require review."
+        } else {
+            "A second pass identified a candidate fact for this requirement; review it against the job context."
+        });
     }
     report["status"] = json!("completed");
     report["proposed"] = json!(proposals.len());
+    report["lexical_candidates"] = json!(lexical_candidates);
     (original, Some(report))
 }
 
@@ -1952,7 +1988,7 @@ fn simple_duration_months(text: &str, candidate: bool) -> Option<u64> {
     None
 }
 
-fn insufficient_stated_duration(excerpt: &str, fact: &str, context: &str) -> bool {
+fn unambiguous_minimum_context(excerpt: &str, context: &str) -> bool {
     let lower = context.to_lowercase();
     let quote = excerpt.to_lowercase();
     let Some(position) = lower.find(&quote) else {
@@ -1986,9 +2022,134 @@ fn insufficient_stated_duration(excerpt: &str, fact: &str, context: &str) -> boo
     {
         return false;
     }
-    simple_duration_months(excerpt, false)
-        .zip(simple_duration_months(fact, true))
-        .is_some_and(|(required, stated)| stated < required)
+    true
+}
+
+fn insufficient_stated_duration(excerpt: &str, fact: &str, context: &str) -> bool {
+    unambiguous_minimum_context(excerpt, context)
+        && simple_duration_months(excerpt, false)
+            .zip(simple_duration_months(fact, true))
+            .is_some_and(|(required, stated)| stated < required)
+}
+
+/// Retrieve one possible fact for a simple single-term duration requirement.
+/// This lexical match is not a judgment and cannot bypass model comparison.
+fn unique_duration_candidate(excerpt: &str, context: &str, facts: &[String]) -> Option<usize> {
+    let required = simple_duration_months(excerpt, false)?;
+    if !unambiguous_minimum_context(excerpt, context) {
+        return None;
+    }
+    // A partial quote can omit an industry, recency or other qualifier.
+    // Only retrieve when the surrounding clause contains no extra words.
+    let lower = context.to_lowercase();
+    let quote = excerpt.to_lowercase();
+    let position = lower.find(&quote)?;
+    let before = lower[..position].rsplit([';', '.', '\n']).next()?.trim();
+    let after = lower[position + quote.len()..].trim_start();
+    if !matches!(
+        before,
+        "" | "required:"
+            | "required"
+            | "requires"
+            | "at least"
+            | "required: at least"
+            | "minimum"
+            | "minimum:"
+    ) || (!after.is_empty() && !after.starts_with([';', '.', '\n', '!', '?']))
+    {
+        return None;
+    }
+    let lower = excerpt.to_lowercase();
+    let terms: Vec<_> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| {
+            word.len() >= 3
+                && !matches!(
+                    *word,
+                    "zero"
+                        | "one"
+                        | "two"
+                        | "three"
+                        | "four"
+                        | "five"
+                        | "six"
+                        | "seven"
+                        | "eight"
+                        | "nine"
+                        | "ten"
+                        | "eleven"
+                        | "twelve"
+                        | "thirteen"
+                        | "fourteen"
+                        | "fifteen"
+                        | "sixteen"
+                        | "seventeen"
+                        | "eighteen"
+                        | "nineteen"
+                        | "twenty"
+                        | "year"
+                        | "years"
+                        | "month"
+                        | "months"
+                        | "yrs"
+                        | "mos"
+                        | "experience"
+                        | "professional"
+                        | "required"
+                        | "minimum"
+                        | "least"
+                        | "with"
+                        | "using"
+                        | "and"
+                        | "for"
+                        | "the"
+                        | "of"
+                        | "in"
+                )
+        })
+        .filter(|word| !word.chars().all(|c| c.is_ascii_digit()))
+        .collect();
+    let [term] = terms.as_slice() else {
+        return None;
+    };
+    let mut found = None;
+    for (index, fact) in facts.iter().enumerate() {
+        let negated_contraction = fact
+            .to_lowercase()
+            .replace('’', "'")
+            .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+            .any(|word| {
+                matches!(
+                    word,
+                    "don't"
+                        | "doesn't"
+                        | "didn't"
+                        | "haven't"
+                        | "hasn't"
+                        | "hadn't"
+                        | "isn't"
+                        | "wasn't"
+                        | "lacks"
+                        | "lack"
+                )
+            });
+        if has_explicit_negation(fact)
+            || negated_contraction
+            || simple_duration_months(fact, true).is_none_or(|duration| duration < required)
+        {
+            continue;
+        }
+        if fact
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| word.eq_ignore_ascii_case(term))
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index + 1);
+        }
+    }
+    found
 }
 
 /// Reassess cited qualifications without showing the original judgment. A
@@ -4307,6 +4468,89 @@ mod tests {
         );
         assert_eq!(checked["rubric"][0]["status"], "unknown");
         assert_eq!(checked["rubric"][1]["status"], "contradicted");
+
+        let facts = vec!["Used Python for six years".to_owned()];
+        let listing = "Required: five years of Python.";
+        let source = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of Python","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let initial = validate(source.clone(), &facts, "", listing).unwrap();
+        let (proposed, report) = find_unknown_qualification_evidence(
+            &mut Fixture(json!({"items":[{"id":1,"status":"unknown","fact_index":null}]})),
+            source,
+            &facts,
+            listing,
+        );
+        assert_eq!(report.unwrap()["lexical_candidates"], 1);
+        assert_eq!(proposed["criteria"][0]["fact_index"], 1);
+        for (status, expected) in [("unknown", "unknown"), ("supported", "supported")] {
+            let (_, checked) = check_qualification_judgments(
+                &mut Fixture(json!({"items":[{"id":1,"status":status}]})),
+                proposed.clone(),
+                initial.clone(),
+                &facts,
+                "",
+                listing,
+            );
+            assert_eq!(checked["rubric"][0]["status"], expected);
+        }
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["Used Python for one year".into()]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["I haven't used Python for six years".into()]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["Never used Python for six years".into()]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &[
+                    "Used Python for six years".into(),
+                    "Used Python for seven years".into()
+                ]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate("five years of Python", "Up to five years of Python", &facts),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate("five years of Python and SQL", listing, &facts),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                "Required: five years of Python in regulated banking.",
+                &facts
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                "Required: regulated banking requires five years of Python.",
+                &facts
+            ),
+            None
+        );
     }
 
     #[test]
