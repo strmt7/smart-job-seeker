@@ -103,6 +103,28 @@ pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
 }
 
 #[cfg(any(windows, test))]
+fn startup_binding(tags: &Value, model: &str) -> Result<(u64, String), String> {
+    let size = installed_size(tags, model)?;
+    let digest = local_inventory_entry(tags, model)?["digest"]
+        .as_str()
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or("The installed model digest is unavailable")?;
+    Ok((size, digest.to_owned()))
+}
+
+#[cfg(any(windows, test))]
+fn check_startup_binding(
+    tags: &Value,
+    model: &str,
+    expected: &(u64, String),
+) -> Result<(), String> {
+    if startup_binding(tags, model)? != *expected {
+        return Err("The selected model changed after the resource check; start again".into());
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
 fn existing_model(ps: &Value, requested: &str) -> Result<Option<Value>, String> {
     let models = ps["models"]
         .as_array()
@@ -170,11 +192,11 @@ fn run(model: &str) -> Result<Value, String> {
         crate::verify_local_model_binding(&ps, &tags, model)?;
         return Ok(existing);
     }
-    let size = installed_size(&tags, model)?;
+    let binding = startup_binding(&tags, model)?;
     let mut system = sysinfo::System::new().map_err(|_| "System memory could not be sampled")?;
     system.refresh_memory();
     resource_gate(
-        size,
+        binding.0,
         system.available_memory(),
         &crate::gpu_resources::sample(),
     )?;
@@ -184,7 +206,7 @@ fn run(model: &str) -> Result<Value, String> {
         return Ok(existing);
     }
     // Recheck the alias after the resource sample, immediately before startup.
-    installed_size(&get("/api/tags")?, model)?;
+    check_startup_binding(&get("/api/tags")?, model, &binding)?;
     let request = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Could not prepare local model request")?;
     let (status, bytes) = guarded_start_request(addr, &request, &crate::check_inference_memory)?;
     if status != 200 {
@@ -197,6 +219,9 @@ fn run(model: &str) -> Result<Value, String> {
     }
     let status = get("/api/ps").map_err(|_| "Model startup could not be verified; a model may remain loaded. Check local model status before retrying")?;
     crate::verify_local_model_binding(&status, &get("/api/tags")?, model)?;
+    if status["models"][0]["digest"].as_str() != Some(binding.1.as_str()) {
+        return Err("The started model differs from the resource-checked model; a model may remain loaded. Check local model status before retrying".into());
+    }
     verify_started_model(&status, model)
 }
 #[cfg(not(windows))]
@@ -266,6 +291,20 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_binding_rejects_changed_size_or_digest() {
+        let digest = "a".repeat(64);
+        let mut tags = json!({"models":[{"name":"fixture","size":6*GIB,"digest":digest,"details":{"format":"gguf"}}]});
+        let binding = startup_binding(&tags, "fixture").unwrap();
+        assert!(check_startup_binding(&tags, "fixture", &binding).is_ok());
+        tags["models"][0]["size"] = json!(7 * GIB);
+        assert!(check_startup_binding(&tags, "fixture", &binding).is_err());
+        tags["models"][0]["size"] = json!(6 * GIB);
+        tags["models"][0]["digest"] = json!("b".repeat(64));
+        assert!(check_startup_binding(&tags, "fixture", &binding).is_err());
+        tags["models"][0]["digest"] = json!("invalid");
+        assert!(startup_binding(&tags, "fixture").is_err());
+    }
     #[test]
     fn startup_request_stops_on_memory_guard_and_reports_uncertain_state() {
         use std::io::Read;
