@@ -2151,3 +2151,11 @@ the focused test and web Clippy passed. No application was submitted.
 The form-review worker also stops automatic link-following after this kind of
 redirect and carries the same notice into review; a fictional driver test
 checks that it stays on the redirected page without exposing the query.
+
+### Search index-date provenance (2026-11-02)
+
+When repeated search results report different index dates, the result now marks
+its date attribution as limited rather than silently presenting the retained
+date as the only report. The flag carries through multi-page result selection
+and saved search context. Fictional parser and interface tests passed. Only one
+index date is currently retained; this change does not establish listing freshness.

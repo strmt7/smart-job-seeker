@@ -414,6 +414,12 @@ pub(crate) fn parse_excluding(
                 );
                 if earlier["indexed_date"] == "" && !indexed_date.trim().is_empty() {
                     earlier["indexed_date"] = json!(indexed_date.trim());
+                } else if !indexed_date.trim().is_empty()
+                    && earlier["indexed_date"].as_str() != Some(indexed_date.trim())
+                {
+                    // Only one index date is retained. Do not imply the
+                    // provider's other reports were preserved.
+                    earlier["dates_limited"] = json!(true);
                 }
             }
             continue;
@@ -913,6 +919,28 @@ mod tests {
         assert_eq!(
             result["repeated_references"][0]["url"],
             "https://example.org/job/0"
+        );
+    }
+
+    #[test]
+    fn conflicting_index_dates_report_omitted_provenance() {
+        let rows = json!([
+            {"url":"https://example.org/job", "indexedDate":"2026-10-01"},
+            {"url":"https://example.org/job", "indexedDate":"2026-10-02"}
+        ]);
+        let data = parse(&json!({"results": rows}).to_string()).unwrap();
+        assert_eq!(data["results"][0]["indexed_date"], "2026-10-01");
+        assert_eq!(data["results"][0]["dates_limited"], true);
+        let excluded = std::collections::HashSet::from(["https://example.org/job".to_owned()]);
+        let repeated = parse_excluding(&json!({"results": rows}).to_string(), &excluded).unwrap();
+        assert_eq!(repeated["repeated_references"][0]["dates_limited"], true);
+        let same = json!({"results": [
+            {"url":"https://example.org/job", "indexedDate":"2026-10-01"},
+            {"url":"https://example.org/job", "indexedDate":"2026-10-01"}
+        ]});
+        assert_eq!(
+            parse(&same.to_string()).unwrap()["results"][0]["dates_limited"],
+            false
         );
     }
 
