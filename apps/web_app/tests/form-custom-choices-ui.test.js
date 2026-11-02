@@ -52,8 +52,9 @@ const {choicesButton, choicesPanel} = run(panel,{session_id:'session'},element,a
   assert.match(optionRow.children[1].textContent,/observed this option/);
   assert.equal(stored.size,0);
   const answer=choicesPanel.children[0].children[5].children[0],suggest=choicesPanel.children[0].children[6],advice=choicesPanel.children[0].children[7];
+  assert.match(choicesPanel.children[0].children[5].text,/fact or preference, not instructions/);
   answer.value='I prefer Berlin';await suggest.listeners.click();
-  assert.match(advice.children[0].text,/Berlin/);assert.equal(stored.size,0);
+  assert.match(advice.children[0].text,/Berlin/);assert.match(advice.children[2].text,/does not verify your answer/);assert.equal(stored.size,0);
   assert.match(advice.children[1].text,/I prefer Berlin/);await advice.children[3].listeners.click();assert.match(optionRow.children[1].textContent,/observed this option/);
   const beforeExact=calls.filter(path=>path==='/api/form/custom-choice-advice-status').length;answer.value='Berlin';await suggest.listeners.click();assert.match(advice.children[0].text,/Berlin/);assert.equal(calls.filter(path=>path==='/api/form/custom-choice-advice-status').length,beforeExact);assert.equal(stored.size,0);
   answer.value='I prefer Lisbon';answer.listeners.input();assert.equal(advice.children.length,0);

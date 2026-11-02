@@ -600,7 +600,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
      }catch(error){visualResult.replaceChildren(element('p',`Choice visual check unavailable: ${error.message}`,'review-label'));}finally{visual.disabled=false;}
     });section.append(visual,visualResult);
     if(choice.expanded && Array.isArray(choice.options) && choice.options.length){
-     const label=element('label','Your answer for this question'),answer=document.createElement('input'),suggest=element('button','Suggest a visible option'),advice=element('div','','review-label');answer.type='text';answer.maxLength=600;answer.autocomplete='off';suggest.type='button';label.append(answer);section.append(label,suggest,advice);
+     const label=element('label','Your answer for this question (state your fact or preference, not instructions to the AI)'),answer=document.createElement('input'),suggest=element('button','Suggest a visible option'),advice=element('div','','review-label');answer.type='text';answer.maxLength=600;answer.autocomplete='off';suggest.type='button';label.append(answer);section.append(label,suggest,advice);
      answer.addEventListener('input',()=>advice.replaceChildren());
      suggest.addEventListener('click',async()=>{
       const requested=answer.value || '';if(!requested.trim()){advice.replaceChildren(element('p','Enter your answer first.'));return;}suggest.disabled=true;advice.replaceChildren(element('p','Checking the visible options locally…'));
@@ -614,7 +614,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
        if(response?.status!=='complete' || response.session_id!==result.session_id || response.radio!==false)throw new Error(response?.error || 'Choice advice is unavailable');
        const option=response.advice?.option;if(option===null){advice.replaceChildren(element('p',choiceAdviceAbstentionMessage(response.advice?.abstention_reason)));return;}
        if(typeof option!=='string' || !choice.options.includes(option) || typeof response.advice?.evidence!=='string' || !response.advice.evidence.trim() || !requested.includes(response.advice.evidence))throw new Error('Invalid option advice');
-       advice.replaceChildren(element('p',`Suggested visible option: ${option}`),element('p',`Based on your answer: ${requested}`),element('p','Suggestions can be wrong and other options may exist. Visually check the option and review it before selecting.'));
+       advice.replaceChildren(element('p',`Suggested visible option: ${option}`),element('p',`Based on your answer: ${requested}`),element('p','The suggestion may misinterpret your answer, and other options may exist. A visual check identifies the option; it does not verify your answer. Review both before selecting.'));
        const checkSuggested=optionChecks.get(option);if(checkSuggested){const checkButton=element('button','Visually check suggested option');checkButton.type='button';checkButton.addEventListener('click',checkSuggested);advice.append(checkButton);}
       }catch(error){advice.replaceChildren(element('p',`Choice advice unavailable: ${error.message}`));}finally{suggest.disabled=false;}
      });
@@ -656,7 +656,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
     const questionReview=element('div','');addVisualCheck(questionReview,null);section.append(questionReview);
     const list=element('ul','');for(const option of group.options || []){const row=element('li',`${option.label} — ${option.checked===true?'reported selected':option.checked===false?'reported not selected':'selection unknown'}${option.disabled?' (disabled)':''}`);addVisualCheck(row,option);list.append(row);}
     section.append(list);if(group.incomplete)section.append(element('p','Some options or states could not be inspected.','review-label'));
-    const answerLabel=element('label','Your answer for this question'),answer=element('input',''),suggest=element('button','Suggest an option with local AI'),advice=element('div','','review-label');answer.type='text';answer.maxLength=600;answer.autocomplete='off';suggest.type='button';suggest.disabled=inventory.incomplete||group.incomplete;answerLabel.append(answer);section.append(answerLabel,suggest,advice);
+    const answerLabel=element('label','Your answer for this question (state your fact or preference, not instructions to the AI)'),answer=element('input',''),suggest=element('button','Suggest an option with local AI'),advice=element('div','','review-label');answer.type='text';answer.maxLength=600;answer.autocomplete='off';suggest.type='button';suggest.disabled=inventory.incomplete||group.incomplete;answerLabel.append(answer);section.append(answerLabel,suggest,advice);
     answer.addEventListener('input',()=>advice.replaceChildren());
     suggest.addEventListener('click',async()=>{
      const requested=answer.value || '';if(!requested.trim()){advice.replaceChildren(element('p','Enter your answer first.'));return;}suggest.disabled=true;advice.replaceChildren(element('p','Checking the available options locally…'));
@@ -669,7 +669,7 @@ function showFormPreview(job,result){setWorkspaceView('applications');
       if(response?.status!=='complete'||response.session_id!==result.session_id||response.radio!==true)throw new Error(response?.error||'Radio advice is unavailable');
       const option=response.advice?.option;if(option===null){advice.replaceChildren(element('p',choiceAdviceAbstentionMessage(response.advice?.abstention_reason)));return;}
       if(typeof option!=='string'||!group.options.some(item=>item.label===option&&!item.disabled)||typeof response.advice?.evidence!=='string'||!response.advice.evidence.trim()||!requested.includes(response.advice.evidence))throw new Error('Invalid option advice');
-      advice.replaceChildren(element('p',`Suggested option: ${option}`),element('p',`Based on your answer: ${requested}`),element('p','Suggestions can be wrong. Visually check the question and option and review the selection manually.'));
+      advice.replaceChildren(element('p',`Suggested option: ${option}`),element('p',`Based on your answer: ${requested}`),element('p','The suggestion may misinterpret your answer. A visual check identifies the question and option; it does not verify your answer. Review both before selecting manually.'));
      }catch(error){advice.replaceChildren(element('p',`Suggestion needs review: ${error.message}`));}finally{suggest.disabled=inventory.incomplete||group.incomplete;}
     });radioPanel.append(section);
    }

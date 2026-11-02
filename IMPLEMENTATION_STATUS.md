@@ -2831,3 +2831,8 @@ not evidence of robust prompt-injection resistance; the resource-gated test
 remains ignored by default and fails until that case is resolved. An initial
 eight-case run incorrectly expected abstention despite an explicit preference;
 the expected result was corrected and a separate instruction-only case added.
+
+The custom-choice and radio review screens now ask for the candidate's fact or
+preference and explain that visual recognition does not verify the suggested
+answer. Fictional interface tests cover both messages. This guidance does not
+prevent model misinterpretation and does not resolve the adversarial failure.
