@@ -890,6 +890,56 @@ fn complete_listing_coverage(assessment: &Value) -> bool {
         )
 }
 
+/// Summarize candidate-fact input limits without exposing the facts in a badge.
+pub(crate) fn qualification_coverage(assessment: &Value) -> &'static str {
+    let source = &assessment["source_coverage"];
+    let Some((total, bounded, oversized, over_limit)) = source["reviewed_facts_total"]
+        .as_u64()
+        .zip(source["reviewed_facts_bounded"].as_u64())
+        .zip(source["reviewed_facts_oversized"].as_u64())
+        .zip(source["reviewed_facts_over_limit"].as_u64())
+        .map(|(((total, bounded), oversized), over_limit)| (total, bounded, oversized, over_limit))
+    else {
+        return "unavailable";
+    };
+    if bounded
+        .checked_add(oversized)
+        .and_then(|n| n.checked_add(over_limit))
+        != Some(total)
+    {
+        return "unavailable";
+    }
+    if total == 0 {
+        return "none";
+    }
+    let selection = &assessment["selection"];
+    let (Some(available), Some(pool), Some(selected), Some(failed), Some(truncated)) = (
+        selection["available_bounded"].as_u64(),
+        selection["pool"].as_u64(),
+        selection["selected"].as_u64(),
+        selection["failed_batches"].as_u64(),
+        selection["budget_truncated"].as_bool(),
+    ) else {
+        return "unavailable";
+    };
+    if available != bounded || selected > pool || pool > bounded {
+        return "unavailable";
+    }
+    if oversized > 0
+        || over_limit > 0
+        || failed > 0
+        || truncated
+        || selection["selection_capped"] == true
+        || selection["oversized_facts"].as_u64().unwrap_or(0) > 0
+    {
+        "limited"
+    } else if selected < bounded {
+        "selected"
+    } else {
+        "complete"
+    }
+}
+
 /// Report incomplete requirement extraction independently of criterion status.
 pub(crate) fn requirement_audit_incomplete(assessment: &Value) -> bool {
     let rubric = assessment["rubric"].as_array();
@@ -2401,6 +2451,29 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualification_coverage_distinguishes_selection_and_limits() {
+        let mut a = json!({"source_coverage":{"reviewed_facts_total":3,"reviewed_facts_bounded":3,"reviewed_facts_oversized":0,"reviewed_facts_over_limit":0},"selection":{"available_bounded":3,"pool":3,"selected":3,"failed_batches":0,"budget_truncated":false}});
+        assert_eq!(qualification_coverage(&a), "complete");
+        a["selection"]["selected"] = json!(2);
+        assert_eq!(qualification_coverage(&a), "selected");
+        a["selection"]["budget_truncated"] = json!(true);
+        assert_eq!(qualification_coverage(&a), "limited");
+        a["selection"]["budget_truncated"] = json!(false);
+        a["source_coverage"]["reviewed_facts_total"] = json!(4);
+        a["source_coverage"]["reviewed_facts_oversized"] = json!(1);
+        assert_eq!(qualification_coverage(&a), "limited");
+        a["selection"]["available_bounded"] = json!(4);
+        assert_eq!(qualification_coverage(&a), "unavailable");
+        assert_eq!(qualification_coverage(&json!({})), "unavailable");
+        assert_eq!(
+            qualification_coverage(
+                &json!({"source_coverage":{"reviewed_facts_total":0,"reviewed_facts_bounded":0,"reviewed_facts_oversized":0,"reviewed_facts_over_limit":0}})
+            ),
+            "none"
+        );
+    }
 
     #[test]
     fn affirmative_negation_phrases_do_not_establish_a_contradiction() {

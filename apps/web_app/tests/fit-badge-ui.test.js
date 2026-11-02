@@ -22,8 +22,12 @@ assert.match(label(80,{lower:60,upper:100},'included','unavailable'), /required 
 assert.match(label(80,{lower:60,upper:100},'included','possible_conflict',true), /possible required conflict.*requirement check incomplete/);
 assert.match(label(80,{lower:60,upper:100},'included','needs_review',true), /required criterion unknown.*requirement check incomplete/);
 assert.equal((label(80,{lower:60,upper:100},'included','incomplete',true).match(/requirement check incomplete/g) || []).length,1);
-assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(item.score,item.score_range,item.preference_coverage,item.requirement_coverage,item.requirement_audit_incomplete)'), 'batch badges must use their stored range and coverage');
-assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage,result.assessment?.requirement_coverage,result.assessment?.requirement_audit_incomplete)'), 'new assessments must use their range and coverage');
+assert.match(label(80,{lower:60,upper:100},'included','supported',false,'limited'), /qualification input limited/);
+assert.match(label(80,{lower:60,upper:100},'included','supported',false,'selected'), /selected qualifications/);
+assert.match(label(80,{lower:60,upper:100},'included','supported',false,'unavailable'), /qualification coverage unavailable/);
+assert.match(label(80,{lower:60,upper:100},'included','supported',false,'none'), /no reviewed qualifications/);
+assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(item.score,item.score_range,item.preference_coverage,item.requirement_coverage,item.requirement_audit_incomplete,item.qualification_coverage)'), 'batch badges must use their stored range and coverage');
+assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage,result.assessment?.requirement_coverage,result.assessment?.requirement_audit_incomplete,result.assessment?.qualification_coverage)'), 'new assessments must use their range and coverage');
 const reviewedLine = source.split('\n').find(value => value.startsWith('function fitBadgeWithReview('));
 const reviewed = vm.runInNewContext(`(${reviewedLine})`);
 assert.equal(reviewed('50% AI',75,{lower:50,upper:100}),'50% AI · Reviewed 75% (50–100%)');

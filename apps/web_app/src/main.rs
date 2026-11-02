@@ -852,6 +852,8 @@ fn read_fit_with_context(
                 }
                 assessment["source_coverage"] =
                     fit_source_coverage(ws, job_id, &listing, instructions)?;
+                assessment["qualification_coverage"] =
+                    json!(fit_task::qualification_coverage(&assessment));
                 let coverage = if assessment["preference_audit"].is_null()
                     && instructions.trim().is_empty()
                     && assessment["source_coverage"]["instructions_total_chars"] == 0
@@ -3140,6 +3142,8 @@ fn serve(
                 } else if result["saved"].is_null() {
                     result["assessment"]["source_coverage"] =
                         fit_source_coverage(ws, &job_id, &listing, &instructions)?;
+                    result["assessment"]["qualification_coverage"] =
+                        json!(fit_task::qualification_coverage(&result["assessment"]));
                     result["assessment"]["preference_coverage"] =
                         json!(fit_task::preference_coverage(&result["assessment"]));
                     result["assessment"]["requirement_coverage"] =
@@ -3245,7 +3249,7 @@ fn serve(
                     .map_err(|e| e.to_string())?;
                 let item = match read_fit_with_context(ws, &id, &mut context) {
                     Ok(value) if value["status"] == "current" => {
-                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"requirement_coverage":value["assessment"]["requirement_coverage"],"requirement_audit_incomplete":value["assessment"]["requirement_audit_incomplete"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
+                        json!({"id":id.as_str(),"status":"current","score":value["assessment"]["score"],"score_range":value["assessment"]["score_range"],"preference_coverage":value["assessment"]["preference_coverage"],"requirement_coverage":value["assessment"]["requirement_coverage"],"requirement_audit_incomplete":value["assessment"]["requirement_audit_incomplete"],"qualification_coverage":value["assessment"]["qualification_coverage"],"review_score":value["user_review"]["score"],"review_range":value["user_review"]["score_range"]})
                     }
                     Ok(value) => json!({"id":id.as_str(),"status":value["status"]}),
                     Err(_) => json!({"id":id.as_str(),"status":"unavailable"}),
@@ -10012,6 +10016,7 @@ mod tests {
         );
         assert_eq!(json["results"][0]["requirement_coverage"], "needs_review");
         assert_eq!(json["results"][0]["requirement_audit_incomplete"], true);
+        assert_eq!(json["results"][0]["qualification_coverage"], "none");
         assert_eq!(json["results"][0]["review_score"], 75);
         assert_eq!(
             json["results"][0]["review_range"],
