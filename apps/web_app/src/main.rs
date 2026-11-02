@@ -9978,6 +9978,43 @@ mod tests {
         assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn saved_fit_recomputes_qualification_input_coverage() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
+        let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.add_fact("Fictional first qualification", FactOrigin::UserAttested)
+            .unwrap();
+        ws.add_fact("Fictional second qualification", FactOrigin::UserAttested)
+            .unwrap();
+        let save = |ws: &Workspace| {
+            let (_, available, _, _, digest) = fit_assessment_inputs(ws, &id).unwrap();
+            let assessment = json!({"score":75,"selection":{"available_bounded":available,"pool":available,"selected":1,"failed_batches":0,"budget_truncated":false}});
+            ws.save_fit_assessment(
+                &id,
+                json!({"input_digest":digest,"assessment":assessment,"model":"fixture"})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+        };
+        save(&ws);
+        assert_eq!(
+            read_fit(&ws, &id).unwrap()["assessment"]["qualification_coverage"],
+            "selected"
+        );
+        ws.add_fact(&"x".repeat(1001), FactOrigin::UserAttested)
+            .unwrap();
+        assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
+        save(&ws);
+        assert_eq!(
+            read_fit(&ws, &id).unwrap()["assessment"]["qualification_coverage"],
+            "limited"
+        );
+    }
+
     #[test]
     fn fit_batch_reports_recomputed_preference_conflict_without_preference_text() {
         use std::io::{Read, Write};
