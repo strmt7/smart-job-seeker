@@ -1,3 +1,8 @@
+## Numeric preference evidence — 2026-11-02
+
+- In one resource-gated `qwen3.5:9b` run, the existing fictional preference cases passed 8/8. A separate four-case test passed 3/4: the model treated unlimited leave subject to approval as proof of a 30-day minimum. A prompt-only attempt also passed 3/4 and was discarded.
+- A positive model judgment on an explicitly stated numeric minimum now stays unknown when the cited text contains no numeric digit. This is a conservative English-language check: it can defer spelled-out amounts or implicit comparisons and does not verify units, numerical relevance or semantics. Existing assessments are marked stale through the input version. The focused fit suite passed (73 passed, 41 ignored) and Windows lint passed. The post-change local-model rerun was refused by the GPU resource gate (9,374 MiB free versus 9,605 MiB required); the behavior was instead verified with a scripted model response. The test-owned model was unloaded. These small fictional tests do not establish general scoring accuracy.
+
 ## PDF setup recovery — 2026-11-02
 
 - If the PDF setup start response is lost, the interface can recover the active or completed-but-uncollected task and follow its result rather than launching another setup. The task ID is available only while that process retains the setup task; app restart recovery is not established. A fictional interface test covered normal and lost-start responses, and focused setup tests and Windows lint passed.

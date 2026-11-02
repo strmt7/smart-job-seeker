@@ -2817,6 +2817,18 @@ fn preference_listing_passages(listing: &str) -> (Vec<&str>, bool) {
     (passages, truncated)
 }
 
+// A model citation without any numeric evidence cannot establish an explicit
+// numeric minimum. This conservative check can also defer spelled-out amounts
+// and implicit comparisons; it does not validate numbers, units or context.
+fn numeric_minimum_without_cited_number(preference: &str, quote: &str) -> bool {
+    let lower = preference.to_lowercase();
+    preference.bytes().any(|byte| byte.is_ascii_digit())
+        && ["at least", "minimum", "no less than", "not less than"]
+            .iter()
+            .any(|marker| lower.contains(marker))
+        && !quote.bytes().any(|byte| byte.is_ascii_digit())
+}
+
 fn compare_preferences_with_source(
     model: &mut dyn Inference,
     mut original: Value,
@@ -2975,6 +2987,10 @@ fn compare_preferences_with_source(
                 verification_text
                     .is_some_and(|source| interval_requires_review(preference, text, source))
             });
+        let missing_numeric_evidence = status == "supported"
+            && quote
+                .as_str()
+                .is_some_and(|text| numeric_minimum_without_cited_number(preference, text));
         // A statement that information is unstated is not evidence of the
         // opposite. This is a limited English-language guard, not semantic validation.
         let absent_information = matches!(status, "supported" | "contradicted")
@@ -2993,8 +3009,11 @@ fn compare_preferences_with_source(
                 .iter()
                 .any(|marker| lower.contains(marker))
             });
-        let needs_review =
-            source_unavailable || ambiguous_quote || numerical_review || absent_information;
+        let needs_review = source_unavailable
+            || ambiguous_quote
+            || numerical_review
+            || missing_numeric_evidence
+            || absent_information;
         updates.push((
             id - 1,
             if needs_review { "unknown" } else { status }.to_owned(),
@@ -3005,6 +3024,8 @@ fn compare_preferences_with_source(
                 "The cited listing text occurs more than once; review the full context before deciding whether this preference is met.".to_owned()
             } else if numerical_review {
                 "A numeric interval in or near the cited text crosses the preference's stated number; check the bounds and units manually.".to_owned()
+            } else if missing_numeric_evidence {
+                "The cited text does not include a numeric amount for this minimum; check the full listing and any conditions manually.".to_owned()
             } else if absent_information {
                 "The cited text says information is not stated; review the preference manually.".to_owned()
             } else if status == "unknown" {
@@ -8560,6 +8581,134 @@ mod tests {
             cases.len(),
             "local model failed the ambiguity benchmark"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated local model for fictional held-out preference cases"]
+    fn resource_gated_preference_held_out_cases() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_preference_held_out_cases,
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated model for fictional indirect preference cases"]
+    fn resource_gated_preference_indirect_cases() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().unwrap();
+            let inner = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                inner,
+                name,
+                crate::resident_model,
+            );
+            let cases = [
+                (
+                    "At least EUR 90000 gross per year is required",
+                    "The role pays EUR 45 per hour; working hours are not specified.",
+                    "unknown",
+                ),
+                (
+                    "Remote work from Germany is required",
+                    "Fully remote, but applicants must be based in the United Kingdom.",
+                    "contradicted",
+                ),
+                (
+                    "I prefer no on-call duties",
+                    "Engineers participate in an occasional incident response rota.",
+                    "contradicted",
+                ),
+                (
+                    "At least 30 days of paid leave are required",
+                    "We offer unlimited paid time off, subject to manager approval.",
+                    "unknown",
+                ),
+            ];
+            let mut passed = 0;
+            for (preference, listing, expected) in cases {
+                let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+                let baseline = validate(raw.clone(), &[], preference, listing).unwrap();
+                let result =
+                    compare_preferences(&mut model, raw, baseline, &[], preference, listing);
+                let actual = result["rubric"][0]["status"].as_str().unwrap();
+                let completed = result["preference_comparison"]["status"] == "completed";
+                println!("fictional indirect preference={preference:?}; expected={expected}; actual={actual}; completed={completed}");
+                passed += usize::from(completed && actual == expected);
+            }
+            println!(
+                "correct completed indirect comparisons: {passed}/{}",
+                cases.len()
+            );
+            assert_eq!(
+                passed,
+                cases.len(),
+                "local model failed indirect preference cases"
+            );
+        });
+    }
+
+    #[test]
+    fn explicit_numeric_minimum_needs_a_number_in_positive_evidence() {
+        assert!(numeric_minimum_without_cited_number(
+            "At least 30 days of leave",
+            "Unlimited leave subject to approval"
+        ));
+        assert!(numeric_minimum_without_cited_number(
+            "Minimum 30 days",
+            "Thirty days of leave"
+        ));
+        assert!(!numeric_minimum_without_cited_number(
+            "At least 30 days of leave",
+            "30 days of leave"
+        ));
+        assert!(!numeric_minimum_without_cited_number(
+            "Prefer remote work",
+            "Fully remote"
+        ));
+        assert!(!numeric_minimum_without_cited_number(
+            "No more than 30 hours",
+            "Flexible hours"
+        ));
+    }
+
+    #[test]
+    fn preference_minimum_without_numeric_citation_stays_unknown() {
+        struct Fixture;
+        impl Inference for Fixture {
+            fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError> {
+                Ok((
+                    json!({"items":[{"id":1,"status":"supported","quote":"Unlimited leave subject to approval","explanation":"No fixed cap"}]}),
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let preference = "At least 30 days of paid leave are required";
+        let listing = "Unlimited leave subject to approval";
+        let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+        let fallback = validate(raw.clone(), &[], preference, listing).unwrap();
+        let result = compare_preferences(&mut Fixture, raw, fallback, &[], preference, listing);
+        assert_eq!(result["rubric"][0]["status"], "unknown");
+        assert_eq!(result["score_range"], json!({"lower":0,"upper":100}));
+        assert!(result["rubric"][0]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("numeric amount"));
     }
 
     #[test]
