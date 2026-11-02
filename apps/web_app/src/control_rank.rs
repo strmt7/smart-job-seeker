@@ -1146,6 +1146,15 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated model for fictional multilingual controls"]
+    fn resource_gated_combined_navigation_labels() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_model_excludes_combined_review_and_submission_controls,
+        );
+    }
+
     #[test]
     #[ignore = "requires a resource-gated resident local model"]
     fn live_model_excludes_combined_review_and_submission_controls() {

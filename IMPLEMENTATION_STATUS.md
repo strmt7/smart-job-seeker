@@ -30,6 +30,8 @@
 
 ## Navigation advice review — 2026-11-03
 
+- After the submission-label fallback change, a resource-gated `qwen3.5:9b` test returned both review-navigation controls and excluded three combined review-and-submission controls in a fictional English, German and Spanish list. This exercises text-label advice, not vision or a real site; the deterministic English filter may contribute to the result, and other wording remains unproven. One concurrent memory sample showed 13,802,000 KiB available, not a measured minimum. The model unloaded afterward, Windows web Clippy passed, and no control was clicked.
+
 - When a model response mixes an explicitly labeled English submission action with other control suggestions, the app now omits that action, retains the remaining advisory indices, and reports the omission in the interface. This narrow label check is not comprehensive submission detection and no controls are clicked. Focused Rust and JavaScript fixture checks, JavaScript syntax and Windows web Clippy passed. The first UI fixture update omitted a valid index and failed; the corrected fixture passed. No live employer or model was used.
 
 - The navigation-advice validator now rejects a model response that explicitly selects certain English submit, send or finalize labels and asks for manual inspection. This is a narrow backstop, not comprehensive submission detection; advice remains non-executing and labels do not establish a button’s effect. Focused control-ranking tests passed (3 passed, 11 ignored) and Windows web Clippy passed. An initial test compile failed because a fixture used a nonexistent default implementation and passed after correction. No live site or application was used.
