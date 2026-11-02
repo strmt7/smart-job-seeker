@@ -99,6 +99,12 @@ fn inspection_failure_reason(error: &str) -> String {
     }
 }
 
+struct PriorSection {
+    preview: form_preview::FormPreview,
+    completed: Vec<String>,
+    profile_digest: Sha256Digest,
+}
+
 struct ReviewSession {
     id: String,
     job_id: JobIdentityId,
@@ -115,6 +121,8 @@ struct ReviewSession {
     /// Sticky across rescans and navigation within this browser session.
     fill_attempted: bool,
     completed_selectors: Vec<String>,
+    prior_sections: Vec<PriorSection>,
+    prior_sections_omitted: bool,
     selected_choices: Vec<(String, String)>,
     answer_drafts: std::collections::HashMap<String, SavedFormAnswer>,
     visible: bool,
@@ -4914,6 +4922,8 @@ fn serve(
                 filled: false,
                 fill_attempted: false,
                 completed_selectors: vec![],
+                prior_sections: vec![],
+                prior_sections_omitted: false,
                 answer_drafts: Default::default(),
                 visible,
                 staged_files: vec![],
@@ -8867,6 +8877,8 @@ mod tests {
             filled: false,
             fill_attempted: false,
             completed_selectors: vec![],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
             answer_drafts: Default::default(),
             visible: false,
             staged_files: vec![],
@@ -9020,6 +9032,8 @@ mod tests {
             filled: true,
             fill_attempted: true,
             completed_selectors: vec![selector.clone(), other.clone()],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
             answer_drafts: Default::default(),
             visible: false,
             staged_files: vec![],
@@ -9930,6 +9944,8 @@ mod tests {
                 filled: false,
                 fill_attempted: false,
                 completed_selectors: vec![],
+                prior_sections: vec![],
+                prior_sections_omitted: false,
                 selected_choices: vec![],
                 answer_drafts: Default::default(),
                 visible: false,
@@ -12939,6 +12955,8 @@ mod tests {
             filled: false,
             fill_attempted: false,
             completed_selectors: vec![],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
             answer_drafts: Default::default(),
             visible: false,
             staged_files: vec![],
@@ -13398,6 +13416,8 @@ mod tests {
                 filled: false,
                 fill_attempted: false,
                 completed_selectors: vec![],
+                prior_sections: vec![],
+                prior_sections_omitted: false,
                 answer_drafts: Default::default(),
                 visible: false,
                 staged_files: vec![],

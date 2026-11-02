@@ -272,6 +272,8 @@ mod tests {
                 filled: false,
                 fill_attempted: false,
                 completed_selectors: vec![],
+                prior_sections: vec![],
+                prior_sections_omitted: false,
                 answer_drafts: Default::default(),
                 visible: false,
                 staged_files: vec![],

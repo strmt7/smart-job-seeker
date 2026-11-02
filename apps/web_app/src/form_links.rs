@@ -410,6 +410,89 @@ fn recheck_navigation_preview(
     Ok(changed)
 }
 
+fn remember_prior_section(session: &mut ReviewSession) {
+    if session.completed_selectors.is_empty() {
+        return;
+    }
+    let suggestions: Vec<_> = session
+        .preview
+        .suggestions
+        .iter()
+        .filter(|mapping| {
+            session
+                .completed_selectors
+                .contains(&mapping.field_selector)
+        })
+        .cloned()
+        .collect();
+    let size = serde_json::to_vec(&serde_json::json!({"schema":session.preview.schema,"suggestions":suggestions,"completed":session.completed_selectors})).map(|bytes| bytes.len());
+    if size.is_err() || size.is_ok_and(|bytes| bytes > 256 * 1024) {
+        session.prior_sections_omitted = true;
+        return;
+    }
+    if session.prior_sections.len() >= 4 {
+        session.prior_sections.remove(0);
+        session.prior_sections_omitted = true;
+    }
+    session.prior_sections.push(crate::PriorSection {
+        preview: form_preview::FormPreview {
+            schema: session.preview.schema.clone(),
+            suggestions,
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        },
+        completed: session.completed_selectors.clone(),
+        profile_digest: session.profile_digest.clone(),
+    });
+}
+
+fn review_prior_section(
+    session: &mut ReviewSession,
+    preview: &mut form_preview::FormPreview,
+    profile: &serde_json::Value,
+) {
+    if session.prior_sections_omitted {
+        preview.manual_review.push("Some earlier filled sections exceeded the in-memory review limit; inspect them manually.".into());
+    }
+    let matches: Vec<_> = session
+        .prior_sections
+        .iter()
+        .filter(|section| section.preview.schema == preview.schema)
+        .collect();
+    let [section] = matches.as_slice() else {
+        if matches.len() > 1 {
+            preview.manual_review.push(
+                "Multiple earlier filled sections have this same layout; inspect them manually."
+                    .into(),
+            );
+        }
+        return;
+    };
+    let Some(first) = section.completed.first() else {
+        return;
+    };
+    if section.profile_digest != waypoint_domain::Sha256Digest::of(&profile.to_string()) {
+        preview.manual_review.push("The profile changed after an earlier section was filled; review its answers against the current profile.".into());
+    }
+    let before = session.driver.current_url().ok();
+    let check = session.driver.with_review_timeout(|driver| {
+        form_preview::verify_completed_fields(driver, &section.preview, &section.completed, first)
+    });
+    let schema_current = session
+        .driver
+        .with_review_timeout(|driver| driver.inspect_current())
+        .is_ok_and(|current| current.schema == preview.schema);
+    let after = session.driver.current_url().ok();
+    let label = if before.is_none() || before != after || !schema_current {
+        "A possible earlier section changed or could not be rechecked during verification; inspect its answers manually.".to_owned()
+    } else if check.failed_labels.is_empty() && check.unverified == 0 {
+        format!("A possible earlier section has the same form layout; {} filled field(s) matched their recorded values from this review session. This does not prove it is the same section or that the values remain correct; review them manually.", check.verified)
+    } else {
+        format!("A possible earlier section has the same form layout; {} field(s) matched, {} could not be verified or changed. Inspect the answers manually.", check.verified, section.completed.len().saturating_sub(check.verified))
+    };
+    preview.manual_review.push(label);
+}
+
 pub fn start(
     id: String,
     session: ReviewSession,
@@ -598,6 +681,8 @@ fn start_with_destination_check(
         if let Some(warning) = navigation_capture_warning {
             preview.manual_review.push(warning);
         }
+        remember_prior_section(&mut session);
+        review_prior_section(&mut session, &mut preview, &profile);
         let result = crate::random_id()
             .map_err(|reason| NavigationFailure {
                 job_id: session.job_id.clone(),
@@ -858,16 +943,22 @@ mod tests {
                 .join("tests/form-local-model-wizard.html"),
         )
         .unwrap();
-        let source = source.replace("<label for=\"email\">", "<p>Do not use AI tools.</p><button type=\"button\" id=\"back\" onclick=\"document.getElementById('step-two').hidden=true;document.getElementById('step-one').hidden=false\">Back</button><label for=\"email\">");
+        let source = source.replace("<label for=\"email\">", "<p>Do not use AI tools.</p><button type=\"button\" id=\"back\" onclick=\"document.getElementById('step-two').hidden=true;document.getElementById('step-one').hidden=false\">Back</button><label for=\"email\">").replace("<button type=\"button\" id=\"next\"", "<button type=\"button\" id=\"mutate\" onclick=\"document.getElementById('given').value='Changed'\">Change saved answer</button><button type=\"button\" id=\"next\"");
         let fixture = temp.path().join("wizard.html");
         std::fs::write(&fixture, source).unwrap();
         let url = url::Url::from_file_path(&fixture).unwrap().to_string();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(&url).unwrap();
         let profile = serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"});
-        let preview =
+        let mut preview =
             form_preview::suggest_without_model(live, &profile, "Fixture model unavailable")
                 .unwrap();
+        preview
+            .suggestions
+            .push(waypoint_applications::form_mapping::ProposedMapping {
+                field_selector: "#given".into(),
+                value: PacketValue::Text("Avery".into()),
+            });
         driver
             .execute(&BrowserCommand::Fill {
                 selector: "#given".into(),
@@ -894,6 +985,8 @@ mod tests {
             filled: true,
             fill_attempted: true,
             completed_selectors: vec!["#given".into()],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
             selected_choices: vec![],
             answer_drafts: Default::default(),
             visible: false,
@@ -909,7 +1002,7 @@ mod tests {
             None,
             false,
             None,
-            profile,
+            profile.clone(),
             (0, vec![]),
             local_fixture_only
         )
@@ -975,6 +1068,107 @@ mod tests {
             .driver
             .verify_text_value("#given", "Avery")
             .unwrap();
+        assert!(super::start_with_destination_check(
+            "wizard-return".into(),
+            returned,
+            None,
+            false,
+            None,
+            profile.clone(),
+            (0, vec![]),
+            local_fixture_only
+        )
+        .is_ok());
+        let mut returned = loop {
+            if let Some(outcome) = super::poll("wizard-return").unwrap() {
+                break match outcome {
+                    Ok((session, _, _)) => session,
+                    Err(failure) => panic!("navigation failed: {}", failure.reason),
+                };
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("1 filled field(s) matched")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("does not prove it is the same section")));
+        let mut revised_profile_view = returned.preview.clone();
+        revised_profile_view.manual_review.clear();
+        super::review_prior_section(
+            &mut returned,
+            &mut revised_profile_view,
+            &serde_json::json!({"first_name":"Revised"}),
+        );
+        assert!(revised_profile_view
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("profile changed after an earlier section")));
+        returned
+            .driver
+            .execute(&BrowserCommand::Click {
+                selector: "#mutate".into(),
+            })
+            .unwrap();
+        assert!(super::start_with_destination_check(
+            "wizard-changed".into(),
+            returned,
+            None,
+            false,
+            None,
+            profile,
+            (0, vec![]),
+            local_fixture_only
+        )
+        .is_ok());
+        let mut returned = loop {
+            if let Some(outcome) = super::poll("wizard-changed").unwrap() {
+                break match outcome {
+                    Ok((session, _, _)) => session,
+                    Err(failure) => panic!("navigation failed: {}", failure.reason),
+                };
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("could not be verified or changed")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .all(|reason| !reason.contains("Avery")));
+        returned.preview = returned.prior_sections[0].preview.clone();
+        returned.completed_selectors = vec!["#given".into()];
+        for _ in 0..5 {
+            super::remember_prior_section(&mut returned);
+        }
+        assert_eq!(returned.prior_sections.len(), 4);
+        assert!(returned.prior_sections_omitted);
+        let mut ambiguous = returned.preview.clone();
+        ambiguous.manual_review.clear();
+        super::review_prior_section(
+            &mut returned,
+            &mut ambiguous,
+            &serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"}),
+        );
+        assert!(ambiguous
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("same layout")));
+        assert!(ambiguous
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("exceeded the in-memory review limit")));
         assert!(returned
             .driver
             .trace
