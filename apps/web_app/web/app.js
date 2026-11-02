@@ -752,8 +752,8 @@ function showFormPreview(job,result){setWorkspaceView('applications');
  }
  async function reviewAfterFillFailure(error,fill){
   notify(error.message);
-  const noFieldsFilled=/^No fields were filled because (?:the attempt record could not be (?:created|written)|an existing value needs review|a replacement answer changed):/.test(error.message);
-  if(noFieldsFilled){visualPanel.replaceChildren(element('p',`${error.message} The review session remains open.`, 'review-label'));await refresh().catch(()=>{});fill.disabled=false;return;}
+  const noFieldsFilled=/^No fields were filled because (?:the attempt record could not be (?:created|written)|an existing value needs review|a replacement answer changed|network observation was unavailable):/.test(error.message);
+  if(noFieldsFilled){visualPanel.replaceChildren(element('p',`${error.message} The review session remains open.`, 'review-label'));await refresh().catch(()=>{});fill.disabled=error.message.startsWith('No fields were filled because network observation was unavailable:');return;}
   panel.append(element('p','Fill did not complete. Fields may have changed; inspect the browser before continuing.','review-label'));
   if(error.message.includes('The form changed after filling; inspect the new fields and review it again')){const lesson=element('button','Review a lesson from this change');lesson.type='button';lesson.addEventListener('click',prepareChangedFormLesson);panel.append(lesson);}
   fillCompleted=true;fillInProgress=false;visualButton.disabled=false;

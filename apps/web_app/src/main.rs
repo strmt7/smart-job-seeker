@@ -7410,10 +7410,32 @@ fn serve(
                     return Err(format!("No fields were filled because the attempt record could not be written: {error}. The review session remains open.{note}"));
                 }
             }
-            let network_before = current
+            let network_before = match current
                 .driver
                 .with_review_timeout(|driver| driver.observed_non_read_requests())
-                .ok();
+            {
+                Ok(count) => Some(count),
+                Err(_) => {
+                    let reason = "Network observation was unavailable before filling. Waypoint did not fill fields; the site may have sent requests. Check the employer site before retrying.";
+                    let record_error = current.record.as_mut().and_then(|record| {
+                        record.event(json!({"type":"fill_network_preflight_unavailable","time":now(),"note":reason})).err()
+                    });
+                    let review_error = ws.mark_manual_review(&current.job_id, reason, now()).err();
+                    current.preview = original_preview;
+                    current.created = Instant::now();
+                    *session = Some(current);
+                    let mut note = String::new();
+                    if let Some(error) = record_error {
+                        note.push_str(&format!(" The attempt event could not be saved: {error}."));
+                    }
+                    if let Some(error) = review_error {
+                        note.push_str(&format!(
+                            " The manual-review flag could not be saved: {error}."
+                        ));
+                    }
+                    return Err(format!("No fields were filled because network observation was unavailable: {reason}{note}"));
+                }
+            };
             current.filled = true;
             current.fill_attempted = true;
             let mut completed = Vec::new();

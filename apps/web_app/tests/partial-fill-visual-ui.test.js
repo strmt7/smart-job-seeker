@@ -39,6 +39,11 @@ async function exercise(message, visionFails=false, status={active:true,session_
   assert.ok(recordFailure.events.every(event=>event[0]!=='inspect'));
   assert.equal(recordFailure.fill.disabled,false);
   assert.equal(recordFailure.context.fillCompleted,false);
+  const preflight = await exercise('No fields were filled because network observation was unavailable: Check the employer site before retrying.');
+  assert.ok(preflight.events.every(event=>event[0]!=='inspect'));
+  assert.ok(preflight.events.some(event=>event[0]==='message' && event[1].includes('Check the employer site')));
+  assert.equal(preflight.fill.disabled,true);
+  assert.equal(preflight.context.fillCompleted,false);
   const existingValue = await exercise('No fields were filled because an existing value needs review: fixture. Unselect that field or inspect the browser, then retry.');
   assert.ok(existingValue.events.every(event=>event[0]!=='inspect'));
   assert.ok(existingValue.events.some(event=>event[0]==='message' && event[1].includes('Unselect that field')));
