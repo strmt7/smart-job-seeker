@@ -2844,3 +2844,11 @@ avoiding a second large allocation. A focused test checks rejection without
 creating a file and acceptance at the 6 MiB decoded boundary. This limits the
 archive decoder; it does not measure or bound memory used by the browser or
 other stages before the capture reaches it.
+
+### Immediate ARIA validation after text entry (2026-11-02)
+
+Text filling now checks the site's ARIA invalid state before reporting the
+individual operation successful, in addition to the existing later retention
+checks. A local browser fixture passed for both valid input and a field that
+sets aria-invalid during typing; the existing ARIA verification fixture also
+passed. This immediate check cannot detect validation the site performs later.

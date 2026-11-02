@@ -5029,6 +5029,9 @@ impl CdpDriver {
                             .into(),
                     ));
                 }
+                // Sites can report an error through ARIA even when native
+                // constraint validation succeeds and the value is retained.
+                self.verify_aria_validity(node, false)?;
                 self.trace
                     .push(format!("typed {} chars into {selector}", t.chars().count()));
                 Ok(())

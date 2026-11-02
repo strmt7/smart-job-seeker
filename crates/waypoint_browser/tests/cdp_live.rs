@@ -79,6 +79,26 @@ fn aria_invalid_fields_require_review() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn typing_stops_when_site_reports_aria_invalid() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_input_aria_invalid.html"))
+        .unwrap();
+    let fill = |selector: &str| BrowserCommand::Fill {
+        selector: selector.into(),
+        value: PacketValue::Text("Fictional".into()),
+    };
+    driver.execute(&fill("#good")).unwrap();
+    let error = driver.execute(&fill("#bad")).unwrap_err();
+    assert!(error.to_string().contains("invalid"), "{error}");
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn section_reveal_is_bounded_and_does_not_activate_controls() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver.open(&file_url("form_reveal_bounded.html")).unwrap();
