@@ -1,0 +1,12 @@
+<!doctype html><html><body><form id="form"><script>
+let parent = document.getElementById('form');
+for (let index = 0; index < 35; index++) {
+  const section = document.createElement('div'), heading = document.createElement('h4');
+  heading.textContent = 'Fictional section ' + index;
+  section.append(heading); for(let i=0; i<100; i++) section.append(document.createElement('span'));
+  parent.append(section); parent = section;
+}
+const label = document.createElement('label'); label.textContent = 'Email'; label.htmlFor = 'email';
+const input = document.createElement('input'); input.id = 'email'; input.type = 'email';
+parent.append(label, input);
+</script></form></body></html>

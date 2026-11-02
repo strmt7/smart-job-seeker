@@ -3675,6 +3675,12 @@ impl CdpDriver {
                                 .and_then(Value::as_str)
                                 .unwrap_or("")
                                 .to_ascii_lowercase();
+                            if matches!(
+                                child_tag.as_str(),
+                                "script" | "style" | "noscript" | "template"
+                            ) {
+                                return false;
+                            }
                             if named_field_group
                                 && (matches!(child_tag.as_str(), "input" | "textarea" | "select")
                                     || supported_editing_host(&child_tag, &attributes(child)))

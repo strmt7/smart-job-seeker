@@ -1983,3 +1983,12 @@ budget exhaustion. The previously reviewed public form still exposed its
 instruction-bearing labels in a read-only check. Browser library tests and
 Clippy passed. This bounds the repeated group scan, not the browser's whole DOM
 retrieval or total memory use; no application was submitted.
+
+A fictional browser fixture with 35 nested headed containers and 100 inert
+children per level exercised the shared section-context budget. The browser
+returned the email field and an explicit incomplete-context warning in one run.
+Script, style, template and noscript subtrees are now skipped during the group
+scan. Earlier fixture variants with 80 and 330 nested containers failed during
+DOM response decoding (the Rust JSON recursion limit and Chromium's protocol
+stack limit, respectively); those depths are not supported by this check. The
+focused browser fixture and browser Clippy passed. No application was submitted.

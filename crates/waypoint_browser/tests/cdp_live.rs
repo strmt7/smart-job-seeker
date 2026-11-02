@@ -861,6 +861,31 @@ fn plain_headed_containers_provide_reviewable_context() {
 }
 
 #[test]
+#[ignore = "launches one local browser against a bounded nested form fixture"]
+fn deeply_nested_headings_report_context_budget() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let form = driver
+        .open(&file_url("form_nested_group_budget.html"))
+        .unwrap();
+    assert!(
+        form.walls
+            .iter()
+            .any(|wall| wall.contains("section context exceeded the inspection budget")),
+        "{:?}",
+        form.walls
+    );
+    assert!(form
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#email"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional fixture"]
 fn verification_rejects_hidden_choices() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
