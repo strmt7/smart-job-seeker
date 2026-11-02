@@ -2011,3 +2011,16 @@ The required workspace checks were also run after enabling serde_json's
 three zip advisories and five denied warnings in the existing lockfile;
 `cargo deny check licenses bans sources` reported license failures while bans
 and sources passed. These workspace gates were not repaired in this change.
+
+### Read-only Workable form observation (2026-11-02)
+
+The ignored live application-check diagnostic now accepts the reviewed
+`apply.workable.com` host and checks the source registry before opening it.
+Two read-only runs against one public application page passed. The first direct
+inspection found eight fields, while the separate application check found none;
+the second found seven fields and reported a possible CAPTCHA, obscured fields,
+required custom controls and a hidden required control. The second application
+check also reported obstacles and required manual review. This variation is not
+enough to establish its cause or reliable Workable support. No candidate details
+were entered and no application was submitted. This observation does not verify
+filling, visual verification or multi-step completion.

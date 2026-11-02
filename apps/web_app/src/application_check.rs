@@ -897,8 +897,10 @@ mod tests {
         assert_eq!(address.scheme(), "https");
         assert!(matches!(
             address.host_str(),
-            Some("job-boards.greenhouse.io" | "jobs.ashbyhq.com")
+            Some("job-boards.greenhouse.io" | "jobs.ashbyhq.com" | "apply.workable.com")
         ));
+        crate::form_links::check_destination(&url, waypoint_policy::Operation::Read)
+            .expect("source policy permits this read-only check");
         let parsed = waypoint_net::parse_url(&url).expect("valid HTTPS URL");
         waypoint_net::resolve_public(&parsed).expect("public destination");
         {
