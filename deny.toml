@@ -31,6 +31,18 @@ allow = [
 ]
 # MPL-2.0 is file-level copyleft; allowed for linked deps but flagged in review.
 
+# Certificate data from the Common CA Database, distributed with its CDLA text.
+# Keep these exceptions pinned to the reviewed crates and versions.
+[[licenses.exceptions]]
+name = "webpki-roots"
+version = "=1.0.11"
+allow = ["CDLA-Permissive-2.0"]
+
+[[licenses.exceptions]]
+name = "webpki-root-certs"
+version = "=1.0.11"
+allow = ["CDLA-Permissive-2.0"]
+
 [advisories]
 version = 2
 yanked = "deny"
