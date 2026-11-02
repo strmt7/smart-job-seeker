@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body style="padding-bottom: 1000px">
+<form style="margin-top: 1600px" onsubmit="event.preventDefault(); document.getElementById('status').textContent='SUBMITTED'">
+<label for="role">Position</label>
+<button id="role" type="button" role="combobox" aria-label="Position" aria-expanded="false" aria-controls="options" onclick="openChoices()">Choose position</button>
+<button type="button" aria-labelledby="missing-label">Upload file</button>
+<output id="status">NOT SUBMITTED</output>
+</form>
+<script>
+if (location.hash === "#limited") document.body.style.paddingBottom = "0px";
+if (location.hash === "#change-on-scroll") window.addEventListener("scroll", () => document.getElementById("role").setAttribute("aria-label", "Changed position"), {once:true});
+function openChoices() {
+  const button = document.getElementById('role');
+  const list = document.createElement('div');
+  list.id = 'options'; list.setAttribute('role', 'listbox');
+  for (const name of ['Designer', 'Engineer', 'Analyst']) {
+    const option = document.createElement('div'); option.setAttribute('role', 'option'); option.textContent = name;
+    option.addEventListener('click', () => { button.textContent = name; button.setAttribute('aria-expanded', 'false'); list.remove(); });
+    list.append(option);
+  }
+  document.body.append(list); button.setAttribute('aria-expanded', 'true');
+}
+</script></body></html>

@@ -153,6 +153,7 @@ pub struct CustomChoices {
 
 enum ClickGuard<'a> {
     Ordinary,
+    NonSubmit,
     ClosedCombobox,
     ChoiceOption {
         label: &'a str,
@@ -575,7 +576,7 @@ impl CdpDriver {
                 break;
             }
             match self.with_review_timeout(|driver| driver.control_visibility_and_path(id)) {
-                Ok((true, selector, available, _)) => {
+                Ok((true, selector, available, _, _)) => {
                     controls.push(PageControl {
                         label,
                         disabled: disabled || !available,
@@ -652,7 +653,7 @@ impl CdpDriver {
                 incomplete = true;
                 break;
             }
-            let (visible, selector, _, _) =
+            let (visible, selector, _, _, _) =
                 match self.with_review_timeout(|driver| driver.control_visibility_and_path(node)) {
                     Ok(value) => value,
                     Err(_) => {
@@ -1213,6 +1214,43 @@ impl CdpDriver {
         // Allow a short bounded interval for immediate site scroll handlers.
         self.cdp.pump(Duration::from_millis(150));
         // The document or frame may have changed while the scroll was running.
+        if self.node_id(selector)?.is_none() {
+            return Err(DriverError(
+                "Field changed during visual review; inspect again".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Center a choice before visual review to leave room for its popup.
+    /// This scrolls only; callers must recheck the page and prior answers.
+    pub fn center_field_for_review(&mut self, selector: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Field is no longer available for visual review".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Field is no longer available for visual review".into()))?
+            .to_owned();
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { if (!this.isConnected) return false; this.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}); return this.isConnected; }","returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Could not position the field for visual review".into(),
+            ));
+        }
+        self.cdp.pump(Duration::from_millis(150));
         if self.node_id(selector)?.is_none() {
             return Err(DriverError(
                 "Field changed during visual review; inspect again".into(),
@@ -1998,7 +2036,7 @@ impl CdpDriver {
     fn control_visibility_and_path(
         &mut self,
         node: u64,
-    ) -> Result<(bool, String, bool, bool), DriverError> {
+    ) -> Result<(bool, String, bool, bool, bool), DriverError> {
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -2015,7 +2053,7 @@ impl CdpDriver {
             const visibleNode = this instanceof HTMLInputElement && this.type === 'file' ? this.parentElement : this;
             if (!visibleNode) return null;
             const style = getComputedStyle(visibleNode);
-            let needsReview = false, outsideScrollArea = false;
+            let needsReview = false, outsideScrollArea = false, dialogObscured = false;
             const rect = visibleNode.getBoundingClientRect();
             let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
             for (let node = visibleNode, depth = 0; node; node = node.parentElement) {
@@ -2046,7 +2084,7 @@ impl CdpDriver {
             if (!needsReview && !outsideScrollArea && (this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || (this instanceof HTMLInputElement && this.type !== 'file') || this.isContentEditable) && rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight) {
                 const root = visibleNode.getRootNode();
                 const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x, y) : null;
-                if (!hit || (hit !== visibleNode && !visibleNode.contains(hit))) needsReview = true;
+                if (!hit || (hit !== visibleNode && !visibleNode.contains(hit))) { needsReview = true; dialogObscured = !!hit?.closest('[role="dialog" i], dialog, [aria-modal="true" i]'); }
             }
             const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !needsReview;
             const parts = []; let current = this;
@@ -2059,7 +2097,7 @@ impl CdpDriver {
             }
             const path = parts.join(' > ');
             const available = !this.matches(':disabled') && this.readOnly !== true && !this.closest('[aria-disabled="true" i], [aria-readonly="true" i]');
-            return path.length <= 4096 ? {visible, path, available, needsReview} : null;
+            return path.length <= 4096 ? {visible, path, available, needsReview, dialogObscured} : null;
         }"#,"returnByValue":true}));
         let released = self
             .cdp
@@ -2094,7 +2132,19 @@ impl CdpDriver {
             .ok_or_else(|| {
                 DriverError("Field visibility is unavailable; manual review is needed".into())
             })?;
-        Ok((visible, path.to_owned(), available, needs_review))
+        let dialog_obscured = value
+            .get("dialogObscured")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                DriverError("Field visibility is unavailable; manual review is needed".into())
+            })?;
+        Ok((
+            visible,
+            path.to_owned(),
+            available,
+            needs_review,
+            dialog_obscured,
+        ))
     }
 
     /// Boxless text containers have no client rectangle; reject clipping and
@@ -3392,7 +3442,7 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                let (rendered, path, available, needs_review) =
+                let (rendered, path, available, needs_review, dialog_obscured) =
                     self.control_visibility_and_path(control.node_id)?;
                 if rendered && available {
                     css_paths.insert(control.node_id, path);
@@ -3401,6 +3451,9 @@ impl CdpDriver {
                     if needs_review {
                         wall_flags.push("a custom control needs manual review".into());
                         wall_flags.push("a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into());
+                        if dialog_obscured {
+                            wall_flags.push("a custom control needs manual review: A dialog covers a form field; resolve it in the visible browser, then inspect again".into());
+                        }
                     }
                     if rendered && !available {
                         let required = control.attrs.contains_key("required")
@@ -3491,7 +3544,7 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                let (visible, _, _, needs_review) = self.control_visibility_and_path(node)?;
+                let (visible, _, _, needs_review, _) = self.control_visibility_and_path(node)?;
                 // Clipped or transparent indicators cannot be confidently
                 // dismissed as absent; leave the workflow for manual review.
                 possible_next_step = visible || needs_review;
@@ -4744,6 +4797,7 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Click target disappeared; review it manually".into()))?;
         let guard_value = match guard {
             ClickGuard::Ordinary => json!({"kind":"ordinary"}),
+            ClickGuard::NonSubmit => json!({"kind":"non-submit"}),
             ClickGuard::ClosedCombobox => json!({"kind":"combobox"}),
             ClickGuard::ChoiceOption {
                 label,
@@ -5359,7 +5413,7 @@ impl BrowserDriver for CdpDriver {
                 let Some(node) = self.node_id(selector)? else {
                     return Err(DriverError(format!("{selector} not found")));
                 };
-                self.click_node(node, selector)
+                self.click_node_guarded(node, selector, ClickGuard::NonSubmit)
             }
             BrowserCommand::ReadText { selector } => {
                 let Some(node) = self.node_id(selector)? else {

@@ -1613,6 +1613,23 @@ fn verify_selected_choices_except(
         })
 }
 
+/// Choice actions retain the unresolved-button warning but do not activate
+/// that unrelated button. All other walls remain blocking.
+fn check_choice_page(session: &mut ReviewSession) -> Result<(), String> {
+    let live = session
+        .driver
+        .inspect_current()
+        .map_err(|e| e.to_string())?;
+    if !form_preview::same_choice_reviewable_walls(&session.preview, &live.walls)
+        || live.schema != session.preview.schema
+        || live.origin != session.preview.schema.origin
+    {
+        return Err("The page changed or needs manual attention; inspect again".into());
+    }
+    verify_selected_choices(session)?;
+    Ok(())
+}
+
 fn custom_choice_snapshot(
     driver: &mut waypoint_browser::CdpDriver,
 ) -> Result<(waypoint_browser::CustomChoices, String), String> {
@@ -1627,6 +1644,27 @@ fn custom_choice_snapshot(
         &json!({"url":url,"schema":live.schema,"walls":live.walls,"choices":choices}).to_string(),
     );
     Ok((choices, digest.as_str().to_owned()))
+}
+
+/// Locate a closed choice without trusting that a scroll leaves the page unchanged.
+fn scroll_closed_choice_for_visual(
+    current: &mut ReviewSession,
+    selector: &str,
+    expected: &str,
+) -> Result<(), String> {
+    check_choice_page(current)?;
+    let before_url = current.driver.current_url().map_err(|e| e.to_string())?;
+    current
+        .driver
+        .with_review_timeout(|driver| driver.center_field_for_review(selector))
+        .map_err(|e| format!("Could not locate the choice; inspect it manually: {e}"))?;
+    if current.driver.current_url().map_err(|e| e.to_string())? != before_url
+        || check_choice_page(current).is_err()
+        || custom_choice_snapshot(&mut current.driver)?.1 != expected
+    {
+        return Err("The page changed while locating the choice; inspect it again".into());
+    }
+    Ok(())
 }
 
 fn now() -> i64 {
@@ -4541,7 +4579,7 @@ fn serve(
                 .filter(|s| s.id == id && s.created.elapsed() <= s.ttl)
                 .ok_or("Form session expired")?;
             let (choices, digest) = custom_choice_snapshot(&mut current.driver)?;
-            let can_open = check_answer_page(current).is_ok();
+            let can_open = check_choice_page(current).is_ok();
             let pending_selected =
                 current
                     .pending_choice_visual
@@ -4697,6 +4735,13 @@ fn serve(
             } else {
                 matches[0].label.clone()
             };
+            // A closed choice can be offscreen even though it appears in the
+            // inventory. Locate it for the visual check, then reject any page
+            // or inventory change caused by scroll handlers. Never scroll an
+            // open list here: that can close it or change the reviewed option.
+            if !selected_review && !option_review && !matches[0].expanded {
+                scroll_closed_choice_for_visual(current, selector, &digest)?;
+            }
             let normalized = |value: &str| {
                 value
                     .split_whitespace()
@@ -4718,7 +4763,10 @@ fn serve(
                     || inventory
                         .choices
                         .iter()
-                        .filter(|choice| normalized(&choice.label) == normalized(&label))
+                        .filter(|choice| {
+                            control_vision::normalize_choice_label(&choice.label)
+                                == control_vision::normalize_choice_label(&label)
+                        })
                         .count()
                         != 1
             };
@@ -4856,7 +4904,7 @@ fn serve(
             if Sha256Digest::of(&profile.to_string()) != current.profile_digest {
                 return Err("Profile changed; inspect the current page again".into());
             }
-            check_answer_page(current)?;
+            check_choice_page(current)?;
             if let Some(first) = current.completed_selectors.first().cloned() {
                 let check = current.driver.with_review_timeout(|driver| {
                     form_preview::verify_completed_fields(
@@ -9107,6 +9155,97 @@ mod tests {
         ws.save_candidate_profile(&json!({"first_name":"Changed"}).to_string())
             .unwrap();
         assert!(letter_answer_provenance(&ws, &id, "letter", "Fictional experience").is_err());
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against fictional offscreen choices"]
+    fn locating_offscreen_choice_rechecks_scroll_changes() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_dynamic_choice.html")
+            .canonicalize()
+            .unwrap();
+        for changed in [false, true] {
+            let mut url = url::Url::from_file_path(&fixture).unwrap();
+            if changed {
+                url.set_fragment(Some("change-on-scroll"));
+            }
+            let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let live = driver.open(url.as_str()).unwrap();
+            assert!(live.walls.iter().any(|wall| wall
+                == "a button has an unresolved accessible name; manual review is needed"));
+            let preview = form_preview::suggest_without_model(live, &json!({}), "fixture").unwrap();
+            let (inventory, digest) = custom_choice_snapshot(&mut driver).unwrap();
+            let selector = inventory
+                .choices
+                .iter()
+                .find(|item| item.label == "Position")
+                .unwrap()
+                .selector
+                .clone();
+            let mut current = ReviewSession {
+                id: "fixture".into(),
+                job_id: JobIdentityId::new("fixture").unwrap(),
+                inspection_task_id: "fixture".into(),
+                inspection_pending_revision: 1,
+                url: url.to_string(),
+                profile_digest: Sha256Digest::of("fixture"),
+                preview,
+                driver,
+                created: Instant::now(),
+                ttl: SESSION_TTL,
+                filled: false,
+                fill_attempted: false,
+                completed_selectors: vec![],
+                selected_choices: vec![],
+                answer_drafts: Default::default(),
+                visible: false,
+                staged_files: vec![],
+                attachments: vec![],
+                pending_choice_visual: None,
+                last_visual_freshness_key: None,
+                record: None,
+            };
+            assert!(!form_preview::same_reviewable_walls(
+                &current.preview,
+                &current.driver.inspect_current().unwrap().walls
+            ));
+            assert!(check_choice_page(&mut current).is_ok());
+            {
+                use std::io::{Read, Write};
+                use std::net::{TcpListener, TcpStream};
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let body = json!({"session_id":"fixture"}).to_string();
+                write!(client, "POST /api/form/custom-choices HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+                let (mut server, _) = listener.accept().unwrap();
+                let mut ws = Workspace::in_memory().unwrap();
+                let mut session = Some(current);
+                serve(&mut server, &mut ws, &mut session, "fixture-token", port).unwrap();
+                drop(server);
+                let mut response = String::new();
+                client.read_to_string(&mut response).unwrap();
+                let result: Value =
+                    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+                assert_eq!(result["can_open"], true);
+                current = session.unwrap();
+            }
+            let result = scroll_closed_choice_for_visual(&mut current, &selector, &digest);
+            if changed {
+                assert!(result.unwrap_err().contains("changed"));
+            } else {
+                result.unwrap();
+                assert!(current.driver.screenshot_field_context(&selector).is_ok());
+            }
+            assert!(current
+                .driver
+                .trace
+                .iter()
+                .all(|entry| !entry.contains("typed")
+                    && !entry.contains("clicked")
+                    && !entry.contains("submitted")));
+        }
     }
 
     #[test]

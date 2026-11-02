@@ -74,20 +74,40 @@ pub(crate) fn is_custom_review(reason: &str) -> bool {
 pub const POST_CHOICE_VISUAL_REQUIRED: &str = "Visual review required after a choice action";
 pub const CHANGED_INFORMATIONAL_PREVIEW: &str = "The application changed during inspection; this view is informational only. Inspect again before filling.";
 
+const UNRESOLVED_BUTTON_REVIEW: &str =
+    "a button has an unresolved accessible name; manual review is needed";
+
 pub fn same_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
+    same_walls_for_operation(preview, fresh_walls, false)
+}
+
+/// Only reviewed custom-choice interaction may proceed past this one stable
+/// warning. It remains a blocker for filling, navigation, and submission.
+pub fn same_choice_reviewable_walls(preview: &FormPreview, fresh_walls: &[String]) -> bool {
+    same_walls_for_operation(preview, fresh_walls, true)
+}
+
+fn same_walls_for_operation(
+    preview: &FormPreview,
+    fresh_walls: &[String],
+    allow_unresolved_button: bool,
+) -> bool {
+    let permitted = |reason: &str| {
+        is_custom_review(reason) || (allow_unresolved_button && reason == UNRESOLVED_BUTTON_REVIEW)
+    };
     if preview.manual_review.iter().any(|reason| {
         reason == "captcha present"
             || reason == "ambiguous form controls need manual review"
             || reason == POST_CHOICE_VISUAL_REQUIRED
             || reason == CHANGED_INFORMATIONAL_PREVIEW
-    }) || fresh_walls.iter().any(|wall| !is_custom_review(wall))
+    }) || fresh_walls.iter().any(|wall| !permitted(wall))
     {
         return false;
     }
     let mut expected: Vec<_> = preview
         .manual_review
         .iter()
-        .filter(|reason| is_custom_review(reason))
+        .filter(|reason| permitted(reason))
         .collect();
     let mut actual: Vec<_> = fresh_walls.iter().collect();
     expected.sort();
@@ -2832,6 +2852,36 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_button_permits_only_stable_choice_review() {
+        let unresolved = "a button has an unresolved accessible name; manual review is needed";
+        let custom = "a custom control needs manual review: Position";
+        let live = LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![unresolved.into(), custom.into()],
+        };
+        let mut preview = suggest_without_model(live.clone(), &json!({}), "fixture").unwrap();
+        assert!(!same_reviewable_walls(&preview, &live.walls));
+        assert!(same_choice_reviewable_walls(&preview, &live.walls));
+        assert!(!same_choice_reviewable_walls(&preview, &[custom.into()]));
+        let mut changed = live.walls.clone();
+        changed.push("captcha present".into());
+        assert!(!same_choice_reviewable_walls(&preview, &changed));
+        changed.pop();
+        changed.push("login required".into());
+        assert!(!same_choice_reviewable_walls(&preview, &changed));
+        preview
+            .manual_review
+            .push(POST_CHOICE_VISUAL_REQUIRED.into());
+        assert!(!same_choice_reviewable_walls(&preview, &live.walls));
+    }
+
+    #[test]
     fn hidden_empty_form_suggests_scrolling_without_promising_a_fix() {
         let mut live = LiveForm {
             origin: "https://example.invalid".into(),
@@ -3018,6 +3068,19 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated visual review of a fictional choice"]
+    fn resource_gated_custom_choice_endpoint_visual_review() {
+        assert!(
+            std::env::var_os("WAYPOINT_TEST_CHOICE_VISION").is_some(),
+            "enable the visual portion of the fixture"
+        );
+        crate::experience_inference::tests::with_resource_gated_model(
+            custom_choice_endpoint_reports_options_without_interaction,
+        );
     }
 
     #[test]
@@ -3281,6 +3344,15 @@ mod tests {
             .all(|entry| !entry.contains("submitted") && !entry.contains("clicked")));
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated read-only comparison on a previously reviewed public application page"]
+    fn resource_gated_public_conflicting_lesson_comparison() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_public_phone_lesson_comparison_is_read_only,
+        );
+    }
+
     #[test]
     #[ignore = "read-only inspection of a public application page"]
     fn live_public_application_structure_is_read_only() {
@@ -3333,6 +3405,10 @@ mod tests {
             live.walls.iter().any(|wall| wall == "captcha present"),
             refreshed.walls.len(),
             refreshed.walls.iter().any(|wall| wall == "captcha present")
+        );
+        println!(
+            "initial_wall_details={:?}; refreshed_wall_details={:?}",
+            live.walls, refreshed.walls
         );
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
@@ -3521,13 +3597,39 @@ mod tests {
         );
         let profile = json!({"first_name":"Avery","last_name":"Example","email":"avery@example.invalid","phone":"+12025550123"});
         let lesson = ExperienceMatch { id:"00000000000000000000000000000001".into(), revision:1, same_platform:true, experience:Experience { version:1,reviewed:true,enabled:true,observed_at:1,platform:Some(Platform::Greenhouse),stage:Stage::EnterInformation,control:Control::Text,observation:Observation::AmbiguousLabel,response:Response::InspectContext,outcome:Outcome::Unknown,note:Some("On a prior form, a field explicitly asking for the applicant's phone was ordinary contact information; confirm whose phone this form asks for.".into()),use_note_in_model:true } };
+        let lessons = if std::env::var_os("WAYPOINT_CONFLICTING_LESSONS").is_some() {
+            let mut lessons = vec![lesson.clone()];
+            for i in 1..=7 {
+                let mut item = lesson.clone();
+                item.id = format!("{:032x}", i + 1);
+                item.experience.observed_at = i + 1;
+                item.experience.note = None;
+                item.experience.use_note_in_model = false;
+                match i {
+                    1 => item.experience.outcome = Outcome::DidNotHelp,
+                    2 => item.experience.outcome = Outcome::Helped,
+                    3 => item.experience.observation = Observation::ValueChanged,
+                    4 => item.experience.observation = Observation::ValidationError,
+                    5 => item.experience.observation = Observation::HiddenControl,
+                    _ => item.experience.observation = Observation::UnexpectedNavigation,
+                }
+                lessons.push(item);
+            }
+            let selected = crate::form_task::relevant_experiences(&live.schema, &lessons);
+            assert!(selected
+                .iter()
+                .any(|item| item.experience.outcome == Outcome::Helped));
+            assert!(selected
+                .iter()
+                .any(|item| item.experience.outcome == Outcome::DidNotHelp));
+            selected
+        } else {
+            vec![lesson]
+        };
         let lesson_first = std::env::var_os("WAYPOINT_LESSON_FIRST").is_some();
         let run_lesson = |llm: &mut Counting<_>| {
             let before = llm.completed;
-            let mut informed = crate::experience_inference::ExperienceInference::new(
-                llm,
-                std::slice::from_ref(&lesson),
-            );
+            let mut informed = crate::experience_inference::ExperienceInference::new(llm, &lessons);
             let preview = suggest_for_live_form(live.clone(), &mut informed, &profile).unwrap();
             assert!(
                 informed.attempted_with_hints(),

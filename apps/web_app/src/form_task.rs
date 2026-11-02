@@ -346,34 +346,7 @@ pub(crate) fn relevant_experiences(
         for item in &mut candidates {
             item.same_platform = platform.is_some() && item.experience.platform == platform;
         }
-        candidates.sort_by(|a, b| {
-            b.same_platform
-                .cmp(&a.same_platform)
-                .then_with(|| b.experience.observed_at.cmp(&a.experience.observed_at))
-                .then_with(|| a.id.cmp(&b.id))
-        });
-        let mut group: Vec<ExperienceMatch> = Vec::new();
-        for item in &candidates {
-            if !group.iter().any(|prior| {
-                prior.experience.observation == item.experience.observation
-                    && prior.experience.response == item.experience.response
-                    && prior.experience.outcome == item.experience.outcome
-            }) {
-                group.push(item.clone());
-                if group.len() == 5 {
-                    break;
-                }
-            }
-        }
-        for item in candidates {
-            if group.len() == 5 {
-                break;
-            }
-            if !group.iter().any(|prior| prior.id == item.id) {
-                group.push(item);
-            }
-        }
-        selected.extend(group);
+        selected.extend(waypoint_workspace::form_experience::select_experience_hints(candidates));
     }
     selected
 }
@@ -557,6 +530,9 @@ pub fn start(
                 used_revisions = used_experience_revisions(&relevant, informed.attempted_with_hints());
                 if informed.attempted_with_hints() {
                     preview.manual_review.push("A model mapping request included reviewed lessons as fallible context; verify every suggestion against this form.".into());
+                    if informed.conflicting_reports_attempted() {
+                        preview.manual_review.push("Reviewed lessons report conflicting outcomes for a similar form issue; verify this form independently.".into());
+                    }
                     let (included, omitted) = informed.note_attempts();
                     if included + omitted > 0 {
                         preview.manual_review.push(format!("Across attempted mapping requests, opted-in note inclusions prepared: {included}; omitted by the context budget: {omitted}. A note can be counted more than once. This does not prove model receipt or use."));
@@ -1185,6 +1161,28 @@ mod tests {
         let selected = relevant_experiences(&schema, &full);
         assert_eq!(selected.len(), 10);
         assert!(selected[0].same_platform && selected[5].same_platform);
+        let mut reports: Vec<_> = (0..7)
+            .map(|i| item(i, Control::Text, Platform::Lever, i as i64 + 1))
+            .collect();
+        reports[0].experience.outcome = Outcome::DidNotHelp;
+        reports[1].experience.outcome = Outcome::Helped;
+        for (index, report) in reports.iter_mut().enumerate().skip(2) {
+            report.experience.observation = match index {
+                2 => Observation::ValueChanged,
+                3 => Observation::ValidationError,
+                4 => Observation::HiddenControl,
+                5 => Observation::UnexpectedNavigation,
+                _ => Observation::AmbiguousLabel,
+            };
+            report.experience.response = Response::StopAndReview;
+        }
+        let selected = relevant_experiences(&schema, &reports);
+        assert!(selected
+            .iter()
+            .any(|item| item.experience.outcome == Outcome::Helped));
+        assert!(selected
+            .iter()
+            .any(|item| item.experience.outcome == Outcome::DidNotHelp));
     }
 
     #[cfg(all(windows, feature = "sqlcipher"))]

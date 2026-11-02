@@ -242,54 +242,82 @@ impl Workspace {
                 same_platform,
             });
         }
-        matches.sort_by(|a, b| {
-            b.same_platform
-                .cmp(&a.same_platform)
-                .then_with(|| b.experience.observed_at.cmp(&a.experience.observed_at))
-                .then_with(|| a.id.cmp(&b.id))
-        });
-        // Keep distinct observation/response pairs before repeating a pattern,
-        // so several similar memories do not crowd out a conflicting response.
-        let mut selected: Vec<ExperienceMatch> = Vec::new();
-        // Reserve space for other contexts when available. A platform match is
-        // only a hint: tenant layouts can differ and contrary observations
-        // must not disappear behind a run of same-platform records.
-        let has_other_context = matches.iter().any(|item| !item.same_platform);
-        for item in &matches {
-            if has_other_context
-                && item.same_platform
-                && selected.iter().filter(|entry| entry.same_platform).count() >= 3
-            {
-                continue;
-            }
-            if !selected.iter().any(|previous| {
-                previous.experience.observation == item.experience.observation
-                    && previous.experience.response == item.experience.response
-                    && previous.experience.outcome == item.experience.outcome
-            }) {
-                selected.push(item.clone());
-                if selected.len() == 5 {
-                    return Ok(selected);
-                }
-            }
-        }
-        for item in matches {
-            if has_other_context
-                && item.same_platform
-                && selected.iter().filter(|entry| entry.same_platform).count() >= 3
-                && !selected.iter().any(|entry| !entry.same_platform)
-            {
-                continue;
-            }
-            if !selected.iter().any(|previous| previous.id == item.id) {
-                selected.push(item);
-                if selected.len() == 5 {
-                    break;
-                }
-            }
-        }
-        Ok(selected)
+        Ok(select_experience_hints(matches))
     }
+}
+
+/// Select bounded, diverse reports; outcomes are user reports, not causal proof.
+/// The input is already filtered for the current stage and control.
+pub fn select_experience_hints(mut matches: Vec<ExperienceMatch>) -> Vec<ExperienceMatch> {
+    matches.sort_by(|a, b| {
+        b.same_platform
+            .cmp(&a.same_platform)
+            .then_with(|| b.experience.observed_at.cmp(&a.experience.observed_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    let has_other_context = matches.iter().any(|item| !item.same_platform);
+    let mut selected: Vec<ExperienceMatch> = Vec::new();
+    // Keep one contradictory pair when available. A failed report should not
+    // disappear behind several newer, different observations.
+    'pairs: for item in &matches {
+        let opposite = match item.experience.outcome {
+            Outcome::Helped => Outcome::DidNotHelp,
+            Outcome::DidNotHelp => Outcome::Helped,
+            Outcome::Unknown => continue,
+        };
+        for other in &matches {
+            if item.experience.observation == other.experience.observation
+                && item.experience.response == other.experience.response
+                && other.experience.outcome == opposite
+            {
+                selected.push(item.clone());
+                selected.push(other.clone());
+                break 'pairs;
+            }
+        }
+    }
+    for item in &matches {
+        if selected.len() == 5 {
+            break;
+        }
+        if has_other_context
+            && item.same_platform
+            && selected.iter().filter(|entry| entry.same_platform).count() >= 3
+        {
+            continue;
+        }
+        if !selected.iter().any(|previous| {
+            previous.experience.observation == item.experience.observation
+                && previous.experience.response == item.experience.response
+                && previous.experience.outcome == item.experience.outcome
+        }) {
+            selected.push(item.clone());
+        }
+    }
+    for item in matches {
+        if selected.len() == 5 {
+            break;
+        }
+        if has_other_context
+            && item.same_platform
+            && selected.iter().filter(|entry| entry.same_platform).count() >= 3
+            && !selected.iter().any(|entry| !entry.same_platform)
+        {
+            continue;
+        }
+        if !selected.iter().any(|previous| previous.id == item.id) {
+            selected.push(item);
+        }
+    }
+    // Pair preservation decides membership; the original ranking still determines
+    // prompt order, so an unrelated older pair cannot precede a matching host.
+    selected.sort_by(|a, b| {
+        b.same_platform
+            .cmp(&a.same_platform)
+            .then_with(|| b.experience.observed_at.cmp(&a.experience.observed_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    selected
 }
 
 #[cfg(all(test, windows))]
@@ -414,6 +442,51 @@ mod tests {
     }
 
     #[test]
+    fn older_conflicting_outcome_survives_newer_distinct_reports() {
+        let mut ws = Workspace::in_memory().unwrap();
+        ws.store = Store::in_memory()
+            .unwrap()
+            .with_sealer(waypoint_seal::platform_sealer().unwrap());
+        for i in 1..=8 {
+            let mut item = lesson();
+            item.observed_at = i;
+            if i == 1 {
+                item.outcome = Outcome::DidNotHelp;
+            } else if i == 2 {
+                item.outcome = Outcome::Helped;
+            } else {
+                item.observation = match i {
+                    3 => Observation::AmbiguousLabel,
+                    4 => Observation::ValidationError,
+                    5 => Observation::HiddenControl,
+                    6 => Observation::UnexpectedNavigation,
+                    7 => Observation::ValueChanged,
+                    _ => Observation::HiddenControl,
+                };
+                item.response = Response::InspectContext;
+            }
+            ws.save_form_experience(&format!("{i:032x}"), 0, &item)
+                .unwrap();
+        }
+        let found = ws
+            .related_form_experiences(
+                Stage::EnterInformation,
+                Control::Text,
+                Some(Platform::Lever),
+            )
+            .unwrap();
+        assert_eq!(found.len(), 5);
+        assert!(found
+            .iter()
+            .any(|item| item.experience.outcome == Outcome::Helped
+                && item.experience.response == Response::VerifyValueAgain));
+        assert!(found
+            .iter()
+            .any(|item| item.experience.outcome == Outcome::DidNotHelp
+                && item.experience.response == Response::VerifyValueAgain));
+    }
+
+    #[test]
     fn platform_matches_cannot_crowd_out_other_contexts() {
         let mut ws = Workspace::in_memory().unwrap();
         ws.store = Store::in_memory()
@@ -450,6 +523,46 @@ mod tests {
             .any(|item| item.experience.platform == Some(Platform::Ashby)));
         assert_eq!(found.len(), 5);
         assert!(found.iter().filter(|item| item.same_platform).count() <= 4);
+    }
+
+    #[test]
+    fn conflicting_other_context_is_retained_without_outranking_current_platform() {
+        let make = |i: u64, platform: Platform, outcome: Outcome| {
+            let mut experience = lesson();
+            experience.platform = Some(platform);
+            experience.outcome = outcome;
+            experience.observed_at = i as i64;
+            ExperienceMatch {
+                id: format!("{i:032x}"),
+                revision: 1,
+                same_platform: platform == Platform::Lever,
+                experience,
+            }
+        };
+        let mut items = vec![
+            make(1, Platform::Ashby, Outcome::DidNotHelp),
+            make(2, Platform::Ashby, Outcome::Helped),
+        ];
+        for i in 3..=8 {
+            let mut item = make(i, Platform::Lever, Outcome::Unknown);
+            item.experience.observation = match i {
+                3 => Observation::AmbiguousLabel,
+                4 => Observation::ValidationError,
+                5 => Observation::HiddenControl,
+                6 => Observation::UnexpectedNavigation,
+                _ => Observation::ValueChanged,
+            };
+            items.push(item);
+        }
+        let selected = select_experience_hints(items);
+        assert_eq!(selected.len(), 5);
+        assert!(selected[0].same_platform);
+        assert!(selected
+            .iter()
+            .any(|item| !item.same_platform && item.experience.outcome == Outcome::Helped));
+        assert!(selected
+            .iter()
+            .any(|item| !item.same_platform && item.experience.outcome == Outcome::DidNotHelp));
     }
 
     #[test]

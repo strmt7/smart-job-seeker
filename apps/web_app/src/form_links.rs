@@ -438,7 +438,10 @@ pub fn start(
                             used_revisions = crate::form_task::used_experience_revisions(&relevant, informed.attempted_with_hints());
                             if informed.attempted_with_hints() {
                                 preview.manual_review.push("A model mapping request included reviewed lessons as fallible context; verify every suggestion against this form.".into());
-                                let (included, omitted) = informed.note_attempts();
+                                if informed.conflicting_reports_attempted() {
+                        preview.manual_review.push("Reviewed lessons report conflicting outcomes for a similar form issue; verify this form independently.".into());
+                    }
+                    let (included, omitted) = informed.note_attempts();
                                 if included + omitted > 0 {
                                     preview.manual_review.push(format!("Across attempted mapping requests, opted-in note inclusions prepared: {included}; omitted by the context budget: {omitted}. A note can be counted more than once. This does not prove model receipt or use."));
                                 }

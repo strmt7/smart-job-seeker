@@ -131,6 +131,36 @@ fn comparison(label: &str, ambiguous: bool, items: &[String]) -> &'static str {
     }
 }
 
+/// Normalize typography and a separated required marker only for choice
+/// field labels, never for option values or selected answers.
+pub fn normalize_choice_label(value: &str) -> String {
+    let normalized = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .replace(['’', '‘'], "'");
+    normalized
+        .strip_suffix(" *")
+        .unwrap_or(&normalized)
+        .to_owned()
+}
+
+fn choice_label_comparison(label: &str, ambiguous: bool, items: &[String]) -> &'static str {
+    if ambiguous {
+        return "ambiguous";
+    }
+    match items
+        .iter()
+        .filter(|item| normalize_choice_label(item) == normalize_choice_label(label))
+        .count()
+    {
+        0 => "not_observed",
+        1 => "label_observed",
+        _ => "ambiguous",
+    }
+}
+
 /// A capture is current only when both surrounding page inventories agree
 /// with the original and the captured pixels match the reviewed image.
 pub fn capture_is_current(
@@ -281,7 +311,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
             json!({"status":"failed","session_id":task.session,"job_id":task.job_id,"pending_revision":task.pending_revision,"error":error})
         }
         Some(Ok(items)) => {
-            json!({"status":"complete","session_id":task.session,"rank_task_id":task.rank_task,"control_index":task.control_index,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":comparison(&task.label,task.ambiguous,items),"choice":task.choice})
+            json!({"status":"complete","session_id":task.session,"rank_task_id":task.rank_task,"control_index":task.control_index,"job_id":task.job_id,"pending_revision":task.pending_revision,"selector":task.selector,"snapshot_digest":task.digest,"image_hash":task.image_hash,"screenshot":task.image,"capture_saved":task.capture_saved,"label":task.label,"ambiguous":task.ambiguous,"buttons":items,"comparison":if task.rank_task == "custom-choice" { choice_label_comparison(&task.label,task.ambiguous,items) } else { comparison(&task.label,task.ambiguous,items) },"choice":task.choice})
         }
     })
 }
@@ -531,6 +561,39 @@ mod tests {
             comparison("Continue", true, &["Continue".into()]),
             "ambiguous"
         );
+    }
+
+    #[test]
+    fn choice_label_comparison_handles_typography_without_relaxing_values() {
+        assert_eq!(
+            choice_label_comparison(
+                "Position You’re Applying For *",
+                false,
+                &["Position You're Applying For".into()]
+            ),
+            "label_observed"
+        );
+        assert_eq!(
+            choice_label_comparison(
+                "Position You’re Applying For *",
+                false,
+                &[
+                    "Position You're Applying For".into(),
+                    "Position You’re Applying For *".into()
+                ]
+            ),
+            "ambiguous"
+        );
+        assert_eq!(
+            choice_label_comparison(
+                "Position You’re Applying For *",
+                true,
+                &["Position You're Applying For".into()]
+            ),
+            "ambiguous"
+        );
+        assert_eq!(comparison("C *", false, &["C".into()]), "not_observed");
+        assert_ne!(normalize_choice_label("C*"), normalize_choice_label("C"));
     }
 
     #[test]

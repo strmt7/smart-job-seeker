@@ -596,9 +596,62 @@ fn obscured_form_reports_how_to_resume_without_interaction() {
         .walls
         .iter()
         .any(|wall| wall.contains("obscured, clipped or transparent")));
+    assert!(!live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("A dialog covers a form field")));
     assert!(driver.trace.iter().all(|entry| !entry.contains("clicked")
         && !entry.contains("typed")
         && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "starts one local browser against a fictional dialog"]
+fn dialog_obscuring_field_reports_specific_review_without_interaction() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_dialog_obscures.html")).unwrap();
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#name"));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("A dialog covers a form field")));
+    assert!(driver.trace.iter().all(|entry| !entry.contains("clicked")
+        && !entry.contains("typed")
+        && !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "starts one local browser against a fictional dismissible dialog"]
+fn dismissing_a_dialog_and_reinspecting_recovers_the_obscured_field() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let first = driver.open(&file_url("form_dialog_obscures.html")).unwrap();
+    assert!(first
+        .walls
+        .iter()
+        .any(|wall| wall.contains("A dialog covers a form field")));
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#dismiss".into(),
+        })
+        .unwrap();
+    let second = driver.inspect_current().unwrap();
+    assert!(!second
+        .walls
+        .iter()
+        .any(|wall| wall.contains("A dialog covers a form field")));
+    assert!(second
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#name"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
 }
 
 #[test]
@@ -1603,6 +1656,76 @@ fn disappearing_custom_choice_leaves_inventory_incomplete() {
 }
 
 #[test]
+#[ignore = "starts a local browser against a fictional dynamic choice"]
+fn dynamic_choice_created_on_open_can_be_inspected_and_selected() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_dynamic_choice.html")).unwrap();
+    let choices = driver.page_custom_choices().unwrap();
+    let choice = choices
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Position")
+        .unwrap();
+    assert!(!choice.expanded);
+    assert!(choice.options_incomplete);
+    let selector = choice.selector.clone();
+    assert!(driver.screenshot_field_context(&selector).is_err());
+    driver.center_field_for_review(&selector).unwrap();
+    assert!(driver.screenshot_field_context(&selector).is_ok());
+    let current = driver.page_custom_choices().unwrap();
+    assert!(current
+        .choices
+        .iter()
+        .any(|choice| choice.selector == selector && !choice.expanded));
+    let opened = driver.open_custom_choice(&selector).unwrap();
+    assert!(opened.expanded);
+    assert_eq!(opened.options, ["Designer", "Engineer", "Analyst"]);
+    assert!(opened.options_incomplete);
+    driver
+        .select_custom_choice_option(&selector, "Engineer")
+        .unwrap();
+    driver
+        .verify_custom_choice_value(&selector, "Engineer")
+        .unwrap();
+    assert!(driver
+        .page_text_bounded(2000)
+        .unwrap()
+        .0
+        .contains("NOT SUBMITTED"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "starts a local browser against a fictional clipped popup"]
+fn dynamic_choice_at_page_end_keeps_incomplete_option_inventory() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let url = format!("{}#limited", file_url("form_dynamic_choice.html"));
+    driver.open(&url).unwrap();
+    let choices = driver.page_custom_choices().unwrap();
+    let selector = choices
+        .choices
+        .iter()
+        .find(|choice| choice.label == "Position")
+        .unwrap()
+        .selector
+        .clone();
+    driver.center_field_for_review(&selector).unwrap();
+    let opened = driver.open_custom_choice(&selector).unwrap();
+    assert!(opened.options_incomplete);
+    assert!(
+        opened.options.len() < 3,
+        "fixture must leave some options out of view"
+    );
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
 fn opening_custom_choice_rejects_submit_controls_and_reports_options() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
@@ -1746,6 +1869,196 @@ fn required_hidden_proxy_is_not_exposed_as_a_text_answer() {
         .trace
         .iter()
         .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
+#[ignore = "starts one local browser against fictional submission controls"]
+fn generic_click_refuses_native_submit_controls_regardless_of_label() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_generic_click_submit_guard.html"))
+        .unwrap();
+    for selector in ["#implicit", "#explicit", "#inside", "#image"] {
+        assert!(
+            driver
+                .execute(&BrowserCommand::Click {
+                    selector: selector.into()
+                })
+                .is_err(),
+            "generic click accepted {selector}"
+        );
+    }
+    let (text, _) = driver.page_text_bounded(2000).unwrap();
+    assert!(text.contains("INITIAL"));
+    assert!(!text.contains("SUBMITTED"));
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#safe".into(),
+        })
+        .unwrap();
+    assert!(driver
+        .page_text_bounded(2000)
+        .unwrap()
+        .0
+        .contains("DISMISSED"));
+}
+
+#[test]
+#[ignore = "uses one browser and a loopback WebSocket to evaluate offline emulation"]
+fn offline_emulation_existing_websocket_qualification() {
+    use serde_json::{json, Value};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use waypoint_browser::cdp::{BrowserProcess, Cdp};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        let mut ws = tungstenite::accept(stream).unwrap();
+        let baseline = ws
+            .read()
+            .ok()
+            .is_some_and(|value| value.to_text().ok() == Some("baseline"));
+        tx.send(baseline).unwrap();
+        let message = ws.read().ok();
+        tx.send(message.is_some_and(|value| value.to_text().ok() == Some("fictional-test")))
+            .unwrap();
+    });
+    let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call("Network.enable", json!({})).unwrap();
+    cdp.call("Runtime.enable", json!({})).unwrap();
+    cdp.call("Runtime.evaluate", json!({"expression":format!("window.fixtureSocket = new WebSocket('ws://127.0.0.1:{port}');"),"returnByValue":true})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let state = cdp
+            .call(
+                "Runtime.evaluate",
+                json!({"expression":"window.fixtureSocket.readyState","returnByValue":true}),
+            )
+            .unwrap();
+        if state.pointer("/result/value").and_then(Value::as_u64) == Some(1) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "fixture socket did not connect");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    cdp.call(
+        "Runtime.evaluate",
+        json!({"expression":"window.fixtureSocket.send('baseline')","returnByValue":true}),
+    )
+    .unwrap();
+    assert!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "loopback baseline not received"
+    );
+    cdp.call(
+        "Network.emulateNetworkConditions",
+        json!({"offline":true,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}),
+    )
+    .unwrap();
+    let result=cdp.call("Runtime.evaluate", json!({"expression":"window.fixtureSocket.send('fictional-test'); 'sent'","returnByValue":true})).unwrap();
+    let before_restore = rx.recv_timeout(Duration::from_secs(1)).ok();
+    cdp.call(
+        "Network.emulateNetworkConditions",
+        json!({"offline":false,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}),
+    )
+    .unwrap();
+    let received =
+        before_restore.unwrap_or_else(|| rx.recv_timeout(Duration::from_secs(9)).unwrap());
+    println!(
+        "send_result={} received_before_restore={before_restore:?} received_by_end={received}",
+        result["result"]["value"]
+    );
+    server.join().unwrap();
+    // Observation only: this test does not establish cross-target isolation.
+}
+
+#[test]
+#[ignore = "uses two local browser targets and a loopback WebSocket"]
+fn offline_emulation_target_scope_qualification() {
+    use serde_json::{json, Value};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use waypoint_browser::cdp::{BrowserProcess, Cdp};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(6)))
+            .unwrap();
+        let mut ws = tungstenite::accept(stream).unwrap();
+        for expected in ["baseline", "second-target"] {
+            tx.send(
+                ws.read()
+                    .ok()
+                    .is_some_and(|value| value.to_text().ok() == Some(expected)),
+            )
+            .unwrap();
+        }
+    });
+    let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call("Network.enable", json!({})).unwrap();
+    let target = cdp
+        .call_browser("Target.createTarget", json!({"url":"about:blank"}))
+        .unwrap();
+    let target_id = target["targetId"].as_str().unwrap();
+    let attach = cdp
+        .call_browser(
+            "Target.attachToTarget",
+            json!({"targetId":target_id,"flatten":true}),
+        )
+        .unwrap();
+    let second = attach["sessionId"].as_str().unwrap().to_owned();
+    cdp.call_session(&second, "Runtime.enable", json!({}))
+        .unwrap();
+    cdp.call_session(&second, "Runtime.evaluate", json!({"expression":format!("window.fixtureSocket = new WebSocket('ws://127.0.0.1:{port}');"),"returnByValue":true})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let state = cdp
+            .call_session(
+                &second,
+                "Runtime.evaluate",
+                json!({"expression":"window.fixtureSocket.readyState","returnByValue":true}),
+            )
+            .unwrap();
+        if state.pointer("/result/value").and_then(Value::as_u64) == Some(1) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "fixture socket did not connect");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    cdp.call_session(
+        &second,
+        "Runtime.evaluate",
+        json!({"expression":"window.fixtureSocket.send('baseline')","returnByValue":true}),
+    )
+    .unwrap();
+    assert!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "loopback baseline not received"
+    );
+    cdp.call(
+        "Network.emulateNetworkConditions",
+        json!({"offline":true,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}),
+    )
+    .unwrap();
+    cdp.call_session(
+        &second,
+        "Runtime.evaluate",
+        json!({"expression":"window.fixtureSocket.send('second-target')","returnByValue":true}),
+    )
+    .unwrap();
+    let received = rx.recv_timeout(Duration::from_secs(7)).unwrap();
+    println!("other_target_delivered_while_first_offline={received}");
+    server.join().unwrap();
 }
 
 #[test]
