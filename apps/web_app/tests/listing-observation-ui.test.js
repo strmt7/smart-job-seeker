@@ -19,4 +19,17 @@ const context={document:{querySelector:s=>({'#filter':query,'#review-only':revie
 vm.runInNewContext(`${find('jobObservationNeedsReview')}\n${find('filteredJobRows')}\nthis.filtered=filteredJobRows`,context);
 assert.equal(context.filtered().map(row=>row.job.id).join(','),'old,unknown,bad');
 filter.checked=false;assert.equal(context.filtered().length,4);
+const sourceBoard=vm.runInNewContext(`(${find('sourceBoardForRefresh')})`,{URL});
+for(const [source,url,board] of [
+ ['greenhouse','https://job-boards.eu.greenhouse.io/unframe/jobs/5010248101','unframe'],
+ ['lever','https://jobs.lever.co/example/fictional','example'],
+ ['ashby','https://jobs.ashbyhq.com/example/fictional','example']
+])assert.equal(sourceBoard({source,canonical_url:url}).board,board);
+for(const job of [
+ {source:'greenhouse',canonical_url:'https://job-boards.greenhouse.io.evil.test/example/jobs/1'},
+ {source:'greenhouse',canonical_url:'https://job-boards.greenhouse.io/example'},
+ {source:'lever',canonical_url:'https://user@jobs.lever.co/example/role'},
+ {source:'ashby',canonical_url:'https://jobs.ashbyhq.com/a%20b/role'},
+ {source:'user_supplied_url',canonical_url:'https://example.org/role'}
+])assert.equal(sourceBoard(job),null);
 console.log('Listing observation UI checks passed.');
