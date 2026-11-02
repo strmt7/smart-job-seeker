@@ -667,6 +667,10 @@ pub fn suggest_with_review(
         .iter()
         .map(|mapping| mapping.field_selector.clone())
         .collect();
+    let exact_selectors: HashSet<String> = exact
+        .iter()
+        .map(|mapping| mapping.field_selector.clone())
+        .collect();
     for mapping in exact {
         if !conflicts.contains(&mapping.field_selector)
             && !invalid_selectors.contains(&mapping.field_selector)
@@ -706,7 +710,11 @@ pub fn suggest_with_review(
                 field.label
             ));
         } else if invalid_selectors.contains(&field.selector) && !field.sensitive {
-            warnings.push(invalid_suggestion_warning(field));
+            let mut warning = invalid_suggestion_warning(field);
+            if exact_selectors.contains(&field.selector) {
+                warning.push_str(" A matching profile value is available; verify the requested information and enter it manually if appropriate.");
+            }
+            warnings.push(warning);
         }
     }
     if unidentified
@@ -3379,11 +3387,36 @@ mod tests {
         assert_eq!(matches[0].field_selector, "#candidate");
         assert!(warnings.iter().any(|warning| warning
             .starts_with("Invalid or duplicate suggestion needs review: Email")
-            && warning.contains("autocomplete hint for email")));
+            && warning.contains("autocomplete hint for email")
+            && warning.contains("matching profile value is available")));
         assert!(warnings.iter().any(
             |warning| warning == "Some model suggestions could not be matched to a form field"
         ));
         assert!(!warnings.join(" ").contains("example@example.invalid"));
+    }
+    #[test]
+    fn invalid_split_phone_mapping_only_mentions_available_exact_value() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        schema.fields[0].label = "Phone number".into();
+        schema.fields[0].autocomplete = Some("tel-national".into());
+        let mut model = FakeInference {
+            response: json!({"mappings":[{"selector":"#candidate","profile_key":"phone"}],"manual_review":[]}),
+            last_prompt: String::new(),
+        };
+        let profile = json!({"phone":"+12025550123","phone_national":"2025550123"});
+        let (mappings, warnings) = suggest_with_diagnostics(&mut model, &schema, &profile).unwrap();
+        assert!(mappings.is_empty());
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("matching profile value is available")));
+        assert!(!warnings.join(" ").contains("2025550123"));
+        let (_, warnings) =
+            suggest_with_diagnostics(&mut model, &schema, &json!({"phone":"+12025550123"}))
+                .unwrap();
+        assert!(!warnings
+            .iter()
+            .any(|warning| warning.contains("matching profile value is available")));
     }
     #[test]
     fn long_forms_are_mapped_in_bounded_isolated_batches() {

@@ -1,3 +1,8 @@
+## Split-phone model evaluation — 2026-11-02
+
+- A resource-gated fictional `qwen3.5:9b` test failed: with a full phone number and explicit national number, calling code and extension, the model chose the full number for a `tel-national` field. The validator rejected that field while accepting the separately mapped calling code and extension. Two experimental prompt changes also failed to correct the national-number choice and were discarded. The test-owned model was unloaded. These observations are not a general model-quality measurement.
+- When a rejected or duplicate model mapping has a conservative exact profile match, review guidance now says a matching profile value is available without revealing it or filling the field. A fictional regression checks both the available and absent-value cases. The suggestion suite passed (41 passed, 18 ignored) and Windows web lint passed. The local-model split-phone test remains failing and the user must inspect and enter the value manually.
+
 ## Screenshot-capture stability — 2026-11-02
 
 - An existing application record can now request a bounded background page recapture without restarting the form. The session is restored even if the web page closes; checks cover tracked fields, attachments, page state and saved job/profile context, and the record remains in manual review. The latest result can be recovered while the app stays running; it is not a persistent task queue. Fictional browser-backed API cases covered stable and changing pages, profile changes, a competing task and lost responses; focused UI tests and Windows lint passed. This does not establish correctness of the filled form or employer-site behavior, and no application was submitted.
