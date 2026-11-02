@@ -2255,3 +2255,15 @@ completed, one of six criteria was supported, and five remained unknown; the
 score range was 25–100 and requirement coverage still needed review. This is one
 unverified input pair, not a general accuracy measurement. The model was
 unloaded and no application was sent.
+
+### Multi-passage requirement audit (2026-11-02)
+
+The requirement audit now scans up to six overlapping, bounded passages and
+reports omitted sections or interrupted scans. A later invalid or unavailable
+pass discards earlier additions. Evidence search can compare all twelve rubric
+criteria in batches of at most six. In the same single real-input diagnostic,
+two audit passages covered the captured listing and added two possible criteria;
+all eight criteria then entered evidence search. Three were supported after
+independent checking and five remained unknown. The resulting 36–100 range and
+listing-only recovery still require review. This is not a general accuracy
+measurement; the model was unloaded and no application was sent.
