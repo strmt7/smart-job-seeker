@@ -143,6 +143,28 @@ fn rank_pass(
         if controls.controls[index].disabled || indices.contains(&index) {
             return Err("Repeated or disabled control selected".into());
         }
+        // This is a narrow backstop for obvious English submission labels,
+        // not a general classifier or permission to click other controls.
+        if controls.controls[index]
+            .label
+            .split(|c: char| !c.is_alphabetic())
+            .any(|word| {
+                [
+                    "submit",
+                    "submitting",
+                    "send",
+                    "sending",
+                    "finalize",
+                    "finalise",
+                ]
+                .iter()
+                .any(|term| word.eq_ignore_ascii_case(term))
+            })
+        {
+            return Err(
+                "Model suggested a possible submission action; inspect controls manually".into(),
+            );
+        }
         indices.push(index);
     }
     Ok(indices)
@@ -311,6 +333,39 @@ mod tests {
                     wall_time_ms: 0,
                 },
             ))
+        }
+    }
+
+    #[test]
+    fn explicitly_labeled_submission_is_not_navigation_advice() {
+        let controls = waypoint_browser::PageControls {
+            controls: [
+                "Continue",
+                "Review and SUBMIT application",
+                "Send application",
+                "Finalize",
+            ]
+            .into_iter()
+            .map(|label| waypoint_browser::PageControl {
+                label: label.into(),
+                disabled: false,
+                selector: "#fixture".into(),
+            })
+            .collect(),
+            incomplete: false,
+        };
+        assert_eq!(
+            rank_pass(&mut Fake(json!({"indices":[0]})), &controls, "fixture").unwrap(),
+            vec![0]
+        );
+        for index in 1..4 {
+            let error = rank_pass(
+                &mut Fake(json!({"indices":[0,index]})),
+                &controls,
+                "fixture",
+            )
+            .unwrap_err();
+            assert!(error.contains("possible submission"));
         }
     }
 
