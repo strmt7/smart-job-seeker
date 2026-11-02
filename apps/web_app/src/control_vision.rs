@@ -443,6 +443,92 @@ mod tests {
         });
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads one resource-gated local vision model against a fictional radio fixture"]
+    fn resource_gated_radio_question_and_option_vision() {
+        use waypoint_applications::driver::BrowserDriver;
+        let model = "qwen3.5:9b";
+        let task = "fictional-radio-vision";
+        crate::model_start::start(task.into(), model.into()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
+        let result = loop {
+            let result = crate::model_start::poll(task).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "model startup timed out; check runtime status"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        assert_eq!(result["status"], "complete", "{result}");
+        struct Unload(bool);
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                if self.0 {
+                    let request = br#"{"model":"qwen3.5:9b","keep_alive":0}"#;
+                    let _ = waypoint_inference::ollama::http_request(
+                        "127.0.0.1:11434".parse().unwrap(),
+                        "POST",
+                        "/api/generate",
+                        Some(request),
+                        10_000,
+                    );
+                }
+            }
+        }
+        let _unload = Unload(result["model"]["already_running"] != true);
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_custom_radio_action.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        driver.open(url.as_str()).unwrap();
+        let inventory = driver.page_custom_radio_groups().unwrap();
+        let group = inventory
+            .groups
+            .iter()
+            .find(|group| group.label == "Working arrangement")
+            .unwrap();
+        for (name, image, option) in [
+            (
+                "Working arrangement",
+                driver
+                    .screenshot_custom_radio_question(&group.selector)
+                    .unwrap(),
+                false,
+            ),
+            (
+                "Remote",
+                driver
+                    .screenshot_custom_radio_option(&group.selector, "Remote")
+                    .unwrap(),
+                true,
+            ),
+        ] {
+            let value = crate::visual_review::generate_vision(
+                "127.0.0.1:11434".parse().unwrap(),
+                model,
+                &image,
+                visual_prompt(true, option, false),
+            )
+            .unwrap();
+            let labels = validate(&value).unwrap();
+            println!("fictional radio vision target={name:?} observed={labels:?}");
+            let observed = if option {
+                comparison(name, false, &labels)
+            } else {
+                choice_label_comparison(name, false, &labels)
+            };
+            assert_eq!(observed, "label_observed");
+        }
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+    }
+
     #[test]
     fn choice_evidence_requires_saved_current_review_and_is_one_use() {
         let mut result = json!({"status":"complete","choice":true,"comparison":"label_observed","capture_saved":true,"result_saved":true,"pending_finished":true});
