@@ -2,14 +2,79 @@
 #[cfg(not(windows))]
 use std::time::{Duration, Instant};
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
+fn checked_office_path(value: &str) -> Result<PathBuf, String> {
+    if value.len() > 2048 || value.chars().any(char::is_control) {
+        return Err("Choose an existing absolute path to soffice.com".into());
+    }
+    let path = PathBuf::from(value);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("soffice.com"))
+        || !path.is_file()
+    {
+        return Err("Choose an existing absolute path to soffice.com".into());
+    }
+    Ok(path)
+}
+
+fn configured_office_path(control: &Path) -> Result<Option<PathBuf>, String> {
+    let bytes = match std::fs::read(control.join("office-path.json")) {
+        Ok(bytes) if bytes.len() <= 8192 => bytes,
+        Ok(_) => return Err("LibreOffice setting is too large".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("Cannot read LibreOffice setting".into()),
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "Invalid LibreOffice setting")?;
+    let path = value["path"].as_str().ok_or("Missing LibreOffice path")?;
+    if path.is_empty() {
+        Ok(None)
+    } else {
+        checked_office_path(path).map(Some)
+    }
+}
+
+pub fn set_office_path(control: &Path, value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if !value.is_empty() {
+        checked_office_path(value)?;
+    }
+    std::fs::create_dir_all(control).map_err(|_| "Cannot create settings folder")?;
+    let mut file =
+        tempfile::NamedTempFile::new_in(control).map_err(|_| "Cannot write LibreOffice setting")?;
+    serde_json::to_writer(&mut file, &serde_json::json!({"path":value}))
+        .map_err(|_| "Cannot write LibreOffice setting")?;
+    file.flush()
+        .map_err(|_| "Cannot write LibreOffice setting")?;
+    file.persist(control.join("office-path.json"))
+        .map_err(|_| "Cannot save LibreOffice setting")?;
+    Ok(())
+}
+
 pub fn office_path() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("WAYPOINT_SOFFICE") {
-        candidates.push(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Ok(control) = crate::storage_settings::control_dir() {
+        match configured_office_path(&control) {
+            Ok(Some(path)) => candidates.push(path),
+            Ok(None) => {}
+            Err(_) => return None,
+        }
     }
     if let Ok(executable) = std::env::current_exe() {
         if let Some(root) = executable.parent() {
@@ -130,7 +195,7 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
         reject_removed_revisions(conversion_bytes)?;
     }
     let office = office_path().ok_or(
-        "LibreOffice was not found. Install it or set WAYPOINT_SOFFICE to its executable.",
+        "LibreOffice was not found. Install it or configure soffice.com in Settings > Local tools and setup.",
     )?;
     let temp = tempfile::Builder::new()
         .prefix("waypoint-convert-")
@@ -221,6 +286,29 @@ fn read_pdf(path: &Path) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn custom_office_path_is_persistent_validated_and_clearable() {
+        let dir = tempfile::tempdir().unwrap();
+        let control = dir.path().join("settings");
+        let executable = dir.path().join("soffice.com");
+        std::fs::write(&executable, b"fictional fixture, never executed").unwrap();
+        let value = executable.to_str().unwrap();
+        super::set_office_path(&control, value).unwrap();
+        assert_eq!(
+            super::configured_office_path(&control).unwrap().as_deref(),
+            Some(executable.as_path())
+        );
+        assert!(super::set_office_path(&control, "relative/soffice.com").is_err());
+        assert!(super::set_office_path(&control, dir.path().to_str().unwrap()).is_err());
+        assert_eq!(
+            super::configured_office_path(&control).unwrap().as_deref(),
+            Some(executable.as_path())
+        );
+        std::fs::remove_file(&executable).unwrap();
+        assert!(super::configured_office_path(&control).is_err());
+        super::set_office_path(&control, "").unwrap();
+        assert_eq!(super::configured_office_path(&control).unwrap(), None);
+    }
     #[test]
     fn conversion_detects_removed_revisions_in_document_parts() {
         use std::io::{Cursor, Write};

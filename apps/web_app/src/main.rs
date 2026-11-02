@@ -2241,6 +2241,12 @@ fn serve(
     let body: Value = serde_json::from_slice(&buf[header_end..header_end + length])
         .map_err(|_| "invalid JSON")?;
     match path.as_str() {
+        "/api/office-path" => {
+            let value = body["path"].as_str().ok_or("Missing LibreOffice path")?;
+            document_convert::set_office_path(&storage_settings::control_dir()?, value)?;
+            let active = document_convert::office_path().map(|path| path.display().to_string());
+            json_reply(stream, "200 OK", json!({"active":active}));
+        }
         "/api/form-experiences/list" => {
             let entries = ws.form_experiences().map_err(|e| e.to_string())?;
             json_reply(stream, "200 OK", json!({"experiences":entries}));

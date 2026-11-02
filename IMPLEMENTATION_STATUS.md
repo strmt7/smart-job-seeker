@@ -2417,6 +2417,17 @@ when the source provides no unique byte. On ten first-page objects of this
 résumé, the change did not alter which stream edits matched (three before and
 after); it is not a demonstrated fix for the remaining résumé failures.
 
+### Custom LibreOffice location (2026-11-02)
+
+Local tools settings can now save an existing absolute `soffice.com` path for
+nonstandard LibreOffice installations, or clear it to restore automatic
+detection. The existing `WAYPOINT_SOFFICE` environment override takes precedence.
+The path must name an existing file when saved and used; the setting does not
+install or execute the converter or prove it works. A temporary-file test covers
+validation, persistence, missing files and clearing; a mocked UI test covers
+the settings request. An actual custom installation and clean-host setup remain
+unverified.
+
 ### Email contacts on application pages (2026-11-02)
 
 When an application check follows an eligible application link, it now also
