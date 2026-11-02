@@ -30,6 +30,8 @@
 
 ## Navigation advice review — 2026-11-03
 
+- When a model response mixes an explicitly labeled English submission action with other control suggestions, the app now omits that action, retains the remaining advisory indices, and reports the omission in the interface. This narrow label check is not comprehensive submission detection and no controls are clicked. Focused Rust and JavaScript fixture checks, JavaScript syntax and Windows web Clippy passed. The first UI fixture update omitted a valid index and failed; the corrected fixture passed. No live employer or model was used.
+
 - The navigation-advice validator now rejects a model response that explicitly selects certain English submit, send or finalize labels and asks for manual inspection. This is a narrow backstop, not comprehensive submission detection; advice remains non-executing and labels do not establish a button’s effect. Focused control-ranking tests passed (3 passed, 11 ignored) and Windows web Clippy passed. An initial test compile failed because a fixture used a nonexistent default implementation and passed after correction. No live site or application was used.
 
 ## Fit display for invalid ranges — 2026-11-03
