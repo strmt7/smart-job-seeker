@@ -2304,7 +2304,19 @@ was entered or submitted. A local fixture confirms that implicit and explicit
 submit controls remain blocked. The browser now reports that such a target
 could submit or navigate instead of incorrectly calling it hidden or covered.
 The screenshot diagnostic is opt-in and writes only to a new user-selected
-local file. Dismissing this real dialog and resuming its form remain unverified.
+local file. That guarded attempt did not dismiss the dialog or resume the form.
+
+### Visible-session reinspection on a public application (2026-11-02)
+
+In a separate, visible isolated browser session on the same public Workable
+form, the operator used the visible cookie-consent control to decline optional
+cookies. Reinspection of that same browser session found seven fields instead of
+four, and the dialog-obstruction warning cleared; four other review reasons
+remained. No applicant information was entered and no application was submitted.
+This verifies the browser driver's same-session rescan in one case; it does not
+verify the complete web-app handoff, automatic dialog handling, filling, or
+completion. An ignored diagnostic retains the visible session briefly for an
+operator to perform a reviewed action and then requests reinspection.
 
 ### Multi-passage requirement audit (2026-11-02)
 

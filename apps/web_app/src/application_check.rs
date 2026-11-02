@@ -1060,6 +1060,52 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "opens a visible browser for an operator-reviewed cookie dialog; never fills or submits"]
+    fn live_visible_session_reinspect_after_review() {
+        use waypoint_applications::driver::BrowserDriver;
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let url = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed public URL");
+        let ready = std::env::var_os("WAYPOINT_VISIBLE_READY").expect("new ready marker");
+        let resume = std::env::var_os("WAYPOINT_VISIBLE_RESUME").expect("new resume marker");
+        assert!(!std::path::Path::new(&ready).exists() && !std::path::Path::new(&resume).exists());
+        let address = url::Url::parse(&url).expect("valid URL");
+        assert_eq!(address.scheme(), "https");
+        assert_eq!(address.host_str(), Some("apply.workable.com"));
+        crate::form_links::check_destination(&url, waypoint_policy::Operation::Read)
+            .expect("source permits read");
+        waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
+        let mut browser =
+            waypoint_browser::CdpDriver::launch_with_mode(vec![], true).expect("visible browser");
+        let before = browser.open(&url).expect("open reviewed page");
+        assert_eq!(browser.current_url().unwrap(), url);
+        assert!(before
+            .walls
+            .iter()
+            .any(|w| w.contains("A dialog covers a form field")));
+        use std::io::Write;
+        let mut marker = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&ready)
+            .expect("new ready marker");
+        marker.write_all(b"ready").expect("write ready marker");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        while !std::path::Path::new(&resume).exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        assert!(
+            std::path::Path::new(&resume).exists(),
+            "visible review timed out"
+        );
+        let after = browser.inspect_current().expect("reinspect same browser");
+        assert_eq!(browser.current_url().unwrap(), url);
+        println!("Before: {} fields, dialog {}; after: {} fields, dialog {}; remaining review reasons {}", before.schema.fields.len(), before.walls.iter().any(|w| w.contains("A dialog covers a form field")), after.schema.fields.len(), after.walls.iter().any(|w| w.contains("A dialog covers a form field")), after.walls.len());
+        assert!(browser
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn browser_start_errors_distinguish_missing_browser_without_exposing_details() {
