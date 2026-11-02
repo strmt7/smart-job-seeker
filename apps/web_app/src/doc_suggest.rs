@@ -67,7 +67,7 @@ pub fn start(id: String, model: String, name: String, bytes: Vec<u8>) -> Result<
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let mut review = suggest(&mut llm, &text, |progress| {
                 if let Ok(mut tasks) = TASK.lock() {
@@ -378,7 +378,7 @@ mod tests {
             inner: crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             ),
             exact: 0,
             rejected: 0,
@@ -420,8 +420,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
             .unwrap()
             .with_resident_context();
-        let mut inference =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut inference = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let result = suggest(&mut inference, &text, |_| {}).unwrap();
         assert!(!result.excerpts.is_empty());
         assert!(result.excerpts.iter().all(|excerpt| text.contains(excerpt)));
@@ -636,7 +639,7 @@ mod tests {
         let mut llm = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut text = String::from("Fictional profile: Avery Example, software engineer.\n");
         for index in 1..=100 {

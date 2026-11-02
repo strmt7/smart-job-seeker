@@ -1,15 +1,22 @@
 //! Recheck the shared local-model budget before each guarded inference request.
 use waypoint_inference::{CapabilityReport, Inference, InferenceError, UsageReport};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResidentIdentity {
+    pub name: String,
+    pub digest: String,
+}
+
 pub struct ResidentInference<I, F> {
     inner: I,
     model: String,
     resident: F,
+    bound_identity: Option<ResidentIdentity>,
 }
 impl<I, F> ResidentInference<I, F>
 where
     I: Inference,
-    F: FnMut() -> Result<Option<String>, String>,
+    F: FnMut() -> Result<Option<ResidentIdentity>, String>,
 {
     pub fn new(mut inner: I, model: String, resident: F) -> Self {
         #[cfg(windows)]
@@ -20,11 +27,21 @@ where
             inner,
             model,
             resident,
+            bound_identity: None,
         }
     }
     fn check(&mut self) -> Result<(), InferenceError> {
         match (self.resident)() {
-            Ok(Some(model)) if model == self.model => Ok(()),
+            Ok(Some(identity)) if identity.name == self.model => match &self.bound_identity {
+                Some(bound) if bound != &identity => Err(InferenceError::RuntimeUnreachable(
+                    "The resident model digest changed; inference stopped".into(),
+                )),
+                Some(_) => Ok(()),
+                None => {
+                    self.bound_identity = Some(identity);
+                    Ok(())
+                }
+            },
             Ok(_) => Err(InferenceError::RuntimeUnreachable(
                 "The eligible resident model changed; form interpretation stopped".into(),
             )),
@@ -37,11 +54,13 @@ where
 impl<I, F> Inference for ResidentInference<I, F>
 where
     I: Inference,
-    F: FnMut() -> Result<Option<String>, String>,
+    F: FnMut() -> Result<Option<ResidentIdentity>, String>,
 {
     fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
         self.check()?;
-        self.inner.probe()
+        let result = self.inner.probe()?;
+        self.check()?;
+        Ok(result)
     }
     fn generate_structured(
         &mut self,
@@ -50,7 +69,9 @@ where
         max: u32,
     ) -> Result<(serde_json::Value, UsageReport), InferenceError> {
         self.check()?;
-        self.inner.generate_structured(schema, prompt, max)
+        let result = self.inner.generate_structured(schema, prompt, max)?;
+        self.check()?;
+        Ok(result)
     }
     fn cancel(&mut self) -> Result<(), InferenceError> {
         self.inner.cancel()
@@ -83,13 +104,57 @@ mod tests {
         }
     }
     #[test]
+    fn changed_digest_during_request_discards_the_response() {
+        let calls = Cell::new(0);
+        let checks = Cell::new(0);
+        let mut guarded = ResidentInference::new(Fake(&calls), "fictional".into(), || {
+            let n = checks.get();
+            checks.set(n + 1);
+            Ok(Some(ResidentIdentity {
+                name: "fictional".into(),
+                digest: if n == 0 {
+                    "a".repeat(64)
+                } else {
+                    "b".repeat(64)
+                },
+            }))
+        });
+        assert!(guarded.generate_structured("test", "fictional", 1).is_err());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn same_name_with_changed_digest_stops_the_next_request() {
+        let calls = Cell::new(0);
+        let checks = Cell::new(0);
+        let mut guarded = ResidentInference::new(Fake(&calls), "fictional".into(), || {
+            let n = checks.get();
+            checks.set(n + 1);
+            Ok(Some(ResidentIdentity {
+                name: "fictional".into(),
+                digest: if n < 2 {
+                    "a".repeat(64)
+                } else {
+                    "b".repeat(64)
+                },
+            }))
+        });
+        assert!(guarded.generate_structured("test", "fictional", 1).is_ok());
+        assert!(guarded.generate_structured("test", "fictional", 1).is_err());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
     fn changed_residency_stops_the_next_model_request() {
         let calls = Cell::new(0);
         let checks = Cell::new(0);
         let mut guarded = ResidentInference::new(Fake(&calls), "fictional".into(), || {
             let n = checks.get();
             checks.set(n + 1);
-            Ok((n == 0).then(|| "fictional".into()))
+            Ok((n < 2).then(|| ResidentIdentity {
+                name: "fictional".into(),
+                digest: "a".repeat(64),
+            }))
         });
         assert!(guarded.generate_structured("test", "fictional", 1).is_ok());
         assert!(guarded.generate_structured("test", "fictional", 1).is_err());

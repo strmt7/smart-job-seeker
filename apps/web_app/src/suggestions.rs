@@ -1237,8 +1237,11 @@ mod tests {
         let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            name,
+            crate::resident_model_identity,
+        );
         let (mappings, warnings, review) = suggest_with_review(
             &mut model,
             &schema,
@@ -1285,8 +1288,11 @@ mod tests {
         let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            name,
+            crate::resident_model_identity,
+        );
         let (mappings, warnings, review) = suggest_with_review(
             &mut model,
             &schema,
@@ -1324,8 +1330,11 @@ mod tests {
         let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            name,
+            crate::resident_model_identity,
+        );
         let (mappings, warnings, review) = suggest_with_review(
             &mut model,
             &schema,
@@ -1388,8 +1397,11 @@ mod tests {
         let model = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            name,
+            crate::resident_model_identity,
+        );
         let (mapped, warnings, review) = suggest_with_review(
             &mut model,
             &schema,
@@ -1417,7 +1429,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut schema = form();
         schema.fields.truncate(1);
@@ -1821,7 +1833,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             model_name.clone(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording {
             inner: guarded,
@@ -2062,7 +2074,7 @@ mod tests {
                 let mut llm = Record(crate::resident_inference::ResidentInference::new(
                     llm,
                     model,
-                    crate::resident_model,
+                    crate::resident_model_identity,
                 ));
                 let (mappings, warnings, review) =
                     suggest_with_review(&mut llm, &schema, &json!({"phone":"+12025550123"}))
@@ -2110,8 +2122,11 @@ mod tests {
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         use waypoint_applications::driver::BrowserDriver;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_contact_headed_sections.html")
@@ -2210,7 +2225,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut recording = Recording {
             inner: guarded,
@@ -2568,8 +2583,11 @@ mod tests {
         let inner = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let guarded =
-            crate::resident_inference::ResidentInference::new(inner, name, crate::resident_model);
+        let guarded = crate::resident_inference::ResidentInference::new(
+            inner,
+            name,
+            crate::resident_model_identity,
+        );
         let mut llm = Recording {
             inner: guarded,
             calls: 0,
@@ -2738,7 +2756,7 @@ mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 name.clone(),
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let (mappings, warnings, _) = suggest_with_review(
                 &mut llm,
@@ -2818,7 +2836,7 @@ mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let (mappings, warnings, _) =
                 suggest_with_review(&mut llm, &schema, &json!({"address":"10 Fictional Street"}))
@@ -3398,7 +3416,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let (mappings, warnings) = suggest_with_diagnostics(
             &mut model,
@@ -3480,7 +3498,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = MissingFirst {
             inner: guarded,
@@ -3725,7 +3743,7 @@ mod tests {
                 inner: crate::resident_inference::ResidentInference::new(
                     llm,
                     model,
-                    crate::resident_model,
+                    crate::resident_model_identity,
                 ),
                 first: true,
             };
@@ -3939,7 +3957,7 @@ mod tests {
             inner: crate::resident_inference::ResidentInference::new(
                 llm,
                 "qwen3.5:9b".into(),
-                crate::resident_model,
+                crate::resident_model_identity,
             ),
             calls: 0,
         };
@@ -3992,7 +4010,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             model_name,
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let (mappings, warnings, review) = suggest_with_review(
             &mut model,

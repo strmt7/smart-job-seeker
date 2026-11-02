@@ -85,7 +85,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             generate_with_selection(&mut llm, input)
         })
@@ -668,8 +668,11 @@ mod tests {
             let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
                 .unwrap()
                 .with_resident_context();
-            let mut llm =
-                crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
             let input = Inputs {
                 session_id: "fictional".into(), selector: "#rust".into(), digest: "fixture".into(),
                 question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have experience with the following stack? — Rust".into(),
@@ -1120,7 +1123,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "gemma3:4b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let answer = json!({"text":"I reduced outage duration by 90 percent.","sources":["Helped resolve a service outage."]});
         let check = check_evidence(&mut model, &answer);
@@ -1147,7 +1150,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let answer = json!({"text":"I used Python to clean laboratory data and managed a team for five years.","sources":["Used Python to clean laboratory data"]});
         let result = check_evidence(&mut model, &answer);
@@ -1180,7 +1183,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut facts: Vec<String> = (0..20)
             .map(|i| format!("Maintained project schedule number {i}."))
@@ -1253,7 +1256,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut recording = Recording {
             inner: guarded,
@@ -1361,7 +1364,7 @@ mod tests {
             inner: crate::resident_inference::ResidentInference::new(
                 model,
                 "qwen3.5:9b".into(),
-                crate::resident_model,
+                crate::resident_model_identity,
             ),
             draft_calls: 0,
         };
@@ -1725,7 +1728,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         for limit in [80, 35] {
@@ -1771,7 +1774,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let fact = "Maintained Python backend services for three years.";
         let short = check_omissions(
@@ -1809,7 +1812,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec![
             "Built Python backend services.".into(),

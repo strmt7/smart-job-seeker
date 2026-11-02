@@ -125,7 +125,7 @@ pub fn start(
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             rank_batched(&mut llm, &links, &context)
         })
@@ -467,7 +467,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let labels = [
             "Company news",

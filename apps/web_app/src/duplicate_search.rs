@@ -91,7 +91,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             search_with_cancel(&mut llm, &target, &candidates, &worker_cancel)
         })
@@ -962,7 +962,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let result = search(&mut model, &input.target, &input.candidates).unwrap();
         println!("Fictional crowded employer: examined={}, unexamined={}, failed_batches={}, matches={:?}", result.examined, result.unexamined, result.failed_batches, result.matches);
@@ -1000,7 +1000,7 @@ mod tests {
             let mut model = crate::resident_inference::ResidentInference::new(
                 llm,
                 "qwen3.5:9b".into(),
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let result = search(&mut model, &input.target, &input.candidates).unwrap();
             println!(
@@ -1031,7 +1031,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let result = search(&mut model, &target, &candidates).unwrap();
         println!("fictional multilingual duplicate result: examined={}, target_shortened={}, candidate_shortened={}, matches={:?}", result.examined, result.target_text_shortened, result.candidate_texts_shortened, result.matches);
@@ -1067,7 +1067,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let result = search(&mut model, target, &candidates).unwrap();
         println!(

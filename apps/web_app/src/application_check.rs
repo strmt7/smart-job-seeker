@@ -277,7 +277,7 @@ fn inspect_page_with_local_vision(
                 crate::resident_inference::ResidentInference::new(
                     llm.with_resident_context(),
                     model.clone(),
-                    crate::resident_model,
+                    crate::resident_model_identity,
                 )
             })
             .and_then(|mut llm| {
@@ -354,8 +354,11 @@ fn suggest_page_links(browser: &mut waypoint_browser::CdpDriver) -> Result<Strin
     let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
         .map_err(|e| e.to_string())?
         .with_resident_context();
-    let mut llm =
-        crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+    let mut llm = crate::resident_inference::ResidentInference::new(
+        llm,
+        model,
+        crate::resident_model_identity,
+    );
     let advice = rank_page_link_labels(&mut llm, &links, &context)?;
     let (_, _, after) = crate::link_rank::snapshot(browser)?;
     if before != after {
@@ -1834,7 +1837,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let links = [
             ("Company news", "news"),

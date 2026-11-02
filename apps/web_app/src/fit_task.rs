@@ -200,7 +200,7 @@ pub fn start(
             let mut model = crate::resident_inference::ResidentInference::new(
                 llm,
                 model.clone(),
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let (selected, selection) = select_semantic_facts(
                 &mut model,
@@ -4535,7 +4535,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing = format!(
             "Required: Rust. {} Mandatory requirement: fluent Japanese.",
@@ -4574,7 +4574,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let (_, result, report) =
             audit_missing_requirements(&mut model, raw, baseline, &facts, "", &listing);
@@ -4605,7 +4605,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing =
             "Required: Python, SQL and a PhD in chemistry. Benefits include flexible hours.";
@@ -5521,7 +5521,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             model_name,
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec!["Maintained backend services in Python for three years".to_owned()];
         let listing = "Required: SQL and Python experience.";
@@ -5684,7 +5684,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             model_name,
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let facts = vec![
@@ -5721,7 +5721,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec![
             "Used SQL for one year".to_owned(),
@@ -5751,7 +5751,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing = "Required: five years of SQL in regulated banking.";
         let source = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of SQL","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
@@ -5781,7 +5781,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec![
             "Used SQL for one year".to_owned(),
@@ -5811,7 +5811,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec!["Five years of professional software engineering experience building backend services in Go and operating cloud infrastructure.".to_owned()];
         let listing = "Required: Professional experience writing and shipping Go. Working understanding of Go's concurrency model, including goroutines, channels, and the sync package.";
@@ -5865,7 +5865,7 @@ mod tests {
         let mut model = Trace(crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         ));
         let facts = vec![
             "Used SQL for one year".to_owned(),
@@ -5928,7 +5928,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let facts = vec![
@@ -6384,7 +6384,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             "gemma3:4b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let mut pool: Vec<_> = (0..20)
@@ -6421,7 +6421,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut full = String::from("Fictional role: documentation specialist.\n");
         for i in 0..130 {
@@ -6492,7 +6492,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut full = String::from("Fictional role: documentation specialist.\n");
         for i in 0..130 {
@@ -6563,7 +6563,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "gemma3:4b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let cases=[
             (false,"Seeking a product engineer to make digital services usable by people with visual disabilities.","","Partnered with blind users to test navigation with VoiceOver."),
@@ -6619,7 +6619,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "gemma3:4b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut pool: Vec<_> = (0..20)
             .map(|i| format!("Managed unrelated inventory record {i}"))
@@ -6652,7 +6652,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let filler =
             "Coordinated project schedules and maintained operational reports. ".repeat(13);
@@ -6719,7 +6719,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording { inner: guarded };
         let mut pool: Vec<_> = (0..20)
@@ -6798,8 +6798,12 @@ mod tests {
         let checked_model = model_name.clone();
         let model =
             crate::resident_inference::ResidentInference::new(model, model_name, move || {
-                crate::visual_review::benchmark_target(&checked_model)
-                    .map(|_| Some(checked_model.clone()))
+                crate::visual_review::benchmark_target(&checked_model).map(|_| {
+                    Some(crate::resident_inference::ResidentIdentity {
+                        name: checked_model.clone(),
+                        digest: "test-benchmark".into(),
+                    })
+                })
             });
         let mut model = Recording(model);
         let facts = vec![
@@ -6875,7 +6879,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let cases = [
             (
@@ -6934,7 +6938,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing = "Fictional engineer. Required: C and C++ programming experience.";
         let result = assess(&mut model, &[], "", listing).unwrap();
@@ -6970,7 +6974,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing = "Fictional data engineer. Required: at least five years of professional Python experience.";
         let facts = vec!["Three years of professional Python experience.".into()];
@@ -7051,7 +7055,7 @@ mod tests {
             let mut model = crate::resident_inference::ResidentInference::new(
                 model,
                 "qwen3.5:9b".into(),
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let (_, result) = review_grouped_support(
                 &mut model,
@@ -7144,7 +7148,7 @@ mod tests {
                 inner: crate::resident_inference::ResidentInference::new(
                     model,
                     "qwen3.5:9b".into(),
-                    crate::resident_model,
+                    crate::resident_model_identity,
                 ),
                 output,
             };
@@ -7221,7 +7225,7 @@ mod tests {
         let mut model = Trace(crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         ));
         let pool = crate::fit_semantic_pool(&facts, &listing);
         let (selected, selection) =
@@ -7289,7 +7293,7 @@ mod tests {
         let mut model = Trace(crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         ));
         let listing = "Fictional platform engineer. Required: hands-on PostgreSQL query optimization and experience mentoring engineers. Preferred: Kubernetes operations.";
         let relevant = vec![
@@ -7342,7 +7346,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec!["Maintained backend services in Python for three years".into()];
         let listings = [
@@ -7413,8 +7417,11 @@ mod tests {
             .unwrap()
             .with_context_window(4096)
             .unwrap();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let facts = vec![
             "Built accessible web interfaces for screen-reader users".into(),
             "Maintained backend services in Python for three years".into(),
@@ -7463,7 +7470,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing =
             "Our Python team runs internal training. Required: five years of Python experience.";
@@ -7523,7 +7530,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording { inner: guarded };
         let facts = vec!["Used Python to clean laboratory data".into()];
@@ -8447,7 +8454,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let preference =
             crate::profile_fit_instructions(&json!({"search_locations":"Berlin\nParis"})).unwrap();
@@ -8470,7 +8477,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let preference =
             crate::profile_fit_instructions(&json!({"search_locations":"Berlin\nParis"})).unwrap();
@@ -8510,7 +8517,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let preference = "Remote work is required";
         for (remote, expected) in [
@@ -8541,7 +8548,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing = format!(
             "Title: Engineer\nRemote status: {}\nDescription: Builds software.",
@@ -8575,7 +8582,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let listing = "The role is fully remote from Germany. Annual salary is EUR 70,000 gross. No visa information is provided.";
         let preferences = "Remote work is required; I require office-only work; at least EUR 80,000 gross annually; visa sponsorship is required";
@@ -8640,7 +8647,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             model_name,
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let cases = [
@@ -8716,7 +8723,7 @@ mod tests {
             let mut model = crate::resident_inference::ResidentInference::new(
                 inner,
                 name,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let cases = [
                 (
@@ -8978,7 +8985,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             model_name,
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let cases = [

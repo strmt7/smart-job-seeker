@@ -62,7 +62,7 @@ pub fn start(id: String, model: String, inputs: Inputs) -> Result<(), String> {
             let mut model = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             compare(&mut model, &inputs.first, &inputs.second)
         })
@@ -299,7 +299,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording { inner: guarded };
         let cases = [

@@ -464,8 +464,11 @@ pub(crate) mod tests {
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_contact_headed_sections.html")
             .canonicalize()
@@ -543,7 +546,7 @@ pub(crate) mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/waypoint_browser/tests/fixtures/form_contact_headed_sections.html").canonicalize().unwrap();
             let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
@@ -812,7 +815,7 @@ pub(crate) mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/form-multilingual-contacts.html")
@@ -970,7 +973,7 @@ pub(crate) mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/waypoint_browser/tests/fixtures/form_repeated_text_selectors.html").canonicalize().unwrap();
             let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
@@ -1015,8 +1018,11 @@ pub(crate) mod tests {
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let item = ExperienceMatch {
             id: "00000000000000000000000000000001".into(),
             revision: 1,
@@ -1137,8 +1143,11 @@ pub(crate) mod tests {
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let make = |selector: &str, label: &str, hint: Option<&str>| FormField {
             selector: selector.into(),
             label: label.into(),

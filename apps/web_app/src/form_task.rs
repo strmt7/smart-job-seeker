@@ -659,7 +659,7 @@ pub fn start_bound(
                 let mut llm = crate::resident_inference::ResidentInference::new(
                     llm,
                     model,
-                    crate::resident_model,
+                    crate::resident_model_identity,
                 );
                 let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);
                 let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
@@ -1078,7 +1078,7 @@ mod tests {
             inner: crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             ),
             completed: 0,
         };
@@ -1581,7 +1581,7 @@ mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let mut experienced =
                 crate::experience_inference::ExperienceInference::new(&mut llm, &selected);
@@ -1658,8 +1658,11 @@ mod tests {
             let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &name)
                 .unwrap()
                 .with_resident_context();
-            let mut llm =
-                crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
             let mut experienced =
                 crate::experience_inference::ExperienceInference::new(&mut llm, &selected);
             let (mappings, _, _) = crate::suggestions::suggest_with_review(

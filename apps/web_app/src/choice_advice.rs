@@ -202,7 +202,7 @@ pub fn start(request: Request) -> Result<(), String> {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             suggest(&mut llm, &question, &answer, &options)
         })
@@ -378,7 +378,7 @@ mod tests {
             let llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let mut llm = Recorder {
                 inner: llm,
@@ -564,8 +564,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let choices = vec!["Lisbon".into(), "Berlin".into(), "Remote".into()];
         let result = suggest(&mut llm, "Preferred location", "I prefer Berlin", &choices).unwrap();
         assert_eq!(result["option"], "Berlin");
@@ -590,8 +593,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         let choices = vec!["Berlin".into(), "Lisbon".into(), "Remote".into()];
         let negative = suggest(
             &mut llm,

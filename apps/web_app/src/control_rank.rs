@@ -189,7 +189,7 @@ pub fn start(
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             rank(&mut llm, &controls, &context)
         })
@@ -485,7 +485,12 @@ mod tests {
         };
         let checked = model.clone();
         let mut llm = crate::resident_inference::ResidentInference::new(llm, model, move || {
-            crate::visual_review::benchmark_target(&checked).map(|_| Some(checked.clone()))
+            crate::visual_review::benchmark_target(&checked).map(|_| {
+                Some(crate::resident_inference::ResidentIdentity {
+                    name: checked.clone(),
+                    digest: "test-benchmark".into(),
+                })
+            })
         });
         let indices = rank(&mut llm, &controls, &context).unwrap().indices;
         let selected: Vec<_> = indices
@@ -545,7 +550,12 @@ mod tests {
         };
         let checked = name.clone();
         let mut llm = crate::resident_inference::ResidentInference::new(llm, name, move || {
-            crate::visual_review::benchmark_target(&checked).map(|_| Some(checked.clone()))
+            crate::visual_review::benchmark_target(&checked).map(|_| {
+                Some(crate::resident_inference::ResidentIdentity {
+                    name: checked.clone(),
+                    digest: "test-benchmark".into(),
+                })
+            })
         });
         let indices = rank(
             &mut llm,
@@ -949,8 +959,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let indices = rank(&mut model, &controls, &context).unwrap().indices;
         println!(
             "Fictional controls: {:?}; selected: {indices:?}",
@@ -990,8 +1003,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let indices = rank(
             &mut model,
             &controls,
@@ -1038,8 +1054,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let indices = rank(
             &mut model,
             &controls,
@@ -1084,8 +1103,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let indices = rank(
             &mut model,
             &controls,
@@ -1132,8 +1154,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let indices = rank(&mut model, &controls, &json!({"fields":[],"walls":[]}))
             .unwrap()
             .indices;

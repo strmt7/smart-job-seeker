@@ -1824,7 +1824,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 ))?;
                 let _lease = crate::doc_suggest::lease()?;
                 let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
-                let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+                let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model_identity);
                 let mut job=extract_page_text_with_hint(&mut inference,&page_text,&current,section_hint.as_deref(),section_text.as_ref().map(|(text, _)| text.as_str()))?;
                 job["page_text_truncated"]=json!(truncated);
                 if let Some((text, truncated)) = section_text.as_ref() {
@@ -2137,7 +2137,7 @@ mod tests {
             let llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let mut llm = Seed(llm);
             for (index, source) in sources.iter().enumerate() {
@@ -2230,7 +2230,7 @@ mod tests {
             let llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let job = extract_page_text(&mut Observe(llm), source, url).unwrap();
             let description = job["description"].as_str().unwrap();
@@ -2767,8 +2767,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let result =
             crate::contact_advice::classify(&mut llm, email["contacts"].as_array().unwrap())
                 .unwrap();
@@ -3790,8 +3793,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let source = "University Example is hiring a Laboratory Technician. The employer is University Example. The position is based at the North Imaging Lab. The technician operates microscopes and prepares samples. Applications close: 30 November 2026.";
         let job = extract_page_text(&mut model, source, "https://example.org/job").unwrap();
         println!("fictional vacancy flagged={}", job["possible_non_job"]);
@@ -4041,8 +4047,11 @@ mod tests {
         let model = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut model =
-            crate::resident_inference::ResidentInference::new(model, name, crate::resident_model);
+        let mut model = crate::resident_inference::ResidentInference::new(
+            model,
+            name,
+            crate::resident_model_identity,
+        );
         let mut job = extract_page_text(&mut model, &text, "https://example.org/job").unwrap();
         merge_partial_structured(&mut job, incomplete.as_ref());
         println!("Partial listing model result: {job}");
@@ -4511,7 +4520,7 @@ mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let article = std::fs::read_to_string(
                 std::env::var_os("WAYPOINT_TEST_CAREER_ARTICLE").expect("public article capture"),

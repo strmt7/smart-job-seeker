@@ -702,7 +702,7 @@ fn start_with_destination_check(
                             let mut llm = crate::resident_inference::ResidentInference::new(
                                 llm,
                                 model,
-                                crate::resident_model,
+                                crate::resident_model_identity,
                             );
                             let relevant = crate::form_task::relevant_experiences(&live.schema, &experiences);
                             let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);

@@ -54,7 +54,7 @@ pub fn start(
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             generate(&mut llm, &facts, &instructions, &protected)
         })
@@ -306,7 +306,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let preferences = crate::profile_fit_instructions(
             &json!({"search_remote_only":"on","search_locations":"Berlin\nParis"}),
@@ -374,8 +374,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            model,
+            crate::resident_model_identity,
+        );
         for (facts, preferences) in [
             (
                 vec!["Laboratory technician experienced in microscopy".into()],
@@ -471,7 +474,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         for (facts, preferences) in [
             (

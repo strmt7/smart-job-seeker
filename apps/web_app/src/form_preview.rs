@@ -2024,7 +2024,7 @@ mod tests {
         let mut llm = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let preview =
             inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery"}))
@@ -2149,7 +2149,7 @@ mod tests {
         let mut llm = crate::resident_inference::ResidentInference::new(
             llm,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let preview = inspect_and_suggest(
             &mut driver,
@@ -2342,8 +2342,12 @@ mod tests {
         let checked_model = model.clone();
         let mut llm =
             crate::resident_inference::ResidentInference::new(llm, model.clone(), move || {
-                crate::visual_review::benchmark_target(&checked_model)
-                    .map(|_| Some(checked_model.clone()))
+                crate::visual_review::benchmark_target(&checked_model).map(|_| {
+                    Some(crate::resident_inference::ResidentIdentity {
+                        name: checked_model.clone(),
+                        digest: "test-benchmark".into(),
+                    })
+                })
             });
         let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
         let first = inspect_and_suggest(&mut driver, &mut llm, &url, &profile).unwrap();
@@ -2554,7 +2558,7 @@ mod tests {
         let llm = crate::resident_inference::ResidentInference::new(
             llm,
             model.clone(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut llm = FictionalTrace(llm);
         let preview = inspect_and_suggest(&mut driver, &mut llm, &url, &json!({"first_name":"Avery", "email":"avery@example.invalid", "work_authorization":"unknown"})).unwrap();
@@ -4205,7 +4209,7 @@ mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let preview = suggest_for_live_form(live, &mut llm, &json!({"first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123"})).unwrap();
             println!(
@@ -4255,7 +4259,7 @@ mod tests {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let preview = suggest_for_live_form(live, &mut llm, &json!({"full_name":"Avery Example","email":"avery@example.invalid","phone":"+12025550123"})).unwrap();
             let instruction_fields: Vec<_> = preview
@@ -4427,8 +4431,12 @@ mod tests {
         };
         let checked_model = model.clone();
         let guarded = crate::resident_inference::ResidentInference::new(llm, model, move || {
-            crate::visual_review::benchmark_target(&checked_model)
-                .map(|_| Some(checked_model.clone()))
+            crate::visual_review::benchmark_target(&checked_model).map(|_| {
+                Some(crate::resident_inference::ResidentIdentity {
+                    name: checked_model.clone(),
+                    digest: "test-benchmark".into(),
+                })
+            })
         });
         let mut llm = Recording {
             inner: guarded,
@@ -4524,7 +4532,7 @@ mod tests {
             inner: crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             ),
             completed: 0,
         };

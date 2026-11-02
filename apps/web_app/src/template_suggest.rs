@@ -77,7 +77,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             let mut model = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             suggest(&mut model, input)
         })
@@ -433,7 +433,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let passage = "Designed accessible interfaces for screen-reader users.";
         let mut request = input_with_passage(passage, passage);
@@ -479,7 +479,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let result = suggest(&mut model, input).unwrap();
@@ -542,7 +542,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let result = suggest(&mut model, input).unwrap();
         println!("Fictional requested addition: {result}");
@@ -573,7 +573,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let result = suggest(&mut model, input).unwrap();
         println!("Fictional wordy template suggestion: {result}");
@@ -615,7 +615,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let result = suggest(&mut model, input).unwrap();
         println!("Fictional cover letter suggestion: {result}");
@@ -648,7 +648,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut outputs = Vec::new();
         for passage in [first, second] {

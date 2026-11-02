@@ -398,7 +398,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             let mut draft =
                 generate_with_selection(&mut llm, &input, &template, template_vision.as_ref())?;
@@ -1454,7 +1454,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let facts = vec![
             format!(
@@ -1518,7 +1518,7 @@ mod tests {
         let model = crate::resident_inference::ResidentInference::new(
             model,
             "gemma3:4b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut model = Recording(model);
         let cases = [
@@ -1583,7 +1583,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let draft = json!({"paragraphs":[{"text":"I used Python to clean laboratory data.","facts":[1]},{"text":"I managed a team for five years.","facts":[1]}]});
         let result = check_document_evidence(
@@ -1641,7 +1641,7 @@ mod tests {
         let guarded = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut recording = Recording {
             inner: guarded,
@@ -2102,7 +2102,7 @@ mod tests {
         let llm = crate::resident_inference::ResidentInference::new(
             llm,
             "gemma3:4b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut llm = Recording(llm);
         let priority = "Partnered with blind users to test navigation with VoiceOver.".to_owned();
@@ -2157,7 +2157,7 @@ mod tests {
         let mut model = crate::resident_inference::ResidentInference::new(
             model,
             "qwen3.5:9b".into(),
-            crate::resident_model,
+            crate::resident_model_identity,
         );
         let mut facts: Vec<String> = (0..20)
             .map(|i| format!("Maintained project schedule number {i}."))

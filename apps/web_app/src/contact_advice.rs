@@ -224,7 +224,7 @@ pub fn start(
             let mut llm = crate::resident_inference::ResidentInference::new(
                 llm,
                 model,
-                crate::resident_model,
+                crate::resident_model_identity,
             );
             classify(&mut llm, &contacts)
         })
@@ -459,8 +459,11 @@ mod tests {
         let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
             .unwrap()
             .with_resident_context();
-        let mut llm =
-            crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+        let mut llm = crate::resident_inference::ResidentInference::new(
+            llm,
+            name,
+            crate::resident_model_identity,
+        );
         let result = classify(&mut llm, &contacts()).unwrap();
         println!("Fictional contact advice: {result}");
         assert_eq!(result["items"][0]["purpose"], "application");

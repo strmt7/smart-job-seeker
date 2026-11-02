@@ -1829,11 +1829,24 @@ fn check_inference_memory() -> Result<(), String> {
 /// Only use one already-resident model that Ollama reports as fully GPU
 /// resident and within the existing 14 GiB budget. This check is a snapshot,
 /// not a reservation; Ollama can change its state after it is read.
-fn resident_model() -> Result<Option<String>, String> {
+fn resident_model_identity() -> Result<Option<resident_inference::ResidentIdentity>, String> {
     #[cfg(windows)]
     check_inference_memory()?;
     let status = resident_model_status()?;
-    Ok(status["model"].as_str().map(str::to_owned))
+    let Some(name) = status["model"].as_str() else {
+        return Ok(None);
+    };
+    let digest = status["model_digest"]
+        .as_str()
+        .ok_or("Resident model digest is unavailable")?;
+    Ok(Some(resident_inference::ResidentIdentity {
+        name: name.to_owned(),
+        digest: digest.to_owned(),
+    }))
+}
+
+fn resident_model() -> Result<Option<String>, String> {
+    Ok(resident_model_identity()?.map(|identity| identity.name))
 }
 
 fn form_model_from_status(status: &Value) -> Result<Option<String>, String> {
