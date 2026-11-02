@@ -1828,6 +1828,53 @@ mod tests {
         assert_eq!(model.0, 2);
     }
 
+    #[test]
+    fn numeric_revision_cannot_turn_valid_number_into_prose() {
+        struct Revision(usize);
+        impl Inference for Revision {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.0 += 1;
+                let text = match schema {
+                    "application_answer" => "5",
+                    "application_answer_style" => "5 years",
+                    _ => panic!("unexpected follow-up"),
+                };
+                Ok((
+                    json!({"text":text,"facts":[1]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let input = Inputs {
+            numeric_only: true,
+            session_id: "fixture".into(),
+            selector: "#years".into(),
+            digest: "fixture".into(),
+            question: "Years?".into(),
+            listing: "Fictional".into(),
+            facts: vec!["Five years.".into()],
+            available_facts: 1,
+            instructions: String::new(),
+            max_length_utf16: None,
+            min_length_utf16: None,
+        };
+        let mut model = Revision(0);
+        assert!(generate(&mut model, &input).is_err());
+        assert_eq!(model.0, 3);
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "resource-gated local model on a fictional numeric question"]
@@ -1957,6 +2004,25 @@ mod tests {
                 .trace
                 .iter()
                 .all(|event| !event.contains("submitted") && !event.contains("clicked")));
+            let no_evidence = Inputs {
+                numeric_only: true,
+                session_id: "fictional".into(),
+                selector: "#years".into(),
+                digest: "missing".into(),
+                question: "How many years of Python experience do you have?".into(),
+                listing: "Fictional Python engineer position.".into(),
+                facts: vec!["Organized retail stock for five years.".into()],
+                available_facts: 1,
+                instructions: String::new(),
+                max_length_utf16: None,
+                min_length_utf16: None,
+            };
+            let unsupported = generate_with_selection(&mut model, no_evidence);
+            println!("Fictional unsupported numeric question: {unsupported:?}");
+            assert!(
+                unsupported.is_err(),
+                "An unrelated duration must not be offered as Python experience"
+            );
         });
     }
 
