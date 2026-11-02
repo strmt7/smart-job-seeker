@@ -245,7 +245,7 @@ mod tests {
         driver.attach_local_file("#upload", &staged).unwrap();
         let mut session = ReviewSession {
             id: "upload-session".into(),
-            job_id: job,
+            job_id: job.clone(),
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
             url: url.to_string(),
@@ -283,21 +283,43 @@ mod tests {
         start("upload-choice".into(), session, selector, None, None, 1)
             .map_err(|(_, error)| error)
             .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut returned_session = None;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            match poll("upload-choice").unwrap() {
-                Poll::Running => {
-                    assert!(std::time::Instant::now() < deadline);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Poll::Complete(_session, result, _) => {
-                    assert_eq!(result["opened"], true, "{}", result["error"]);
-                    assert_eq!(result["attachments_verified"], false);
-                    assert_eq!(result["previous_fields_verified"], false);
-                    break;
-                }
-                _ => panic!("choice action did not complete"),
+            let body = json!({"task_id":"upload-choice"}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "POST /api/form/custom-choice-action-status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(
+                &mut server,
+                &mut ws,
+                &mut returned_session,
+                "fixture-token",
+                port,
+            )
+            .unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let result: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            if result["status"] == "running" {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
             }
+            assert_eq!(result["opened"], true, "{}", result["error"]);
+            assert_eq!(result["attachments_verified"], false);
+            assert_eq!(result["previous_fields_verified"], false);
+            assert!(ws
+                .manual_review_reasons(&job)
+                .unwrap()
+                .iter()
+                .any(|reason| reason.reason
+                    == "Previously attached files changed or could not be verified"));
+            break;
         }
     }
 

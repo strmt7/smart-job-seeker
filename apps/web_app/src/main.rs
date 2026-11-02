@@ -5368,7 +5368,7 @@ fn serve(
                 )
                 .map_err(|error| error.to_string())?;
                 return Err(
-                    "Previously attached files changed or could not be checked; inspect them again"
+                    "Previously attached files changed or could not be checked. Close this review, inspect the form again and reattach the documents. Unsaved site changes may be lost."
                         .into(),
                 );
             }
