@@ -405,6 +405,10 @@ const MIGRATIONS: &[&str] = &[
        SELECT id FROM jobs WHERE trim(location)<>'' AND instr(lower(title),lower(trim(location)))>0
      );
      UPDATE meta SET value='46' WHERE key='schema_version';",
+    // v47 — schedule a bounded, resumable Unicode location recheck.
+    "INSERT INTO meta(key,value)
+       SELECT 'duplicate_unicode_location_cursor','' WHERE EXISTS (SELECT 1 FROM jobs LIMIT 1);
+     UPDATE meta SET value='47' WHERE key='schema_version';",
 ];
 
 pub mod documents;

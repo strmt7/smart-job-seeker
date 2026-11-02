@@ -103,12 +103,19 @@ fn title_without_location<'a>(title: &'a str, location: &str) -> &'a str {
         Some(']') => (&trimmed[..trimmed.len() - 1], Some('[')),
         _ => (trimmed, None),
     };
-    let lower = content.to_ascii_lowercase();
-    let location_lower = location.to_ascii_lowercase();
-    if !lower.ends_with(&location_lower) {
+    // Slice on the original string's character boundaries: Unicode lowercase
+    // mappings can change byte lengths, so offsets in a lowercased copy are
+    // not valid offsets into the original title.
+    let Some((end, _)) = content
+        .char_indices()
+        .rev()
+        .nth(location.chars().count() - 1)
+    else {
+        return title;
+    };
+    if content[end..].to_lowercase() != location.to_lowercase() {
         return title;
     }
-    let end = content.len() - location.len();
     let Some(prefix) = content.get(..end) else {
         return title;
     };
@@ -757,6 +764,41 @@ impl Store {
                     [],
                 )?;
             }
+        } else if let Some(cursor) = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='duplicate_unicode_location_cursor'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            let mut page = self.conn.prepare(
+                "SELECT id,location FROM jobs WHERE id>?1 ORDER BY id LIMIT 64",
+            )?;
+            let jobs = page
+                .query_map([&cursor], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if let Some((last, _)) = jobs.last() {
+                let candidate = jobs.iter().find(|(_, location)| !location.is_ascii());
+                let advanced = candidate.map(|(id, _)| id).unwrap_or(last);
+                self.conn.execute(
+                    "UPDATE meta SET value=?1 WHERE key='duplicate_unicode_location_cursor'",
+                    [advanced],
+                )?;
+                if candidate.is_some() {
+                    next = self.conn.query_row("SELECT id,title,employer,location,state,canonical_url,content_hash,first_seen,last_seen,remote,source,requisition_id,posted_at FROM jobs WHERE id=?1", [advanced], Self::row_to_job).optional()?;
+                } else {
+                    progressed = Some(last.clone());
+                }
+            } else {
+                self.conn.execute(
+                    "DELETE FROM meta WHERE key='duplicate_unicode_location_cursor'",
+                    [],
+                )?;
+            }
         }
         let compared = next.is_some();
         let indexed = if let Some(job) = next {
@@ -780,7 +822,7 @@ impl Store {
     }
 
     pub fn duplicate_index_pending(&self) -> rusqlite::Result<bool> {
-        self.conn.query_row("SELECT 1 WHERE EXISTS (SELECT 1 FROM meta WHERE key IN ('duplicate_cross_employer_cursor','duplicate_title_level_cursor')) OR EXISTS (SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id))", [], |_| Ok(())).optional().map(|v| v.is_some())
+        self.conn.query_row("SELECT 1 WHERE EXISTS (SELECT 1 FROM meta WHERE key IN ('duplicate_cross_employer_cursor','duplicate_title_level_cursor','duplicate_unicode_location_cursor')) OR EXISTS (SELECT 1 FROM jobs j WHERE NOT EXISTS (SELECT 1 FROM job_employer_indexed i WHERE i.job_id=j.id))", [], |_| Ok(())).optional().map(|v| v.is_some())
     }
 
     /// Counts are about bounded comparison work, not proof that every duplicate
@@ -1253,6 +1295,90 @@ mod tests {
         assert!(pairs[0].reason.contains("matching location suffix"));
         assert!(store.has_duplicate_hold("a").unwrap());
         assert!(store.has_duplicate_hold("b").unwrap());
+    }
+
+    #[test]
+    fn unicode_location_suffix_rechecks_existing_index_without_merging() {
+        let title = "Senior Data Scientist – ZÜRICH, SCHWEIZ, EUROPA";
+        let location = "Zürich, Schweiz, Europa";
+        let short = "Senior Data Scientist";
+        assert_eq!(title_without_location(title, location), short);
+        assert_eq!(
+            title_without_location("Data Scientist (İSTANBUL)", "İstanbul"),
+            "Data Scientist"
+        );
+        // Locale-sensitive Turkish casing is not inferred by Unicode lowercase.
+        assert_eq!(
+            title_without_location("Data Scientist (İZMİR)", "İzmir"),
+            "Data Scientist (İZMİR)"
+        );
+        assert_eq!(
+            title_without_location("Data Scientist – ZÜRICH", "Genève"),
+            "Data Scientist – ZÜRICH"
+        );
+        assert_eq!(
+            title_without_location("ZÜRICH Specialist", "Zürich"),
+            "ZÜRICH Specialist"
+        );
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..46] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for (id, role) in [("a", title), ("b", short)] {
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,?2,'Example Labs',?3,'\"discovered\"')", params![id, role, location]).unwrap();
+            conn.execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example'),(?1,'labs')",
+                [id],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [id])
+                .unwrap();
+        }
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        store.index_next_duplicate_job("").unwrap();
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(pairs[0].reason.contains("matching location suffix"));
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
+    }
+
+    #[test]
+    fn unicode_location_recheck_advances_in_bounded_pages() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..46] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for n in 0..130 {
+            let id = format!("a{n:03}");
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,'Engineer','Example','Berlin','\"discovered\"')", [&id]).unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [&id])
+                .unwrap();
+        }
+        conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES('z','Data Engineer – ZÜRICH','Example','Zürich','\"discovered\"')", []).unwrap();
+        conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES('z')", [])
+            .unwrap();
+        let store = Store::migrate(conn).unwrap();
+        let first = store.index_next_duplicate_step("").unwrap();
+        assert_eq!(first.cursor.as_deref(), Some("a063"));
+        assert!(!first.compared && first.more_pending);
+        let second = store.index_next_duplicate_step("").unwrap();
+        assert_eq!(second.cursor.as_deref(), Some("a127"));
+        assert!(!second.compared && second.more_pending);
+        let third = store.index_next_duplicate_step("").unwrap();
+        assert_eq!(third.cursor.as_deref(), Some("z"));
+        assert!(third.compared && third.more_pending);
+        let finished = store.index_next_duplicate_step("").unwrap();
+        assert!(finished.cursor.is_none() && !finished.more_pending);
+        assert!(!store.duplicate_index_pending().unwrap());
     }
 
     #[test]
