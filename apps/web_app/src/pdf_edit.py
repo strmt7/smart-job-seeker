@@ -159,7 +159,7 @@ try:
     original_document.close()
     sys.stdout.buffer.write(edited)
 except ImportError:
-    print('PDF editing requires pypdfium2, pypdf and Pillow in the configured local Python runtime')
+    print('PDF editing requires pypdfium2, pypdf and Pillow in the selected Python runtime. Open Settings > Local tools and setup > Set up PDF tools. If WAYPOINT_PDF_PYTHON is set, correct or remove that override first.')
     sys.exit(2)
 except Exception as error:
     print('PDF editing failed: ' + str(error)[:500])

@@ -75,7 +75,7 @@ try:
     response = {"text": result, "page_texts": parts, "page_count": len(reader.pages), "empty_text_pages": empty_pages, "structurally_blank_pages": structurally_blank_pages, "mixed_image_pages": mixed_image_pages, "image_inventory_unknown_pages": image_inventory_unknown_pages}
     sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
 except ImportError:
-    print("PDF extraction requires pypdf in the configured local Python runtime")
+    print("PDF extraction requires pypdf in the selected Python runtime. Open Settings > Local tools and setup > Set up PDF tools. If WAYPOINT_PDF_PYTHON is set, correct or remove that override first.")
     sys.exit(2)
 except Exception as error:
     print("PDF extraction failed: " + str(error)[:500])

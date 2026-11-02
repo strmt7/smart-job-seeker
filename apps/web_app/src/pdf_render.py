@@ -119,7 +119,7 @@ try:
     page.close()
     document.close()
 except ImportError:
-    print('PDF preview requires pypdfium2, Pillow and pypdf in the configured local Python runtime')
+    print('PDF preview requires pypdfium2, Pillow and pypdf in the selected Python runtime. Open Settings > Local tools and setup > Set up PDF tools. If WAYPOINT_PDF_PYTHON is set, correct or remove that override first.')
     sys.exit(2)
 except Exception as error:
     print('PDF preview failed: ' + str(error)[:500])
