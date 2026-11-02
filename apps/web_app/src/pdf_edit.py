@@ -33,6 +33,59 @@ try:
         if first < 0:
             return 0
         return 2 if text.find(needle, first + 1) >= 0 else 1
+    def edit_adjacent_objects(document, page_index, original_text, before, after):
+        # Only whole, consecutive text objects whose character order is exactly
+        # represented by PDFium are eligible. More complex layouts stay manual.
+        if not after or len(after) > len(before):
+            return None
+        page = document[page_index]
+        textpage = page.get_textpage()
+        count = textpage.count_chars()
+        if count > 200000:
+            return None
+        decoded = ''.join(chr(raw.FPDFText_GetUnicode(textpage, i)) for i in range(count))
+        if decoded != original_text:
+            return None
+        start = decoded.find(before)
+        groups = []
+        for i in range(start, start + len(before)):
+            pointer = raw.FPDFText_GetTextObject(textpage, i)
+            address = ctypes.cast(pointer, ctypes.c_void_p).value if pointer else None
+            if not address:
+                return None
+            if not groups or groups[-1][0] != address:
+                if any(address == existing[0] for existing in groups):
+                    return None
+                groups.append((address, decoded[i]))
+            else:
+                groups[-1] = (address, groups[-1][1] + decoded[i])
+        if not 2 <= len(groups) <= 8 or len(after) < len(groups):
+            return None
+        objects = {ctypes.cast(obj.raw, ctypes.c_void_p).value: obj for obj in page.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=textpage)}
+        if any(address not in objects or objects[address].extract() != text for address, text in groups):
+            return None
+        bounds = [objects[address].get_bounds() for address, _ in groups]
+        parts = []
+        remaining = after
+        for index, (address, text) in enumerate(groups):
+            available = len(remaining) - (len(groups) - index - 1)
+            size = min(len(text), available)
+            if size <= 0:
+                return None
+            part, remaining = remaining[:size], remaining[size:]
+            parts.append(part)
+            encoded = part.encode('utf-16-le') + b'\0\0'
+            chars = (ctypes.c_ushort * (len(encoded) // 2)).from_buffer_copy(encoded)
+            if not raw.FPDFText_SetText(objects[address], chars):
+                return None
+        if remaining:
+            return None
+        textpage.close()
+        page.gen_content()
+        out = io.BytesIO()
+        document.save(out)
+        page.close()
+        return out.getvalue(), bounds, parts
     originals, targets = [], []
     for index in range(len(doc)):
         page = doc[index]
@@ -54,32 +107,38 @@ try:
     if occurrences != 1:
         raise ValueError('The selected passage occurs more than once; choose a unique passage or review manually')
     if len(targets) != 1 or targets[0][3] != 1:
-        raise ValueError('The selected passage spans PDF text objects or is ambiguous; choose a shorter passage or review manually')
-    index, old_object, old_bounds, _ = targets[0]
-    expected_object = old_object.replace(before, after, 1)
-    try:
-        edited = edit_pdf_stream(reader, index, before, after)
-    except (AttributeError, KeyError, TypeError, ValueError, NotImplementedError):
-        # Unknown stream/font structures fall back to the original guarded path.
-        edited = None
-    if edited is None:
-        page = doc[index]
-        textpage = page.get_textpage()
-        objects = [o for o in page.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=textpage) if o.extract() == old_object]
-        if len(objects) != 1:
-            raise ValueError('PDF text object is ambiguous; review manually')
-        encoded = expected_object.encode('utf-16-le') + b'\0\0'
-        chars = (ctypes.c_ushort * (len(encoded) // 2)).from_buffer_copy(encoded)
-        if not raw.FPDFText_SetText(objects[0], chars):
-            raise ValueError('The original font cannot encode this edit; review manually')
-        textpage.close()
-        page.gen_content()
-        out = io.BytesIO()
-        doc.save(out)
-        page.close()
+        index = next(i for i, text in enumerate(originals) if matches(text, before))
+        multi = edit_adjacent_objects(doc, index, originals[index], before, after)
+        if multi is None:
+            raise ValueError('The selected passage spans PDF text objects or is ambiguous; choose a shorter passage or review manually')
+        edited, old_bounds, expected_parts = multi
         doc.close()
-        edited = out.getvalue()
     else:
+        index, old_object, bounds, _ = targets[0]
+        old_bounds = [bounds]
+        expected_object = old_object.replace(before, after, 1)
+        expected_parts = [expected_object]
+        try:
+            edited = edit_pdf_stream(reader, index, before, after)
+        except (AttributeError, KeyError, TypeError, ValueError, NotImplementedError):
+            # Unknown stream/font structures fall back to the original guarded path.
+            edited = None
+        if edited is None:
+            page = doc[index]
+            textpage = page.get_textpage()
+            objects = [o for o in page.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=textpage) if o.extract() == old_object]
+            if len(objects) != 1:
+                raise ValueError('PDF text object is ambiguous; review manually')
+            encoded = expected_object.encode('utf-16-le') + b'\0\0'
+            chars = (ctypes.c_ushort * (len(encoded) // 2)).from_buffer_copy(encoded)
+            if not raw.FPDFText_SetText(objects[0], chars):
+                raise ValueError('The original font cannot encode this edit; review manually')
+            textpage.close()
+            page.gen_content()
+            out = io.BytesIO()
+            doc.save(out)
+            page.close()
+            edited = out.getvalue()
         doc.close()
     if len(edited) > 10 * 1024 * 1024:
         raise ValueError('Edited PDF exceeds 10 MiB')
@@ -107,13 +166,12 @@ try:
             page_left, page_bottom, page_right, page_top = original_page.get_bbox()
             if abs((page_right - page_left) - width) > 1 or abs((page_top - page_bottom) - height) > 1:
                 raise ValueError('Page crop geometry needs manual editing')
-            left, bottom, right, top = old_bounds
-            if left < page_left or right > page_right or bottom < page_bottom or top > page_top:
-                raise ValueError('Edited text lies outside the page; review manually')
-            # Mask the original text object with a small antialiasing margin.
-            # Anything else that changed visually causes a manual handoff.
-            rectangle = (math.floor((left-page_left)*scale)-4, math.floor((page_top-top)*scale)-4,
-                         math.ceil((right-page_left)*scale)+4, math.ceil((page_top-bottom)*scale)+4)
+            rectangle = []
+            for left, bottom, right, top in old_bounds:
+                if left < page_left or right > page_right or bottom < page_bottom or top > page_top:
+                    raise ValueError('Edited text lies outside the page; review manually')
+                rectangle.append((math.floor((left-page_left)*scale)-4, math.floor((page_top-top)*scale)-4,
+                                  math.ceil((right-page_left)*scale)+4, math.ceil((page_top-bottom)*scale)+4))
         visual_change, change_bounds = changed_outside(before_image, after_image, rectangle)
         before_image.close()
         after_image.close()
@@ -128,31 +186,58 @@ try:
         if actual != expected:
             raise ValueError('Saved PDF text changed unexpectedly; review manually')
         if page_index == index:
-            objs = [o for o in p.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=t) if o.extract() == expected_object]
-            if len(objs) != 1:
-                raise ValueError('Edited text object could not be verified')
-            obj = objs[0]
-            l,b,r,top = obj.get_bounds()
-            old_l,old_b,old_r,old_top = old_bounds
-            if l < old_l - 1 or b < old_b - 1 or r > old_r + 1 or top > old_top + 1:
-                raise ValueError('Replacement extends outside the original text area; review manually')
-            obj_addr = ctypes.cast(obj.raw, ctypes.c_void_p).value
-            observed = []
-            for char_index in range(t.count_chars()):
-                char_obj = raw.FPDFText_GetTextObject(t, char_index)
-                if not char_obj or ctypes.cast(char_obj, ctypes.c_void_p).value != obj_addr:
-                    continue
-                code = raw.FPDFText_GetUnicode(t, char_index)
-                char = chr(code) if code else ''
-                if not char:
-                    raise ValueError('A glyph could not be verified; review manually')
-                observed.append(char)
-                if char and not char.isspace():
-                    left,bottom,right,upper = t.get_charbox(char_index)
-                    if right - left < 0.01 or upper - bottom < 0.01 or raw.FPDFText_HasUnicodeMapError(t, char_index):
-                        raise ValueError('A glyph may be missing in the original font; review manually')
-            if ''.join(observed) != expected_object:
-                raise ValueError('Edited glyphs could not be matched to the text object; review manually')
+            objects = list(p.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=t))
+            if len(expected_parts) == 1:
+                groups = [[o for o in objects if o.extract() == expected_parts[0]]]
+                if len(groups[0]) != 1:
+                    raise ValueError('Edited text object could not be verified; review manually')
+                selected = [groups[0][0]]
+            else:
+                count = t.count_chars()
+                decoded = ''.join(chr(raw.FPDFText_GetUnicode(t, i)) for i in range(count))
+                if decoded != actual:
+                    raise ValueError('Edited character mapping could not be verified; review manually')
+                start = originals[index].find(before)
+                by_address = {ctypes.cast(o.raw, ctypes.c_void_p).value: o for o in objects}
+                selected = []
+                used_addresses = set()
+                offset = start
+                for part in expected_parts:
+                    addresses = set()
+                    for char_index in range(offset, offset + len(part)):
+                        pointer = raw.FPDFText_GetTextObject(t, char_index)
+                        addresses.add(ctypes.cast(pointer, ctypes.c_void_p).value if pointer else None)
+                    if len(addresses) != 1 or None in addresses:
+                        raise ValueError('Edited character mapping could not be verified; review manually')
+                    address = addresses.pop()
+                    obj = by_address.get(address)
+                    if obj is None or obj.extract() != part or address in used_addresses:
+                        raise ValueError('Edited text objects could not be verified; review manually')
+                    selected.append(obj)
+                    used_addresses.add(address)
+                    offset += len(part)
+            for obj, expected_object, bounds in zip(selected, expected_parts, old_bounds):
+                l,b,r,top = obj.get_bounds()
+                old_l,old_b,old_r,old_top = bounds
+                if l < old_l - 1 or b < old_b - 1 or r > old_r + 1 or top > old_top + 1:
+                    raise ValueError('Replacement extends outside the original text area; review manually')
+                obj_addr = ctypes.cast(obj.raw, ctypes.c_void_p).value
+                observed = []
+                for char_index in range(t.count_chars()):
+                    char_obj = raw.FPDFText_GetTextObject(t, char_index)
+                    if not char_obj or ctypes.cast(char_obj, ctypes.c_void_p).value != obj_addr:
+                        continue
+                    code = raw.FPDFText_GetUnicode(t, char_index)
+                    char = chr(code) if code else ''
+                    if not char:
+                        raise ValueError('A glyph could not be verified; review manually')
+                    observed.append(char)
+                    if not char.isspace():
+                        left,bottom,right,upper = t.get_charbox(char_index)
+                        if right - left < 0.01 or upper - bottom < 0.01 or raw.FPDFText_HasUnicodeMapError(t, char_index):
+                            raise ValueError('A glyph may be missing in the original font; review manually')
+                if ''.join(observed) != expected_object:
+                    raise ValueError('Edited glyphs could not be matched to the text object; review manually')
         t.close()
         p.close()
     check.close()

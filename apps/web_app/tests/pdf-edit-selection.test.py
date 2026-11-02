@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 src = Path(__file__).resolve().parents[1] / "src"
@@ -41,5 +41,15 @@ def refused(operators, passage, expected):
 
 refused(b"(Alpha Beta) Tj", "Missing", "was not found")
 refused(b"(Alpha Alpha) Tj", "Alpha", "occurs more than once")
-refused(b"(Alpha) Tj (Beta) Tj", "AlphaBeta", "spans PDF text objects")
+refused(b"(PrefixAlpha) Tj (Beta) Tj", "AlphaBeta", "spans PDF text objects")
+payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBet"}).encode()
+result = subprocess.run([sys.executable, "-c", program], input=payload,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
+assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "AlphaBet"
+# Expansion is deliberately refused for multi-object edits.
+payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBetaLong"})
+result = subprocess.run([sys.executable, "-c", program], input=payload, text=True,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode != 0 and "review manually" in result.stdout
 print("Fictional PDF selection checks passed.")

@@ -9,7 +9,10 @@ def changed_outside(before, after, allowed):
     left.close()
     right.close()
     if allowed is not None:
-        ImageDraw.Draw(difference).rectangle(allowed, fill=(0, 0, 0))
+        rectangles = allowed if isinstance(allowed, list) else [allowed]
+        draw = ImageDraw.Draw(difference)
+        for rectangle in rectangles:
+            draw.rectangle(rectangle, fill=(0, 0, 0))
     bounds = difference.getbbox()
     difference.close()
     return bounds is not None, bounds
