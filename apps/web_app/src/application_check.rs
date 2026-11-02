@@ -789,6 +789,30 @@ mod tests {
         inspect_page_with_local_vision, poll, report_inspected_page, visual_page_advice, Task,
         TASK,
     };
+
+    #[test]
+    #[ignore = "read-only live browser check; requires a reviewed public URL"]
+    fn live_public_application_check_reports_result() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let url = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed public URL");
+        let address = url::Url::parse(&url).expect("valid URL");
+        assert_eq!(address.scheme(), "https");
+        assert_eq!(address.host_str(), Some("job-boards.greenhouse.io"));
+        let parsed = waypoint_net::parse_url(&url).expect("valid HTTPS URL");
+        waypoint_net::resolve_public(&parsed).expect("public destination");
+        super::start("live-public-check".into(), "test-job".into(), url, false).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("live-public-check").unwrap() {
+                break done;
+            }
+            assert!(std::time::Instant::now() < deadline, "check timed out");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        acknowledge("live-public-check").unwrap();
+        println!("Application check: {result}; manual review: {review}");
+        assert!(!result.is_empty());
+    }
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn browser_start_errors_distinguish_missing_browser_without_exposing_details() {
