@@ -4,6 +4,7 @@
 
 ## Document context feedback — 2026-11-02
 
+- CV and cover-letter drafting now sends up to 1,500 JSON-encoded bytes of writing instructions instead of 500. It stays within the existing prompt budget by reducing the qualification budget when longer instructions are supplied; omitted qualifications remain reported, and the draft refuses to omit user-prioritized qualifications. Fictional prompt tests verified that instructions beyond the old limit reach both drafting passes and checked the tradeoff. A resource-gated Qwen 3.5 9B run produced a fictional draft with longer instructions; it did not assess whether the model followed them semantically. The draft suite passed (17 passed, eight ignored before the additional live test), the selected live test passed, and Windows web Clippy passed. Longer inputs can still be truncated and require review; the model was unloaded.
 - Draft selection feedback now identifies whether job details, writing instructions, or template text were shortened, instead of combining them into an ambiguous warning. Fictional UI checks cover individual and combined omissions; the JavaScript syntax check passed. This does not increase the model's context or recover omitted material.
 
 ## Local choice-advice evaluation — 2026-11-02

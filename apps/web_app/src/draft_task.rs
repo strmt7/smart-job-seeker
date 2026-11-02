@@ -521,6 +521,14 @@ fn generate_with_selection(
     let limit = if input.kind == "cv" { 18 } else { 20 };
     let over_limit = selected.len().saturating_sub(limit);
     selected.truncate(limit);
+    // Give longer user instructions more of the existing prompt budget,
+    // without increasing its upper bound. Facts omitted by the smaller budget
+    // remain visible in selection diagnostics; prioritized facts cannot drop.
+    let instructions = crate::answer_task::json_prefix(&input.instructions, 1500);
+    let instruction_bytes = serde_json::to_string(instructions)
+        .map_err(|_| "Could not serialize writing instructions")?
+        .len();
+    let fact_budget = 3000usize.saturating_sub(instruction_bytes.saturating_sub(500));
     let mut facts = Vec::new();
     let mut bytes = 2usize;
     for fact in &selected {
@@ -528,7 +536,7 @@ fn generate_with_selection(
             .map_err(|_| "Could not serialize qualification")?
             .len()
             + 1;
-        if bytes + size <= 3000 {
+        if bytes + size <= fact_budget {
             bytes += size;
             facts.push(fact.clone());
         }
@@ -574,7 +582,6 @@ fn generate_with_selection(
             job[key] = json!(bounded);
         }
     }
-    let instructions = crate::answer_task::json_prefix(&input.instructions, 500);
     selection["used_in_draft"] = json!(qualification_count);
     selection["draft_fact_budget_omitted"] =
         json!(over_limit + selected.len() - qualification_count);
@@ -1719,6 +1726,109 @@ mod tests {
         assert!(serde_json::to_string(&focused).unwrap().len() <= 700);
         assert!(focused_template_style(&template, Some("invented passage")).is_err());
         assert!(focused_template_style(&template, Some(&"a".repeat(350))).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated local model for fictional longer-instruction drafting"]
+    fn resource_gated_draft_with_longer_instructions() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().expect("resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
+            let input = Inputs {
+                job_id: "j".into(),
+                digest: "d".into(),
+                job: json!({"title":"Engineer","employer":"Example","description":"Develop reliable software."}),
+                kind: "cover_letter".into(),
+                facts: vec!["Built reliable software with a small team.".into()],
+                available_facts: 1,
+                contact_facts: vec![],
+                priority_facts: vec![],
+                selection_listing: "Develop reliable software.".into(),
+                instructions: format!(
+                    "{} Keep the language direct and concise.",
+                    "Use clear, specific wording. ".repeat(30)
+                ),
+                template: None,
+                reviewed_template: None,
+                template_style_focus: None,
+                template_scan_page: None,
+            };
+            let draft = generate_with_selection(&mut llm, &input, "", None).unwrap();
+            assert_eq!(draft["selection"]["instructions_truncated"], false);
+            assert!(!draft["paragraphs"].as_array().unwrap().is_empty());
+            println!("Fictional longer-instruction draft returned {} paragraph(s); semantic compliance was not assessed.", draft["paragraphs"].as_array().unwrap().len());
+        });
+    }
+
+    #[test]
+    fn longer_instructions_reach_both_drafting_passes_with_bounded_facts() {
+        struct Capture(Vec<(String, String)>);
+        impl Inference for Capture {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.0.push((task.into(), prompt.into()));
+                let response = if task == "cover_letter_draft" || task == "cover_letter_style" {
+                    json!({"paragraphs":[{"text":"Built reliable systems.","facts":[1]}]})
+                } else {
+                    json!({"items":[{"id":1,"status":"supported","explanation":"Fictional fact"}]})
+                };
+                Ok((
+                    response,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let instructions = format!("{} IMPORTANT END", "a".repeat(1000));
+        let input = Inputs {
+            job_id: "j".into(),
+            digest: "d".into(),
+            job: json!({"title":"Engineer","employer":"Example","description":"Build systems"}),
+            kind: "cv".into(),
+            facts: vec!["Built reliable systems.".into()],
+            available_facts: 1,
+            contact_facts: vec![],
+            priority_facts: vec![],
+            selection_listing: "Build systems".into(),
+            instructions,
+            template: None,
+            reviewed_template: None,
+            template_style_focus: None,
+            template_scan_page: None,
+        };
+        let mut model = Capture(vec![]);
+        let result = generate_with_selection(&mut model, &input, "", None).unwrap();
+        assert_eq!(result["selection"]["instructions_truncated"], false);
+        for name in ["cover_letter_draft", "cover_letter_style"] {
+            let prompt = &model.0.iter().find(|(task, _)| task == name).unwrap().1;
+            assert!(prompt.contains("IMPORTANT END"));
+            assert!(prompt.len() <= 8000);
+        }
+        let mut crowded = input.clone();
+        crowded.facts = (0..3).map(|i| format!("{i}{}", "x".repeat(899))).collect();
+        crowded.available_facts = 3;
+        let draft = generate_with_selection(&mut Capture(vec![]), &crowded, "", None).unwrap();
+        assert_eq!(draft["selection"]["draft_fact_budget_omitted"], 1);
+        crowded.priority_facts = crowded.facts.clone();
+        assert!(generate_with_selection(&mut Capture(vec![]), &crowded, "", None).is_err());
     }
 
     #[test]
