@@ -1796,3 +1796,12 @@ On the previously researched Weblytec page, a resource-gated qwen3.5:9b crop rea
 A loopback-only Chromium experiment established a WebSocket, verified a baseline message, enabled `Network.emulateNetworkConditions` offline, attempted a fictional message, and restored connectivity after one second. The browser reported the send accepted; the server did not receive the message before restoration but did receive it afterward. This is one browser/version/transport observation, not a complete network-isolation evaluation. The initial exploratory test lacked a baseline and incorrectly asserted delivery while offline; that assertion failed and the revised test records observations rather than assuming the result. A temporary offline switch must therefore not be presented as a no-submission rehearsal guard. No external application was opened or submitted in this experiment. Official CDP Fetch and Network documentation was retained in `target/research/` using the isolated crawler (Fetch native SHA-256 `a3721414b422ecbec8b34748120d590165918a7b811651f8eb8f23e267d64872`; Network native SHA-256 `7703f56b96d91f99d07ed76c04057ad11fa546b820279bdab10df047964fcbe4`). A first Fetch capture with a mismatched marker was retained as a failed qualification; the subsequent capture succeeded.
 
 A second loopback experiment attached two browser targets, established a WebSocket in the second target, and put only the first target into offline emulation. A fictional message from the second target reached the loopback server while the first remained offline. The initial second-target baseline also arrived. This confirms target-scoped emulation cannot by itself isolate the browser; other targets, workers, service workers, existing connections and race windows still need explicit treatment. No external application was involved. At this checkpoint, the serial web-app suite passed 515 tests (272 ignored), all 124 JavaScript UI checks passed, and formatting passed.
+
+### Listing capture fingerprints (2026-11-02)
+
+New attempt archives include an unsigned SHA-256 manifest for the original and
+follow-up page capture metadata and screenshot segments. It enables later manual
+comparison; the application does not yet automatically verify these hashes, and
+the manifest does not authenticate the files or their origin. Existing archives
+are not modified. The Windows attempt-record tests and web-app lint passed with
+fictional captures.

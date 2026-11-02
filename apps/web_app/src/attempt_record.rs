@@ -1461,6 +1461,26 @@ impl AttemptRecord {
                     listing_capture_view(&metadata, segments.len()),
                 )
                 .map_err(|e| e.to_string())?;
+                // These fingerprints detect accidental changes when compared later;
+                // the plaintext manifest is not an authenticated signature.
+                let mut hashes = serde_json::Map::new();
+                hashes.insert(
+                    "capture.json".into(),
+                    json!(waypoint_domain::sha256_hex(&metadata)),
+                );
+                for (index, png) in segments.iter().enumerate() {
+                    hashes.insert(
+                        format!("{:04}.png", index + 1),
+                        json!(waypoint_domain::sha256_hex(png)),
+                    );
+                }
+                let manifest = json!({"algorithm":"SHA-256", "files":hashes,
+                    "note":"Compare these fingerprints with the saved files to detect changes. This manifest is unsigned and does not prove origin or authenticity."});
+                fs::write(
+                    source_dir.join("capture-hashes.json"),
+                    serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
             }
         }
         if let Some(packet) = ws.packet(id).map_err(|e| e.to_string())? {
@@ -3437,6 +3457,17 @@ mod tests {
                 b"\x89PNG\r\n\x1a\nfictional-data"
             );
             assert!(record.dir.join("original-job-page/capture.json").exists());
+            for folder in ["original-job-page", "followup-job-page"] {
+                let dir = record.dir.join(folder);
+                let manifest: Value =
+                    serde_json::from_slice(&fs::read(dir.join("capture-hashes.json")).unwrap())
+                        .unwrap();
+                assert_eq!(manifest["algorithm"], "SHA-256");
+                for name in ["capture.json", "0001.png"] {
+                    let bytes = fs::read(dir.join(name)).unwrap();
+                    assert_eq!(manifest["files"][name], waypoint_domain::sha256_hex(&bytes));
+                }
+            }
             assert!(
                 fs::read_to_string(record.dir.join("original-job-page/view.html"))
                     .unwrap()
