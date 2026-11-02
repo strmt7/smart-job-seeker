@@ -2858,3 +2858,8 @@ single-select, multi-select and radio changes; the latter recheck the live
 selection before returning. A local fixture passed for five controls that set
 an invalid state on change, and four existing local-browser selection/date
 tests passed. A later asynchronous validation change still needs a later check.
+
+Checkbox fills also check native browser validity before reporting success. A
+fictional browser fixture confirms that an unchecked required checkbox is
+reported invalid and that checking it succeeds. A rejected fill may already
+have changed the page and therefore still requires review.

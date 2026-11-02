@@ -5045,12 +5045,12 @@ impl CdpDriver {
                     .pointer("/object/objectId")
                     .and_then(Value::as_str)
                     .ok_or_else(|| DriverError("Cannot inspect checkbox".into()))?;
-                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if ((!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) || this.tagName !== 'INPUT' || this.type !== 'checkbox' || this.matches(':disabled')) return false; if (this.checked !== value) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set; set.call(this, value); this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.checked === value; }","arguments":[{"value":b}],"returnByValue":true})).map_err(derr)?;
+                let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if ((!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) || this.tagName !== 'INPUT' || this.type !== 'checkbox' || this.matches(':disabled')) return false; if (this.checked !== value) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set; set.call(this, value); this.dispatchEvent(new Event('input', {bubbles:true})); this.dispatchEvent(new Event('change', {bubbles:true})); } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') && this.checked === value && this.validity.valid; }","arguments":[{"value":b}],"returnByValue":true})).map_err(derr)?;
                 if result.get("exceptionDetails").is_some()
                     || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
                 {
                     return Err(DriverError(
-                        "Checkbox was unavailable or its value was not retained".into(),
+                        "Checkbox was unavailable, invalid, or its value was not retained".into(),
                     ));
                 }
                 self.verify_aria_validity(node, false)

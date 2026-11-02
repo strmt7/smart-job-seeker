@@ -132,6 +132,13 @@ fn control_changes_stop_when_site_reports_aria_invalid() {
             "{command:?}: {error}"
         );
     }
+    let required = |value| BrowserCommand::Fill {
+        selector: "#required".into(),
+        value: PacketValue::Bool(value),
+    };
+    let error = driver.execute(&required(false)).unwrap_err();
+    assert!(error.to_string().contains("invalid"), "{error}");
+    driver.execute(&required(true)).unwrap();
     assert!(driver
         .trace
         .iter()
