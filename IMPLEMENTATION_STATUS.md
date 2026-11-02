@@ -1640,6 +1640,20 @@ The local search planner now asks for some general-web job-intent phrases while 
 On 2026-11-02, the actual web-search batch worker sent three non-personal planner-style phrases to Wiby's public JSON API. Two runs each reported zero results for microscopy, ten for remote Rust (seven eligible HTTPS links) and one for payroll accounting (no eligible HTTPS link). The seven retained titles did not obviously describe job listings; the pages were not inspected, so their content and application availability remain unknown. All three requests completed without provider errors. This small sample demonstrates a practical limitation of Wiby for these searches, not general web coverage; no applications were contacted or submitted.
 # Optional FreeSerp web search — 2026-11-02
 
+A later employer-specific search returned ten candidate links in the rendered
+interface. The first [employer-hosted result](https://job-boards.greenhouse.io/unframe/jobs/4943017101)
+redirected to a careers page that stated the role was no longer open; the
+Crawl4AI capture recorded HTTP 302 then 200 and native SHA-256
+`2c526af11b069468757dea915f17a1d1625251921ca69bcca78523ad20f473bd`.
+With no local model, Waypoint initially reported only that no structured job was
+found. It now also warns when the listing redirected to a different path on the
+same site, without displaying query parameters or asserting closure. An
+isolated app endpoint check against that URL returned the warning and saved no
+job. A subsequent provider query fell back from its web index and was correctly
+refused; the direct endpoint check used the previously captured URL. Candidate
+tests passed (45 passed, 20 ignored), as did web Clippy. No application was
+opened or submitted, and this one case does not measure stale-link coverage.
+
 In a later isolated running-app check, three generic phrases covering data
 engineering, museum work and network technicians each returned ten candidate
 links through the rendered wider-web form. Visible results included search

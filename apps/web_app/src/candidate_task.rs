@@ -1727,6 +1727,23 @@ fn warn_same_site_path_redirect(job: &mut Value, original: &url::Url, reached: &
     job["extraction_warnings"].as_array_mut().expect("warnings array").insert(0, json!("The requested listing redirected to a different page on the same site. The extracted position may be different; verify the original job and destination before saving."));
 }
 
+fn no_model_inspection_reason(
+    original: &url::Url,
+    reached: &url::Url,
+    course_hint: bool,
+) -> String {
+    let mut reason = String::new();
+    if crate::application_check::same_origin_path_redirect_notice(original, reached).is_some() {
+        reason.push_str("The listing redirected to a different page on the same site and may be stale or describe another position. Verify the original listing and destination. ");
+    }
+    reason.push_str(if course_hint {
+        "No structured job found. The page includes course metadata and may not be a vacancy; no eligible local model is loaded. Review manually"
+    } else {
+        "No structured job found and no eligible local model is loaded; review manually"
+    });
+    reason
+}
+
 pub(crate) fn redirect_review_destination(metadata: &Value) -> Option<String> {
     let original = url::Url::parse(metadata["requested_url"].as_str()?).ok()?;
     let reached = url::Url::parse(metadata["source_url"].as_str()?).ok()?;
@@ -1800,13 +1817,11 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 // A short challenge page is not evidence of a job listing.
                 // Longer pages still require exact-source extraction and review.
                 require_readable_listing(&page.walls, &page_text)?;
-                let model = crate::resident_model()?.ok_or_else(|| {
-                    if incomplete_structured.is_none() && structured_course_hint(&scripts) {
-                        "No structured job found. The page includes course metadata and may not be a vacancy; no eligible local model is loaded. Review manually"
-                    } else {
-                        "No structured job found and no eligible local model is loaded; review manually"
-                    }
-                })?;
+                let model = crate::resident_model()?.ok_or_else(|| no_model_inspection_reason(
+                    &original,
+                    &reached,
+                    incomplete_structured.is_none() && structured_course_hint(&scripts),
+                ))?;
                 let _lease = crate::doc_suggest::lease()?;
                 let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
                 let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model);
@@ -1903,6 +1918,20 @@ pub fn complete(id: &str, value: Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn missing_model_reports_path_redirect_without_exposing_query() {
+        let original = url::Url::parse("https://example.org/jobs/123").unwrap();
+        let reached = url::Url::parse("https://example.org/careers?secret=fictional").unwrap();
+        let reason = super::no_model_inspection_reason(&original, &reached, false);
+        assert!(reason.contains("redirected to a different page"));
+        assert!(reason.contains("may be stale"));
+        assert!(!reason.contains("fictional"));
+        let same_path = url::Url::parse("https://example.org/jobs/123?secret=fictional").unwrap();
+        let reason = super::no_model_inspection_reason(&original, &same_path, true);
+        assert!(!reason.contains("redirected"));
+        assert!(reason.contains("course metadata"));
+    }
+
     #[test]
     fn structured_course_hint_is_advisory_and_ignores_nested_related_objects() {
         assert!(super::structured_course_hint(&[
