@@ -89,14 +89,28 @@ def edit_pdf_stream(reader, page_index, before, after):
             ambiguous.add(char)
         else:
             reverse[char] = value
-    if any(char not in reverse or char in ambiguous for char in after):
+    # A font may map more than one byte to the same Unicode character. Reuse
+    # the source byte only when the selected passage uses a single encoding
+    # for that character; never guess between distinct source glyph codes.
+    selected_codes = {}
+    position = 0
+    end = start + length
+    for _, data, decoded in pieces:
+        for index, char in enumerate(decoded):
+            if start <= position + index < end:
+                selected_codes.setdefault(char, set()).add(data[index])
+        position += len(decoded)
+    for char in ambiguous:
+        codes = selected_codes.get(char, set())
+        if len(codes) == 1:
+            reverse[char] = next(iter(codes))
+    if any(char not in reverse or (char in ambiguous and len(selected_codes.get(char, ())) != 1) for char in after):
         return None
     replacement = bytes(reverse[char] for char in after)
     operands, op = stream.operations[op_index]
     elements = operands[0] if op == b'TJ' else operands
     position = 0
     inserted = False
-    end = start + length
     for offset, data, decoded in pieces:
         next_position = position + len(decoded)
         if start < next_position and end > position:

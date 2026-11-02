@@ -2406,6 +2406,17 @@ across operators alone therefore cannot safely replace the existing checks;
 the mapping between rendered characters and source operators needs further
 investigation.
 
+In a separate first-page probe, three unique-on-page text objects could be
+matched to a stream operation; one shortening passed the complete document,
+glyph, bounds and visual checks, while two were refused because their text
+also occurred elsewhere in the document. The output was kept in memory. A
+subsequent change lets the stream editor reuse a glyph byte from the selected
+passage when the font maps multiple bytes to the same character, provided the
+passage itself uses only one such byte. Fictional tests cover reuse and refusal
+when the source provides no unique byte. On ten first-page objects of this
+résumé, the change did not alter which stream edits matched (three before and
+after); it is not a demonstrated fix for the remaining résumé failures.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the

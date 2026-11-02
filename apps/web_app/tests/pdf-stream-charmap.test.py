@@ -19,7 +19,7 @@ mapping.set_data(b"""/CIDInit /ProcSet findresource begin
 /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
 /CMapName /Fixture def /CMapType 2 def
 1 begincodespacerange <00> <FF> endcodespacerange
-4 beginbfchar <41> <0041> <42> <0042> <43> <0043> <44> <0044> endbfchar
+5 beginbfchar <41> <0041> <42> <0042> <43> <0043> <44> <0044> <45> <0041> endbfchar
 endcmap CMapName currentdict /CMap defineresource pop end end""")
 font = DictionaryObject({
     NameObject("/Type"): NameObject("/Font"),
@@ -38,4 +38,10 @@ edited = module.edit_pdf_stream(reader, 0, "ABCD", "BAD")
 assert edited is not None, "mapped glyphs should use the stream editor"
 assert "BAD" in PdfReader(io.BytesIO(edited)).pages[0].extract_text()
 assert module.edit_pdf_stream(reader, 0, "ABCD", "Z") is None, "unmapped glyphs need review"
+assert module.edit_pdf_stream(reader, 0, "BCD", "A") is None, "ambiguous glyph without source evidence needs review"
+content.set_data(b"BT /F1 12 Tf 20 200 Td (AEBCD) Tj ET")
+conflicting = io.BytesIO()
+writer.write(conflicting)
+reader_conflicting = PdfReader(io.BytesIO(conflicting.getvalue()))
+assert module.edit_pdf_stream(reader_conflicting, 0, "AABCD", "AB") is None, "conflicting source glyph codes need review"
 print("Fictional PDF charmap stream checks passed.")
