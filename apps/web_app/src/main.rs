@@ -2828,8 +2828,29 @@ fn serve(
                     ))
                 })
                 .collect::<Result<Vec<_>, &str>>()?;
+            let listing = if let Some(id) = body["listing_id"].as_str() {
+                if targets.len() != 1
+                    || !matches!(targets[0].source.as_str(), "greenhouse" | "lever" | "ashby")
+                {
+                    return Err("Choose one supported source board to check a listing".into());
+                }
+                let id = JobIdentityId::new(id).map_err(|e| e.to_string())?;
+                let job = ws
+                    .job(&id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Job not found")?;
+                if job.source != targets[0].source {
+                    return Err("Listing source changed; refresh the job list".into());
+                }
+                Some((
+                    id.as_str().to_owned(),
+                    job.canonical_url.ok_or("Job has no URL")?,
+                ))
+            } else {
+                None
+            };
             let id = random_id()?;
-            discovery_task::start(id.clone(), targets, ws)?;
+            discovery_task::start(id.clone(), targets, ws, listing)?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/web-search/batch-start" => {

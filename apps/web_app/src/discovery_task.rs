@@ -18,6 +18,7 @@ struct Task {
     total: usize,
     processed: usize,
     history: Vec<Value>,
+    listing: Option<(String, String)>,
 }
 enum Message {
     Board(DiscoveryTarget, String, Result<String, FetchFailure>),
@@ -68,14 +69,20 @@ fn send_bounded(sender: &SyncSender<Message>, mut message: Message, cancel: &Ato
         }
     }
 }
-pub fn start(id: String, targets: Vec<DiscoveryTarget>, ws: &mut Workspace) -> Result<(), String> {
-    start_with_fetcher(id, targets, Arc::new(BoundedFetcher), Some(ws))
+pub fn start(
+    id: String,
+    targets: Vec<DiscoveryTarget>,
+    ws: &mut Workspace,
+    listing: Option<(String, String)>,
+) -> Result<(), String> {
+    start_with_fetcher(id, targets, Arc::new(BoundedFetcher), Some(ws), listing)
 }
 fn start_with_fetcher(
     id: String,
     targets: Vec<DiscoveryTarget>,
     fetcher: Arc<dyn Fetcher>,
     workspace: Option<&mut Workspace>,
+    listing: Option<(String, String)>,
 ) -> Result<(), String> {
     if targets.is_empty() || targets.len() > MAX_TARGETS {
         return Err("Choose 1 to 10 job boards".into());
@@ -131,6 +138,7 @@ fn start_with_fetcher(
         total,
         processed: 0,
         history: Vec::new(),
+        listing,
     });
     drop(task);
     std::thread::spawn(move || {
@@ -166,6 +174,27 @@ fn start_with_fetcher(
     });
     Ok(())
 }
+fn listing_response_status(
+    target: &DiscoveryTarget,
+    result: &Result<String, FetchFailure>,
+    checked_url: &str,
+) -> &'static str {
+    let Ok(body) = result else {
+        return "unavailable";
+    };
+    let parsed = match target.source.as_str() {
+        "greenhouse" => waypoint_connectors::parse_greenhouse(&target.board, body),
+        "lever" => waypoint_connectors::parse_lever(&target.board, body),
+        "ashby" => waypoint_connectors::parse_ashby(&target.board, body),
+        _ => return "unavailable",
+    };
+    match parsed {
+        Ok(jobs) if jobs.iter().any(|job| job.source_url == checked_url) => "found",
+        Ok(_) => "not_seen",
+        Err(_) => "unavailable",
+    }
+}
+
 pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Discovery task unavailable")?;
     let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
@@ -179,6 +208,21 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
     };
     match task.rx.try_recv() {
         Ok(Message::Board(target, url, result)) => {
+            let listing_check = task.listing.as_ref().map(|(job_id, checked_url)| {
+                let still_current = waypoint_domain::JobIdentityId::new(job_id)
+                    .ok()
+                    .and_then(|id| ws.job(&id).ok().flatten())
+                    .is_some_and(|job| {
+                        job.source == target.source
+                            && job.canonical_url.as_deref() == Some(checked_url)
+                    });
+                let status = if !still_current {
+                    "changed"
+                } else {
+                    listing_response_status(&target, &result, checked_url)
+                };
+                json!({"job_id":job_id,"status":status})
+            });
             let more = if target.source == "jobicy" {
                 result
                     .as_ref()
@@ -194,7 +238,7 @@ pub fn poll(id: &str, ws: &mut Workspace) -> Result<Value, String> {
             };
             let outcome = ws.discover(std::slice::from_ref(&target), &fetcher, crate::now());
             task.processed += 1;
-            let report = json!({"source":target.source,"board":target.board,"summary":outcome.summary(),"coverage":outcome.coverage,"has_more":more});
+            let report = json!({"source":target.source,"board":target.board,"summary":outcome.summary(),"coverage":outcome.coverage,"has_more":more,"listing_check":listing_check});
             task.history.push(report.clone());
             Ok(
                 json!({"status":"running","source":report["source"],"board":report["board"],"processed":task.processed,"total":task.total,"summary":report["summary"],"coverage":report["coverage"],"has_more":more,"history":task.history}),
@@ -256,6 +300,32 @@ pub fn cancel(id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn listing_response_checks_exact_url_without_guessing_closure() {
+        let target = DiscoveryTarget::new("greenhouse", "fixture");
+        let body = Ok(r#"[{"id":1,"title":"Engineer","location":{"name":"Berlin"},"absolute_url":"https://example.org/job"}]"#.to_string());
+        assert_eq!(
+            listing_response_status(&target, &body, "https://example.org/job"),
+            "found"
+        );
+        assert_eq!(
+            listing_response_status(&target, &body, "https://example.org/other"),
+            "not_seen"
+        );
+        assert_eq!(
+            listing_response_status(&target, &Ok("not json".into()), "https://example.org/job"),
+            "unavailable"
+        );
+        assert_eq!(
+            listing_response_status(
+                &target,
+                &Err(FetchFailure::Network("fixture".into())),
+                "https://example.org/job"
+            ),
+            "unavailable"
+        );
+    }
+
+    #[test]
     fn background_results_are_persisted_incrementally() {
         let target = DiscoveryTarget::new("greenhouse", "fixture");
         let plan = waypoint_connectors::discovery_plan(
@@ -270,6 +340,7 @@ mod tests {
             "fixture".into(),
             vec![target, failed_target],
             Arc::new(fetcher),
+            None,
             None,
         )
         .unwrap();
@@ -300,6 +371,30 @@ mod tests {
         }
         assert!(seen);
         assert!(degraded);
+        let saved = ws.jobs().unwrap().into_iter().next().unwrap();
+        let listing_id = saved.id.as_str().to_owned();
+        let listing_url = saved.canonical_url.unwrap();
+        let target = DiscoveryTarget::new("greenhouse", "fixture");
+        let fetcher = StaticFetcher::default().route(&plan.url, r#"[{"id":123,"title":"Engineer","location":{"name":"Remote"},"absolute_url":"https://example.com/job"}]"#);
+        start_with_fetcher(
+            "listing-check".into(),
+            vec![target],
+            Arc::new(fetcher),
+            None,
+            Some((listing_id.clone(), listing_url)),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = poll("listing-check", &mut ws).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["history"][0]["listing_check"]["job_id"], listing_id);
+                assert_eq!(result["history"][0]["listing_check"]["status"], "found");
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let background_target = DiscoveryTarget::new("greenhouse", "background");
         let background_plan = waypoint_connectors::discovery_plan(
             &waypoint_workspace::default_registry(),
@@ -313,6 +408,7 @@ mod tests {
             "background".into(),
             vec![background_target],
             Arc::new(background_fetcher),
+            None,
             None,
         )
         .unwrap();
@@ -341,6 +437,7 @@ mod tests {
             vec![jobicy.clone()],
             Arc::new(fetcher.clone()),
             Some(&mut ws),
+            None,
         )
         .unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -370,7 +467,8 @@ mod tests {
             "again".into(),
             vec![jobicy],
             Arc::new(fetcher),
-            Some(&mut ws)
+            Some(&mut ws),
+            None
         )
         .is_err());
         let (sender, rx) = mpsc::sync_channel(1);
@@ -382,6 +480,7 @@ mod tests {
             total: 2,
             processed: 1,
             history: vec![json!({"source":"greenhouse","board":"fixture","summary":"1 saved"})],
+            listing: None,
         });
         let failed = poll("interrupted", &mut ws).unwrap();
         assert_eq!(failed["status"], "failed");

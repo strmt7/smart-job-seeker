@@ -32,4 +32,8 @@ for(const job of [
  {source:'ashby',canonical_url:'https://jobs.ashbyhq.com/a%20b/role'},
  {source:'user_supplied_url',canonical_url:'https://example.org/role'}
 ])assert.equal(sourceBoard(job),null);
+const resultText=vm.runInNewContext(`(${find('listingBoardCheckText')})`);
+assert.match(resultText({status:'found'}),/exact saved listing URL.*availability/i);
+assert.match(resultText({status:'not_seen'}),/does not establish closure/i);
+assert.match(resultText({status:'unavailable'}),/could not be checked/i);
 console.log('Listing observation UI checks passed.');
