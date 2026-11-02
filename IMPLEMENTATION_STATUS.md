@@ -140,6 +140,8 @@
 
 ## Attachments and custom choices — 2026-11-02
 
+- A fictional multi-reference choice was also exercised through the web backend's reviewed opening, option selection, record and rescan routes. The existing single-reference fixture still passed after sharing the test setup; the tests use simulated visual-review responses rather than a live model or web approval gesture. Windows web Clippy passed. No employer page was opened or application submitted.
+
 - The browser can now inspect, open, scroll and select a custom choice when `aria-controls` or `aria-owns` contains several references and exactly one resolves to a listbox in the same tree. All references must resolve uniquely; missing, duplicate or multiple listbox references remain manual-review cases. Option lookup and the final click guard recheck the same relationship. This supports a standards-defined reference-list form, but the previously inspected Greenhouse page was not shown to use it and was not interacted with. Fictional browser fixtures covered multi-reference opening, selection, scrolling, `aria-owns`, ambiguity and a changed reference; six existing custom-choice browser tests, an existing scroll test, browser unit tests, browser Clippy and the web reviewed-open fixture passed. No application was submitted.
 - The [WAI-ARIA 1.3 specification](https://www.w3.org/TR/wai-aria-1.3/#aria-controls) describes `aria-controls` as referencing one or more controlled elements. Its isolated Crawl4AI `0.9.5+flitzzip.portable2` capture returned HTTP 200; native receipt `target/w3c-aria-e3f5b6d88f5d42c1853d7b4df68d338e.json`, SHA-256 `09cb7054ccf0c2e0198c4ac72b9b5d257afe74817de9f2fd4bc9208f8fe6d7ca`.
 

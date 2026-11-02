@@ -343,6 +343,32 @@ mod tests {
     fn reviewed_open_is_recorded_one_use_and_recoverable() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../crates/waypoint_browser/tests/fixtures/form_custom_choice_open.html");
+        exercise_reviewed_choice(&fixture);
+    }
+
+    #[test]
+    #[ignore = "starts one browser and reviews a fictional multi-reference choice"]
+    fn reviewed_multi_reference_choice_is_recorded_and_recoverable() {
+        let original = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/waypoint_browser/tests/fixtures/form_custom_choice_open.html");
+        let html = std::fs::read_to_string(original).unwrap();
+        assert_eq!(html.matches("aria-controls=\"locations\"").count(), 1);
+        let html = html
+            .replace(
+                "aria-controls=\"locations\"",
+                "aria-controls=\"location-help locations\"",
+            )
+            .replace(
+                "<form onsubmit=",
+                "<div id=\"location-help\">Choose a location.</div><form onsubmit=",
+            );
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir.path().join("choice.html");
+        std::fs::write(&fixture, html).unwrap();
+        exercise_reviewed_choice(&fixture);
+    }
+
+    fn exercise_reviewed_choice(fixture: &std::path::Path) {
         let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(url.as_str()).unwrap();
