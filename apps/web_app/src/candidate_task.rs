@@ -957,9 +957,14 @@ fn possible_listing_closure(
         .ok_or("Invalid closure evidence")?
         .trim();
     if !closed {
-        // Some models quote evidence of an open role despite the requested
-        // empty field. No closure claim or excerpt is retained in this case.
-        return Ok(None);
+        // A quote alongside a negative answer violates the response contract;
+        // it can even contain the closure text. Do not silently treat that as
+        // a completed negative check.
+        return if evidence.is_empty() {
+            Ok(None)
+        } else {
+            Err("Inconsistent closure check".into())
+        };
     }
     if !(3..=250).contains(&evidence.len())
         || !source.contains(evidence)
@@ -4915,15 +4920,12 @@ mod tests {
             .unwrap(),
             None
         );
-        assert_eq!(
-            possible_listing_closure(
-                &mut Response(json!({"closed":false,"evidence":"unused text"})),
-                source,
-                "Fictional Engineer"
-            )
-            .unwrap(),
-            None
-        );
+        assert!(possible_listing_closure(
+            &mut Response(json!({"closed":false,"evidence":"This vacancy has expired."})),
+            source,
+            "Fictional Engineer"
+        )
+        .is_err());
         for result in [
             json!({"closed":true,"evidence":"invented closure"}),
             json!({"closed":true,"evidence":""}),
@@ -4990,6 +4992,45 @@ mod tests {
             extraction_provenance(&capture.metadata, &job).unwrap()["possible_closure_evidence"],
             "This vacancy has expired."
         );
+        struct Inconsistent;
+        impl Inference for Inconsistent {
+            fn probe(
+                &mut self,
+            ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError>
+            {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                budget: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
+            {
+                if task == "job_page_closure_advice" {
+                    Ok((
+                        json!({"closed":false,"evidence":"This vacancy has expired."}),
+                        waypoint_inference::UsageReport {
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            wall_time_ms: 0,
+                        },
+                    ))
+                } else {
+                    Model.generate_structured(task, prompt, budget)
+                }
+            }
+        }
+        let inconsistent =
+            extract_page_text(&mut Inconsistent, source, "https://example.org/job").unwrap();
+        assert!(inconsistent["extraction_warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains("could not complete the closure check"))));
+        assert!(inconsistent["possible_closure_evidence"].is_null());
     }
 
     #[cfg(windows)]
