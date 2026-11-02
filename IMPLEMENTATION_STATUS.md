@@ -2328,6 +2328,14 @@ applicant data was entered or submitted. This covers the workers, not the full
 rendered web interface or automatic dialog handling, and does not establish that
 the form can be filled or completed.
 
+With a fictional profile and resource-gated qwen3.5:9b, the same worker rescan
+was repeated twice on this form after the operator declined optional cookies.
+Both runs observed seven fields and returned four suggestions matching the
+fictional first name, last name, email and phone; nine review reasons remained.
+The second run asserted those mappings. This checks one form and profile, not
+general mapping accuracy, actual filling, visual verification or submission.
+No applicant data was entered and the model was unloaded afterward.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and

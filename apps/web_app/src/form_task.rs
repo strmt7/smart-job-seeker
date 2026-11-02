@@ -2974,12 +2974,17 @@ mod tests {
         assert_eq!(parsed.host_str(), Some("apply.workable.com"));
         crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
         waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
+        let profile = if std::env::var_os("WAYPOINT_DIAGNOSTIC_FICTIONAL_PROFILE").is_some() {
+            serde_json::json!({"first_name":"Avery","last_name":"Example","email":"avery@example.invalid","phone":"+12025550123"})
+        } else {
+            serde_json::json!({})
+        };
         let job = JobIdentityId::new("fictional-live-review").unwrap();
         start_bound(
             "live-visible-inspection".into(),
             job.clone(),
             url.clone(),
-            serde_json::json!({}),
+            profile.clone(),
             Ok(None),
             true,
             (0, vec![], None),
@@ -3045,7 +3050,7 @@ mod tests {
             None,
             false,
             None,
-            serde_json::json!({}),
+            profile,
             (0, vec![]),
         )
         .unwrap_or_else(|(_, error)| panic!("rescan start: {error}"));
@@ -3058,11 +3063,61 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
         println!(
-            "App worker: initial {} fields; rescanned {} fields; {} review reasons",
+            "App worker: initial {} fields; rescanned {} fields; {} suggestions; {} review reasons",
             initial_count,
             session.preview.schema.fields.len(),
+            session.preview.suggestions.len(),
             session.preview.manual_review.len()
         );
+        if std::env::var_os("WAYPOINT_DIAGNOSTIC_FICTIONAL_PROFILE").is_some() {
+            use waypoint_applications::form_mapping::PacketValue;
+            let expected = [
+                ("First name", "Avery"),
+                ("Last name", "Example"),
+                ("Email", "avery@example.invalid"),
+                ("Phone", "+12025550123"),
+            ];
+            assert_eq!(session.preview.suggestions.len(), expected.len());
+            for mapping in &session.preview.suggestions {
+                let label = session
+                    .preview
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.selector == mapping.field_selector)
+                    .map(|field| field.label.as_str())
+                    .unwrap_or("unknown field");
+                println!("Fictional suggestion: {label}: {:?}", mapping.value);
+                let value = expected
+                    .iter()
+                    .find(|(name, _)| *name == label)
+                    .expect("unexpected field suggestion")
+                    .1;
+                assert_eq!(
+                    mapping.value,
+                    PacketValue::Text(value.to_owned()),
+                    "incorrect fictional mapping for {label}"
+                );
+            }
+            for (label, _) in expected {
+                assert_eq!(
+                    session
+                        .preview
+                        .suggestions
+                        .iter()
+                        .filter(|mapping| session
+                            .preview
+                            .schema
+                            .fields
+                            .iter()
+                            .any(|field| field.selector == mapping.field_selector
+                                && field.label == label))
+                        .count(),
+                    1,
+                    "missing or duplicate fictional mapping for {label}"
+                );
+            }
+        }
         assert!(session.preview.schema.fields.len() > initial_count);
         assert!(!session
             .preview
@@ -3074,5 +3129,14 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local-model rescan of a public form with fictional profile"]
+    fn resource_gated_live_visible_inspection_and_rescan_after_review() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_visible_inspection_and_rescan_after_review,
+        );
     }
 }
