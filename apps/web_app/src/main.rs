@@ -7392,6 +7392,10 @@ fn serve(
                     return Err(format!("No fields were filled because the attempt record could not be written: {error}. The review session remains open.{note}"));
                 }
             }
+            let network_before = current
+                .driver
+                .with_review_timeout(|driver| driver.observed_non_read_requests())
+                .ok();
             current.filled = true;
             current.fill_attempted = true;
             let mut completed = Vec::new();
@@ -7418,6 +7422,26 @@ fn serve(
                 .iter()
                 .filter_map(|item| item["selector"].as_str().map(str::to_owned))
                 .collect();
+            let network_after = current
+                .driver
+                .with_review_timeout(|driver| driver.observed_non_read_requests())
+                .ok();
+            let observed_request = network_before
+                .zip(network_after)
+                .is_some_and(|(before, after)| after > before);
+            let mut network_record_error = None;
+            if observed_request {
+                let reason = "The browser observed a non-GET/HEAD request during filling. It may be unrelated; its purpose and delivery are unknown. Check the employer site before retrying. Other requests or transports may not have been observed.";
+                current.preview.manual_review.push(reason.into());
+                if let Some(record) = &mut current.record {
+                    if let Err(error) = record.event(json!({"type":"non_read_request_observed_during_fill","time":now(),"note":"A request was observed, but its purpose and delivery are unknown. URLs, headers and bodies are not retained. Other requests or transports may not have been observed."})) {
+                        network_record_error = Some(error);
+                    }
+                }
+                if let Err(error) = ws.mark_manual_review(&current.job_id, reason, now()) {
+                    network_record_error = Some(error.to_string());
+                }
+            }
             let mut attachment_changed = false;
             for (selector, paths) in current_attachment_groups(&current.attachments, &current.id) {
                 if !staged_attachments_unchanged(&current.attachments, &current.id, &selector)
@@ -7472,14 +7496,32 @@ fn serve(
                     } else {
                         ""
                     };
+                    let network_note = if observed_request {
+                        " A non-GET/HEAD request was observed during filling; its purpose and delivery are unknown. Check the employer site before retrying."
+                    } else {
+                        ""
+                    };
+                    let network_record_note = network_record_error
+                        .as_ref()
+                        .map(|error| {
+                            format!(
+                                " The network observation could not be fully recorded: {error}."
+                            )
+                        })
+                        .unwrap_or_default();
                     let outcome_note = outcome_error
                         .map(|e| format!(" The attempt record could not be fully updated: {e}."))
                         .unwrap_or_default();
                     return Err(format!(
-                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{flag_note}{outcome_note}", completed.len()
+                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{network_note}{network_record_note}{flag_note}{outcome_note}", completed.len()
                     ));
                 }
             };
+            if let Some(error) = network_record_error {
+                current.created = Instant::now();
+                *session = Some(current);
+                return Err(format!("Fields may have been filled and a non-GET/HEAD request was observed, but its review status or record could not be saved: {error}. Check the employer site before retrying."));
+            }
             if verify_selected_choices(&mut current).is_err() {
                 let reason =
                     "A previously selected choice changed after filling; inspect the form manually";
@@ -7576,7 +7618,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"filled":filled,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
+                json!({"filled":filled,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"non_read_request_observed":observed_request,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
             );
             *session = Some(current);
         }
@@ -13266,6 +13308,150 @@ mod tests {
             .trace
             .iter()
             .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts one browser and a loopback server for a fictional input-triggered request"]
+    fn reviewed_fill_reports_observed_non_read_request() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
+        use waypoint_applications::{
+            driver::BrowserDriver,
+            form_mapping::{PacketValue, ProposedMapping},
+        };
+        use waypoint_store::StoredJob;
+        let fixture = TcpListener::bind("127.0.0.1:0").unwrap();
+        fixture.set_nonblocking(true).unwrap();
+        let fixture_port = fixture.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            while !worker_stop.load(Ordering::Relaxed) {
+                match fixture.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                        let mut bytes = [0u8; 8192];
+                        let count = stream.read(&mut bytes).unwrap_or(0);
+                        if bytes[..count].starts_with(b"POST ") {
+                            let _ = tx.send(());
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        } else {
+                            let page = "<!doctype html><label for='given'>First name</label><input id='given' autocomplete='given-name' oninput=\"fetch('/fixture',{method:'POST',body:'fictional'})\">";
+                            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", page.len(), page);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let temp = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        let mut ws = Workspace::open(temp.path()).unwrap();
+        let id = JobIdentityId::new("fictional-network-observation").unwrap();
+        let url = format!("http://127.0.0.1:{fixture_port}/");
+        ws.import_job(StoredJob {
+            id: id.clone(),
+            title: "Fictional".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        let profile = json!({"first_name":"A"});
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: "#given".into(),
+                value: PacketValue::Text("A".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut session = Some(ReviewSession {
+            id: "fictional-session".into(),
+            job_id: id.clone(),
+            inspection_task_id: "fixture".into(),
+            inspection_pending_revision: 0,
+            url,
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body = json!({"session_id":"fictional-session","reviewed":true,"selectors":["#given"],"answers":[]}).to_string();
+        write!(client, "POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        let result = serve(&mut stream, &mut ws, &mut session, "fixture-token", port);
+        drop(stream);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("fixture request was not received");
+        assert!(result.is_ok(), "{result:?}");
+        assert!(response.contains("non-GET/HEAD request"), "{response}");
+        assert!(
+            response.contains("\"non_read_request_observed\":true"),
+            "{response}"
+        );
+        assert!(ws
+            .manual_reviews()
+            .unwrap()
+            .iter()
+            .any(|review| review.reason.contains("non-GET/HEAD request")));
+        let attempts = attempt_record::list(&ws, &id).unwrap();
+        let folder = attempts["attempts"][0]["folder"].as_str().unwrap();
+        let events =
+            std::fs::read_to_string(std::path::Path::new(folder).join("events.jsonl")).unwrap();
+        assert!(events.contains("non_read_request_observed_during_fill"));
+        assert!(!events.contains("/fixture"));
+        assert!(session
+            .as_ref()
+            .unwrap()
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+        drop(session);
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
     }
 
     #[test]

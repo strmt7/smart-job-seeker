@@ -2187,6 +2187,69 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
 }
 
 #[test]
+#[ignore = "uses a local browser and loopback server to observe a fictional input-triggered request"]
+fn observes_non_read_request_triggered_by_field_input() {
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+    use std::time::{Duration, Instant};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_worker = stop.clone();
+    let (tx, rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        while !stop_worker.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buffer = [0u8; 8192];
+                    let count = stream.read(&mut buffer).unwrap_or(0);
+                    if buffer[..count].starts_with(b"POST ") {
+                        let _ = tx.send(());
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    } else {
+                        let body = "<!doctype html><label for='name'>Name</label><input id='name' oninput=\"fetch('/fictional', {method:'POST',body:'fixture'})\">";
+                        let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let before = driver.observed_non_read_requests().unwrap();
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#name".into(),
+            value: PacketValue::Text("A".into()),
+        })
+        .unwrap();
+    rx.recv_timeout(Duration::from_secs(5))
+        .expect("fictional POST did not reach loopback server");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if driver.observed_non_read_requests().unwrap() > before {
+            break;
+        }
+        assert!(Instant::now() < deadline, "request event was not observed");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    drop(driver);
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+}
+
+#[test]
 #[ignore = "read-only navigation to an explicitly supplied public listing after robots and policy checks"]
 fn public_listing_navigation_probe() {
     let url = std::env::var("WAYPOINT_NAVIGATION_URL").expect("supply a public listing URL");

@@ -535,6 +535,19 @@ pub struct Cdp {
     /// driver legitimately needs them (e.g. `Page.loadEventFired`).
     pub events: Vec<(String, Value)>,
     pub timeout: Duration,
+    observed_non_read_requests: u64,
+}
+
+fn is_non_read_request(value: &Value) -> bool {
+    value.get("method").and_then(Value::as_str) == Some("Network.requestWillBeSent")
+        && value
+            .pointer("/params/request/method")
+            .and_then(Value::as_str)
+            .is_some_and(|method| {
+                !method.is_empty()
+                    && !method.eq_ignore_ascii_case("GET")
+                    && !method.eq_ignore_ascii_case("HEAD")
+            })
 }
 
 fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize) {
@@ -583,6 +596,7 @@ impl Cdp {
             session: String::new(),
             events: vec![],
             timeout: Duration::from_secs(20),
+            observed_non_read_requests: 0,
         };
         let target = cdp.call_browser("Target.createTarget", json!({ "url": "about:blank" }))?;
         let target_id = target
@@ -670,6 +684,9 @@ impl Cdp {
                 }
                 return Ok(value.get("result").cloned().unwrap_or(Value::Null));
             }
+            if is_non_read_request(&value) {
+                self.observed_non_read_requests = self.observed_non_read_requests.saturating_add(1);
+            }
             retain_event(&mut self.events, value, raw.len());
         }
     }
@@ -686,11 +703,19 @@ impl Cdp {
             match self.ws.read() {
                 Ok(Message::Text(t)) => {
                     if let Ok(value) = serde_json::from_str::<Value>(t.as_str()) {
+                        if is_non_read_request(&value) {
+                            self.observed_non_read_requests =
+                                self.observed_non_read_requests.saturating_add(1);
+                        }
                         retain_event(&mut self.events, value, t.len());
                     }
                 }
                 Ok(Message::Binary(b)) => {
                     if let Ok(value) = serde_json::from_str::<Value>(&String::from_utf8_lossy(&b)) {
+                        if is_non_read_request(&value) {
+                            self.observed_non_read_requests =
+                                self.observed_non_read_requests.saturating_add(1);
+                        }
                         retain_event(&mut self.events, value, b.len());
                     }
                 }
@@ -702,6 +727,10 @@ impl Cdp {
 
     pub fn take_events(&mut self) -> Vec<(String, Value)> {
         std::mem::take(&mut self.events)
+    }
+
+    pub fn observed_non_read_requests(&self) -> u64 {
+        self.observed_non_read_requests
     }
 
     pub fn saw_event(&self, name: &str) -> bool {
@@ -717,6 +746,23 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_read_observation_does_not_retain_request_contents() {
+        let request = json!({"method":"Network.requestWillBeSent","params":{"request":{"method":"POST","url":"https://example.invalid/private","headers":{"Authorization":"fictional-secret"},"postData":"fictional-body"}}});
+        assert!(is_non_read_request(&request));
+        let mut events = Vec::new();
+        retain_event(&mut events, request, 100);
+        assert!(events.is_empty());
+        for method in ["GET", "head"] {
+            assert!(!is_non_read_request(
+                &json!({"method":"Network.requestWillBeSent","params":{"request":{"method":method}}})
+            ));
+        }
+        assert!(!is_non_read_request(
+            &json!({"method":"Network.webSocketFrameSent"})
+        ));
+    }
 
     #[test]
     fn deeper_dom_decoder_is_bounded_and_ignores_brackets_in_strings() {
@@ -954,6 +1000,7 @@ mod tests {
             session: String::new(),
             events: vec![],
             timeout: Duration::from_secs(2),
+            observed_non_read_requests: 0,
         };
         cdp.pump(Duration::from_millis(40));
         let response = cdp
@@ -986,6 +1033,7 @@ mod tests {
             session: String::new(),
             events: vec![],
             timeout: Duration::from_secs(2),
+            observed_non_read_requests: 0,
         };
         let error = cdp.call_browser("Test.deep", json!({})).unwrap_err();
         assert!(

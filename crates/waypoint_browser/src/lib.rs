@@ -1520,6 +1520,15 @@ impl CdpDriver {
             .to_string())
     }
 
+    /// A partial observation only: other targets, transports and late events
+    /// may not be represented. No request URL, headers or body are retained.
+    pub fn observed_non_read_requests(&mut self) -> Result<u64, DriverError> {
+        self.cdp
+            .call("Page.getFrameTree", json!({}))
+            .map_err(derr)?;
+        Ok(self.cdp.observed_non_read_requests())
+    }
+
     /// Capture the current viewport for the candidate's review.
     pub fn screenshot_base64(&mut self) -> Result<String, DriverError> {
         let result = self
