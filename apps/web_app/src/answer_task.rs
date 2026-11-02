@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use waypoint_inference::{Inference, InferenceError, OllamaInference};
 
 pub struct Inputs {
+    pub numeric_only: bool,
     pub session_id: String,
     pub selector: String,
     pub digest: String,
@@ -504,7 +505,12 @@ fn generate_for_context(
         format!(" The final answer must fit the page limit of {limit} UTF-16 code units, including spaces and punctuation; some characters use two units. Be concise without adding facts.")
     });
     let minimum_instruction = input.min_length_utf16.map_or_else(String::new, |minimum| format!(" A nonempty answer must be at least {minimum} UTF-16 code units. Never invent facts to reach the minimum; return empty text if the evidence cannot support a suitable answer."));
-    let limit_instruction = format!("{limit_instruction}{minimum_instruction}");
+    let number_instruction = if input.numeric_only {
+        " This is a numeric input. Return only a finite numeric value without words, units or extra punctuation; do not infer a value not supported by the facts."
+    } else {
+        ""
+    };
+    let limit_instruction = format!("{limit_instruction}{minimum_instruction}{number_instruction}");
     let data = json!({"question":input.question,"listing":input.listing,"facts":input.facts,"writing_preferences":input.instructions});
     let voice_instruction = if template {
         " The first candidate fact contains the original template passage. Unless writing preferences explicitly request otherwise, preserve its grammatical person and tense: if it begins with I, keep I; if it omits a subject pronoun, do not introduce I or we. Rewrite only the original passage: other candidate facts are context and must not be introduced as new experiences or qualifications unless the writing preferences explicitly request them."
@@ -546,8 +552,14 @@ fn generate_for_context(
                     );
                 }
                 if let Ok(answer) = validate(&value, &input.facts) {
-                    first = Some(answer);
-                    break;
+                    if !input.numeric_only
+                        || answer["text"]
+                            .as_str()
+                            .is_some_and(waypoint_applications::form_mapping::valid_number)
+                    {
+                        first = Some(answer);
+                        break;
+                    }
                 }
             }
             Err(InferenceError::StructuredOutputFailed(_)) => {}
@@ -589,6 +601,14 @@ fn generate_for_context(
                     return Err("The model could not produce an answer within the field limits; review this question manually".into());
                 }
                 match validate(&value, &input.facts) {
+                    Ok(answer)
+                        if input.numeric_only
+                            && !answer["text"]
+                                .as_str()
+                                .is_some_and(waypoint_applications::form_mapping::valid_number) =>
+                    {
+                        last_error = "the answer is not a valid numeric value".into();
+                    }
                     Ok(mut answer)
                         if answer["text"].as_str().is_some_and(|text| {
                             let length = text.encode_utf16().count();
@@ -673,7 +693,7 @@ mod tests {
                 name,
                 crate::resident_model_identity,
             );
-            let input = Inputs {
+            let input = Inputs { numeric_only: false,
                 session_id: "fictional".into(), selector: "#rust".into(), digest: "fixture".into(),
                 question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have experience with the following stack? — Rust".into(),
                 listing: "Fictional software role".into(), facts: vec!["Built production services using Rust for three years.".into()], available_facts: 1,
@@ -689,7 +709,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|source| source == "Built production services using Rust for three years."));
-            let negative = Inputs {
+            let negative = Inputs { numeric_only: false,
                 session_id: "fictional".into(), selector: "#postgres".into(), digest: "fixture".into(),
                 question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have experience with the following stack? — PostgreSQL".into(),
                 listing: "Fictional software role".into(), facts: vec!["Built production services using Rust for three years.".into()], available_facts: 1,
@@ -701,7 +721,7 @@ mod tests {
                 negative_result.unwrap_err(),
                 "The model returned no answer; review this question manually"
             );
-            let nuanced = Inputs {
+            let nuanced = Inputs { numeric_only: false,
                 session_id: "fictional".into(), selector: "#production".into(), digest: "fixture".into(),
                 question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have production PostgreSQL experience?".into(),
                 listing: "Fictional software role".into(), facts: vec!["Studied PostgreSQL in coursework but have no production PostgreSQL experience.".into()], available_facts: 1,
@@ -756,6 +776,7 @@ mod tests {
         let mut facts = vec!["User-selected passage: original".to_owned()];
         facts.extend((0..21).map(|i| format!("Fact {i} {}", "x".repeat(500))));
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: String::new(),
@@ -823,6 +844,7 @@ mod tests {
             }
         }
         let input = Inputs {
+            numeric_only: false,
             session_id: "s".into(),
             selector: "q".into(),
             digest: "d".into(),
@@ -1190,6 +1212,7 @@ mod tests {
             .collect();
         facts.push("Built web interfaces usable by people who rely on screen readers.".into());
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "fictional".into(),
@@ -1263,6 +1286,7 @@ mod tests {
             responses: Vec::new(),
         };
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "fictional".into(),
@@ -1289,6 +1313,7 @@ mod tests {
 
         recording.responses.clear();
         let supported = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "fictional".into(),
@@ -1369,6 +1394,7 @@ mod tests {
             draft_calls: 0,
         };
         let input = Inputs {
+            numeric_only: false,
             session_id: "fictional".into(),
             selector: "#skills".into(),
             digest: "fixture".into(),
@@ -1402,6 +1428,7 @@ mod tests {
         let mut model = Fake { calls: 0 };
         let facts: Vec<String> = (0..8).map(|i| format!("{i}{}", "x".repeat(999))).collect();
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "s".into(),
@@ -1514,6 +1541,7 @@ mod tests {
             }
         }
         let mut input = Inputs {
+            numeric_only: false,
             session_id: "s".into(),
             selector: "q".into(),
             digest: "d".into(),
@@ -1603,6 +1631,7 @@ mod tests {
             }
         }
         let mut input = Inputs {
+            numeric_only: false,
             session_id: "s".into(),
             selector: "q".into(),
             digest: "d".into(),
@@ -1733,6 +1762,7 @@ mod tests {
         let mut model = Recording(model);
         for limit in [80, 35] {
             let input = Inputs {
+                numeric_only: false,
                 session_id: "fictional".into(),
                 selector: "#experience".into(),
                 digest: "fixture".into(),
@@ -1753,6 +1783,181 @@ mod tests {
             assert_eq!(result["length"]["used_utf16"], text.encode_utf16().count());
             assert!(!result["sources"].as_array().unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn numeric_draft_rejects_prose_after_bounded_retry() {
+        struct Prose(usize);
+        impl Inference for Prose {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.0 += 1;
+                assert!(prompt.contains("numeric input"));
+                Ok((
+                    json!({"text":"five years","facts":[1]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let input = Inputs {
+            numeric_only: true,
+            session_id: "fixture".into(),
+            selector: "#years".into(),
+            digest: "fixture".into(),
+            question: "Years?".into(),
+            listing: "Fictional".into(),
+            facts: vec!["Five years.".into()],
+            available_facts: 1,
+            instructions: String::new(),
+            max_length_utf16: None,
+            min_length_utf16: None,
+        };
+        let mut model = Prose(0);
+        assert!(generate(&mut model, &input).is_err());
+        assert_eq!(model.0, 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model on a fictional numeric question"]
+    fn resource_gated_numeric_question_diagnostic() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().expect("resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
+            let input = Inputs {
+                numeric_only: true,
+                session_id: "fictional".into(),
+                selector: "#years".into(),
+                digest: "fixture".into(),
+                question: "How many years of Python experience do you have?".into(),
+                listing: "Fictional Python engineer position.".into(),
+                facts: vec!["I have five years of Python programming experience.".into()],
+                available_facts: 1,
+                instructions: String::new(),
+                max_length_utf16: None,
+                min_length_utf16: None,
+            };
+            let result = generate_with_selection(&mut model, input).unwrap();
+            let answer = result["text"].as_str().unwrap();
+            println!(
+                "Fictional numeric answer: {answer:?}; numeric parse: {}",
+                answer.parse::<f64>().is_ok()
+            );
+            assert!(waypoint_applications::form_mapping::valid_number(answer));
+            assert_eq!(answer, "5");
+            use waypoint_applications::driver::BrowserDriver;
+            use waypoint_applications::form_mapping::FormFieldType;
+            use waypoint_domain::{
+                ApplicationState, ApprovalGrant, GrantId, GrantOperation, IntentId, JobIdentityId,
+                Sha256Digest,
+            };
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/form-numeric-answer.html")
+                .canonicalize()
+                .unwrap();
+            let url = url::Url::from_file_path(fixture).unwrap().to_string();
+            let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let live = driver.open(&url).unwrap();
+            assert_eq!(live.schema.fields[0].field_type, FormFieldType::Number);
+            let preview =
+                crate::form_preview::suggest_without_model(live, &json!({}), "offline").unwrap();
+            let (preview, _) = crate::prepare_reviewed_fill(
+                &preview,
+                &json!({"selectors":[],"answers":[{"selector":"#years","value":answer}]}),
+            )
+            .unwrap();
+            let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+            let job_id = JobIdentityId::new("numeric-fixture").unwrap();
+            ws.import_job(waypoint_store::StoredJob {
+                id: job_id.clone(),
+                title: "Fictional role".into(),
+                employer: "Fixture".into(),
+                location: String::new(),
+                state: ApplicationState::Shortlisted,
+                canonical_url: Some(url.clone()),
+                content_hash: None,
+                first_seen: None,
+                last_seen: None,
+                remote: false,
+                source: "user_supplied_url".into(),
+                requisition_id: None,
+                posted_at: None,
+            })
+            .unwrap();
+            let intent = IntentId::new("numeric-intent").unwrap();
+            let packet = Sha256Digest::of("fictional profile");
+            let mut grant = ApprovalGrant {
+                id: GrantId::new("numeric-grant").unwrap(),
+                intent_id: intent.clone(),
+                bound_payload_sha256: Sha256Digest::of(
+                    &serde_json::to_string(&preview.suggestions).unwrap(),
+                ),
+                profile_revision: 1,
+                packet_sha256: packet.clone(),
+                form_schema_sha256: Sha256Digest::of(&preview.schema.schema_hash_input()),
+                destination_origin: preview.schema.origin.clone(),
+                operation: GrantOperation::Prefill,
+                nonce: "fictional".into(),
+                explicit_user_gesture: true,
+                consumed: false,
+                expired: false,
+            };
+            let mut completed = Vec::new();
+            assert_eq!(
+                crate::form_preview::apply_reviewed_text_fields(
+                    &mut ws,
+                    &job_id,
+                    &mut driver,
+                    &url,
+                    &preview,
+                    &mut grant,
+                    crate::form_preview::FillContext {
+                        intent: &intent,
+                        packet_digest: &packet,
+                        source_reviewed: true,
+                        timestamp: 1,
+                        completed: &mut completed
+                    }
+                )
+                .unwrap(),
+                1
+            );
+            driver.verify_text_value("#years", "5").unwrap();
+            let visual = crate::visual_review::analyze(
+                "127.0.0.1:11434".parse().unwrap(),
+                "qwen3.5:9b",
+                &driver.screenshot_base64().unwrap(),
+                &[(
+                    "How many years of Python experience do you have?".into(),
+                    "5".into(),
+                )],
+            )
+            .unwrap();
+            println!("Fictional numeric visual review: {visual}");
+            assert_eq!(visual["comparisons"][0]["status"], "matches_transcription");
+            assert!(driver
+                .trace
+                .iter()
+                .all(|event| !event.contains("submitted") && !event.contains("clicked")));
+        });
     }
 
     #[cfg(windows)]
@@ -1868,6 +2073,7 @@ mod tests {
     #[test]
     fn invalid_revision_gets_one_bounded_repair() {
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "s".into(),
@@ -1929,6 +2135,7 @@ mod tests {
             }
         }
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "s".into(),
@@ -1956,6 +2163,7 @@ mod tests {
     #[test]
     fn two_passes_require_valid_sources() {
         let input = Inputs {
+            numeric_only: false,
             max_length_utf16: None,
             min_length_utf16: None,
             session_id: "s".into(),

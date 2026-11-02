@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum FormFieldType {
     Text,
+    Number,
     Email,
     TextArea,
     Select { options: Vec<String> },
@@ -115,6 +116,15 @@ pub fn valid_multi_select(options: &[String], values: &[String]) -> bool {
                 .iter()
                 .any(|previous| previous.trim().eq_ignore_ascii_case(value.trim()))
         })
+}
+
+/// Validate a finite, unpadded HTML-style numeric answer. Browser constraints
+/// such as min, max and step are checked on the live control before entry.
+pub fn valid_number(value: &str) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && !value.starts_with('+')
+        && value.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
 /// Accept the year and month syntax used by native month inputs.
@@ -258,6 +268,7 @@ pub fn validate_mapping(
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                 PacketValue::Text(text),
             ) => text_fits_field(f, text),
+            (FormFieldType::Number, PacketValue::Text(value)) => valid_number(value),
             (FormFieldType::Date, PacketValue::Date(date)) => valid_iso_date(date),
             (FormFieldType::Month, PacketValue::Date(date)) => valid_iso_month(date),
             (FormFieldType::Time, PacketValue::Date(time)) => valid_iso_time(time),
@@ -575,6 +586,16 @@ mod tests {
             .unwrap_err()[0],
             MappingError::TypeMismatch { .. }
         ));
+    }
+
+    #[test]
+    fn numeric_answers_require_finite_unpadded_numbers() {
+        for value in ["0", "5", "-2", "1.5", "1e3"] {
+            assert!(valid_number(value), "{value}");
+        }
+        for value in ["", "five", "5 years", " 5", "+5", "NaN", "inf", "1e999"] {
+            assert!(!valid_number(value), "{value}");
+        }
     }
 
     #[test]

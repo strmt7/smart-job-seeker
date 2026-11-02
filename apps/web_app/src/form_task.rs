@@ -399,6 +399,7 @@ pub(crate) fn relevant_experiences(
         }
         match field.field_type {
             Field::Text
+            | Field::Number
             | Field::Email
             | Field::TextArea
             | Field::Date

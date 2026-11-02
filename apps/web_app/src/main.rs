@@ -1014,6 +1014,11 @@ fn reviewed_form_answers(
                 if !value.trim().is_empty() && value.encode_utf16().count() <= 4000 =>
             {
                 match kind {
+                    FormFieldType::Number
+                        if waypoint_applications::form_mapping::valid_number(value) =>
+                    {
+                        PacketValue::Text(value.clone())
+                    }
                     FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => {
                         PacketValue::Text(value.clone())
                     }
@@ -1147,7 +1152,10 @@ fn answer_field_eligible(
         && field.label.len() <= 1000
         && matches!(
             field.field_type,
-            FormFieldType::Text | FormFieldType::TextArea | FormFieldType::Checkbox
+            FormFieldType::Text
+                | FormFieldType::Number
+                | FormFieldType::TextArea
+                | FormFieldType::Checkbox
         )
 }
 
@@ -1212,6 +1220,7 @@ fn answer_inputs(
     let available_facts = all_facts.len();
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","session":session.id,"schema":session.preview.schema.schema_hash_input(),"selector":selector,"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
+        numeric_only: matches!(field.field_type, FormFieldType::Number),
         max_length_utf16: field.max_length_utf16,
         min_length_utf16: field.min_length_utf16,
         session_id: session.id.clone(),
@@ -1385,6 +1394,7 @@ fn email_answer_inputs(ws: &Workspace, id: &JobIdentityId) -> Result<answer_task
     let available_facts = all_facts.len();
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","job_id":id.as_str(),"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
     Ok(answer_task::Inputs {
+        numeric_only: false,
         max_length_utf16: None,
         min_length_utf16: None,
         session_id: id.as_str().to_owned(),
@@ -6725,6 +6735,7 @@ fn serve(
                     if !matches!(
                         field.field_type,
                         waypoint_applications::form_mapping::FormFieldType::Text
+                            | waypoint_applications::form_mapping::FormFieldType::Number
                             | waypoint_applications::form_mapping::FormFieldType::Email
                             | waypoint_applications::form_mapping::FormFieldType::TextArea
                             | waypoint_applications::form_mapping::FormFieldType::Select { .. }
@@ -7204,6 +7215,7 @@ fn serve(
                 || !matches!(
                     field.field_type,
                     waypoint_applications::form_mapping::FormFieldType::Text
+                        | waypoint_applications::form_mapping::FormFieldType::Number
                         | waypoint_applications::form_mapping::FormFieldType::Email
                         | waypoint_applications::form_mapping::FormFieldType::TextArea
                         | waypoint_applications::form_mapping::FormFieldType::Date
@@ -7341,6 +7353,7 @@ fn serve(
                         || !matches!(
                             field.field_type,
                             waypoint_applications::form_mapping::FormFieldType::Select { .. }
+                                | waypoint_applications::form_mapping::FormFieldType::Number
                                 | waypoint_applications::form_mapping::FormFieldType::Text
                                 | waypoint_applications::form_mapping::FormFieldType::Email
                                 | waypoint_applications::form_mapping::FormFieldType::TextArea
@@ -10859,6 +10872,9 @@ mod tests {
         field.sensitive = true;
         assert!(!answer_field_eligible(&field, false));
         field.sensitive = false;
+        field.field_type = FormFieldType::Number;
+        assert!(answer_field_eligible(&field, false));
+        assert!(!answer_field_eligible(&field, true));
         field.field_type = FormFieldType::File;
         assert!(!answer_field_eligible(&field, false));
     }

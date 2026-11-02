@@ -275,6 +275,9 @@ fn required_value_valid(
                     .count()
                     == 1
         }
+        (FormFieldType::Number, PacketValue::Text(value)) => {
+            waypoint_applications::form_mapping::valid_number(value)
+        }
         (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
             valid_multi_select(options, values)
         }
@@ -406,7 +409,10 @@ fn check_existing_value(
                 selection_snapshot_digest(scope, &field.selector, &snapshot)
             }
             (
-                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+                FormFieldType::Text
+                | FormFieldType::Number
+                | FormFieldType::Email
+                | FormFieldType::TextArea,
                 PacketValue::Text(_),
             )
             | (
@@ -447,7 +453,10 @@ fn check_existing_value(
     }
     match (&field.field_type, value) {
         (
-            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+            FormFieldType::Text
+            | FormFieldType::Number
+            | FormFieldType::Email
+            | FormFieldType::TextArea,
             PacketValue::Text(text),
         )
         | (
@@ -588,6 +597,9 @@ pub fn apply_reviewed_text_fields_with_replacements(
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
         let valid = match (&field.field_type, &mapping.value) {
+            (FormFieldType::Number, PacketValue::Text(value)) => {
+                waypoint_applications::form_mapping::valid_number(value)
+            }
             (
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
                 PacketValue::Text(text),
@@ -864,7 +876,10 @@ pub fn verify_filled_field(
         .ok_or("Reviewed answer is unavailable")?;
     let checked = match (&field.field_type, &mapping.value) {
         (
-            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+            FormFieldType::Text
+            | FormFieldType::Number
+            | FormFieldType::Email
+            | FormFieldType::TextArea,
             PacketValue::Text(value),
         )
         | (
@@ -1035,7 +1050,10 @@ fn build_preview(
         if let PacketValue::Text(text) = &mapping.value {
             if matches!(
                 field.field_type,
-                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
+                FormFieldType::Text
+                    | FormFieldType::Number
+                    | FormFieldType::Email
+                    | FormFieldType::TextArea
             ) && !waypoint_applications::form_mapping::text_fits_field(field, text)
             {
                 let too_short = !text.is_empty()

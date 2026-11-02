@@ -663,7 +663,10 @@ fn crosscheck_live_values_with_budget(
             });
             match mapping.map(|mapping| (&field.field_type, &mapping.value)) {
                 Some((
-                    FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+                    FormFieldType::Text
+                    | FormFieldType::Number
+                    | FormFieldType::Email
+                    | FormFieldType::TextArea,
                     PacketValue::Text(value),
                 )) => Some(driver.verify_text_value(&field.selector, value)),
                 Some((

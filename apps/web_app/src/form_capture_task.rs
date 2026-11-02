@@ -305,6 +305,7 @@ mod tests {
                 crate::answer_task::set_completed_fixture(
                     "pending-answer",
                     crate::answer_task::Inputs {
+                        numeric_only: false,
                         session_id: "recapture-session".into(),
                         selector: "#fixture".into(),
                         digest: "fixture".into(),

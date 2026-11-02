@@ -4655,6 +4655,7 @@ impl CdpDriver {
                 (_, "select") => FormFieldType::Select {
                     options: control.options.clone(),
                 },
+                (_, "number") => FormFieldType::Number,
                 (_, "email") => FormFieldType::Email,
                 (_, "date") => FormFieldType::Date,
                 (_, "month") => FormFieldType::Month,

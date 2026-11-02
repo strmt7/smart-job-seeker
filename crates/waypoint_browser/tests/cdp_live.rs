@@ -4944,9 +4944,13 @@ fn required_input_combobox_requires_manual_review() {
 #[ignore = "launches one local browser with fictional numeric fields"]
 fn numeric_constraints_are_checked_before_changing_the_field() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
-    driver
+    let live = driver
         .open(&file_url("form_number_constraints.html"))
         .unwrap();
+    assert!(live.schema.fields.iter().all(|field| matches!(
+        field.field_type,
+        waypoint_applications::form_mapping::FormFieldType::Number
+    )));
     let fill = |selector: &str, value: &str| BrowserCommand::Fill {
         selector: selector.into(),
         value: PacketValue::Text(value.into()),
