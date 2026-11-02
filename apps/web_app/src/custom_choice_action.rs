@@ -338,6 +338,19 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local vision model and fictional multi-reference choice"]
+    fn resource_gated_multi_reference_choice_workflow() {
+        assert_eq!(
+            std::env::var("WAYPOINT_CHOICE_LIVE_VISION").as_deref(),
+            Ok("1")
+        );
+        crate::experience_inference::tests::with_resource_gated_model(
+            reviewed_multi_reference_choice_is_recorded_and_recoverable,
+        );
+    }
+
     #[test]
     #[ignore = "starts one browser and opens only a fictional choice"]
     fn reviewed_open_is_recorded_one_use_and_recoverable() {
@@ -638,7 +651,7 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
-        assert_eq!(advice["advice"]["option"], "Berlin");
+        assert_eq!(advice["advice"]["option"], "Berlin", "{advice}");
         crate::choice_advice::set_fixture("choice-advice-stale", "choice-session", "stale");
         let stale = request(
             &mut ws,

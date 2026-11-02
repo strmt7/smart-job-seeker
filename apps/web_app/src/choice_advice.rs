@@ -108,7 +108,7 @@ fn suggest(
         if !response["evidence_index"].is_null() {
             return Err("Invalid abstention evidence".into());
         }
-        return Ok(json!({"option":null,"evidence":""}));
+        return Ok(json!({"option":null,"evidence":"","abstention_reason":"model_abstained"}));
     }
     let index = response["index"]
         .as_u64()
@@ -145,7 +145,9 @@ fn suggest(
         .as_bool()
         .ok_or("Invalid choice consistency review")?;
     if contradictory || uncertain || !supported {
-        return Ok(json!({"option":null,"evidence":""}));
+        return Ok(
+            json!({"option":null,"evidence":"","abstention_reason":"verification_inconclusive"}),
+        );
     }
     Ok(json!({"option":options[index],"evidence":evidence}))
 }
@@ -461,6 +463,7 @@ mod tests {
             )
             .unwrap();
             assert!(result["option"].is_null());
+            assert_eq!(result["abstention_reason"], "verification_inconclusive");
         }
         assert!(suggest(
             &mut TwoResponses(json!({"supported":true})),
@@ -543,14 +546,15 @@ mod tests {
             &choices
         )
         .is_err());
-        assert!(suggest(
+        let abstained = suggest(
             &mut Fake(json!({"index":null,"evidence_index":null})),
             "City",
             "Not sure",
-            &choices
+            &choices,
         )
-        .unwrap()["option"]
-            .is_null());
+        .unwrap();
+        assert!(abstained["option"].is_null());
+        assert_eq!(abstained["abstention_reason"], "model_abstained");
     }
 
     #[test]
