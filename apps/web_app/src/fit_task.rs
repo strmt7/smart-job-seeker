@@ -8858,6 +8858,57 @@ mod tests {
         });
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "forces a retry then uses a resource-gated local model on fictional listings"]
+    fn resource_gated_preference_retry_preserves_duty_reasoning() {
+        use waypoint_inference::{CapabilityReport, UsageReport};
+        struct ForceRetry<I> {
+            inner: I,
+            first: bool,
+        }
+        impl<I: Inference> Inference for ForceRetry<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                budget: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                if self.first && task == "fit_preference_comparison" {
+                    self.first = false;
+                    return Ok((
+                        json!({"items":[]}),
+                        UsageReport {
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            wall_time_ms: 0,
+                        },
+                    ));
+                }
+                self.inner.generate_structured(task, prompt, budget)
+            }
+        }
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().unwrap();
+            for (listing, expected) in [("This role audits websites for security vulnerabilities and requires security knowledge.", "unknown"), ("This role designs security products for enterprise customers.", "supported")] {
+                let preference = "I want to design security products";
+                let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"preferred","status":"unknown","fact_index":null,"explanation":"Review"}]});
+                let baseline = validate(raw.clone(), &[], preference, listing).unwrap();
+                let inner = OllamaInference::new("http://127.0.0.1:11434", &name).unwrap().with_resident_context();
+                let inner = crate::resident_inference::ResidentInference::new(inner, name.clone(), crate::resident_model_identity);
+                let mut model = ForceRetry { inner, first: true };
+                let result = compare_preferences(&mut model, raw, baseline, &[], preference, listing);
+                println!("fictional retry expected={expected}; status={}; comparison={}", result["rubric"][0]["status"], result["preference_comparison"]);
+                assert_eq!(result["preference_comparison"]["retried"], true);
+                assert_eq!(result["preference_comparison"]["status"], "completed");
+                assert_eq!(result["rubric"][0]["status"], expected);
+            }
+        });
+    }
+
     #[test]
     fn explicit_numeric_minimum_needs_a_number_in_positive_evidence() {
         assert!(numeric_minimum_without_cited_number(
