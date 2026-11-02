@@ -142,7 +142,7 @@ fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
         .unwrap_or(&normalized);
     match key {
         "full_name" => matches!(plain, "name" | "fullname"),
-        "preferred_name" => is_preferred_name_label(label),
+        "preferred_name" => is_applicant_preferred_name_label(label),
         "first_name" => matches!(plain, "firstname" | "givenname"),
         "last_name" => matches!(plain, "lastname" | "familyname" | "surname"),
         "email" => matches!(plain, "email" | "emailaddress"),
@@ -167,6 +167,22 @@ fn is_preferred_name_label(label: &str) -> bool {
         .any(|phrase| normalized.contains(phrase))
 }
 
+fn is_applicant_preferred_name_label(label: &str) -> bool {
+    let normalized = normalize_field_name(label);
+    let plain = ["applicants", "applicant", "candidates", "candidate", "your"]
+        .iter()
+        .find_map(|prefix| normalized.strip_prefix(prefix))
+        .unwrap_or(&normalized);
+    let plain = ["ifapplicable", "optional"]
+        .iter()
+        .find_map(|suffix| plain.strip_suffix(suffix))
+        .unwrap_or(plain);
+    matches!(
+        plain,
+        "preferredname" | "chosenname" | "nickname" | "nameyougoby"
+    )
+}
+
 /// Conservative offline fallback using exact labels or standard autocomplete hints.
 pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<ProposedMapping>, String> {
     if schema.fields.len() > MAX_FIELDS {
@@ -184,7 +200,7 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
                 AUTOFILL_PROFILE_FIELDS.contains(&key.as_str())
                     && (normalize_field_name(key) == normalize_field_name(&field.label)
                         || (key.as_str() == "preferred_name"
-                            && is_preferred_name_label(&field.label)))
+                            && is_applicant_preferred_name_label(&field.label)))
                     && value.as_str().is_some_and(|text| {
                         !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE
                     })
@@ -814,7 +830,9 @@ fn validate_suggestions(
             if field.sensitive || !AUTOFILL_PROFILE_FIELDS.contains(&key) {
                 return None;
             }
-            if is_preferred_name_label(&field.label) != (key == "preferred_name") {
+            if (is_preferred_name_label(&field.label) && key != "preferred_name")
+                || (key == "preferred_name" && !is_applicant_preferred_name_label(&field.label))
+            {
                 return None;
             }
             let direct = AUTOFILL_PROFILE_FIELDS.iter().copied().find(|candidate| {
@@ -1807,6 +1825,22 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        for label in [
+            "Reference preferred name",
+            "Manager nickname",
+            "Applicant reference chosen name",
+        ] {
+            schema.fields[0].label = label.into();
+            assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+            let (mapped, invalid, _) = validate_suggestions(
+                &schema,
+                profile.as_object().unwrap(),
+                &response("preferred_name"),
+            )
+            .unwrap();
+            assert!(mapped.is_empty());
+            assert!(invalid.contains("#candidate"));
+        }
         schema.fields[0].label = "Full legal name".into();
         let (mapped, invalid, _) = validate_suggestions(
             &schema,
