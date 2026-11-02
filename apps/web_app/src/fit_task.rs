@@ -7089,6 +7089,44 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "resource-gated local model on fictional unrelated experience"]
+    fn resource_gated_fit_does_not_transfer_unrelated_experience() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().expect("resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
+            let listing = "Fictional laboratory technician. Required: at least three years of clinical laboratory experience.";
+            let facts = vec![
+                "Five years working in retail sales.".into(),
+                "Six months of clinical laboratory experience.".into(),
+            ];
+            let result = assess(&mut model, &facts, "", listing).unwrap();
+            println!("Fictional unrelated-experience assessment: {result}");
+            let criteria = result["rubric"].as_array().unwrap();
+            let duration: Vec<_> = criteria
+                .iter()
+                .filter(|item| {
+                    item["excerpt"]
+                        .as_str()
+                        .is_some_and(|text| text.to_lowercase().contains("three years"))
+                })
+                .collect();
+            assert!(
+                !duration.is_empty(),
+                "the duration requirement must be represented: {result}"
+            );
+            assert!(duration.iter().all(|item| item["status"] != "supported"), "unrelated retail experience and six months of clinical work do not establish three clinical years: {result}");
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "resource-gated local model evaluation on fictional grouped criteria"]
     fn resource_gated_grouped_fictional_evaluation() {
         crate::experience_inference::tests::with_resource_gated_model(|| {
