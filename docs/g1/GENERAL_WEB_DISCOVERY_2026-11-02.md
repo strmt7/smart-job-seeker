@@ -12,3 +12,9 @@ A bounded local fallback now divides captured listing text into verbatim segment
 
 On the previously saved public Greenhouse capture, the resource-gated `qwen3.5:9b` test recovered a 497-byte source-matched excerpt containing role responsibilities after the original extraction returned no verifiable description. The test used the already captured page and did not make another employer request. The result is one example, not a general accuracy measurement. It did not change the saved job or submit an application; the model was unloaded.
 The fallback inspects at most 32 segments and reports when that limit leaves source text unexamined. Segment boundaries prefer sentence ends, then whitespace; very long unbroken text may still be split. A selected excerpt is not a full job description.
+
+## Longer source-bound excerpts — 2026-11-02
+
+The fallback can now select a single contiguous range of up to 12 indexed segments and 6,000 bytes, preserving the exact source text between the chosen boundaries. Invalid, reversed, incomplete and oversized selections are rejected. The original one-index response remains accepted as a single segment. Results are still partial model-selected excerpts and require review against the original listing.
+
+On the same saved public listing, an initial four-segment limit rejected the model's nine-segment selection. With the revised bounds, one resource-gated 9B run recovered a 4,003-byte exact source excerpt. This was an offline test against the earlier capture, not a new application or a measurement of general extraction accuracy. The model was unloaded afterward.
