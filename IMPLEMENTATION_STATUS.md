@@ -2903,3 +2903,16 @@ an option from an instruction-only answer. These are single development-set
 runs, not general model rankings; no peak-memory measurement was taken. Gemma
 was unloaded afterward. Before the reserve change its startup had been refused
 with 9,881 MiB GPU free versus 10,104 MiB required.
+
+### Combined choice-evidence experiment (2026-11-02)
+
+The fictional adversarial choice test can optionally run the experimental
+statement classifier first using `WAYPOINT_CHOICE_EXPERIMENTAL_GATE`. On the
+nine development cases, qwen3.5:9b and gemma4:12b-it-qat each matched 8/9,
+with no wrong option and one unexpected abstention. The previous ungated runs
+were 8/9 with one wrong option for Qwen and 7/9 with one wrong option and one
+unexpected abstention for Gemma. This is a small, non-held-out comparison;
+the experimental gate is test-only, adds inference work, and is not enabled
+in the application. Both models were unloaded after their runs. Separately,
+Gemma matched 6/7 statement-classification labels, treating an undecided
+answer as a definite statement.
