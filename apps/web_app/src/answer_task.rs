@@ -653,6 +653,36 @@ fn generate_for_context(
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the application resource gate"]
+    fn local_model_checkbox_evidence_uses_reviewed_fact() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().unwrap();
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut llm =
+                crate::resident_inference::ResidentInference::new(llm, name, crate::resident_model);
+            let input = Inputs {
+                session_id: "fictional".into(), selector: "#rust".into(), digest: "fixture".into(),
+                question: "Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: Do you have experience with the following stack? — Rust".into(),
+                listing: "Fictional software role".into(), facts: vec!["Built production services using Rust for three years.".into()], available_facts: 1,
+                instructions: String::new(), max_length_utf16: None, min_length_utf16: None,
+            };
+            let result = generate_with_selection(&mut llm, input).unwrap();
+            println!("Fictional checkbox evidence: {result}");
+            assert!(result["text"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty()));
+            assert!(result["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|source| source == "Built production services using Rust for three years."));
+        });
+    }
+
     #[test]
     fn template_selection_retains_passage_and_bounds_long_inputs() {
         struct Model;

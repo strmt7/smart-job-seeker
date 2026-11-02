@@ -1123,6 +1123,20 @@ fn prepare_reviewed_fill(
     Ok((prepared, omitted))
 }
 
+fn answer_field_eligible(
+    field: &waypoint_applications::form_mapping::FormField,
+    model_review: bool,
+) -> bool {
+    use waypoint_applications::form_mapping::FormFieldType;
+    !field.sensitive
+        && !model_review
+        && field.label.len() <= 1000
+        && matches!(
+            field.field_type,
+            FormFieldType::Text | FormFieldType::TextArea | FormFieldType::Checkbox
+        )
+}
+
 fn answer_inputs(
     ws: &Workspace,
     session: &ReviewSession,
@@ -1139,14 +1153,10 @@ fn answer_inputs(
         .iter()
         .find(|f| f.selector == selector)
         .ok_or("Field is no longer available")?;
-    if field.sensitive
-        || session.preview.model_review_selectors.contains(selector)
-        || !matches!(
-            field.field_type,
-            FormFieldType::Text | FormFieldType::TextArea
-        )
-        || field.label.len() > 1000
-    {
+    if !answer_field_eligible(
+        field,
+        session.preview.model_review_selectors.contains(selector),
+    ) {
         return Err("This question requires manual handling".into());
     }
     let job = ws
@@ -1179,7 +1189,11 @@ fn answer_inputs(
         .chars()
         .take(2000)
         .collect();
-    let question = field.label.clone();
+    let question = if matches!(field.field_type, FormFieldType::Checkbox) {
+        format!("Explain whether the candidate's reviewed qualifications support selecting this checkbox. Do not infer experience or recommend an answer without support. Checkbox question and option: {}", field.label)
+    } else {
+        field.label.clone()
+    };
     let facts = fit_semantic_pool(&all_facts, &format!("{question}\n{listing}"));
     let available_facts = all_facts.len();
     let digest = Sha256Digest::of(&json!({"version":"answer-semantic-v1","session":session.id,"schema":session.preview.schema.schema_hash_input(),"selector":selector,"question":question,"listing":listing,"all_facts":all_facts,"facts":facts,"instructions":instructions}).to_string()).as_str().to_owned();
@@ -10410,6 +10424,30 @@ mod tests {
             assert!(facts.len() <= if kind == "cv" { 18 } else { 20 });
         }
     }
+    #[test]
+    fn checkbox_evidence_respects_sensitive_and_model_review_gates() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType};
+        let mut field = FormField {
+            selector: "#rust".into(),
+            label: "Experience — Rust".into(),
+            field_type: FormFieldType::Checkbox,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        assert!(answer_field_eligible(&field, false));
+        assert!(!answer_field_eligible(&field, true));
+        field.sensitive = true;
+        assert!(!answer_field_eligible(&field, false));
+        field.sensitive = false;
+        field.field_type = FormFieldType::File;
+        assert!(!answer_field_eligible(&field, false));
+    }
+
     #[test]
     fn listing_observation_preserves_unknown_and_age_boundaries() {
         let mut ws = Workspace::in_memory().unwrap();
