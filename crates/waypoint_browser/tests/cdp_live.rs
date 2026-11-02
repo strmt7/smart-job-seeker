@@ -2470,6 +2470,80 @@ fn observes_non_read_request_triggered_by_field_input() {
 }
 
 #[test]
+#[ignore = "uses a local browser and loopback WebSocket on a fictional form"]
+fn observes_websocket_frame_triggered_by_field_input() {
+    use std::io::{Read, Write};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let socket_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    socket_listener.set_nonblocking(true).unwrap();
+    let socket_port = socket_listener.local_addr().unwrap().port();
+    let (tx, rx) = mpsc::channel();
+    let socket_server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let stream = loop {
+            match socket_listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(error) => panic!("fixture WebSocket accept failed: {error}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut socket = tungstenite::accept(stream).unwrap();
+        tx.send(socket.read().unwrap().to_text().unwrap() == "fictional")
+            .unwrap();
+    });
+    let page_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let page_port = page_listener.local_addr().unwrap().port();
+    let page_server = std::thread::spawn(move || {
+        let (mut stream, _) = page_listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = [0; 2048];
+        let _ = stream.read(&mut request);
+        let body = format!("<!doctype html><label for='name'>Name</label><input id='name' oninput=\"socket.send('fictional')\"><script>const socket=new WebSocket('ws://127.0.0.1:{socket_port}');</script>");
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+    });
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&format!("http://127.0.0.1:{page_port}/"))
+        .unwrap();
+    let before = driver.observed_non_read_requests().unwrap();
+    if let Err(error) = driver.execute(&BrowserCommand::Fill {
+        selector: "#name".into(),
+        value: PacketValue::Text("A".into()),
+    }) {
+        assert!(
+            error.to_string().contains("outgoing WebSocket frame"),
+            "{error}"
+        );
+    }
+    assert!(rx.recv_timeout(Duration::from_secs(8)).unwrap());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while driver.observed_non_read_requests().unwrap() == before {
+        assert!(Instant::now() < deadline, "outgoing frame was not observed");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+    drop(driver);
+    page_server.join().unwrap();
+    socket_server.join().unwrap();
+}
+
+#[test]
 #[ignore = "read-only navigation to an explicitly supplied public listing after robots and policy checks"]
 fn public_listing_navigation_probe() {
     let url = std::env::var("WAYPOINT_NAVIGATION_URL").expect("supply a public listing URL");
