@@ -114,7 +114,7 @@ fn existing_model(ps: &Value, requested: &str) -> Result<Option<Value>, String> 
     if state["model"].as_str() == Some(requested) && state["context_length"].as_u64() == Some(4096)
     {
         return Ok(Some(
-            json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":4096,"already_running":true}),
+            json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"reported_cpu_bytes":state["reported_cpu_bytes"],"context_length":4096,"already_running":true}),
         ));
     }
     Err("A model is already loaded with a different identity, context, or resource state; it was left unchanged".into())
@@ -130,7 +130,7 @@ fn verify_started_model(ps: &Value, requested: &str) -> Result<Value, String> {
         return Err("The requested model was not reported as the single model within the GPU and system-memory budgets with the requested 4096 context; a model may remain loaded. Check local model status before retrying".into());
     }
     Ok(
-        json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"context_length":4096,"already_running":false}),
+        json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"reported_cpu_bytes":state["reported_cpu_bytes"],"context_length":4096,"already_running":false}),
     )
 }
 
@@ -308,6 +308,18 @@ mod tests {
         let result = existing_model(&valid, "fixture").unwrap().unwrap();
         assert_eq!(result["already_running"], true);
         assert_eq!(result["context_length"], 4096);
+        let mut limited_offload = valid.clone();
+        limited_offload["models"][0]["size_vram"] = json!(5 * GIB);
+        assert_eq!(
+            existing_model(&limited_offload, "fixture")
+                .unwrap()
+                .unwrap()["reported_cpu_bytes"],
+            GIB
+        );
+        assert_eq!(
+            verify_started_model(&limited_offload, "fixture").unwrap()["reported_cpu_bytes"],
+            GIB
+        );
         assert!(existing_model(&valid, "other").is_err());
         let mut wrong_context = valid.clone();
         wrong_context["models"][0]["context_length"] = json!(8192);
