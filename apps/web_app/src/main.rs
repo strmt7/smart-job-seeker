@@ -2075,6 +2075,12 @@ fn serve(
             let basis = if skills.is_empty() { "no_reviewed_qualifications" } else if !row.description_available { "no_description" } else { "text_overlap" };
             json!({"job":row.job,"score":if basis == "text_overlap" { Some(row.score) } else { None },"matched":if basis == "text_overlap" { row.matched_skills.clone() } else { vec![] },"match_basis":basis,"remote_status":row.remote_status,"unknown_constraints":row.unknown_constraints,"excluded_reasons":row.reasons})
         }));
+        let routes = ws.job_application_routes().map_err(|e| e.to_string())?;
+        for row in &mut jobs {
+            if let Some(route) = row["job"]["id"].as_str().and_then(|id| routes.get(id)) {
+                row["source_application_url"] = json!(route);
+            }
+        }
         let facts: Vec<Value> = facts
             .iter()
             .map(|f| json!({"id":f.id,"text":f.text,"requires_review":f.requires_review}))
@@ -12153,6 +12159,44 @@ mod tests {
         assert_eq!(described["score"], 1.0);
         assert_eq!(missing["match_basis"], "no_description");
         assert!(missing["score"].is_null());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn state_exposes_source_application_route_separately() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut ws = Workspace::in_memory().unwrap();
+            let body = r#"{"jobs":[{"id":"fixture","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/fixture","applyUrl":"https://jobs.ashbyhq.com/ashby/fixture/application"}]}"#;
+            let fetcher = waypoint_workspace::StaticFetcher::default()
+                .route("https://api.ashbyhq.com/posting-api/job-board/ashby", body);
+            assert_eq!(
+                ws.discover(
+                    &[waypoint_workspace::DiscoveryTarget::new("ashby", "ashby")],
+                    &fetcher,
+                    100
+                )
+                .inserted,
+                1
+            );
+            let (mut stream, _) = listener.accept().unwrap();
+            serve(&mut stream, &mut ws, &mut None, "test-token", port).unwrap();
+        });
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(stream, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let state: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(
+            state["jobs"][0]["job"]["canonical_url"],
+            "https://jobs.ashbyhq.com/ashby/fixture"
+        );
+        assert_eq!(
+            state["jobs"][0]["source_application_url"],
+            "https://jobs.ashbyhq.com/ashby/fixture/application"
+        );
         worker.join().unwrap();
     }
 

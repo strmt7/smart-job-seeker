@@ -154,6 +154,47 @@ fn ashby_secondary_location_can_satisfy_location_filter() {
 }
 
 #[test]
+fn ashby_application_route_is_refreshed_and_bound_to_listing() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let targets = [DiscoveryTarget::new("ashby", "ashby")];
+    let payload = |route: &str| {
+        format!(
+            r#"{{"jobs":[{{"id":"fixture","title":"Engineer","jobUrl":"https://jobs.ashbyhq.com/ashby/fixture","applyUrl":"{route}"}}]}}"#
+        )
+    };
+    let fetcher = StaticFetcher::default().route(
+        ASHBY_URL,
+        &payload("https://jobs.ashbyhq.com/ashby/fixture/application"),
+    );
+    assert_eq!(ws.discover(&targets, &fetcher, 100).inserted, 1);
+    let job = ws.jobs().unwrap().remove(0);
+    assert_eq!(
+        ws.job_application_routes()
+            .unwrap()
+            .get(job.id.as_str())
+            .map(String::as_str),
+        Some("https://jobs.ashbyhq.com/ashby/fixture/application")
+    );
+    let fetcher =
+        StaticFetcher::default().route(ASHBY_URL, &payload("https://other.example/apply"));
+    assert_eq!(ws.discover(&targets, &fetcher, 101).unchanged, 1);
+    assert!(ws.job_application_routes().unwrap().is_empty());
+    let fetcher = StaticFetcher::default().route(
+        ASHBY_URL,
+        &payload("https://jobs.ashbyhq.com/ashby/fixture/application"),
+    );
+    ws.discover(&targets, &fetcher, 102);
+    let mut changed = job.clone();
+    changed.source = "user_supplied_url".into();
+    ws.store.upsert_job(&changed).unwrap();
+    assert!(ws.job_application_routes().unwrap().is_empty());
+    let mut changed = job;
+    changed.canonical_url = Some("https://jobs.ashbyhq.com/ashby/other".into());
+    ws.store.upsert_job(&changed).unwrap();
+    assert!(ws.job_application_routes().unwrap().is_empty());
+}
+
+#[test]
 fn lever_requirement_lists_contribute_to_ranked_evidence() {
     let mut ws = Workspace::in_memory().unwrap();
     let payload = r#"[{"id":"fixture-list","text":"Engineer","hostedUrl":"https://jobs.lever.co/spotify/fixture-list","descriptionPlain":"Join our team.","lists":[{"text":"Requirements","content":"<ul><li>Rust systems development</li></ul>"}]}]"#;

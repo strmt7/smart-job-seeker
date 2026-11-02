@@ -397,6 +397,9 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE job_capture_followup_metadata(job_id TEXT PRIMARY KEY REFERENCES jobs(id), sealed_metadata BLOB NOT NULL);
      CREATE TABLE job_capture_followup_segments(job_id TEXT NOT NULL REFERENCES jobs(id), sequence INTEGER NOT NULL, sealed_png BLOB NOT NULL, PRIMARY KEY(job_id,sequence));
      UPDATE meta SET value='44' WHERE key='schema_version';",
+    // v45 — unverified board-provided application routes, bound to a listing URL.
+    "CREATE TABLE job_application_routes(job_id TEXT PRIMARY KEY REFERENCES jobs(id), source TEXT NOT NULL, listing_url TEXT NOT NULL, application_url TEXT NOT NULL);
+     UPDATE meta SET value='45' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -924,6 +927,41 @@ impl Store {
             ],
         )?;
         Ok(())
+    }
+
+    /// Replace a source-reported route only while its listing URL is current.
+    pub fn set_job_application_route(
+        &self,
+        id: &JobIdentityId,
+        source: &str,
+        listing_url: &str,
+        route: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        match route {
+            Some(route) => {
+                self.conn.execute(
+                    "INSERT INTO job_application_routes(job_id,source,listing_url,application_url)
+                     SELECT id,?2,?3,?4 FROM jobs WHERE id=?1 AND source=?2 AND canonical_url=?3
+                     ON CONFLICT(job_id) DO UPDATE SET source=excluded.source,listing_url=excluded.listing_url,application_url=excluded.application_url",
+                    params![id.as_str(), source, listing_url, route],
+                )?;
+            }
+            None => {
+                self.conn.execute(
+                    "DELETE FROM job_application_routes WHERE job_id=?1 AND source=?2 AND listing_url=?3 AND EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND source=?2 AND canonical_url=?3)",
+                    params![id.as_str(), source, listing_url],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn job_application_routes(
+        &self,
+    ) -> Result<std::collections::HashMap<String, String>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT r.job_id,r.application_url FROM job_application_routes r JOIN jobs j ON j.id=r.job_id AND j.source=r.source AND j.canonical_url=r.listing_url")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     /// Read one job back by identity. Additive read API used by the pipeline

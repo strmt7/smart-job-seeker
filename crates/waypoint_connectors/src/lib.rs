@@ -14,6 +14,9 @@ pub struct RawPosting {
     pub identity: String,
     pub source: String,
     pub source_url: String,
+    /// Unverified application destination supplied by the source, if safe to display.
+    #[serde(default)]
+    pub application_url: Option<String>,
     /// Provider listing identifier used for stable identity when distinct from
     /// the employer's requisition number.
     #[serde(default)]
@@ -129,6 +132,8 @@ struct AshbyPosting {
     secondary_locations: Option<Vec<AshbyLocation>>,
     #[serde(default, rename = "jobUrl")]
     job_url: Option<String>,
+    #[serde(default, rename = "applyUrl")]
+    apply_url: Option<String>,
     #[serde(default, rename = "publishedAt")]
     published_at: Option<String>,
     #[serde(default)]
@@ -273,6 +278,7 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
                 identity: identity_key("greenhouse", req.as_deref(), &j.absolute_url),
                 source: "greenhouse".into(),
                 source_url: j.absolute_url.clone(),
+                application_url: None,
                 identity_requisition_id: req.clone(),
                 requisition_id: requisition,
                 employer_namespace: board.to_string(),
@@ -414,6 +420,28 @@ fn normalized_locations<'a>(values: impl Iterator<Item = &'a str>) -> String {
     locations.join("\n")
 }
 
+fn safe_application_url(listing: &str, application: &str) -> Option<String> {
+    if application.len() > 2048 || !is_public_host_url(listing) || !is_public_host_url(application)
+    {
+        return None;
+    }
+    let listing = url::Url::parse(listing).ok()?;
+    let application = url::Url::parse(application).ok()?;
+    if listing.scheme() != "https"
+        || application.scheme() != "https"
+        || listing.origin() != application.origin()
+        || !listing.username().is_empty()
+        || listing.password().is_some()
+        || !application.username().is_empty()
+        || application.password().is_some()
+        || application.query().is_some()
+        || application.fragment().is_some()
+    {
+        return None;
+    }
+    Some(application.to_string())
+}
+
 /// Parse a Lever postings payload.
 pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
     let jobs: Vec<LeverPosting> = serde_json::from_str(payload)
@@ -443,6 +471,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
                 identity: identity_key("lever", Some(&j.id), &j.hosted_url),
                 source: "lever".into(),
                 source_url: j.hosted_url.clone(),
+                application_url: None,
                 identity_requisition_id: None,
                 requisition_id: Some(j.id.clone()),
                 employer_namespace: company.to_string(),
@@ -478,6 +507,11 @@ pub fn parse_ashby(org: &str, payload: &str) -> Result<Vec<RawPosting>, Connecto
             identity: identity_key("ashby", Some(&j.id), j.job_url.as_deref().unwrap_or("")),
             source: "ashby".into(),
             source_url: j.job_url.clone().unwrap_or_default(),
+            application_url: j
+                .job_url
+                .as_deref()
+                .zip(j.apply_url.as_deref())
+                .and_then(|(listing, application)| safe_application_url(listing, application)),
             identity_requisition_id: None,
             requisition_id: Some(j.id.clone()),
             employer_namespace: org.to_string(),
@@ -556,6 +590,7 @@ pub fn parse_jobicy(payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
             identity: identity_key("jobicy", Some(&id), url),
             source: "jobicy".into(),
             source_url: url.into(),
+            application_url: None,
             identity_requisition_id: None,
             requisition_id: Some(id.clone()),
             employer_namespace: employer.into(),
@@ -758,6 +793,25 @@ mod tests {
         let payload = r#"{"jobs":[{"id":"a","title":"Engineer","location":"Berlin","secondaryLocations":[{"location":"Paris"},{"location":"  paris  "},{"location":"New\nYork"},{"location":null},{}]}]}"#;
         let rows = parse_ashby("example", payload).unwrap();
         assert_eq!(rows[0].location, "Berlin\nParis\nNew York");
+    }
+
+    #[test]
+    fn source_application_url_requires_safe_same_origin_without_tokens() {
+        let listing = "https://jobs.ashbyhq.com/example/123";
+        assert_eq!(
+            safe_application_url(listing, "https://jobs.ashbyhq.com/example/123/application")
+                .as_deref(),
+            Some("https://jobs.ashbyhq.com/example/123/application")
+        );
+        for invalid in [
+            "http://jobs.ashbyhq.com/example/123/application",
+            "https://other.example/application",
+            "https://jobs.ashbyhq.com/application?token=secret",
+            "https://jobs.ashbyhq.com/application#fragment",
+            "https://person@jobs.ashbyhq.com/application",
+        ] {
+            assert_eq!(safe_application_url(listing, invalid), None);
+        }
     }
 
     #[test]

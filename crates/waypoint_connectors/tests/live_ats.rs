@@ -51,7 +51,12 @@ fn captured_ashby_locations_preserve_all_alternatives() {
     let parsed = parse_ashby("ashby", &body).unwrap();
     assert_eq!(parsed.len(), jobs.len());
     let mut with_secondary = 0;
+    let mut with_application_route = 0;
     for (row, source) in parsed.iter().zip(jobs) {
+        if let Some(route) = &row.application_url {
+            assert_eq!(Some(route.as_str()), source["applyUrl"].as_str());
+            with_application_route += 1;
+        }
         let Some(locations) = source["secondaryLocations"].as_array() else {
             continue;
         };
@@ -72,7 +77,9 @@ fn captured_ashby_locations_preserve_all_alternatives() {
         }
     }
     assert!(with_secondary > 0);
+    assert!(with_application_route > 0);
     println!("Checked {with_secondary} captured listings with secondary locations");
+    println!("Retained {with_application_route} source-reported application URLs");
 }
 
 #[test]

@@ -634,6 +634,12 @@ impl Workspace {
         Ok(self.store.get_job(id)?)
     }
 
+    pub fn job_application_routes(
+        &self,
+    ) -> Result<std::collections::HashMap<String, String>, WorkspaceError> {
+        Ok(self.store.job_application_routes()?)
+    }
+
     pub fn job_description(&self, id: &JobIdentityId) -> Result<Option<String>, WorkspaceError> {
         Ok(self.store.job_description(id)?)
     }
@@ -1079,6 +1085,14 @@ impl Workspace {
                     posted_at: posting.posted_at.clone(),
                 };
                 self.store.upsert_job(&job)?;
+                if posting.source == "ashby" {
+                    self.store.set_job_application_route(
+                        &id,
+                        &posting.source,
+                        &posting.source_url,
+                        posting.application_url.as_deref(),
+                    )?;
+                }
                 self.store
                     .set_job_remote_evidence(&id, &hash, posting.remote_evidence)?;
                 self.store
@@ -1157,6 +1171,14 @@ impl Workspace {
                 }
                 self.store
                     .set_job_remote_evidence(&id, &hash, posting.remote_evidence)?;
+                if posting.source == "ashby" {
+                    self.store.set_job_application_route(
+                        &id,
+                        &posting.source,
+                        &posting.source_url,
+                        posting.application_url.as_deref(),
+                    )?;
+                }
                 Ok(true)
             }
         }
