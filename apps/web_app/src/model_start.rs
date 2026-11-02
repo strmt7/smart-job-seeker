@@ -103,7 +103,7 @@ pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
 }
 
 #[cfg(any(windows, test))]
-fn startup_binding(tags: &Value, model: &str) -> Result<(u64, String), String> {
+pub(crate) fn startup_binding(tags: &Value, model: &str) -> Result<(u64, String), String> {
     let size = installed_size(tags, model)?;
     let digest = local_inventory_entry(tags, model)?["digest"]
         .as_str()
