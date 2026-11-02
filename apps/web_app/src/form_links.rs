@@ -412,6 +412,31 @@ fn recheck_navigation_preview(
 
 pub fn start(
     id: String,
+    session: ReviewSession,
+    target: Option<String>,
+    allow_other: bool,
+    reviewed_label: Option<String>,
+    profile: serde_json::Value,
+    review: (
+        i64,
+        Vec<waypoint_workspace::form_experience::ExperienceMatch>,
+    ),
+) -> Result<(), (Box<ReviewSession>, String)> {
+    start_with_destination_check(
+        id,
+        session,
+        target,
+        allow_other,
+        reviewed_label,
+        profile,
+        review,
+        check_destination,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_with_destination_check(
+    id: String,
     mut session: ReviewSession,
     target: Option<String>,
     allow_other: bool,
@@ -421,6 +446,7 @@ pub fn start(
         i64,
         Vec<waypoint_workspace::form_experience::ExperienceMatch>,
     ),
+    destination_check: fn(&str, Operation) -> Result<(), String>,
 ) -> Result<(), (Box<ReviewSession>, String)> {
     let (pending_revision, experiences) = review;
     let mut tasks = match TASK.lock() {
@@ -497,7 +523,7 @@ pub fn start(
                     permitted(&actual, Operation::Read)?;
                     live
                 } else {
-                    check_destination(&fresh.origin, Operation::Read)?;
+                    destination_check(&fresh.origin, Operation::Read)?;
                     fresh
                 };
                 let observed_url = session.driver.current_url().map_err(|e| e.to_string())?;
@@ -805,6 +831,155 @@ mod tests {
             .trace
             .iter()
             .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "runs the background navigation worker on a fictional local wizard"]
+    fn worker_reinspects_manually_advanced_wizard_without_submitting() {
+        use waypoint_applications::{
+            driver::BrowserDriver,
+            form_mapping::{BrowserCommand, PacketValue},
+        };
+        use waypoint_domain::{JobIdentityId, Sha256Digest};
+        fn local_fixture_only(origin: &str, _: waypoint_policy::Operation) -> Result<(), String> {
+            if origin == "file://" {
+                Ok(())
+            } else {
+                Err("Unexpected fixture origin".into())
+            }
+        }
+        let _lease = crate::doc_suggest::lease().unwrap();
+        let temp = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/form-local-model-wizard.html"),
+        )
+        .unwrap();
+        let source = source.replace("<label for=\"email\">", "<p>Do not use AI tools.</p><button type=\"button\" id=\"back\" onclick=\"document.getElementById('step-two').hidden=true;document.getElementById('step-one').hidden=false\">Back</button><label for=\"email\">");
+        let fixture = temp.path().join("wizard.html");
+        std::fs::write(&fixture, source).unwrap();
+        let url = url::Url::from_file_path(&fixture).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let profile = serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"});
+        let preview =
+            form_preview::suggest_without_model(live, &profile, "Fixture model unavailable")
+                .unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#given".into(),
+                value: PacketValue::Text("Avery".into()),
+            })
+            .unwrap();
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#next".into(),
+            })
+            .unwrap();
+        let session = crate::ReviewSession {
+            id: "wizard-session".into(),
+            job_id: JobIdentityId::new("wizard-job").unwrap(),
+            inspection_task_id: "wizard-inspection".into(),
+            inspection_pending_revision: 0,
+            url,
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(120),
+            filled: true,
+            fill_attempted: true,
+            completed_selectors: vec!["#given".into()],
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        };
+        assert!(super::start_with_destination_check(
+            "wizard-task".into(),
+            session,
+            None,
+            false,
+            None,
+            profile,
+            (0, vec![]),
+            local_fixture_only
+        )
+        .is_ok());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut returned = loop {
+            if let Some(outcome) = super::poll("wizard-task").unwrap() {
+                break match outcome {
+                    Ok((session, _, _)) => session,
+                    Err(failure) => panic!("navigation failed: {}", failure.reason),
+                };
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_ne!(returned.id, "wizard-session");
+        assert!(returned
+            .preview
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.selector == "#email"));
+        assert!(returned
+            .preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#email"));
+        assert!(!returned
+            .preview
+            .suggestions
+            .iter()
+            .any(|mapping| mapping.field_selector == "#permit"));
+        assert_eq!(
+            returned.driver.text_value_snapshot("#email").unwrap().value,
+            ""
+        );
+        assert_eq!(
+            returned
+                .driver
+                .text_value_snapshot("#permit")
+                .unwrap()
+                .value,
+            ""
+        );
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("without AI assistance")));
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Fields filled before this inspection")));
+        assert!(returned.completed_selectors.is_empty());
+        returned
+            .driver
+            .execute(&BrowserCommand::Click {
+                selector: "#back".into(),
+            })
+            .unwrap();
+        returned
+            .driver
+            .verify_text_value("#given", "Avery")
+            .unwrap();
+        assert!(returned
+            .driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     #[test]

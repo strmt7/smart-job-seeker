@@ -316,6 +316,9 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             .filter(|(key, value)| {
                 AUTOFILL_PROFILE_FIELDS.contains(&key.as_str())
                     && (normalize_field_name(key) == normalize_field_name(&field.label)
+                        || (key.as_str() == "email"
+                            && matches!(field.field_type, FormFieldType::Email)
+                            && hint_matches_applicant_label(&field.label, key))
                         || (key.as_str() == "preferred_name"
                             && is_applicant_preferred_name_label(&field.label)))
                     && value.as_str().is_some_and(|text| {
@@ -1932,6 +1935,37 @@ mod tests {
         assert!(suggest_exact(&schema, &json!({"phone":"+12025550123"}))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn offline_mapping_recognizes_unambiguous_labels_without_autocomplete() {
+        let mut schema = form();
+        schema.fields = [
+            ("#email", "Email address", FormFieldType::Email),
+            ("#ref", "Reference email address", FormFieldType::Email),
+            ("#phone", "Phone number", FormFieldType::Text),
+        ]
+        .into_iter()
+        .map(|(selector, label, field_type)| FormField {
+            selector: selector.into(),
+            label: label.into(),
+            field_type,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        })
+        .collect();
+        let mappings = suggest_exact(&schema, &json!({"email":"candidate@example.invalid","phone":"+12025550123","phone_national":"2025550123"})).unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].field_selector, "#email");
+        assert_eq!(
+            mappings[0].value,
+            PacketValue::Text("candidate@example.invalid".into())
+        );
     }
 
     #[test]
