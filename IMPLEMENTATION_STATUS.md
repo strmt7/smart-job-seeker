@@ -48,6 +48,8 @@
 
 ## Attempt listing comparison — 2026-11-02
 
+- New attempt listing captures now fingerprint the generated viewer and any extracted page text and structured-source files, in addition to metadata and images. Older manifests still verify their metadata and images but report a partial check in the interface. The manifest remains unsigned: a match covers only listed files and does not establish authenticity or protect against coordinated changes. Fictional original/follow-up archive, changed-file and older-format tests passed (27 attempt-record tests passed, 6 ignored); the focused interface check and Windows web Clippy passed. No existing attempt files were rewritten.
+
 - Attempt history now compares each readable original listing snapshot with the current saved workspace listing, including its description, title, employer, location, source, URL and requisition identifier. Changed or unavailable snapshots are shown for review; a match does not establish that the live vacancy is unchanged or authenticate the plaintext record. Reads are bounded and older, missing, inconsistent or oversized snapshots can report unavailable. The original files are not rewritten.
 - A fictional disk-backed test changed the saved job title and separately checked a changed description, missing description and inconsistent snapshot fingerprint; the original attempt text remained unchanged. The focused test, UI check and Windows lint passed. No employer site was contacted or application submitted.
 

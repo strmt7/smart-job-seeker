@@ -696,17 +696,33 @@ fn listing_capture_integrity(
     let Ok(manifest) = serde_json::from_slice::<Value>(&bytes) else {
         return "unavailable";
     };
-    let Some(files) = manifest["files"]
-        .as_object()
-        .filter(|m| m.len() == count as usize + 1)
-    else {
+    let Some(files) = manifest["files"].as_object() else {
         return "unavailable";
     };
     if manifest["algorithm"] != "SHA-256" {
         return "unavailable";
     }
-    let names = std::iter::once("capture.json".to_owned())
-        .chain((1..=count).map(|i| format!("{i:04}.png")));
+    let full = manifest["version"] == 2;
+    let mut names: Vec<String> = std::iter::once("capture.json".to_owned())
+        .chain((1..=count).map(|i| format!("{i:04}.png")))
+        .collect();
+    if full {
+        names.push("view.html".into());
+        if files.contains_key("page-text.txt") {
+            names.push("page-text.txt".into());
+        }
+        for i in 1..=8 {
+            let name = format!("structured-{i:04}.json.txt");
+            if files.contains_key(&name) {
+                names.push(name);
+            }
+        }
+    } else if !manifest["version"].is_null() {
+        return "unavailable";
+    }
+    if files.len() != names.len() {
+        return "unavailable";
+    }
     for name in names {
         let Some(expected) = files.get(&name).and_then(Value::as_str).filter(|s| {
             s.len() == 64
@@ -749,7 +765,11 @@ fn listing_capture_integrity(
             return "mismatch";
         }
     }
-    "match"
+    if full {
+        "match"
+    } else {
+        "partial_match"
+    }
 }
 
 // A comparison of saved workspace data, not a claim about the live vacancy or
@@ -1666,6 +1686,7 @@ impl AttemptRecord {
             ("followup-job-page", followup),
         ] {
             if let Some((metadata, segments)) = capture {
+                let mut extra_hashes = serde_json::Map::new();
                 let source_dir = dir.join(folder);
                 fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
                 fs::write(source_dir.join("capture.json"), &metadata).map_err(|e| e.to_string())?;
@@ -1680,6 +1701,10 @@ impl AttemptRecord {
                             .ok_or("Invalid captured page text")?;
                         fs::write(source_dir.join("page-text.txt"), text)
                             .map_err(|e| e.to_string())?;
+                        extra_hashes.insert(
+                            "page-text.txt".into(),
+                            json!(waypoint_domain::sha256_hex(text.as_bytes())),
+                        );
                     }
                     if capture["structured_source_status"] == "captured" {
                         let scripts = capture["structured_source_scripts"]
@@ -1689,11 +1714,10 @@ impl AttemptRecord {
                             return Err("Invalid structured source capture".into());
                         }
                         for (index, script) in scripts.iter().enumerate() {
-                            fs::write(
-                                source_dir.join(format!("structured-{:04}.json.txt", index + 1)),
-                                script.as_str().unwrap().as_bytes(),
-                            )
-                            .map_err(|e| e.to_string())?;
+                            let name = format!("structured-{:04}.json.txt", index + 1);
+                            let bytes = script.as_str().unwrap().as_bytes();
+                            fs::write(source_dir.join(&name), bytes).map_err(|e| e.to_string())?;
+                            extra_hashes.insert(name, json!(waypoint_domain::sha256_hex(bytes)));
                         }
                     }
                 }
@@ -1701,14 +1725,15 @@ impl AttemptRecord {
                     fs::write(source_dir.join(format!("{:04}.png", index + 1)), png)
                         .map_err(|e| e.to_string())?;
                 }
-                fs::write(
-                    source_dir.join("view.html"),
-                    listing_capture_view(&metadata, segments.len()),
-                )
-                .map_err(|e| e.to_string())?;
+                let view = listing_capture_view(&metadata, segments.len());
+                fs::write(source_dir.join("view.html"), &view).map_err(|e| e.to_string())?;
                 // These fingerprints detect accidental changes when compared later;
                 // the plaintext manifest is not an authenticated signature.
-                let mut hashes = serde_json::Map::new();
+                let mut hashes = extra_hashes;
+                hashes.insert(
+                    "view.html".into(),
+                    json!(waypoint_domain::sha256_hex(view.as_bytes())),
+                );
                 hashes.insert(
                     "capture.json".into(),
                     json!(waypoint_domain::sha256_hex(&metadata)),
@@ -1719,7 +1744,7 @@ impl AttemptRecord {
                         json!(waypoint_domain::sha256_hex(png)),
                     );
                 }
-                let manifest = json!({"algorithm":"SHA-256", "files":hashes,
+                let manifest = json!({"version":2, "algorithm":"SHA-256", "files":hashes,
                     "note":"Compare these fingerprints with the saved files to detect changes. This manifest is unsigned and does not prove origin or authenticity."});
                 fs::write(
                     source_dir.join("capture-hashes.json"),
@@ -3715,8 +3740,43 @@ mod tests {
         .unwrap();
         assert_eq!(
             listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+            "partial_match"
+        );
+        fs::write(dir.join("view.html"), b"viewer").unwrap();
+        fs::write(dir.join("page-text.txt"), b"listing text").unwrap();
+        fs::write(dir.join("structured-0001.json.txt"), b"structured").unwrap();
+        let mut complete = manifest.clone();
+        complete["version"] = json!(2);
+        complete["files"]["view.html"] = json!(waypoint_domain::sha256_hex(b"viewer"));
+        complete["files"]["page-text.txt"] = json!(waypoint_domain::sha256_hex(b"listing text"));
+        complete["files"]["structured-0001.json.txt"] =
+            json!(waypoint_domain::sha256_hex(b"structured"));
+        fs::write(
+            dir.join("capture-hashes.json"),
+            serde_json::to_vec(&complete).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            listing_capture_integrity(root.path(), &info, false, &mut 100_000),
             "match"
         );
+        for (name, original) in [
+            ("view.html", &b"viewer"[..]),
+            ("page-text.txt", &b"listing text"[..]),
+            ("structured-0001.json.txt", &b"structured"[..]),
+        ] {
+            fs::write(dir.join(name), b"changed").unwrap();
+            assert_eq!(
+                listing_capture_integrity(root.path(), &info, false, &mut 100_000),
+                "mismatch"
+            );
+            fs::write(dir.join(name), original).unwrap();
+        }
+        fs::write(
+            dir.join("capture-hashes.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             listing_capture_integrity(root.path(), &info, false, &mut 1),
             "budget_exhausted"
@@ -3956,10 +4016,23 @@ mod tests {
                     serde_json::from_slice(&fs::read(dir.join("capture-hashes.json")).unwrap())
                         .unwrap();
                 assert_eq!(manifest["algorithm"], "SHA-256");
-                for name in ["capture.json", "0001.png"] {
+                assert_eq!(manifest["version"], 2);
+                for name in [
+                    "capture.json",
+                    "0001.png",
+                    "view.html",
+                    "page-text.txt",
+                    "structured-0001.json.txt",
+                ] {
                     let bytes = fs::read(dir.join(name)).unwrap();
                     assert_eq!(manifest["files"][name], waypoint_domain::sha256_hex(&bytes));
                 }
+            }
+            for followup in [false, true] {
+                assert_eq!(
+                    listing_capture_integrity(&record.dir, &initial, followup, &mut 100_000),
+                    "match"
+                );
             }
             assert!(
                 fs::read_to_string(record.dir.join("original-job-page/view.html"))
