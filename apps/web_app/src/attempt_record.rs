@@ -865,6 +865,36 @@ fn listing_snapshot_comparison(
     {
         return "unavailable";
     }
+    // The readable copy is part of the archive too. Do not say the listing
+    // snapshot matches when this separately saved artifact is missing or changed.
+    let text_path = dir.join("original-job.txt");
+    let Ok(text_meta) = fs::symlink_metadata(&text_path) else {
+        return "unavailable";
+    };
+    if !text_meta.is_file()
+        || text_meta.file_type().is_symlink()
+        || text_meta.len() > 1024 * 1024
+        || text_meta.len() > *budget
+    {
+        return "unavailable";
+    }
+    let limit = (*budget).min(1024 * 1024);
+    let Ok(text_file) = fs::File::open(text_path) else {
+        return "unavailable";
+    };
+    let mut text_bytes = Vec::new();
+    if text_file
+        .take(limit + 1)
+        .read_to_end(&mut text_bytes)
+        .is_err()
+        || text_bytes.len() as u64 > limit
+    {
+        return "unavailable";
+    }
+    *budget = budget.saturating_sub(text_bytes.len() as u64);
+    if text_bytes != saved_description.as_bytes() {
+        return "unavailable";
+    }
     if saved["title"].as_str() == Some(current.title.as_str())
         && saved["employer"].as_str() == Some(current.employer.as_str())
         && saved["location"].as_str() == Some(current.location.as_str())
@@ -4313,6 +4343,30 @@ mod tests {
             "unavailable"
         );
         fs::write(record.dir.join("original-job.json"), saved_bytes).unwrap();
+        fs::write(record.dir.join("original-job.txt"), "Altered copy").unwrap();
+        assert_eq!(
+            listing_snapshot_comparison(
+                &record.dir,
+                Some(&current),
+                Some("Fictional job description."),
+                &mut budget
+            ),
+            "unavailable"
+        );
+        fs::write(
+            record.dir.join("original-job.txt"),
+            "Fictional job description.",
+        )
+        .unwrap();
+        assert_eq!(
+            listing_snapshot_comparison(
+                &record.dir,
+                Some(&current),
+                Some("Fictional job description."),
+                &mut budget
+            ),
+            "matches"
+        );
         assert_eq!(
             listing["description_sha256"],
             Sha256Digest::of("Fictional job description.").as_str()
