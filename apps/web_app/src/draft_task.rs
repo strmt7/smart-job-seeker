@@ -260,7 +260,7 @@ pub fn requested_scanned_template_page(
 fn transcribe_scanned_template(
     bytes: &[u8],
     page: Option<usize>,
-    model: &str,
+    guard: &mut crate::visual_review::VisionIdentityGuard,
 ) -> Result<(String, Option<Value>, Value), String> {
     let addr = "127.0.0.1:11434"
         .parse()
@@ -271,21 +271,7 @@ fn transcribe_scanned_template(
             page,
             "full",
             crate::pdf_extract::render_page,
-            |image| {
-                if crate::resident_model()?.as_deref() != Some(model) {
-                    return Err("Resident model changed during template transcription".into());
-                }
-                let output = crate::visual_review::generate_vision(
-                    addr,
-                    model,
-                    image,
-                    crate::pdf_transcribe::TRANSCRIBE_PROMPT,
-                )?;
-                if crate::resident_model()?.as_deref() != Some(model) {
-                    return Err("Resident model changed during template transcription".into());
-                }
-                Ok(output)
-            },
+            |image| guard.generate(addr, image, crate::pdf_transcribe::TRANSCRIBE_PROMPT),
         )
     })
 }
@@ -311,6 +297,11 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
+            let identity = crate::resident_model_identity()?
+                .filter(|identity| identity.name == model)
+                .ok_or("The selected resident model changed; drafting stopped")?;
+            let mut visual_guard =
+                crate::visual_review::VisionIdentityGuard::from_identity(identity.clone());
             let (template, template_coverage, template_vision) = if let Some((reviewed, vision)) =
                 &input.reviewed_template
             {
@@ -343,7 +334,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                         );
                     }
                     let (_, _, mut next_vision) =
-                        transcribe_scanned_template(bytes, Some(next), &model)?;
+                        transcribe_scanned_template(bytes, Some(next), &mut visual_guard)?;
                     let new_text = next_vision["text"]
                         .as_str()
                         .ok_or("Invalid template transcription")?
@@ -383,7 +374,7 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                             let (text, coverage, vision) = transcribe_scanned_template(
                                 bytes,
                                 input.template_scan_page,
-                                &model,
+                                &mut visual_guard,
                             )?;
                             (text, coverage, Some(vision))
                         }
@@ -399,7 +390,8 @@ pub fn start(id: String, model: String, input: Inputs) -> Result<(), String> {
                 llm,
                 model,
                 crate::resident_model_identity,
-            );
+            )
+            .with_identity(identity)?;
             let mut draft =
                 generate_with_selection(&mut llm, &input, &template, template_vision.as_ref())?;
             draft["template_pdf_coverage"] = json!(template_coverage);

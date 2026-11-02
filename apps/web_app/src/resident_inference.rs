@@ -30,6 +30,14 @@ where
             bound_identity: None,
         }
     }
+    pub fn with_identity(mut self, identity: ResidentIdentity) -> Result<Self, String> {
+        if identity.name != self.model {
+            return Err("The selected resident model changed".into());
+        }
+        self.bound_identity = Some(identity);
+        Ok(self)
+    }
+
     fn check(&mut self) -> Result<(), InferenceError> {
         match (self.resident)() {
             Ok(Some(identity)) if identity.name == self.model => match &self.bound_identity {
@@ -103,6 +111,25 @@ mod tests {
             ))
         }
     }
+    #[test]
+    fn prebound_identity_refuses_a_different_digest_before_inference() {
+        let calls = Cell::new(0);
+        let original = ResidentIdentity {
+            name: "fictional".into(),
+            digest: "a".repeat(64),
+        };
+        let mut guarded = ResidentInference::new(Fake(&calls), "fictional".into(), || {
+            Ok(Some(ResidentIdentity {
+                name: "fictional".into(),
+                digest: "b".repeat(64),
+            }))
+        })
+        .with_identity(original)
+        .unwrap();
+        assert!(guarded.generate_structured("test", "fictional", 1).is_err());
+        assert_eq!(calls.get(), 0);
+    }
+
     #[test]
     fn changed_digest_during_request_discards_the_response() {
         let calls = Cell::new(0);

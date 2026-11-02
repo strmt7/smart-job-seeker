@@ -899,6 +899,13 @@ impl VisionIdentityGuard {
         }
     }
 
+    pub(crate) fn from_identity(identity: crate::resident_inference::ResidentIdentity) -> Self {
+        Self {
+            model: identity.name.clone(),
+            bound: Some(identity),
+        }
+    }
+
     fn check_snapshot(
         &mut self,
         identity: Option<crate::resident_inference::ResidentIdentity>,
@@ -1109,6 +1116,29 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prebound_visual_identity_rejects_replacement_before_request() {
+        let original = crate::resident_inference::ResidentIdentity {
+            name: "fixture".into(),
+            digest: "a".repeat(64),
+        };
+        let mut guard = VisionIdentityGuard::from_identity(original);
+        let called = std::cell::Cell::new(false);
+        let changed = || {
+            Ok(Some(crate::resident_inference::ResidentIdentity {
+                name: "fixture".into(),
+                digest: "b".repeat(64),
+            }))
+        };
+        assert!(guard
+            .checked_with(changed, || {
+                called.set(true);
+                Ok(())
+            })
+            .is_err());
+        assert!(!called.get());
+    }
 
     #[test]
     fn visual_guard_discards_changed_identity_and_binds_multiple_pages() {
