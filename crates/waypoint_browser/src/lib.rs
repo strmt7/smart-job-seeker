@@ -4713,6 +4713,33 @@ impl CdpDriver {
 
     /* ------------------------------- actions -------------------------------- */
 
+    /// Check a number against Chromium's current native constraints on a
+    /// detached clone, so an invalid candidate does not alter the live input.
+    fn check_number_candidate(&mut self, object: &str, candidate: &str) -> Result<(), DriverError> {
+        let result = self
+            .cdp
+            .call(
+                "Runtime.callFunctionOn",
+                json!({"objectId":object,"functionDeclaration":r#"function(value) {
+            if (!this.isConnected) return false;
+            if (!(this instanceof HTMLInputElement) || this.type !== 'number') return true;
+            const probe = this.cloneNode(false);
+            probe.value = value;
+            return probe.value === value && probe.validity.valid;
+        }"#,"arguments":[{"value":candidate}],"returnByValue":true}),
+            )
+            .map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Number does not satisfy the field's current constraints; review it manually"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn ensure_text_focus(&mut self, node: u64, object: &str) -> Result<(), DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Err(DriverError(
@@ -4808,6 +4835,7 @@ impl CdpDriver {
                         "Text field is unavailable or requires manual handling".into(),
                     ));
                 }
+                self.check_number_candidate(object, t)?;
                 let rich = if t.contains('\n') {
                     let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return ['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox'; }","returnByValue":true})).map_err(derr)?;
                     if result.get("exceptionDetails").is_some() {
@@ -4848,6 +4876,8 @@ impl CdpDriver {
                         "Field became hidden on focus; review it manually".into(),
                     ));
                 }
+                // Focus handlers may change min, max or step.
+                self.check_number_candidate(object, t)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.cdp.call("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65,"modifiers":2})).map_err(derr)?;
                 self.ensure_text_focus(node, object)?;

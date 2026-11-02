@@ -4507,6 +4507,31 @@ fn required_input_combobox_requires_manual_review() {
 }
 
 #[test]
+#[ignore = "launches one local browser with fictional numeric fields"]
+fn numeric_constraints_are_checked_before_changing_the_field() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_number_constraints.html"))
+        .unwrap();
+    let fill = |selector: &str, value: &str| BrowserCommand::Fill {
+        selector: selector.into(),
+        value: PacketValue::Text(value.into()),
+    };
+    for value in ["4", "11", "abc"] {
+        assert!(driver.execute(&fill("#years", value)).is_err());
+        assert_eq!(driver.text_value_snapshot("#years").unwrap().value, "3");
+    }
+    assert!(driver.execute(&fill("#changing", "5")).is_err());
+    assert_eq!(driver.text_value_snapshot("#changing").unwrap().value, "3");
+    driver.execute(&fill("#years", "5")).unwrap();
+    driver.verify_text_value("#years", "5").unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser with fictional native controls"]
 fn native_select_and_number_roles_remain_supported() {
     let mut driver = CdpDriver::launch(vec![upload_dir()]).expect("launch browser");
