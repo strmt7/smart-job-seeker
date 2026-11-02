@@ -2765,6 +2765,52 @@ mod tests {
     }
 
     #[test]
+    fn suspected_non_vacancy_is_reviewed_without_creating_a_job() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let _guard = crate::email_worker::TEST_LOCK.lock().unwrap();
+        let (_tx, rx) = mpsc::channel();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "non-vacancy".into(),
+            url: "https://example.org/article".into(),
+            rx,
+            result: Some(Ok(Arc::new(InspectedListing {
+                job: json!({"url":"https://example.org/article","title":"Fictional role","employer":"Example","possible_non_job":true}),
+                capture: ListingCapture {
+                    metadata: json!({}),
+                    segments: vec![],
+                },
+            }))),
+        });
+        let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for _ in 0..2 {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"task_id":"non-vacancy"}).to_string();
+            write!(client, "POST /api/listing-inspect/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(
+                &mut server,
+                &mut workspace,
+                &mut None,
+                "fixture-token",
+                port,
+            )
+            .unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let result: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(result["status"], "complete");
+            assert_eq!(result["review_only"], true);
+            assert!(result["saved"].is_null());
+            assert_eq!(workspace.job_count().unwrap(), 0);
+        }
+    }
+
+    #[test]
     fn failed_save_retains_inspection_and_success_response_can_be_retried() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};

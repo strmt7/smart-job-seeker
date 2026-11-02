@@ -2166,3 +2166,17 @@ saved search context; further dates set the existing limited-attribution flag.
 Older saved contexts without the new field remain readable. Fictional parser,
 selection, persistence and interface tests passed, as did web Clippy. Provider
 index dates remain unverified and do not establish that a listing is open.
+
+### Suspected non-vacancy results (2026-11-02)
+
+A model-classified possible non-vacancy now returns a review-only inspection
+result instead of automatically creating a job. The search result remains
+available for manual entry because the model can misclassify a genuine role.
+Batch inspection does not check an application page for that result, and the UI
+does not present its mentioned role titles as vacancies. A fictional endpoint
+test verifies no job is created and that the result can be retrieved again;
+single and batch UI tests passed. In a fresh isolated Windows workspace, a real
+web search returned an article; qwen3.5:9b flagged it, the UI kept zero jobs,
+and manual entry remained available. No real application was filled or sent.
+This does not prevent false negatives when the classifier says uncertain or
+vacancy, and older mistakenly saved records are not removed.

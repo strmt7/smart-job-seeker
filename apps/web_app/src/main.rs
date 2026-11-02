@@ -3129,6 +3129,16 @@ fn serve(
                 }
                 Some(Ok(inspected)) => {
                     let job = &inspected.job;
+                    if job["possible_non_job"] == true {
+                        // This classification is fallible. Keep the original
+                        // search result available for manual entry, but do not
+                        // turn a suspected article into a saved vacancy.
+                        let response =
+                            json!({"status":"complete","job":job,"saved":null,"review_only":true});
+                        candidate_task::complete(id, response.clone())?;
+                        json_reply(stream, "200 OK", response);
+                        return Ok(());
+                    }
                     let result = manual_job::add(ws, job, now())?;
                     let job_id =
                         JobIdentityId::new(result["id"].as_str().ok_or("missing saved id")?)

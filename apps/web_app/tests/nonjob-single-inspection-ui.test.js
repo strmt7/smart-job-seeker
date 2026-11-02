@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(value=>value.startsWith('async function followListingInspection('));
+assert.ok(line);
+const notices=[];
+const context={setTimeout:fn=>fn(),sessionStorage:{removeItem(){}},refresh:async()=>{},notify:text=>notices.push(text),api:async()=>({status:'complete',saved:null,review_only:true,job:{possible_non_job:true}})};
+const follow=vm.runInNewContext(`(${line})`,context);
+(async()=>{const result=await follow('fictional');assert.equal(result.review_only,true);assert.match(notices[0],/nothing was saved/);assert.match(notices[0],/manually/);console.log('Non-vacancy single inspection checks passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
