@@ -14,6 +14,10 @@ pub struct RawPosting {
     pub identity: String,
     pub source: String,
     pub source_url: String,
+    /// Provider listing identifier used for stable identity when distinct from
+    /// the employer's requisition number.
+    #[serde(default)]
+    pub identity_requisition_id: Option<String>,
     pub requisition_id: Option<String>,
     pub employer_namespace: String,
     pub title: String,
@@ -52,6 +56,8 @@ impl std::error::Error for ConnectorError {}
 struct GreenhouseJob {
     #[serde(default)]
     id: Option<serde_json::Value>,
+    #[serde(default)]
+    requisition_id: Option<serde_json::Value>,
     title: String,
     #[serde(default)]
     location: GreenhouseLocation,
@@ -248,11 +254,19 @@ pub fn parse_greenhouse(board: &str, payload: &str) -> Result<Vec<RawPosting>, C
                 Some(serde_json::Value::String(s)) => Some(s.clone()),
                 _ => None,
             };
+            let requisition = match &j.requisition_id {
+                Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+                Some(serde_json::Value::String(s)) if !s.trim().is_empty() => {
+                    Some(s.trim().to_owned())
+                }
+                _ => None,
+            };
             RawPosting {
                 identity: identity_key("greenhouse", req.as_deref(), &j.absolute_url),
                 source: "greenhouse".into(),
                 source_url: j.absolute_url.clone(),
-                requisition_id: req.clone(),
+                identity_requisition_id: req.clone(),
+                requisition_id: requisition,
                 employer_namespace: board.to_string(),
                 title: j.title,
                 employer: board.to_string(),
@@ -411,6 +425,7 @@ pub fn parse_lever(company: &str, payload: &str) -> Result<Vec<RawPosting>, Conn
                 identity: identity_key("lever", Some(&j.id), &j.hosted_url),
                 source: "lever".into(),
                 source_url: j.hosted_url.clone(),
+                identity_requisition_id: None,
                 requisition_id: Some(j.id.clone()),
                 employer_namespace: company.to_string(),
                 title: j.text,
@@ -445,6 +460,7 @@ pub fn parse_ashby(org: &str, payload: &str) -> Result<Vec<RawPosting>, Connecto
             identity: identity_key("ashby", Some(&j.id), j.job_url.as_deref().unwrap_or("")),
             source: "ashby".into(),
             source_url: j.job_url.clone().unwrap_or_default(),
+            identity_requisition_id: None,
             requisition_id: Some(j.id.clone()),
             employer_namespace: org.to_string(),
             title: j.title,
@@ -515,6 +531,7 @@ pub fn parse_jobicy(payload: &str) -> Result<Vec<RawPosting>, ConnectorError> {
             identity: identity_key("jobicy", Some(&id), url),
             source: "jobicy".into(),
             source_url: url.into(),
+            identity_requisition_id: None,
             requisition_id: Some(id.clone()),
             employer_namespace: employer.into(),
             title: title.into(),
@@ -680,7 +697,8 @@ mod tests {
         let out = parse_greenhouse("acme", GH_FIXTURE).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].identity, "greenhouse::req::482731");
-        assert_eq!(out[0].requisition_id.as_deref(), Some("482731"));
+        assert_eq!(out[0].identity_requisition_id.as_deref(), Some("482731"));
+        assert_eq!(out[0].requisition_id, None);
         assert_eq!(out[0].posted_at, None);
         assert_eq!(
             out[0].source_url,

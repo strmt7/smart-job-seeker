@@ -52,13 +52,37 @@ fn rediscovery_clears_legacy_greenhouse_update_date_without_changing_state() {
         .find(|j| j.title == "Engineer")
         .unwrap();
     job.posted_at = Some("2026-09-20T10:00:00Z".into());
+    job.requisition_id = Some("401".into());
     job.state = ApplicationState::Shortlisted;
     ws.store.upsert_job(&job).unwrap();
     assert_eq!(ws.discover(&targets, &fetcher, 101).unchanged, 2);
     let refreshed = ws.store.get_job(&job.id).unwrap().unwrap();
     assert_eq!(refreshed.posted_at, None);
+    assert_eq!(refreshed.requisition_id, None);
     assert_eq!(refreshed.state, ApplicationState::Shortlisted);
     assert_eq!(refreshed.content_hash, job.content_hash);
+}
+
+#[test]
+fn greenhouse_requisition_is_distinct_from_listing_identity_on_refresh() {
+    let mut ws = Workspace::in_memory().unwrap();
+    let targets = [DiscoveryTarget::new("greenhouse", "vercel")];
+    let before = r#"{"jobs":[{"id":401,"title":"Engineer","absolute_url":"https://boards.greenhouse.io/vercel/jobs/401"}]}"#;
+    let after = r#"{"jobs":[{"id":401,"requisition_id":"REQ-42","title":"Engineer","absolute_url":"https://boards.greenhouse.io/vercel/jobs/401"},{"id":402,"requisition_id":"REQ-42","title":"Engineer II","absolute_url":"https://boards.greenhouse.io/vercel/jobs/402"}]}"#;
+    let fetcher = StaticFetcher::default().route(GH_URL, before);
+    assert_eq!(ws.discover(&targets, &fetcher, 100).inserted, 1);
+    let original = ws.jobs().unwrap().remove(0).id;
+    let fetcher = StaticFetcher::default().route(GH_URL, after);
+    let result = ws.discover(&targets, &fetcher, 101);
+    assert_eq!(result.inserted, 1);
+    assert_eq!(result.unchanged, 1);
+    let jobs = ws.jobs().unwrap();
+    assert_eq!(jobs.len(), 2);
+    assert!(jobs
+        .iter()
+        .all(|job| job.requisition_id.as_deref() == Some("REQ-42")));
+    assert!(jobs.iter().any(|job| job.id == original));
+    assert_eq!(ws.possible_duplicates().unwrap().len(), 1);
 }
 
 #[test]

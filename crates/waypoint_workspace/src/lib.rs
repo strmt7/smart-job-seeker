@@ -1032,7 +1032,11 @@ impl Workspace {
         }
         let key = identity_key(
             &posting.employer_namespace,
-            posting.requisition_id.as_deref(),
+            if posting.source == "greenhouse" {
+                posting.identity_requisition_id.as_deref()
+            } else {
+                posting.requisition_id.as_deref()
+            },
             &posting.source_url,
         );
         let id = match JobIdentityId::new(key) {
@@ -1094,16 +1098,19 @@ impl Workspace {
                 match dedup_decision(&existing.id, &id, existing.content_hash.as_deref(), &hash) {
                     DedupDecision::SameObservation => {
                         outcome.unchanged += 1;
-                        // Older Greenhouse imports stored the update timestamp as
-                        // a publication date. Refresh that field even when the
-                        // listing content itself has not changed.
+                        // Older Greenhouse imports mislabeled update time and
+                        // listing ID as publication date and requisition number.
+                        // Correct these even when listing content is unchanged.
                         if existing.source == "greenhouse"
                             && posting.source == "greenhouse"
-                            && existing.posted_at != posting.posted_at
+                            && (existing.posted_at != posting.posted_at
+                                || existing.requisition_id != posting.requisition_id)
                         {
                             let mut corrected = existing.clone();
                             corrected.posted_at = posting.posted_at.clone();
+                            corrected.requisition_id = posting.requisition_id.clone();
                             self.store.upsert_job(&corrected)?;
+                            self.store.find_possible_duplicates(&corrected)?;
                         }
                         // Repair a missing description if a previous import
                         // stopped after writing the job row but before its text.
