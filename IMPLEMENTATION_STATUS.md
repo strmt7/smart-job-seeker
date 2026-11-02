@@ -2372,6 +2372,15 @@ independent checking and five remained unknown. The resulting 36–100 range and
 listing-only recovery still require review. This is not a general accuracy
 measurement; the model was unloaded and no application was sent.
 
+Preference comparison now samples the beginning, middle and end of long
+listings instead of only the first 3,000 bytes. Quotes must occur wholly in one
+supplied passage; omitted sections remain explicitly incomplete, and existing
+assessments become stale under the updated input version. A fictional test
+recovered a late remote-work statement and rejected a gap marker as evidence.
+The fit test group passed (70 passed, 39 ignored); no local model or real job
+was tested in this change, and the sample still cannot establish full coverage
+or the correctness of a model's judgment.
+
 ### Partial-edge edits across PDF text objects (2026-11-02)
 
 The guarded PDF editor can now attempt a replacement that begins inside the
