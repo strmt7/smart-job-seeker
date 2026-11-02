@@ -80,6 +80,42 @@ fn title_score(a: &str, b: &str) -> u32 {
     overlap(&title_words(a), &title_words(b))
 }
 
+/// Remove an exact, explicitly separated location suffix for candidate
+/// comparison only. Keep the original title for display and identity.
+fn title_without_location<'a>(title: &'a str, location: &str) -> &'a str {
+    let location = location.trim();
+    if location.is_empty() {
+        return title;
+    }
+    let trimmed = title.trim_end();
+    let (content, opening) = match trimmed.chars().last() {
+        Some(')') => (&trimmed[..trimmed.len() - 1], Some('(')),
+        Some(']') => (&trimmed[..trimmed.len() - 1], Some('[')),
+        _ => (trimmed, None),
+    };
+    let lower = content.to_ascii_lowercase();
+    let location_lower = location.to_ascii_lowercase();
+    if !lower.ends_with(&location_lower) {
+        return title;
+    }
+    let end = content.len() - location.len();
+    let Some(prefix) = content.get(..end) else {
+        return title;
+    };
+    let prefix = prefix.trim_end();
+    let core = match opening {
+        Some(open) => prefix.strip_suffix(open),
+        None => prefix.strip_suffix(['-', '|', '–', '—']),
+    };
+    let Some(core) = core.map(str::trim_end) else {
+        return title;
+    };
+    if title_words(core).len() < 2 {
+        return title;
+    }
+    core
+}
+
 fn title_terms(title: &str) -> BTreeSet<String> {
     title
         .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
@@ -465,6 +501,7 @@ impl Store {
         }
         let candidate_count = candidates.len();
         let source_title_words = title_words(&job.title);
+        let source_core_words = title_words(title_without_location(&job.title, &job.location));
         let mut result = Vec::new();
         for other in candidates {
             let other_employer = employer_words(&other.employer);
@@ -494,7 +531,12 @@ impl Store {
             {
                 continue;
             }
-            let score = overlap(&source_title_words, &title_words(&other.title));
+            let raw_score = overlap(&source_title_words, &title_words(&other.title));
+            let core_score = overlap(
+                &source_core_words,
+                &title_words(title_without_location(&other.title, &other.location)),
+            );
+            let score = raw_score.max(core_score);
             let description_score = if score < 65 || dissimilar_employers {
                 if description_words.is_none() {
                     let description = self.job_description(&job.id)?.unwrap_or_default();
@@ -549,7 +591,7 @@ impl Store {
                         "description unavailable or too short".into()
                     }
                 });
-            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} {} {} Compare location, duties and requisition numbers.", if same_url { "Exact application URL matches; sites may reuse URLs for different positions." } else { "" }, if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" }, if dissimilar_employers { "Employer names differ; compare the listing details carefully." } else { "" });
+            let reason = format!("Employer token overlap {employer_score}%; title overlap {score}%, {description_evidence}. {} {} {} {} {} {} Compare location, duties and requisition numbers.", if core_score > raw_score { "Title comparison omitted an explicitly matching location suffix." } else { "" }, if same_url { "Exact application URL matches; sites may reuse URLs for different positions." } else { "" }, if same_requisition { "Matching requisition identifiers." } else { "" }, if same_acronym && employer_score < 65 { "Employer initials match; initials can belong to different employers." } else { "" }, if missing_employer_pair { "Employer missing; identifiers can be reused by unrelated employers." } else { "" }, if dissimilar_employers { "Employer names differ; compare the listing details carefully." } else { "" });
             self.conn.execute("INSERT INTO possible_duplicates(job_a,job_b,score,reason,status) VALUES(?1,?2,?3,?4,'pending') ON CONFLICT(job_a,job_b) DO UPDATE SET score=excluded.score,reason=CASE WHEN possible_duplicates.status='pending' AND possible_duplicates.reason LIKE 'Listing changed after duplicate review; review again.%' THEN 'Listing changed after duplicate review; review again. ' || excluded.reason ELSE excluded.reason END", params![job_a,job_b,score,reason])?;
             let (status, preferred_job, stored_reason, revision) = self.conn.query_row(
                 "SELECT status,preferred_job,reason,revision FROM possible_duplicates WHERE job_a=?1 AND job_b=?2",
@@ -1078,6 +1120,61 @@ mod tests {
         assert!(store.duplicate_index_pending().unwrap());
         store.index_next_duplicate_job("").unwrap();
         assert_eq!(store.possible_duplicates().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rechecks_jobs_with_explicit_location_suffix_without_merging() {
+        let long = "Senior Data Scientist - Berlin, Germany, Central Europe";
+        let location = "Berlin, Germany, Central Europe";
+        let short = "Senior Data Scientist";
+        assert!(title_score(long, short) < 65);
+        assert_eq!(title_without_location(long, location), short);
+        assert_eq!(
+            title_without_location("Data Scientist (Berlin)", "Berlin"),
+            "Data Scientist"
+        );
+        assert_eq!(
+            title_without_location("Berlin Specialist", "Berlin"),
+            "Berlin Specialist"
+        );
+        assert_eq!(
+            title_without_location("Director - Berlin", "Berlin"),
+            "Director - Berlin"
+        );
+        assert_eq!(
+            title_without_location("Data Scientist - Berlin", "Paris"),
+            "Data Scientist - Berlin"
+        );
+
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..45] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for (id, title, place) in [("a", long, location), ("b", short, "Berlin")] {
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,?2,'Example Labs',?3,'\"discovered\"')", params![id,title,place]).unwrap();
+            conn.execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example'),(?1,'labs')",
+                [id],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [id])
+                .unwrap();
+        }
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("a")
+        );
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(pairs[0].reason.contains("matching location suffix"));
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
     }
 
     #[test]

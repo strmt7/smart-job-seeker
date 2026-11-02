@@ -1083,6 +1083,15 @@ The endpoint test adds a direct test-only dependency on the already locked `rusq
 - Duplicate indexing now flags a matching requisition under moderately related employer names for user review, even if title overlap is low. The explanation includes employer, title and description overlap. Identifiers can be reused by unrelated organizations, so this is not an automatic merge; existing pairs are not retroactively rescanned and candidate scans remain bounded.
 - With one build job and one test thread, ten duplicate tests and web-app Clippy passed. No live boards or peak resources were measured. No application was sent.
 
+On 2026-11-02, duplicate candidate comparison also began considering a title
+without its own explicitly separated, exact location suffix. The original
+title stays intact, the comparison requires at least two remaining title terms,
+and any resulting pair remains pending review. Migration 46 queues affected
+older listings for bounded rechecking. A fictional migration test covered the
+previously missed pair and conservative exclusions; the store suite passed
+(93 passed, 2 ignored), the focused SQLCipher test and web Clippy passed. No
+live-board duplicate accuracy or peak resources were measured.
+
 The table below records a historical checkpoint, not current release evidence.
 
 Status: G0-G5 complete; G6 release-readiness executed (audit/SBOM/packaging checks); remaining release blockers recorded honestly.

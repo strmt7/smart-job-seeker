@@ -400,6 +400,11 @@ const MIGRATIONS: &[&str] = &[
     // v45 — unverified board-provided application routes, bound to a listing URL.
     "CREATE TABLE job_application_routes(job_id TEXT PRIMARY KEY REFERENCES jobs(id), source TEXT NOT NULL, listing_url TEXT NOT NULL, application_url TEXT NOT NULL);
      UPDATE meta SET value='45' WHERE key='schema_version';",
+    // v46 — reconsider titles that include their own explicit location.
+    "DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT id FROM jobs WHERE trim(location)<>'' AND instr(lower(title),lower(trim(location)))>0
+     );
+     UPDATE meta SET value='46' WHERE key='schema_version';",
 ];
 
 pub mod documents;
