@@ -361,46 +361,42 @@ pub(crate) fn relevant_experiences(
 ) -> Vec<ExperienceMatch> {
     use waypoint_applications::form_mapping::FormFieldType as Field;
     use waypoint_workspace::form_experience::{Control, Stage};
-    let has_text = schema.fields.iter().any(|field| {
-        !field.sensitive
-            && matches!(
-                field.field_type,
-                Field::Text
-                    | Field::Email
-                    | Field::TextArea
-                    | Field::Date
-                    | Field::Month
-                    | Field::Time
-                    | Field::DateTimeLocal
-            )
-    });
-    let has_choice = schema.fields.iter().any(|field| {
-        !field.sensitive
-            && matches!(
-                field.field_type,
-                Field::Select { .. }
-                    | Field::MultiSelect { .. }
-                    | Field::Checkbox
-                    | Field::Radio { .. }
-            )
-    });
-    // A form schema can combine fields from the top page and nested frames.
-    // Its single origin describes the top page, not necessarily every field's
-    // platform; the shared mapping batch cannot attribute a hint per frame.
-    let platform = if schema
-        .fields
-        .iter()
-        .any(|field| field.selector.contains("waypoint-frame:"))
-    {
-        None
-    } else {
-        observed_platform(&schema.origin)
+    let field_control = |field: &waypoint_applications::form_mapping::FormField| {
+        if field.sensitive {
+            return None;
+        }
+        match field.field_type {
+            Field::Text
+            | Field::Email
+            | Field::TextArea
+            | Field::Date
+            | Field::Month
+            | Field::Time
+            | Field::DateTimeLocal => Some(Control::Text),
+            Field::Select { .. }
+            | Field::MultiSelect { .. }
+            | Field::Checkbox
+            | Field::Radio { .. } => Some(Control::Choice),
+            _ => None,
+        }
     };
     let mut selected = Vec::new();
-    for (control, present) in [(Control::Text, has_text), (Control::Choice, has_choice)] {
-        if !present {
+    for control in [Control::Text, Control::Choice] {
+        let mut fields = schema
+            .fields
+            .iter()
+            .filter(|field| field_control(field) == Some(control))
+            .peekable();
+        if fields.peek().is_none() {
             continue;
         }
+        // Hints are labelled by control type. The top-page origin can rank
+        // one type's hints only if none of that type's mapped fields is framed.
+        let platform = if fields.any(|field| field.selector.contains("waypoint-frame:")) {
+            None
+        } else {
+            observed_platform(&schema.origin)
+        };
         let mut candidates: Vec<_> = experiences
             .iter()
             .filter(|item| {
@@ -1340,18 +1336,33 @@ mod tests {
             .all(|value| !value.same_platform));
         let mut embedded = schema.clone();
         embedded.fields[0].selector = "waypoint-frame:12:34:input[name=given]".into();
-        assert!(relevant_experiences(&embedded, &items)
+        let mixed = relevant_experiences(&embedded, &items);
+        assert!(mixed
             .iter()
+            .filter(|value| value.experience.control == Control::Text)
             .all(|value| !value.same_platform));
+        assert!(mixed
+            .iter()
+            .any(|value| value.experience.control == Control::Choice && value.same_platform));
         embedded.fields[0].selector =
             "waypoint-shadow:7:8:waypoint-frame:12:34:input[name=given]".into();
         assert!(relevant_experiences(&embedded, &items)
             .iter()
+            .filter(|value| value.experience.control == Control::Text)
             .all(|value| !value.same_platform));
         embedded.fields[0].selector = "waypoint-shadow:7:8:input[name=given]".into();
         assert!(relevant_experiences(&embedded, &items)
             .iter()
             .any(|value| value.same_platform));
+        embedded.fields[1].selector = "waypoint-frame:12:34:input[type=checkbox]".into();
+        let mixed = relevant_experiences(&embedded, &items);
+        assert!(mixed
+            .iter()
+            .any(|value| value.experience.control == Control::Text && value.same_platform));
+        assert!(mixed
+            .iter()
+            .filter(|value| value.experience.control == Control::Choice)
+            .all(|value| !value.same_platform));
         let mut workable_schema = schema.clone();
         workable_schema.origin = "https://apply.workable.com".into();
         let mut workable_lesson = item(8, Control::Text, Platform::Workable, 1);
@@ -1480,6 +1491,13 @@ mod tests {
                         "Email address",
                         FormFieldType::Email,
                     ),
+                    field(
+                        "#country",
+                        "Country",
+                        FormFieldType::Select {
+                            options: vec!["Germany".into(), "France".into()],
+                        },
+                    ),
                 ],
                 multi_step: false,
                 steps: 1,
@@ -1503,9 +1521,13 @@ mod tests {
                     use_note_in_model: false,
                 },
             };
-            let selected = relevant_experiences(&schema, &[lesson]);
-            assert_eq!(selected.len(), 1);
+            let mut choice_lesson = lesson.clone();
+            choice_lesson.id = "00000000000000000000000000000002".into();
+            choice_lesson.experience.control = Control::Choice;
+            let selected = relevant_experiences(&schema, &[lesson, choice_lesson]);
+            assert_eq!(selected.len(), 2);
             assert!(!selected[0].same_platform);
+            assert!(selected[1].same_platform);
             let model = crate::resident_model().unwrap().unwrap();
             let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
                 .unwrap()
@@ -1520,7 +1542,7 @@ mod tests {
             let (mappings, _, _) = crate::suggestions::suggest_with_review(
                 &mut experienced,
                 &schema,
-                &serde_json::json!({"first_name":"Avery","email":"avery@example.invalid"}),
+                &serde_json::json!({"first_name":"Avery","email":"avery@example.invalid","country":"Germany"}),
             )
             .unwrap();
             assert!(experienced.attempted_with_hints());
@@ -1531,6 +1553,8 @@ mod tests {
             assert!(mappings.iter().any(|m| m.field_selector
                 == "waypoint-frame:12:34:input[name=email]"
                 && m.value == PacketValue::Text("avery@example.invalid".into())));
+            assert!(mappings.iter().any(|m| m.field_selector == "#country"
+                && m.value == PacketValue::Text("Germany".into())));
         });
     }
 
