@@ -7358,6 +7358,15 @@ mod tests {
             .expect("write private result");
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated model for a fictional candidate comparison"]
+    fn resource_gated_semantic_candidate_comparison() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_job_fit_semantic_candidate_comparison,
+        );
+    }
+
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_job_fit_semantic_candidate_comparison() {

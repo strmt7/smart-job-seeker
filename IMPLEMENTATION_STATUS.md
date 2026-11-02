@@ -42,6 +42,8 @@
 
 ## Fictional fit experience check — 2026-11-03
 
+- A resource-gated `qwen3.5:9b` run compared two fictional candidates against one platform-engineering listing. The supported candidate scored 100% on three extracted criteria; the unrelated candidate scored a 50% midpoint with a 0–100% range and all three criteria unknown. The pipeline connected coaching to mentoring and administering clusters to operations. This is one model run and one listing; the percentages are rubric outputs, not hiring probabilities or evidence of general calibration. Windows web Clippy passed, the model unloaded, and no application was sent.
+
 - A new resource-gated `qwen3.5:9b` test assessed a fictional clinical role requiring three years against five years of unrelated retail work and six months of clinical experience. The production assessment retained the clinical duration as unknown, with a 0–100% range; it did not credit the unrelated years. This is one case and does not establish calibration or general semantic accuracy. One system memory sample during the test showed 13,360,504 KiB available; it is not a measured minimum. The test-owned model unloaded afterward, and Windows web Clippy passed. No employer or application was used.
 
 ## Fit preference coverage — 2026-11-03
