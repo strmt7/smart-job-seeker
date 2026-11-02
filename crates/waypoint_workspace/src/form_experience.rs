@@ -28,6 +28,7 @@ pub enum Observation {
     ValueChanged,
     ValidationError,
     HiddenControl,
+    FormChanged,
     UnexpectedNavigation,
 }
 

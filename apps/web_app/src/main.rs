@@ -11395,7 +11395,7 @@ mod tests {
             stream.read_to_string(&mut response).unwrap();
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
         };
-        let experience = json!({"stage":"enter_information","control":"text","platform":"workable","observation":"value_changed","response":"verify_value_again","outcome":"did_not_help","note":"Check the preceding section"});
+        let experience = json!({"stage":"enter_information","control":"text","platform":"workable","observation":"form_changed","response":"verify_value_again","outcome":"did_not_help","note":"Check the preceding section"});
         assert!(send(
             "/api/form-experiences/save",
             json!({"experience":experience})
@@ -11408,6 +11408,10 @@ mod tests {
         let listed = send("/api/form-experiences/list", json!({}));
         assert_eq!(listed["experiences"].as_array().unwrap().len(), 1);
         assert_eq!(listed["experiences"][0]["id"], saved["id"]);
+        assert_eq!(
+            listed["experiences"][0]["experience"]["observation"],
+            "form_changed"
+        );
         assert_eq!(
             listed["experiences"][0]["experience"]["outcome"],
             "did_not_help"

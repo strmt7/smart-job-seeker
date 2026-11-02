@@ -2457,6 +2457,15 @@ reported the fill as incomplete and retained the already-entered value; it did
 not submit. This verifies the browser behavior on that fixture, not the full
 web endpoint or arbitrary employer pages.
 
+When that post-fill check detects a changed form, the review panel now offers
+to prepare a lesson for explicit review. It starts with an unknown outcome and
+platform, asks the user to check the control type and any existing note, and
+does not save or share the note automatically. A fictional UI test covers the
+handoff; an API test persists the new observation category, and a fake model
+test confirms that a reviewed category can enter bounded advisory context.
+This does not establish that the local model learns from or acts correctly on
+the lesson.
+
 ### Redirected listing identity (2026-11-02)
 
 When an inspected listing redirects to a different path on the same site, the

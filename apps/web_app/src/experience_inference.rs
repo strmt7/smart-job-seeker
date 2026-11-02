@@ -199,7 +199,7 @@ pub(crate) mod tests {
                 platform: Some(Platform::Lever),
                 stage: Stage::EnterInformation,
                 control: Control::Text,
-                observation: Observation::ValueChanged,
+                observation: Observation::FormChanged,
                 response: Response::VerifyValueAgain,
                 outcome: Outcome::DidNotHelp,
                 note: Some("fictional note should remain private".into()),
@@ -217,7 +217,7 @@ pub(crate) mod tests {
         model
             .generate_structured("form_option_mapping", "other", 100)
             .unwrap();
-        assert!(capture.0[0].contains("value_changed"));
+        assert!(capture.0[0].contains("form_changed"));
         assert!(capture.0[0].contains("\"reported_outcome\":\"did_not_help\""));
         assert!(capture.0[0].contains("\"platform_relation\":\"not_established\""));
         assert!(capture.0[0].contains("untrusted, potentially irrelevant"));
