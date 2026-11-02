@@ -391,7 +391,7 @@ fn resident_context_from_ps(value: &Value, model: &str) -> Result<u32, String> {
     }
     let size = models[0]["size"]
         .as_u64()
-        .filter(|size| *size > 0 && *size <= 14 * 1024 * 1024 * 1024)
+        .filter(|size| *size > 0 && *size <= 16 * 1024 * 1024 * 1024)
         .ok_or("resident model size unavailable or over budget")?;
     if models[0]["size_vram"].as_u64() != Some(size) {
         return Err("resident model is not fully GPU-resident".into());
@@ -824,12 +824,15 @@ mod tests {
     fn resident_context_requires_a_single_matching_gpu_model() {
         let valid = serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096}]});
         assert_eq!(resident_context_from_ps(&valid, "local").unwrap(), 4096);
+        let at_limit = serde_json::json!({"models":[{"name":"local","size":16u64*1024*1024*1024,"size_vram":16u64*1024*1024*1024,"context_length":4096}]});
+        assert_eq!(resident_context_from_ps(&at_limit, "local").unwrap(), 4096);
         for invalid in [
             serde_json::json!({"models":[]}),
             serde_json::json!({"models":[{"name":"other","size":1000,"size_vram":1000,"context_length":4096}]}),
             serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":999,"context_length":4096}]}),
             serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000}]}),
             serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096},{"name":"other"}]}),
+            serde_json::json!({"models":[{"name":"local","size":16u64*1024*1024*1024+1,"size_vram":16u64*1024*1024*1024+1,"context_length":4096}]}),
         ] {
             assert!(resident_context_from_ps(&invalid, "local").is_err());
         }
