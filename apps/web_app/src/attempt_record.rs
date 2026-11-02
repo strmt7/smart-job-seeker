@@ -2182,6 +2182,7 @@ fn final_capture_change(
 
 enum CaptureError {
     DimensionsChanged,
+    FirstTileChanged,
     Other(String),
 }
 impl From<String> for CaptureError {
@@ -2195,8 +2196,8 @@ impl From<&str> for CaptureError {
     }
 }
 
-/// Save at most six segments per attempt. A dimension change gets one fresh
-/// capture, since Chromium can change scrollbar width during the first tile.
+/// Save at most six segments per capture. A dimension or first-tile change
+/// gets one fresh capture; both attempts remain in the archive.
 pub fn capture_page(
     driver: &mut waypoint_browser::CdpDriver,
     record: &mut AttemptRecord,
@@ -2213,6 +2214,12 @@ pub fn capture_page(
                     "Page dimensions changed during both captures; inspect and capture again"
                         .into(),
                 )
+            }
+            Err(CaptureError::FirstTileChanged) if attempt == 0 => {
+                record.event(json!({"type":"page_capture_retry","time":timestamp,"note":"Page image changed; starting one new capture. The earlier capture may show a different state."}))?;
+            }
+            Err(CaptureError::FirstTileChanged) => {
+                return Err("Page image changed during capture; this may be a blinking cursor, animation, or a real page change. Inspect the page and capture again".into());
             }
             Err(CaptureError::Other(error)) => return Err(error),
         }
@@ -2274,9 +2281,7 @@ fn capture_page_once(
                 CaptureChange::Address => {
                     Err("Page address changed during capture; inspect and capture again".into())
                 }
-                CaptureChange::FirstTile => {
-                    Err("Page image changed during capture; this may be a blinking cursor, animation, or a real page change. Inspect the page and capture again".into())
-                }
+                CaptureChange::FirstTile => Err(CaptureError::FirstTileChanged),
             };
         }
     }
@@ -2853,6 +2858,22 @@ mod tests {
             .join(changed["screenshot"].as_str().unwrap())
             .is_file());
         assert!(!events.iter().any(|event| event["type"] == "page_capture"));
+        let starts: Vec<_> = events
+            .iter()
+            .filter(|event| event["type"] == "page_capture_started")
+            .collect();
+        assert_eq!(starts.len(), 2);
+        assert_ne!(starts[0]["capture_id"], starts[1]["capture_id"]);
+        assert!(events
+            .iter()
+            .any(|event| event["type"] == "page_capture_retry"));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["type"] == "page_capture_changed")
+                .count(),
+            2
+        );
     }
 
     #[test]
