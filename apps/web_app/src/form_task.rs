@@ -258,6 +258,37 @@ fn observed_platform(origin: &str) -> Option<waypoint_workspace::form_experience
 
 /// Keep newly observed walls even if the first inspection missed them. A
 /// different schema cannot safely reuse mappings made for the earlier page.
+fn schema_change_summary(
+    before: &waypoint_applications::form_mapping::FormSchema,
+    after: &waypoint_applications::form_mapping::FormSchema,
+) -> String {
+    use std::collections::HashMap;
+    let before_fields: HashMap<_, _> = before.fields.iter().map(|f| (&f.selector, f)).collect();
+    let after_fields: HashMap<_, _> = after.fields.iter().map(|f| (&f.selector, f)).collect();
+    if before_fields.len() != before.fields.len() || after_fields.len() != after.fields.len() {
+        return "The field inventory changed or contained repeated identifiers.".into();
+    }
+    let added = after_fields
+        .keys()
+        .filter(|key| !before_fields.contains_key(*key))
+        .count();
+    let removed = before_fields
+        .keys()
+        .filter(|key| !after_fields.contains_key(*key))
+        .count();
+    let changed = before_fields
+        .iter()
+        .filter(|(key, field)| after_fields.get(*key).is_some_and(|next| **field != *next))
+        .count();
+    let order_changed = before
+        .fields
+        .iter()
+        .map(|f| &f.selector)
+        .ne(after.fields.iter().map(|f| &f.selector));
+    let structure_changed = before.multi_step != after.multi_step || before.steps != after.steps;
+    format!("Inspection field changes: added {added}, removed {removed}, modified {changed}; order {}, step structure {}. No entered values are included.", if order_changed { "changed" } else { "unchanged" }, if structure_changed { "changed" } else { "unchanged" })
+}
+
 fn merge_final_inspection(
     preview: &mut form_preview::FormPreview,
     fresh: &waypoint_applications::driver::LiveForm,
@@ -270,6 +301,7 @@ fn merge_final_inspection(
     if fresh.schema != preview.schema {
         let reason =
             "The form changed during inspection; previous model suggestions were discarded";
+        let detail = schema_change_summary(&preview.schema, &fresh.schema);
         let mut updated = form_preview::suggest_without_model(fresh.clone(), profile, reason)?;
         updated.suggestions.clear();
         updated.manual_review.retain(|item| {
@@ -278,6 +310,7 @@ fn merge_final_inspection(
             )
         });
         updated.manual_review.push(reason.into());
+        updated.manual_review.push(detail);
         form_preview::refresh_required_review(&mut updated);
         updated
             .manual_review
@@ -969,6 +1002,16 @@ mod tests {
             .manual_review
             .iter()
             .any(|wall| wall == form_preview::CHANGED_INFORMATIONAL_PREVIEW));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|wall| wall.contains("added 1, removed 0, modified 0")
+                && wall.contains("step structure changed")));
+        let mut altered = fresh.schema.clone();
+        altered.fields[0].label = "Confidential example".into();
+        let detail = schema_change_summary(&fresh.schema, &altered);
+        assert!(detail.contains("added 0, removed 0, modified 1"));
+        assert!(!detail.contains("Confidential example"));
         assert!(preview
             .manual_review
             .iter()

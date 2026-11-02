@@ -3457,7 +3457,7 @@ mod tests {
         if live
             .walls
             .iter()
-            .any(|wall| wall == "The page changed during inspection; review the form manually")
+            .any(|wall| wall == waypoint_browser::CHANGED_DURING_INSPECTION)
         {
             println!("Initial inspection changed; requesting one fresh read-only inspection");
             live = driver.inspect_current().unwrap();
@@ -3579,7 +3579,7 @@ mod tests {
         if live
             .walls
             .iter()
-            .any(|wall| wall == "The page changed during inspection; review the form manually")
+            .any(|wall| wall == waypoint_browser::CHANGED_DURING_INSPECTION)
         {
             live = driver.inspect_current().unwrap();
         }

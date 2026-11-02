@@ -45,8 +45,8 @@ fn is_disappeared_node_error(message: &str) -> bool {
         && message.contains("No node with given id found")
 }
 
-const CHANGED_DURING_INSPECTION: &str =
-    "The page changed during inspection; review the form manually";
+pub const CHANGED_DURING_INSPECTION: &str =
+    "A page element disappeared during inspection; the scan was retried. Review the form manually";
 
 // Spend the 720-pixel capture width on nearby context without excluding the
 // target's right edge. A wide target may leave little room for context.
