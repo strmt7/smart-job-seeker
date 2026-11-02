@@ -34,13 +34,7 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
         url.set_path(&path);
     }
     if local && url.path() == "/mega/" && url.port().is_some() {
-        let mut search = url.join("search").map_err(|_| "Invalid provider path")?;
-        search
-            .query_pairs_mut()
-            .append_pair("text", query.trim())
-            .append_pair("mode", "fast")
-            .append_pair("limit", "10");
-        return Ok(search);
+        return openserp_request(&url, query, &waypoint_workspace::default_registry());
     }
     if is_wiby(&url) {
         let mut search = url.join("json/").map_err(|_| "Invalid provider path")?;
@@ -61,6 +55,35 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
         .query_pairs_mut()
         .append_pair("q", query.trim())
         .append_pair("format", "json");
+    Ok(search)
+}
+
+fn openserp_request(
+    base: &Url,
+    query: &str,
+    registry: &waypoint_policy::PermissionRegistry,
+) -> Result<Url, String> {
+    let engines: Vec<&str> = ["google", "bing", "yandex", "baidu", "duckduckgo", "ecosia"]
+        .into_iter()
+        .filter(|engine| {
+            registry
+                .check_public_route(
+                    &format!("openserp_{engine}"),
+                    waypoint_policy::Operation::Discover,
+                )
+                .is_ok()
+        })
+        .collect();
+    if engines.is_empty() {
+        return Err("Local OpenSERP has no search engines approved in the source permission registry; use another provider until its engines are reviewed".into());
+    }
+    let mut search = base.join("search").map_err(|_| "Invalid provider path")?;
+    search
+        .query_pairs_mut()
+        .append_pair("text", query.trim())
+        .append_pair("mode", "fast")
+        .append_pair("limit", "10")
+        .append_pair("engines", &engines.join(","));
     Ok(search)
 }
 
@@ -140,6 +163,24 @@ pub(crate) fn parse_provider(
             .ok_or("Provider returned no results array")?;
         if entries.len() > 500 {
             return Err("Provider returned too many results".into());
+        }
+        let approved: Vec<String> = url
+            .query_pairs()
+            .filter(|(key, _)| key == "engines")
+            .flat_map(|(_, value)| value.split(',').map(str::to_owned).collect::<Vec<_>>())
+            .collect();
+        if approved.is_empty() {
+            return Err("Local OpenSERP request has no approved engines".into());
+        }
+        if entries.iter().any(|item| {
+            item["type"] == "organic"
+                && !item["engine"].as_str().is_some_and(|engine| {
+                    approved
+                        .iter()
+                        .any(|allowed| allowed.eq_ignore_ascii_case(engine))
+                })
+        }) {
+            return Err("Local OpenSERP returned an organic result from an unapproved or unidentified engine".into());
         }
         let mut omitted = 0usize;
         let results: Vec<Value> = entries.iter().filter_map(|item| {
@@ -625,11 +666,20 @@ mod tests {
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
         let base = format!("http://127.0.0.1:{}/mega/", addr.port());
-        let url = page_url(&request_url(&base, "fictional role").unwrap(), 2);
+        assert!(request_url(&base, "fictional role")
+            .unwrap_err()
+            .contains("no search engines approved"));
+        let fixture_policy = waypoint_policy::PermissionRegistry::from_json(r#"[{"source":"openserp_google","discover":"allowed_public","read":"forbidden","prefill":"forbidden","upload":"forbidden","submit":"forbidden","confirm":"forbidden"}]"#).unwrap();
+        let base = Url::parse(&base).unwrap();
+        let url = page_url(
+            &openserp_request(&base, "fictional role", &fixture_policy).unwrap(),
+            2,
+        );
         let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(pairs["text"], "fictional role");
         assert_eq!(pairs["mode"], "fast");
         assert_eq!(pairs["limit"], "10");
+        assert_eq!(pairs["engines"], "google");
         let body = fetch(&url).map_err(|e| e.message).unwrap();
         worker.join().unwrap();
         let result = parse_provider(&body, &url, &Default::default()).unwrap();
@@ -640,6 +690,13 @@ mod tests {
         assert_eq!(result["results"][0]["engines"], json!(["google"]));
         assert_eq!(result["unresponsive_engines"], 1);
         assert_eq!(result["unresponsive_engine_names"], json!(["bing"]));
+        assert!(parse_provider(&json!({"results":[{"type":"organic","engine":"bing","url":"https://example.org/job"}]}).to_string(), &url, &Default::default()).is_err());
+        assert!(parse_provider(
+            &json!({"results":[{"type":"organic","url":"https://example.org/job"}]}).to_string(),
+            &url,
+            &Default::default()
+        )
+        .is_err());
         assert!(parse_provider(
             &json!({"meta":{"engines_failed":["google"]},"results":[]}).to_string(),
             &url,
