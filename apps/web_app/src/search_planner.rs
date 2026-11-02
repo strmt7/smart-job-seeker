@@ -106,17 +106,43 @@ fn normalized_identifier(value: &str) -> String {
         .collect()
 }
 
+fn query_contains_protected(query: &str, normalized: &str, identifier: &str) -> bool {
+    if identifier.chars().count() >= 6 {
+        return normalized.contains(identifier);
+    }
+    let words: Vec<_> = query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(normalized_identifier)
+        .collect();
+    (0..words.len()).any(|start| {
+        let mut joined = String::new();
+        for word in words.iter().skip(start).take(3) {
+            joined.push_str(word);
+            if joined == identifier {
+                return true;
+            }
+            if joined.len() > identifier.len() {
+                break;
+            }
+        }
+        false
+    })
+}
+
 /// The identifier list is used for local validation and is not added to the prompt.
 /// User-provided facts or instructions may themselves contain identifying text.
 pub fn protected_identifiers(profile: &Value) -> Vec<String> {
     let first = profile["first_name"].as_str().unwrap_or("").trim();
     let last = profile["last_name"].as_str().unwrap_or("").trim();
     let mut values = Vec::new();
+    let mut short_names = Vec::new();
     if !first.is_empty() && !last.is_empty() {
         values.push(normalized_identifier(&format!("{first} {last}")));
     }
     for key in [
         "full_name",
+        "preferred_name",
         "email",
         "phone",
         "address",
@@ -128,6 +154,9 @@ pub fn protected_identifiers(profile: &Value) -> Vec<String> {
             .filter(|value| !value.trim().is_empty())
         {
             let normalized = normalized_identifier(value);
+            if key == "preferred_name" && (2..6).contains(&normalized.chars().count()) {
+                short_names.push(normalized.clone());
+            }
             if key == "phone"
                 && normalized.len() >= 10
                 && normalized.bytes().all(|b| b.is_ascii_digit())
@@ -138,6 +167,7 @@ pub fn protected_identifiers(profile: &Value) -> Vec<String> {
         }
     }
     values.retain(|value| value.chars().count() >= 6);
+    values.extend(short_names);
     values.sort();
     values.dedup();
     values
@@ -187,7 +217,7 @@ fn generate(
         let normalized = normalized_identifier(query);
         if protected
             .iter()
-            .any(|identifier| normalized.contains(identifier))
+            .any(|identifier| query_contains_protected(query, &normalized, identifier))
         {
             omitted_private += 1;
             continue;
@@ -374,6 +404,32 @@ mod tests {
             &explicit_name
         )
         .is_err());
+        let preferred = protected_identifiers(&json!({"preferred_name":"Ace"}));
+        assert!(generate(
+            &mut Fake(json!({"queries":["Ace engineer"]})),
+            &facts,
+            "",
+            &preferred
+        )
+        .is_err());
+        assert!(generate(
+            &mut Fake(json!({"queries":["A-ce engineer"]})),
+            &facts,
+            "",
+            &preferred
+        )
+        .is_err());
+        assert_eq!(
+            generate(
+                &mut Fake(json!({"queries":["space engineer"]})),
+                &facts,
+                "",
+                &preferred
+            )
+            .unwrap()
+            .queries,
+            ["space engineer"]
+        );
         assert!(generate(
             &mut Fake(json!({"queries":["engineer +41-555-123-4567"]})),
             &facts,
