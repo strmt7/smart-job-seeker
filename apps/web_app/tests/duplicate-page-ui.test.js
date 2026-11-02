@@ -20,6 +20,14 @@ async function batchRun(results,stopAfterFirst=false,stopBeforeStart=false){
  return {data,messages,requests,context};
 }
 (async()=>{
+ const stopLine=source.split('\n').find(line=>line.startsWith('async function stopDuplicateBatch('));
+ const stopCalls=[],stopMessages=[];
+ const stopContext={duplicateBatch:{job:'fictional',stop:false},notify:value=>stopMessages.push(value),sessionStorage:{getItem:()=>JSON.stringify({job:'fictional',task:'running-task'})},api:async(path,body)=>stopCalls.push({path,body})};
+ await vm.runInNewContext(`(${stopLine})`,stopContext)('fictional');
+ assert.equal(stopContext.duplicateBatch.stop,true);
+ assert.equal(stopCalls[0].path,'/api/duplicates/search-cancel');
+ assert.equal(stopCalls[0].body.task_id,'running-task');
+ assert.match(stopMessages[0],/stop after the current model batch/);
  const result={status:'complete',page_after:'',next_cursor:'job-12',examined:12,unexamined:0,total_candidates:12,added:0,truncated:true};
  let x=await run([],result);assert.equal(x.requests[1].body.after,'');assert.deepEqual(JSON.parse(x.data.get('waypoint-duplicate-cursor')),{job:'fictional',after:'job-12'});
  x=await run([...x.data],{...result,page_after:'job-12',next_cursor:'job-24',failed_batches:1,unexamined:1,examined:11});assert.equal(x.requests[1].body.after,'job-12');assert.equal(JSON.parse(x.data.get('waypoint-duplicate-cursor')).after,'job-12');

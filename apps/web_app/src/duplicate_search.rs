@@ -718,6 +718,111 @@ mod tests {
     }
 
     #[test]
+    fn cancel_api_preserves_partial_results_and_retries_the_same_page() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::mpsc;
+        struct BlockingModel {
+            started: mpsc::Sender<()>,
+            resume: mpsc::Receiver<()>,
+        }
+        impl Inference for BlockingModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.started.send(()).unwrap();
+                self.resume
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok((
+                    json!({"matches":[{"index":1,"reason":"Possible match","target_excerpt":"Engineer","candidate_excerpt":"Position"}]}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let first = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/cancel-target","title":"Engineer","employer":"Alpha"}), 1).unwrap();
+        for i in 0..4 {
+            crate::manual_job::add(&mut ws, &json!({"url":format!("https://example.org/cancel-{i}"),"title":"Position","employer":format!("Employer {i}")}), 1).unwrap();
+        }
+        let id = waypoint_domain::JobIdentityId::new(first["id"].as_str().unwrap()).unwrap();
+        let input = crate::duplicate_search_inputs_scope(&ws, &id, Some(""), true).unwrap();
+        assert_eq!(input.candidates.len(), 4);
+        let original_ids: Vec<_> = input.candidates.iter().map(|(id, _)| id.clone()).collect();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let target = input.target.clone();
+        let candidates = input.candidates.clone();
+        *TASK.lock().unwrap() = Some(Task {
+            id: "cancel-fixture".into(),
+            input,
+            result: None,
+            cancel,
+        });
+        let (started_tx, started_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut model = BlockingModel {
+                started: started_tx,
+                resume: resume_rx,
+            };
+            search_with_cancel(&mut model, &target, &candidates, &worker_cancel)
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let call = |ws: &mut waypoint_workspace::Workspace, path: &str| -> Value {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = json!({"task_id":"cancel-fixture"}).to_string();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(&mut server, ws, &mut None, "fixture-token", port).unwrap();
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        assert_eq!(
+            call(&mut ws, "/api/duplicates/search-cancel")["requested"],
+            true
+        );
+        resume_tx.send(()).unwrap();
+        TASK.lock().unwrap().as_mut().unwrap().result = Some(worker.join().unwrap());
+        let result = call(&mut ws, "/api/duplicates/search-status");
+        assert_eq!(
+            (
+                result["examined"].as_u64(),
+                result["unexamined"].as_u64(),
+                result["cancelled"].as_bool()
+            ),
+            (Some(3), Some(1), Some(true))
+        );
+        assert_eq!(result["added"], 1);
+        assert_eq!(result["page_after"], "");
+        let retry =
+            crate::duplicate_search_inputs_scope(&ws, &id, result["page_after"].as_str(), true)
+                .unwrap();
+        let remaining: Vec<_> = retry.candidates.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(remaining.len(), 3);
+        assert!(!remaining.contains(&original_ids[0]));
+        assert!(original_ids[1..].iter().all(|id| remaining.contains(id)));
+        *COMPLETED.lock().unwrap() = None;
+    }
+
+    #[test]
     fn partial_batches_preserve_valid_matches_and_report_unexamined_candidates() {
         struct Sequence(std::collections::VecDeque<Result<Value, InferenceError>>);
         impl Inference for Sequence {
