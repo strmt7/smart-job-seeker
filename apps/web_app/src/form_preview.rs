@@ -3885,6 +3885,55 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "resource-gated read-only model inspection of a public form"]
+    fn resource_gated_public_generic_form_mapping() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").unwrap();
+            crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
+            let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let live = driver.open(&url).unwrap();
+            assert_eq!(
+                driver.current_url().unwrap(),
+                url,
+                "listing redirected; inspect manually"
+            );
+            let model = crate::resident_model().unwrap().expect("resident model");
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model,
+            );
+            let preview = suggest_for_live_form(live, &mut llm, &json!({"first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123"})).unwrap();
+            println!(
+                "fields={} suggestions={} review={:?}",
+                preview.schema.fields.len(),
+                preview.suggestions.len(),
+                preview.manual_review
+            );
+            for mapping in &preview.suggestions {
+                let field = preview
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.selector == mapping.field_selector)
+                    .expect("visible mapped field");
+                assert!(!field.sensitive, "sensitive field was proposed");
+                println!(
+                    "proposed field: {:?}, fictional value: {:?}",
+                    field.label, mapping.value
+                );
+            }
+            assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
+                && !entry.contains("clicked")
+                && !entry.contains("submitted")));
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated read-only model inspection of a public form"]
     fn resource_gated_public_form_context_mapping() {
         crate::experience_inference::tests::with_resource_gated_model(|| {
             let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").unwrap();

@@ -2125,3 +2125,16 @@ transcribed the applicant values correctly. The second run also asserted that
 the visual observations reported each reference field empty. DOM checks agreed;
 no application was submitted. These are two runs of one fixture, not a general
 accuracy measurement.
+
+### Read-only local-model inspection of a public form (2026-11-02)
+
+A generic resource-gated diagnostic can now inspect a policy-permitted public
+form with a fictional profile without clicking, typing or submitting. Two runs
+against a Greenhouse-hosted Synack form observed ten fields and four suggested
+contact mappings. On the second run the proposed first name, last name, email
+and phone matched the fictional profile. The inspector also reported a possible
+CAPTCHA, an uninspected embedded frame, custom/hidden controls and required
+fields needing review. No real-site filling or visual verification was tested.
+A separate search result redirected to its employer's board with a closed-job
+message, illustrating why search snippets alone cannot establish freshness.
+The local model was unloaded; these observations are not a general success rate.
