@@ -20,6 +20,10 @@
 - Required-criteria coverage now treats missing or invalid listing-sampling, removed-criteria and criterion-limit metadata as incomplete. Current saved assessments recompute this coverage when read; the score itself is unchanged. This can make older assessments show incomplete coverage rather than supported. Fictional fit tests passed (76 passed, 41 ignored), as did Windows web Clippy. No live model or application was used.
 - Qualification-coverage reporting now treats missing or invalid selection-limit metadata as unavailable rather than assuming no facts were omitted. Direct all-facts selections are recognized separately and must have internally consistent counts. This can make older or incomplete saved assessments show coverage unavailable; it does not change their score or prove model judgments correct. Fictional coverage and saved-assessment checks passed. The first full web-suite run also exposed a stale GPU-startup test expectation from the bounded-offload change; that test now checks both sides of the current estimate. The rerun passed (621 passed, 344 ignored), and Windows web Clippy passed. No live model or external application was used.
 
+## Local-model drafting check — 2026-11-03
+
+- A resource-gated fictional cover-letter drafting test ran with the installed `qwen3.5:9b` at 4096-token context. It produced one French paragraph and neutral French framing, and flagged a separate invented 25-year experience claim for review. This is one small fixture, not a general language, document-quality, or factuality evaluation. One concurrent system sample showed 13,310,324 KiB available; this was not a measured minimum. The test-owned model was unloaded afterward and no application was sent.
+
 ## PDF template editing — 2026-11-03
 
 - The PDF stream editor also handles the two shorthand text-show operators, preserving their spacing operands. Fictional font-map checks exercised both operators directly, and PDFium selection tests passed through the full document, glyph, geometry and visual checks. Windows web Clippy passed. Real-document coverage and arbitrary font support remain unverified.
