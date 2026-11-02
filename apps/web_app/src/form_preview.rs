@@ -2020,7 +2020,9 @@ mod tests {
     #[test]
     #[ignore = "resource-gated local model and fictional multi-step form"]
     fn resource_gated_local_model_wizard() {
-        crate::experience_inference::tests::with_resource_gated_model(|| {
+        let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:9b".into());
+        crate::experience_inference::tests::with_resource_gated_named_model(&model, || {
             live_local_model_reinspects_and_prefills_a_fictional_wizard();
         });
     }

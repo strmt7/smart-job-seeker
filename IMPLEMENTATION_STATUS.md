@@ -2100,3 +2100,9 @@ filled values as matching. No application was submitted. Ollama reported a
 was about 14.1 GiB during the run and 19.7 GiB after unloading. These are
 snapshots, not peak measurements. One fictional run does not establish
 reliability on real multi-step applications or general model accuracy.
+
+The same gated wizard test can select an installed model through
+`WAYPOINT_VISION_BENCHMARK_MODEL`. A qwen3.5:9b-q8_0 attempt did not run:
+the startup gate reported 20,159 MiB available and required at least
+20,206 MiB. The model was not started and no comparison result was obtained.
+The gate was not relaxed; available memory is a changing snapshot.
