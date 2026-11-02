@@ -1998,13 +1998,20 @@ fn review_grouped_support(
                     let mut quotes = std::collections::HashSet::new();
                     let mut supported = 0usize;
                     for component in components {
-                        let Some(quote) = component["requirement_quote"]
-                            .as_str()
-                            .filter(|q| !q.trim().is_empty() && requirement.contains(q))
-                        else {
+                        let Some(quote) = component["requirement_quote"].as_str().and_then(|q| {
+                            if q.trim().is_empty() {
+                                None
+                            } else if requirement.contains(q) {
+                                Some(q.to_owned())
+                            } else {
+                                recover_isolated_quote(&[requirement], q)
+                            }
+                        }) else {
                             return false;
                         };
-                        if !quotes.insert(quote)
+                        if quotes.iter().any(|existing: &String| {
+                            existing.contains(&quote) || quote.contains(existing)
+                        }) || !quotes.insert(quote)
                             || !component
                                 .as_object()
                                 .is_some_and(|v| v.contains_key("fact_quote"))
@@ -6829,6 +6836,140 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "resource-gated local model evaluation on fictional grouped criteria"]
+    fn resource_gated_grouped_fictional_evaluation() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let listing =
+                "Required: Python and SQL. Required: Spark and Hadoop. Required: Rust or Go.";
+            let facts = vec![
+                "Used Python and SQL for data engineering.".to_owned(),
+                "Used Spark for data engineering.".to_owned(),
+                "Used Rust for systems programming.".to_owned(),
+            ];
+            let original = json!({"summary":"Review","criteria":[
+                {"source":"listing","excerpt":"Python and SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Review"},
+                {"source":"listing","excerpt":"Spark and Hadoop","importance":"required","status":"supported","fact_index":2,"explanation":"Review"},
+                {"source":"listing","excerpt":"Rust or Go","importance":"required","status":"supported","fact_index":3,"explanation":"Review"}
+            ]});
+            let assessment = validate(original.clone(), &facts, "", listing).unwrap();
+            let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                model,
+                "qwen3.5:9b".into(),
+                crate::resident_model,
+            );
+            let (_, result) = review_grouped_support(
+                &mut model,
+                original,
+                assessment,
+                &facts,
+                "",
+                listing,
+                Some(listing),
+            );
+            let statuses: Vec<_> = result["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v["status"].as_str().unwrap())
+                .collect();
+            println!(
+                "Fictional grouped statuses: {statuses:?}; {}",
+                result["grouped_support_check"]
+            );
+            assert_eq!(statuses, vec!["supported", "unknown", "supported"]);
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated diagnostic using a private local assessment and trace"]
+    fn resource_gated_private_grouped_diagnostic() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let input = std::env::var_os("WAYPOINT_PRIVATE_GROUP_INPUT").expect("private input");
+            let listing_path = std::env::var_os("WAYPOINT_PUBLIC_FIT_LISTING").expect("listing");
+            let trace_path =
+                std::env::var_os("WAYPOINT_PRIVATE_GROUP_TRACE").expect("private trace");
+            let prior: Value = serde_json::from_slice(&std::fs::read(input).unwrap()).unwrap();
+            let listing = std::fs::read_to_string(listing_path).unwrap();
+            let mut facts = Vec::new();
+            let mut criteria = Vec::new();
+            for item in prior["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|v| v["source"] == "listing" && v["status"] == "supported")
+            {
+                let fact = item["qualification"]
+                    .as_str()
+                    .expect("cited fact")
+                    .to_owned();
+                facts.push(fact);
+                criteria.push(json!({"source":"listing","excerpt":item["excerpt"],"importance":item["importance"],"status":"supported","fact_index":facts.len(),"explanation":"Review"}));
+            }
+            let original = json!({"summary":"Review","criteria":criteria});
+            let assessment =
+                validate(original.clone(), &facts, "", &listing).expect("prior rubric");
+            struct Trace<I> {
+                inner: I,
+                output: std::fs::File,
+            }
+            impl<I: Inference> Inference for Trace<I> {
+                fn probe(
+                    &mut self,
+                ) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
+                    self.inner.probe()
+                }
+                fn generate_structured(
+                    &mut self,
+                    task: &str,
+                    prompt: &str,
+                    limit: u32,
+                ) -> Result<(Value, waypoint_inference::UsageReport), InferenceError>
+                {
+                    use std::io::Write;
+                    let result = self.inner.generate_structured(task, prompt, limit);
+                    let entry = match &result {
+                        Ok((value, _)) => json!({"prompt":prompt,"response":value}),
+                        Err(error) => json!({"prompt":prompt,"error":format!("{error:?}")}),
+                    };
+                    writeln!(self.output, "{}", entry).expect("write private trace");
+                    result
+                }
+            }
+            let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(trace_path)
+                .expect("new private trace");
+            let mut model = Trace {
+                inner: crate::resident_inference::ResidentInference::new(
+                    model,
+                    "qwen3.5:9b".into(),
+                    crate::resident_model,
+                ),
+                output,
+            };
+            let (_, result) = review_grouped_support(
+                &mut model,
+                original,
+                assessment,
+                &facts,
+                "",
+                &listing,
+                Some(&listing),
+            );
+            println!("Grouped diagnostic: {}", result["grouped_support_check"]);
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "resource-gated local model with private local résumé and public listing captures"]
     fn resource_gated_private_facts_against_public_listing() {
         crate::experience_inference::tests::with_resource_gated_model(
@@ -8540,6 +8681,37 @@ mod tests {
             "",
             alternative_listing,
             Some(alternative_listing),
+        );
+        assert_eq!(assessment["rubric"][0]["status"], "supported");
+        let overlapping = json!({"items":[{"id":1,"relation":"all","components":[{"requirement_quote":"Python or SQL","fact_quote":"Python"},{"requirement_quote":"Python","fact_quote":"Python"}]}]});
+        let mut overlapping_source = source.clone();
+        overlapping_source["criteria"][0]["excerpt"] = json!("Python or SQL");
+        let baseline =
+            validate(overlapping_source.clone(), &facts, "", alternative_listing).unwrap();
+        let (_, assessment) = review_grouped_support(
+            &mut Fixture(overlapping),
+            overlapping_source,
+            baseline,
+            &facts,
+            "",
+            alternative_listing,
+            Some(alternative_listing),
+        );
+        assert_eq!(assessment["rubric"][0]["status"], "unknown");
+        let formatted_listing = "Required: **Python** and **SQL**.";
+        let formatted = json!({"summary":"Review","criteria":[{"source":"listing","excerpt":"**Python** and **SQL**","importance":"required","status":"supported","fact_index":1,"explanation":"Review"}]});
+        let formatted_facts = vec!["Used Python and SQL".to_owned()];
+        let baseline =
+            validate(formatted.clone(), &formatted_facts, "", formatted_listing).unwrap();
+        let response = json!({"items":[{"id":1,"relation":"all","components":[{"requirement_quote":"Python","fact_quote":"Python"},{"requirement_quote":"SQL","fact_quote":"SQL"}]}]});
+        let (_, assessment) = review_grouped_support(
+            &mut Fixture(response),
+            formatted,
+            baseline,
+            &formatted_facts,
+            "",
+            formatted_listing,
+            Some(formatted_listing),
         );
         assert_eq!(assessment["rubric"][0]["status"], "supported");
     }

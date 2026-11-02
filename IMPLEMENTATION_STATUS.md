@@ -2271,6 +2271,16 @@ range was 0–100. This is a material usability limitation of this model and che
 not a successful fit assessment. The model was unloaded and no application was
 sent.
 
+The grouped check was then evaluated separately with three fictional cases:
+a fully supported conjunction, a partially supported conjunction, and an
+explicit alternative. The local model returned the expected three statuses in
+this small test. Component quotes can now recover paired Markdown formatting
+from the source; overlapping component quotes are rejected. In a separate
+repeat using five grouped judgments from the earlier real-input assessment,
+three responses were structurally usable and all five judgments remained
+unknown. The detailed trace remains outside the repository. These examples do
+not establish general accuracy, and the real-input result remains inconclusive.
+
 ### Multi-passage requirement audit (2026-11-02)
 
 The requirement audit now scans up to six overlapping, bounded passages and
