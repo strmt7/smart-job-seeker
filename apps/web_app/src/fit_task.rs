@@ -2878,6 +2878,40 @@ fn numeric_time_minimum_requires_review(preference: &str, quote: &str) -> bool {
             .any(|marker| quote_lower.contains(marker))
 }
 
+// A model can cite the amount while omitting an immediately preceding upper
+// bound. Only inspect uniquely located, digit-leading quotes on the same line.
+fn numeric_time_upper_bound_in_context(preference: &str, quote: &str, listing: &str) -> bool {
+    if !numeric_time_minimum_requires_review(preference, "")
+        || !quote.as_bytes().first().is_some_and(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    let mut matches = listing.match_indices(quote);
+    let Some((position, _)) = matches.next() else {
+        return false;
+    };
+    if matches.next().is_some() {
+        return false;
+    }
+    let start = listing.ceil_char_boundary(position.saturating_sub(80));
+    let prefix = listing[start..position]
+        .rsplit('\n')
+        .next()
+        .unwrap_or("")
+        .trim_end()
+        .to_ascii_lowercase();
+    ["up to", "at most", "maximum", "maximum of", "no more than"]
+        .iter()
+        .any(|marker| {
+            prefix.strip_suffix(marker).is_some_and(|before| {
+                before
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric())
+            })
+        })
+}
+
 fn compare_preferences_with_source(
     model: &mut dyn Inference,
     mut original: Value,
@@ -3042,9 +3076,12 @@ fn compare_preferences_with_source(
                 .as_str()
                 .is_some_and(|text| numeric_minimum_without_cited_number(preference, text));
         let numeric_time_review = status == "supported"
-            && quote
-                .as_str()
-                .is_some_and(|text| numeric_time_minimum_requires_review(preference, text));
+            && quote.as_str().is_some_and(|text| {
+                numeric_time_minimum_requires_review(preference, text)
+                    || verification_text.is_some_and(|source| {
+                        numeric_time_upper_bound_in_context(preference, text, source)
+                    })
+            });
         // A statement that information is unstated is not evidence of the
         // opposite. This is a limited English-language guard, not semantic validation.
         let absent_information = matches!(status, "supported" | "contradicted")
@@ -8783,6 +8820,41 @@ mod tests {
     }
 
     #[test]
+    fn partial_time_citation_retains_preceding_upper_bound() {
+        let preference = "At least 30 days of leave";
+        assert!(numeric_time_upper_bound_in_context(
+            preference,
+            "35 days",
+            "Up to 35 days of leave"
+        ));
+        assert!(numeric_time_upper_bound_in_context(
+            preference,
+            "35 days",
+            "Maximum of 35 days of leave"
+        ));
+        assert!(!numeric_time_upper_bound_in_context(
+            preference,
+            "35 days",
+            "Guaranteed 35 days of leave"
+        ));
+        assert!(!numeric_time_upper_bound_in_context(
+            preference,
+            "35 days",
+            "Up to 35 days or 35 days of leave"
+        ));
+        assert!(!numeric_time_upper_bound_in_context(
+            preference,
+            "35 days",
+            "Backup to 35 days"
+        ));
+        assert!(!numeric_time_upper_bound_in_context(
+            "Prefer leave",
+            "35 days",
+            "Up to 35 days"
+        ));
+    }
+
+    #[test]
     fn unsupported_time_minimum_does_not_inflate_preference_score() {
         struct Fixture(&'static str);
         impl Inference for Fixture {
@@ -8806,22 +8878,17 @@ mod tests {
             }
         }
         let preference = "At least 30 days of leave";
-        for listing in [
-            "25 days of leave",
-            "In 2026, unlimited leave",
-            "5 weeks of leave",
-            "Up to 35 days of leave",
+        for (listing, quote) in [
+            ("25 days of leave", "25 days of leave"),
+            ("In 2026, unlimited leave", "In 2026, unlimited leave"),
+            ("5 weeks of leave", "5 weeks of leave"),
+            ("Up to 35 days of leave", "Up to 35 days of leave"),
+            ("Up to 35 days of leave", "35 days of leave"),
         ] {
             let raw = json!({"summary":"fixture","criteria":[{"source":"preference","excerpt":preference,"importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
             let fallback = validate(raw.clone(), &[], preference, listing).unwrap();
-            let result = compare_preferences(
-                &mut Fixture(listing),
-                raw,
-                fallback,
-                &[],
-                preference,
-                listing,
-            );
+            let result =
+                compare_preferences(&mut Fixture(quote), raw, fallback, &[], preference, listing);
             assert_eq!(result["rubric"][0]["status"], "unknown", "{listing}");
             assert_eq!(
                 result["score_range"],
