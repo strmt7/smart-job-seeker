@@ -14908,9 +14908,25 @@ mod tests {
             // Reuse the fixture session to exercise a later page fill that
             // changes an earlier value; the production UI starts a rescan.
             current.filled = false;
+            // Block screenshot writes in this disposable attempt, while leaving
+            // answer and event recording functional.
+            let capture_dir = current.record.as_ref().unwrap().test_directory().to_owned();
+            let screenshots = capture_dir.join("screenshots");
+            let screenshots_backup = capture_dir.join("screenshots-backup");
+            std::fs::rename(&screenshots, &screenshots_backup).unwrap();
+            std::fs::write(&screenshots, b"fixture blocker").unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
             assert!(error.contains("2 successful field commands"), "{error}");
+            assert!(
+                error.contains("Screenshots could not all be captured or saved"),
+                "{error}"
+            );
+            assert!(std::fs::read_to_string(capture_dir.join("events.jsonl"))
+                .unwrap()
+                .contains("capture_incomplete"));
+            std::fs::remove_file(&screenshots).unwrap();
+            std::fs::rename(&screenshots_backup, &screenshots).unwrap();
             assert!(error.contains("Given name"), "{error}");
             assert!(
                 error.contains("An attachment could not be verified"),
@@ -15256,14 +15272,13 @@ mod tests {
                     .any(|event| event["type"] == "page_capture" && event["segments"] == 2),
                 "{events}"
             );
-            let failure_viewport = event_values
+            assert!(event_values
                 .iter()
                 .skip(incomplete + 1)
-                .find(|event| event["type"] == "fill_failure_viewport")
-                .unwrap();
-            assert!(record
-                .join(failure_viewport["screenshot"].as_str().unwrap())
-                .is_file());
+                .any(|event| event["type"] == "capture_incomplete"
+                    && event["note"]
+                        .as_str()
+                        .is_some_and(|note| note.contains("failure viewport"))));
             let capture_end = event_values
                 .iter()
                 .enumerate()

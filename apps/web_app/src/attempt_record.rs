@@ -604,6 +604,13 @@ pub struct AttemptRecord {
     sequence: u32,
 }
 
+#[cfg(test)]
+impl AttemptRecord {
+    pub(crate) fn test_directory(&self) -> &std::path::Path {
+        &self.dir
+    }
+}
+
 // Checks presence only, not image contents or provenance.
 fn listing_capture_files(dir: &std::path::Path, value: &Value, followup: bool) -> &'static str {
     let (available, count_key, folder) = if followup {
