@@ -55,10 +55,16 @@ fn words(text: &str) -> Vec<String> {
     result
 }
 fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
-    if !name.to_ascii_lowercase().ends_with(".docx") {
+    let lower_name = name.to_ascii_lowercase();
+    if lower_name.ends_with(".pdf") {
         return Ok(vec![
             "PDF visual layout, columns, images, headers and footers are not assessed by this text check."
                 .into(),
+        ]);
+    }
+    if !lower_name.ends_with(".docx") {
+        return Ok(vec![
+            "This text check does not assess the layout of a separately rendered document.".into(),
         ]);
     }
     use std::io::Read;
@@ -416,6 +422,19 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn text_and_pdf_reports_identify_the_correct_format_limitations() {
+        let text_notes = structure_notes("resume.TXT", b"Fictional candidate").unwrap();
+        assert!(text_notes[0].contains("text check"));
+        assert!(!text_notes[0].contains("PDF"));
+        let pdf_notes = structure_notes("resume.PDF", b"not parsed by structure_notes").unwrap();
+        assert!(pdf_notes[0].contains("PDF visual layout"));
+        let report = report("resume.txt", b"Fictional Rust developer", "Rust role", &[]).unwrap();
+        assert!(report["structure_notes"][0]
+            .as_str()
+            .unwrap()
+            .contains("text check"));
+    }
     #[test]
     fn recovers_active_and_completed_checks_without_cross_task_results() {
         start(
