@@ -702,6 +702,15 @@ mod tests {
             && !entry.contains("submitted")));
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated local model and reads a permitted public page"]
+    fn resource_gated_public_overlay_advice() {
+        crate::experience_inference::tests::with_resource_gated_model(
+            live_model_recommends_public_overlay_controls_read_only,
+        );
+    }
+
     #[test]
     #[ignore = "requires an isolated local model"]
     fn live_model_overlay_advice_excludes_fictional_submission_actions() {
