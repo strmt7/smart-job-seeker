@@ -1407,7 +1407,12 @@ mod tests {
         assert_eq!(address.scheme(), "https");
         assert!(matches!(
             address.host_str(),
-            Some("job-boards.greenhouse.io" | "jobs.ashbyhq.com" | "apply.workable.com")
+            Some(
+                "job-boards.greenhouse.io"
+                    | "jobs.ashbyhq.com"
+                    | "apply.workable.com"
+                    | "jobs.lever.co"
+            )
         ));
         crate::form_links::check_destination(&url, waypoint_policy::Operation::Read)
             .expect("source policy permits this read-only check");
