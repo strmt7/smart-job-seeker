@@ -1,3 +1,7 @@
+## Indirect preference retest — 2026-11-03
+
+- After the numeric minimum-evidence check, one resource-gated `qwen3.5:9b` run completed all four fictional indirect preference cases as expected: unspecified working hours left an hourly-to-annual salary comparison unknown; UK-only remote work conflicted with a Germany requirement; an incident rota conflicted with a no-on-call preference; and discretionary unlimited leave left a 30-day minimum unknown. An earlier run had failed the leave case before the numeric check. These four cases are not a broad accuracy or repeatability benchmark.
+
 ## Semantic fit fixture — 2026-11-03
 
 - In one resource-gated fictional candidate comparison, `qwen3.5:9b` scored the candidate with relevant experience above an unrelated candidate, recognized coaching engineers as supporting mentoring and administering production clusters as supporting Kubernetes operations. All three criteria remained unknown for the unrelated candidate, with a 0–100 score range. This is one controlled example; it does not establish calibration, repeatability or performance across occupations. The test made no external application.
