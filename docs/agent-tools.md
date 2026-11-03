@@ -51,6 +51,17 @@ crawl is evidence for that page at that time, not permission to use it in the
 product: Waypoint's source policy and permission registry still apply. `qualify`
 is an explicit multi-site network run, not an installation prerequisite.
 
+## Inert form-structure fixtures
+
+`py -3.13 -B tools/inert_form_fixture.py <local-html> target/<new-file>.html`
+creates an inert, local-only approximation of standard controls and labels from
+an existing HTML capture. It omits scripts, form submission, network attributes,
+entered values and unsupported controls. Output is restricted to `target/`;
+captures and fixtures can contain private or third-party text and must not be
+committed. This is not a replay of the original site's behavior, styling,
+JavaScript, validation, custom widgets or multi-step flow. Use it alongside
+other evidence, not as proof that the real application can be completed.
+
 ## Coverage
 
 The coverage workflow runs Rust workspace tests under `cargo-llvm-cov` on a
