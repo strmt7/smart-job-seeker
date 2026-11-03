@@ -107,6 +107,14 @@ pub trait BrowserDriver {
     fn check_text_candidate(&mut self, _selector: &str, _value: &str) -> Result<(), DriverError> {
         Err(DriverError("Text preflight is unavailable".into()))
     }
+    /// Check a date or time candidate without changing the live field.
+    fn check_temporal_candidate(
+        &mut self,
+        _selector: &str,
+        _value: &str,
+    ) -> Result<(), DriverError> {
+        Err(DriverError("Date and time preflight is unavailable".into()))
+    }
     /// Refuse to replace an existing, different text value without manual review.
     fn ensure_text_replaceable(
         &mut self,

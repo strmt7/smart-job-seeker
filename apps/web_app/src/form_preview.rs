@@ -697,6 +697,18 @@ pub fn apply_reviewed_text_fields_with_replacements(
                 .check_text_candidate(&field.selector, value)
                 .map_err(|e| e.to_string())?;
         }
+        if let (
+            FormFieldType::Date
+            | FormFieldType::Month
+            | FormFieldType::Time
+            | FormFieldType::DateTimeLocal,
+            PacketValue::Date(value),
+        ) = (&field.field_type, &mapping.value)
+        {
+            driver
+                .check_temporal_candidate(&field.selector, value)
+                .map_err(|e| e.to_string())?;
+        }
         check_existing_value(driver, field, &mapping.value, intent.as_str(), replacements)?;
     }
     let payload_digest = fill_payload_digest(preview, replacements)?;
@@ -4753,11 +4765,41 @@ mod tests {
         .unwrap();
         let intent = IntentId::new("text-preflight-intent").unwrap();
         let packet = Sha256Digest::of("fictional profile");
-        for (email, code) in [
-            ("invalid-email", "AB"),
-            ("candidate@example.invalid", "abc"),
+        driver
+            .check_temporal_candidate("#date", "2026-02-01")
+            .unwrap();
+        driver.check_temporal_candidate("#time", "10:00").unwrap();
+        for (email, code, date, time, expected) in [
+            (
+                "invalid-email",
+                "AB",
+                "2026-02-01",
+                "10:00",
+                "Text field needs review",
+            ),
+            (
+                "candidate@example.invalid",
+                "abc",
+                "2026-02-01",
+                "10:00",
+                "Text field needs review",
+            ),
+            (
+                "candidate@example.invalid",
+                "AB",
+                "2027-01-01",
+                "10:00",
+                "Date or time does not satisfy",
+            ),
+            (
+                "candidate@example.invalid",
+                "AB",
+                "2026-02-01",
+                "09:30",
+                "Date or time does not satisfy",
+            ),
         ] {
-            let (candidate, _) = crate::prepare_reviewed_fill(&preview, &json!({"selectors":[],"answers":[{"selector":"#name","value":"Fictional"},{"selector":"#email","value":email},{"selector":"#code","value":code}]})).unwrap();
+            let (candidate, _) = crate::prepare_reviewed_fill(&preview, &json!({"selectors":[],"answers":[{"selector":"#name","value":"Fictional"},{"selector":"#email","value":email},{"selector":"#code","value":code},{"selector":"#date","value":date},{"selector":"#time","value":time}]})).unwrap();
             let mut grant = ApprovalGrant {
                 id: GrantId::new("text-preflight-grant").unwrap(),
                 intent_id: intent.clone(),
@@ -4791,7 +4833,7 @@ mod tests {
                 },
             )
             .unwrap_err();
-            assert!(error.contains("Text field needs review"), "{error}");
+            assert!(error.contains(expected), "{error}");
             assert!(!grant.consumed && completed.is_empty());
             driver.verify_text_value("#name", "").unwrap();
         }

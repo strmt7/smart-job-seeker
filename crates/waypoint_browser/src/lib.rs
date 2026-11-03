@@ -5663,6 +5663,34 @@ fn retain_loading_observations(previous: LiveForm, next: &mut LiveForm) {
 }
 
 impl BrowserDriver for CdpDriver {
+    fn check_temporal_candidate(&mut self, selector: &str, value: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Date or time field is unavailable".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Date or time field cannot be inspected".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(value) {
+            if (!this.isConnected || !(this instanceof HTMLInputElement) || !['date','month','time','datetime-local'].includes(this.type)) return false;
+            const probe = this.cloneNode(false);
+            probe.value = value;
+            return probe.value === value && probe.validity.valid;
+        }"#,"arguments":[{"value":value}],"returnByValue":true})).map_err(derr)?;
+        if result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(DriverError(
+                "Date or time does not satisfy the field's current constraints; review it manually"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
     fn check_text_candidate(&mut self, selector: &str, value: &str) -> Result<(), DriverError> {
         let node = self
             .node_id(selector)?
