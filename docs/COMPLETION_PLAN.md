@@ -70,6 +70,11 @@ build and configuration.
    submit or navigate. Investigate general, bounded consent handling with
    adversarial local fixtures and intercepted external writes before considering
    any broader action; uncertain controls remain in manual review.
+   A fictional loopback diagnostic also demonstrated that a `type=button`
+   click can invoke a scripted form submission. The DOM type guard alone does
+   not prevent this. Treat protection against script-triggered writes across
+   clicks, typing, uploads, frames, navigation and other browser channels as a
+   release blocker; prove it with adversarial fixtures before relying on it.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,
    PDF conversion and page-by-page review. Compare ATS-readable text and visual

@@ -109,6 +109,10 @@ used by development tools and tests. Do not add WSL or Docker as product require
   show automated interactions. Do not use visible-session test fixtures unless
   the user explicitly requests that interaction in a future instruction. This
   constraint applies to agent work, not to the user's own use of the product.
+- Until script-triggered external writes are prevented and verified, do not
+  click, type, upload, select, or otherwise interact with real application forms
+  during development; even a non-submit control can trigger a submission. Use
+  fictional loopback fixtures for interaction tests and public sites read-only.
 - Respect site terms/robots and the permission registry before any external fetch.
 - Never store credentials/secrets in code or fixtures. Fictional fixtures only.
 - Keep loops bounded (drafting ≤2 repairs, research has explicit budgets/stopping).

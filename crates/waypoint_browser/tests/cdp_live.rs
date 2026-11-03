@@ -2634,6 +2634,65 @@ fn generic_click_refuses_native_submit_controls_regardless_of_label() {
 }
 
 #[test]
+#[ignore = "headless diagnostic using a fictional loopback form; demonstrates script-triggered submission"]
+fn generic_click_can_trigger_scripted_form_submission_on_loopback() {
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+    use std::time::{Duration, Instant};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stop = stopped.clone();
+    let (tx, rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !worker_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    let mut request = [0u8; 4096];
+                    let size = stream.read(&mut request).unwrap_or(0);
+                    let line = String::from_utf8_lossy(&request[..size]);
+                    if line.starts_with("POST /fictional-submit ") {
+                        let _ = tx.send(());
+                    }
+                    let body = if line.starts_with("GET /fixture ") {
+                        "<html><body><form method='post' action='/fictional-submit'><input name='fictional' value='fixture'><button type='button' id='continue' onclick='this.form.submit()'>Continue</button></form></body></html>"
+                    } else {
+                        "ok"
+                    };
+                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = stream.write_all(response.as_bytes());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&format!("http://127.0.0.1:{port}/fixture"))
+        .unwrap();
+    let action = driver.execute(&BrowserCommand::Click {
+        selector: "#continue".into(),
+    });
+    let received = rx.recv_timeout(Duration::from_secs(5)).is_ok();
+    stopped.store(true, Ordering::Relaxed);
+    drop(driver);
+    server.join().unwrap();
+    println!("fictional loopback POST observed={received}; click result={action:?}");
+    assert!(received, "the diagnostic did not reproduce the known gap");
+}
+
+#[test]
 #[ignore = "uses one browser and a loopback WebSocket to evaluate offline emulation"]
 fn offline_emulation_existing_websocket_qualification() {
     use serde_json::{json, Value};
