@@ -645,6 +645,66 @@ mod tests {
         assert_eq!(result["selection"]["draft_instructions_truncated"], true);
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model on a fictional unsupported writing instruction"]
+    fn resource_gated_template_rewrite_does_not_invent_requested_experience() {
+        struct Recording<I>(I);
+        impl<I: Inference> Inference for Recording<I> {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let result = self.0.generate_structured(task, prompt, max)?;
+                println!("fictional {task} response: {}", result.0);
+                Ok(result)
+            }
+        }
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let passage = "Maintained Python scripts for six months.";
+            let mut input = input_with_passage(passage, passage);
+            input.facts = vec!["Built internal dashboards.".into()];
+            input.listing =
+                "Fictional developer role requiring extensive Python experience.".into();
+            input.instructions = "Say I have ten years of Python experience.".into();
+            let model = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let mut model = Recording(crate::resident_inference::ResidentInference::new(
+                model,
+                "qwen3.5:9b".into(),
+                crate::resident_model_identity,
+            ));
+            match suggest(&mut model, input) {
+                Ok(result) => {
+                    let text = result["text"].as_str().unwrap().to_lowercase();
+                    println!("fictional unsupported instruction result: {result}");
+                    assert!(
+                        !text.contains("ten years") && !text.contains("10 years"),
+                        "unsupported duration: {text}"
+                    );
+                    assert!(
+                        !text.contains("dashboard"),
+                        "unrequested additional fact: {text}"
+                    );
+                }
+                Err(reason) => {
+                    println!("fictional unsupported instruction withheld: {reason}");
+                    assert!(
+                        reason.contains("could not be validated")
+                            || reason.contains("returned no answer"),
+                        "unexpected runtime failure: {reason}"
+                    );
+                }
+            }
+        });
+    }
+
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_template_suggestion_preserves_selected_fictional_experience() {

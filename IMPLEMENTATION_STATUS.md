@@ -3382,3 +3382,16 @@ and no top-level error in addition to complete, clean per-page findings. Failed,
 partial, missing or contradictory status metadata requires follow-up even if a
 report body appears clean. This is an integrity check, not proof of document
 quality or of the model's visual accuracy.
+
+### Unsupported document instructions (2026-11-03)
+
+In a fictional template rewrite, Qwen3.5:9b initially proposed a requested
+ten-year claim unsupported by a six-month source, with an invalid citation; the
+app withheld it. With an unrelated fact available, it instead added that fact
+and its evidence reviewer incorrectly called the addition supported, although
+the template provenance guard marked the claims uncertain. Drafting now states
+explicitly that writing preferences are not evidence. In the subsequent run,
+the model returned no rewrite for the unsupported request, and a separate
+ordinary fictional rewrite passed. This is not a general hallucination or
+evidence-accuracy benchmark; candidate review remains necessary. The model was
+unloaded.
