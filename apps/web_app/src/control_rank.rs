@@ -126,9 +126,14 @@ fn rank(
             Err(_) => navigation_incomplete = true,
         }
     }
-    if response_at_limit && indices.len() < candidates.len() {
-        // Give the model one bounded chance to inspect the remaining controls.
-        // Original indices remain stable so the result still binds to the snapshot.
+    // A long page can contain more eligible controls than two responses can
+    // hold. Continue only while the most recent response was full, with a
+    // fixed bound and the original indices retained for snapshot binding.
+    let mut more_may_exist = response_at_limit;
+    for _ in 0..3 {
+        if !more_may_exist || indices.len() >= candidates.len() {
+            break;
+        }
         let remaining: Vec<_> = candidates
             .iter()
             .filter(|item| {
@@ -144,12 +149,26 @@ fn rank(
             .ok_or("Control advice prompt is incomplete")?;
         let followup = format!("{instructions} The previous pass reached its limit. Consider only these remaining controls and return their original indices. Controls: {}. Current form context: {}", json!(remaining), context);
         match rank_pass(model, controls, &followup) {
-            Ok((additional, omitted, _)) if additional.iter().all(|i| !indices.contains(i)) => {
+            Ok((additional, omitted, at_limit))
+                if additional.iter().all(|i| !indices.contains(i)) =>
+            {
                 omitted_submission_labels |= omitted;
+                more_may_exist = at_limit;
+                if additional.is_empty() && at_limit {
+                    navigation_incomplete = true;
+                    break;
+                }
                 indices.extend(additional);
             }
-            _ => navigation_incomplete = true,
+            _ => {
+                navigation_incomplete = true;
+                more_may_exist = false;
+                break;
+            }
         }
+    }
+    if more_may_exist && indices.len() < candidates.len() {
+        navigation_incomplete = true;
     }
     Ok(Advice {
         indices,
@@ -498,6 +517,49 @@ mod tests {
         );
         assert!(single.0.is_empty());
     }
+    #[test]
+    fn long_control_lists_get_bounded_followups_and_keep_original_indices() {
+        let controls = waypoint_browser::PageControls {
+            controls: (0..17)
+                .map(|index| waypoint_browser::PageControl {
+                    label: format!("Control {index}"),
+                    disabled: false,
+                    selector: format!("#{index}"),
+                })
+                .collect(),
+            incomplete: false,
+        };
+        let mut model = Scripted(vec![
+            json!({"indices":[0,1,2,3,4]}),
+            json!({"indices":[5,6,7,8,9]}),
+            json!({"indices":[10,11,12,13,14]}),
+            json!({"indices":[15,16]}),
+        ]);
+        let advice = rank(&mut model, &controls, &json!({"walls":[]})).unwrap();
+        assert_eq!(advice.indices, (0..17).collect::<Vec<_>>());
+        assert!(!advice.navigation_incomplete);
+        assert!(advice.response_at_limit);
+        assert!(model.0.is_empty());
+        let mut larger = controls.clone();
+        larger
+            .controls
+            .extend((17..22).map(|index| waypoint_browser::PageControl {
+                label: format!("Control {index}"),
+                disabled: false,
+                selector: format!("#{index}"),
+            }));
+        let mut capped = Scripted(vec![
+            json!({"indices":[0,1,2,3,4]}),
+            json!({"indices":[5,6,7,8,9]}),
+            json!({"indices":[10,11,12,13,14]}),
+            json!({"indices":[15,16,17,18,19]}),
+        ]);
+        let advice = rank(&mut capped, &larger, &json!({"walls":[]})).unwrap();
+        assert_eq!(advice.indices.len(), 20);
+        assert!(advice.navigation_incomplete);
+        assert!(capped.0.is_empty());
+    }
+
     #[test]
     fn disabled_controls_do_not_consume_model_budget_or_shift_indices() {
         struct CheckPrompt;

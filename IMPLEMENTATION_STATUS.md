@@ -95,6 +95,8 @@
 
 ## Navigation advice coverage — 2026-11-03
 
+- Control advice can now make up to three sequential remaining-control passes when the preceding response reaches its five-item limit, instead of one. A separate overlay-related pass may also occur. The cap or a failed/invalid pass marks advice incomplete; the interface explains that outcome. Scripted tests covered 17 returned controls and the 20-control bound, the focused UI check and Windows web Clippy passed. Extra passes can increase model latency; no live model or employer page was used for this change, and navigation advice does not click or authorize controls.
+
 - Follow-up control advice now supplies only the remaining controls in its prompt, retaining their original indices instead of repeating the full list alongside them. Four focused scripted tests and the fictional resource-gated `qwen3.5:9b` test passed; the unscripted case again selected six navigation controls and omitted the submission control. This is not real-site qualification.
 
 - In the same fictional seven-control scenario, an unscripted `qwen3.5:9b` run selected all six navigation controls and omitted the submission control. Its first pass reached the limit and the bounded follow-up completed without a reported error. This is one scenario, not evidence of general form-navigation accuracy.
