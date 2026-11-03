@@ -7289,6 +7289,71 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "resource-gated local model evaluates fictional negated experience"]
+    fn resource_gated_fit_does_not_treat_training_as_production_experience() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let name = crate::resident_model().unwrap().expect("resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
+            let facts = vec![
+                "Completed Kubernetes training but have never deployed Kubernetes in production."
+                    .to_owned(),
+            ];
+            let listing = "Fictional platform engineer role. Required: production experience deploying Kubernetes.";
+            let result = assess(&mut model, &facts, "", listing).unwrap();
+            println!("fictional production experience assessment: {result}");
+            let relevant: Vec<_> = result["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| {
+                    item["source"] == "listing"
+                        && item["excerpt"]
+                            .as_str()
+                            .is_some_and(|text| text.to_lowercase().contains("kubernetes"))
+                })
+                .collect();
+            assert!(
+                !relevant.is_empty(),
+                "missing Kubernetes criterion: {result}"
+            );
+            assert!(
+                relevant.iter().all(|item| item["status"] != "supported"),
+                "training was treated as production experience: {result}"
+            );
+            let training_only = vec!["Completed Kubernetes training.".to_owned()];
+            let uncertain = assess(&mut model, &training_only, "", listing).unwrap();
+            println!("fictional training-only assessment: {uncertain}");
+            let criteria: Vec<_> = uncertain["rubric"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| {
+                    item["source"] == "listing"
+                        && item["excerpt"]
+                            .as_str()
+                            .is_some_and(|text| text.to_lowercase().contains("kubernetes"))
+                })
+                .collect();
+            assert!(
+                !criteria.is_empty(),
+                "missing Kubernetes criterion: {uncertain}"
+            );
+            assert!(
+                criteria.iter().all(|item| item["status"] == "unknown"),
+                "unmentioned production experience must remain unknown: {uncertain}"
+            );
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "resource-gated local model evaluates fictional language alternatives"]
     fn resource_gated_fit_distinguishes_language_alternatives_and_conjunctions() {
         crate::experience_inference::tests::with_resource_gated_model(|| {
