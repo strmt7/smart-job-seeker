@@ -855,6 +855,21 @@ impl Cdp {
         params: Value,
         session: Option<String>,
     ) -> Result<Value, CdpError> {
+        let result = self.call_inner_impl(method, params, session);
+        // A failed command may have consumed or lost protocol events. Do not
+        // allow subsequent interception servicing to assert a complete view.
+        if result.is_err() {
+            self.paused_event_lost = true;
+        }
+        result
+    }
+
+    fn call_inner_impl(
+        &mut self,
+        method: &str,
+        params: Value,
+        session: Option<String>,
+    ) -> Result<Value, CdpError> {
         self.next_id += 1;
         let id = self.next_id;
         let mut msg = json!({ "id": id, "method": method, "params": params });
@@ -1451,6 +1466,7 @@ mod tests {
                 .contains("invalid or too deeply nested browser response"),
             "{error}"
         );
+        assert!(cdp.fail_next_paused_request().is_err());
         worker.join().unwrap();
     }
 }
