@@ -897,16 +897,16 @@ fn extract_page_text(
 fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -> (String, bool) {
     let is_sampled = source.len() > 6000;
     if is_sampled {
-        // Examine consecutive, UTF-8-safe sections, bounded to four calls.
-        // An incomplete or conflicting assessment remains uncertain. Even a
-        // fully covered page loses context across section boundaries.
+        // Overlap adjacent UTF-8-safe sections so short statements split at a
+        // boundary are presented together. Four calls cover up to 16,000
+        // ASCII bytes; longer or multibyte boundary cases may remain partial.
         let mut start = 0;
         let mut uncertain = false;
         for index in 0..4 {
             if start >= source.len() {
                 break;
             }
-            let end = source.floor_char_boundary((start + 4000).min(source.len()));
+            let end = source.floor_char_boundary((start + 4096).min(source.len()));
             if end == start {
                 return ("uncertain".into(), true);
             }
@@ -916,7 +916,11 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
                 "uncertain" => uncertain = true,
                 _ => {}
             }
-            start = end;
+            if end == source.len() {
+                start = end;
+                break;
+            }
+            start = source.floor_char_boundary(end.saturating_sub(128));
         }
         return (
             if uncertain || start < source.len() {
@@ -4850,12 +4854,21 @@ mod tests {
                 "the later vacancy was incorrectly dismissed"
             );
             assert!(sampled);
+            let boundary = format!("{}\nNorth Quay Bistro is hiring a pastry chef in Oslo. This full-time opening involves baking pastries and leading a small kitchen team. Apply on the restaurant career page.\n{}", &filler[..4050], &filler[4050..]);
+            let (boundary_kind, boundary_sampled) =
+                classify_page_kind_with_sample(&mut llm, &boundary);
+            println!("fictional boundary vacancy classification={boundary_kind}, sampled={boundary_sampled}");
+            assert_ne!(
+                boundary_kind, "not_vacancy",
+                "the boundary vacancy was incorrectly dismissed"
+            );
+            assert!(boundary_sampled);
         });
     }
 
     #[test]
     fn segmented_classification_preserves_text_at_section_boundaries() {
-        struct Model(String);
+        struct Model(Vec<String>);
         impl Inference for Model {
             fn probe(
                 &mut self,
@@ -4872,8 +4885,8 @@ mod tests {
             {
                 let excerpt: String =
                     serde_json::from_str(prompt.rsplit_once(" Page: ").unwrap().1).unwrap();
-                assert!(excerpt.len() <= 4000);
-                self.0.push_str(&excerpt);
+                assert!(excerpt.len() <= 4096);
+                self.0.push(excerpt);
                 Ok((
                     json!({"kind":"not_vacancy"}),
                     waypoint_inference::UsageReport {
@@ -4884,16 +4897,28 @@ mod tests {
                 ))
             }
         }
-        let source = format!("{}é{}", "a".repeat(3999), "b".repeat(8000));
-        let mut model = Model(String::new());
+        let marker = "Fictional vacancy: Example Lab is hiring a materials technician.";
+        let source = format!(
+            "{}é{}{marker}{}",
+            "a".repeat(3999),
+            "a".repeat(69),
+            "b".repeat(7900)
+        );
+        let mut model = Model(Vec::new());
         assert_eq!(
             classify_page_kind_with_sample(&mut model, &source),
             ("not_vacancy".into(), true)
         );
-        assert_eq!(model.0, source);
+        assert!(model.0[1].contains(marker));
+        let mut reconstructed = model.0[0].clone();
+        for excerpt in model.0.iter().skip(1) {
+            assert!(reconstructed.ends_with(&excerpt[..128]));
+            reconstructed.push_str(&excerpt[128..]);
+        }
+        assert_eq!(reconstructed, source);
         let too_long = "x".repeat(16001);
         assert_eq!(
-            classify_page_kind_with_sample(&mut Model(String::new()), &too_long),
+            classify_page_kind_with_sample(&mut Model(Vec::new()), &too_long),
             ("uncertain".into(), true)
         );
     }
