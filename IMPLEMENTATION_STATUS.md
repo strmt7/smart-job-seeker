@@ -1,3 +1,7 @@
+## Missing employer result through listing inspection — 2026-11-03
+
+- The listing-inspection start and status endpoints were tested read-only on the Capital One search result whose independent source capture returned HTTP 404. Waypoint reported the HTTP error, explicitly stated that it does not establish whether the vacancy is closed, and saved no job. The test used no local model and did not open or submit an application. This confirms the handling of one missing page, not general stale-link coverage.
+
 ## Changing-form diagnostics — 2026-11-03
 
 - A read-only diagnostic immediately reinspected the previously observed DoorDash form: both snapshots had eight fields and eleven review reasons, with no schema or warning change in that run. It did not reproduce the earlier intermittent change, so the cause remains unknown. When a later check detects a change, the application now reports both field counts and whether a possible verification challenge appeared in either snapshot, while still requiring manual review and warning that snapshots may be incomplete. A fictional real-browser changing-form test and Windows web Clippy passed. No fields were filled or application submitted.

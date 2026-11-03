@@ -5711,7 +5711,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "read-only end-to-end inspection of a reviewed public listing"]
-    fn public_closed_listing_inspection_without_model() {
+    fn public_listing_inspection_stops_for_review_without_saving() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
         let url = std::env::var("WAYPOINT_CLOSURE_DIAGNOSTIC_URL").unwrap();
@@ -5766,7 +5766,14 @@ mod tests {
             .unwrap_or_else(|_| "closed positions".into())
             .to_lowercase();
         assert!(message.to_lowercase().contains(&expected), "{message}");
-        assert!(message.contains("verify the current status"), "{message}");
+        if std::env::var_os("WAYPOINT_LISTING_EXPECTED_HTTP_MISSING").is_some() {
+            assert!(
+                message.contains("does not establish whether the vacancy is closed"),
+                "{message}"
+            );
+        } else {
+            assert!(message.contains("verify the current status"), "{message}");
+        }
         assert_eq!(workspace.job_count().unwrap(), 0);
     }
 
