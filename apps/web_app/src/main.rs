@@ -7575,7 +7575,7 @@ fn serve(
                     );
                 }
                 if form_preview::guard_phone_country_picker(&mut phone_check, controls) {
-                    return Err("The phone-country control needs manual review; inspect again before filling".into());
+                    return Err("No fields were filled: the phone-country control needs manual review. Clear the phone answer and retry other fields, then enter the phone number in the visible browser after checking the selected country.".into());
                 }
             }
             let mut replacements = form_preview::ReviewedReplacements::new();
