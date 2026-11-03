@@ -8,7 +8,7 @@ const end = source.indexOf('\nlet webBatchRunning=', start);
 assert.ok(start >= 0 && end > start, 'single-search recovery must exist');
 const recovery = source.slice(start, end);
 
-async function runFixture(saved, active) {
+async function runFixture(saved, active, results = [{title: 'Fictional role'}]) {
     const storage = new Map(saved ? [['waypoint-web-search', saved]] : []);
     const calls = [];
     const button = { disabled: false };
@@ -28,7 +28,7 @@ async function runFixture(saved, active) {
         api: async (path, body) => {
             calls.push([path, body]);
             if (path === '/api/web-search/pending') return { task_id: active };
-            if (path === '/api/web-search/status') return { status: 'complete', data: { results: [{title: 'Fictional role'}] } };
+            if (path === '/api/web-search/status') return { status: 'complete', data: { results } };
             throw Error(`Unexpected request ${path}`);
         },
     };
@@ -47,5 +47,9 @@ async function runFixture(saved, active) {
     assert.equal(replay.calls[1][1].task_id, 'new-task');
     assert.equal(replay.storage.get('waypoint-web-search'), 'new-task');
     assert.ok(!replay.calls.some(([path]) => path === '/api/web-search/start'));
+    const empty = await runFixture('empty-task', null, []);
+    assert.ok(empty.panel.rows.some(row => row.text.includes('does not mean there are no matching jobs')));
+    assert.ok(empty.panel.rows.some(row => row.text.includes('remove search operators')));
+    assert.ok(!newer.panel.rows.some(row => row.text.includes('remove search operators')));
     console.log('Single-search recovery UI checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

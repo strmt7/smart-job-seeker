@@ -1,3 +1,7 @@
+## Empty wider-web search guidance — 2026-11-03
+
+- A site-restricted FreeSerp search through Waypoint returned zero provider results; this does not establish whether matching vacancies exist or why the provider returned none. The interface now explains that limitation and suggests broader terms, removing operators or another provider. Focused UI tests passed, and the guidance was rendered in the actual interface using a mocked empty response in an isolated workspace. No candidate information or application was submitted.
+
 ## Tail evidence for saved listings — 2026-11-03
 
 - Successful listing inspections now also check a bounded tail sample for advisory closure wording when the captured first sample was truncated and contained no such warning. When a match is found, the source sample is retained in listing metadata if it fits the existing size budget; otherwise its omission is marked. The warning and provenance say that intervening text was not checked. A fictional structured-listing test covered retained evidence and the absence of a closure verdict; Windows web Clippy passed. A complete live structured-listing flow with a tail-only notice has not been tested.
