@@ -1,3 +1,7 @@
+## Windows web integration check — 2026-11-03
+
+- After the recent template, match-coverage and navigation changes, the Windows web-app suite passed with 653 tests passed and 359 ignored. The ignored tests include live-model, browser and network cases; this run does not establish their behavior or end-to-end application capability. Tests ran serially with the model unloaded.
+
 ## Template voice review — 2026-11-03
 
 - A scripted full template-suggestion test now exercises a cosmetic first result followed by either a revised or unsupported retry. It checks that the revised result retains the unverified-template provenance warning and that the unsupported retry falls back to the initial suggestion. The focused test passed; it is not a live-model factuality evaluation.
