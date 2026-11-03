@@ -1,17 +1,21 @@
 //! Sequential local visual inspection of a candidate PDF for one job.
 use serde_json::{json, Value};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 struct Task {
     id: String,
     outcome: Option<Result<Value, String>>,
     pages_processed: usize,
     completed: Option<std::time::Instant>,
     record_saved: bool,
+    cancelled: Arc<AtomicBool>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Retain the most recent result for a retry if its response is lost.
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
-const PAGE_LIMIT: usize = 30;
+const PAGE_LIMIT: usize = crate::pdf_extract::PDF_MAX_PAGES;
 struct PageObservation {
     count: usize,
     geometry: Value,
@@ -40,6 +44,13 @@ fn page_findings(value: &Value) -> Result<Vec<Value>, String> {
         result.push(json!({"category":category,"description":description}));
     }
     Ok(result)
+}
+fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
+    if cancelled.load(Ordering::Relaxed) {
+        Err("Visual review stopped by user".into())
+    } else {
+        Ok(())
+    }
 }
 fn inspect<F, G>(bytes: &[u8], mut render: F, mut analyze: G) -> Result<Value, String>
 where
@@ -192,12 +203,14 @@ pub fn start(
     let material = record.material(name, &bytes)?;
     let document_sha = waypoint_domain::sha256_hex(&bytes);
     record.event(json!({"type":"document_visual_started","time":crate::now(),"material":material,"document_sha256":document_sha,"context_sha256":context_sha,"model":model,"note":"Visual review is advisory and does not submit an application."}))?;
+    let cancelled = Arc::new(AtomicBool::new(false));
     *task = Some(Task {
         id: id.clone(),
         outcome: None,
         pages_processed: 0,
         completed: None,
         record_saved: false,
+        cancelled: cancelled.clone(),
     });
     drop(task);
     let name_for_record = name.to_owned();
@@ -212,8 +225,12 @@ pub fn start(
                 .map_err(|_| "Invalid local runtime address")?;
             inspect(
                 &bytes,
-                crate::pdf_extract::render_page_for_review,
+                |bytes, page| {
+                    ensure_not_cancelled(&cancelled)?;
+                    crate::pdf_extract::render_page_for_review(bytes, page)
+                },
                 |image| {
+                    ensure_not_cancelled(&cancelled)?;
                     if crate::resident_model()?.as_deref() != Some(model.as_str()) {
                         return Err("Resident model changed during visual review".into());
                     }
@@ -248,6 +265,21 @@ pub fn start(
         }
     });
     Ok(())
+}
+/// Stop after the current render or model call completes; never discard a partial report.
+pub fn cancel(id: &str) -> Result<bool, String> {
+    let tasks = TASK
+        .lock()
+        .map_err(|_| "Document visual review unavailable")?;
+    let task = tasks
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Document visual review not found")?;
+    if task.outcome.is_some() {
+        return Ok(false);
+    }
+    task.cancelled.store(true, Ordering::Relaxed);
+    Ok(true)
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK
@@ -489,6 +521,7 @@ mod tests {
             pages_processed: 1,
             completed: Some(std::time::Instant::now()),
             record_saved: true,
+            cancelled: Arc::new(AtomicBool::new(false)),
         });
         let first = poll("fictional-review").unwrap();
         assert_eq!(first["report"]["complete"], false);
@@ -519,7 +552,7 @@ mod tests {
         .is_err());
     }
     #[test]
-    fn longer_documents_report_partial_visual_coverage() {
+    fn longer_documents_review_all_pages_within_limit() {
         let result = inspect(
             b"fixture",
             |_, _| Ok(json!({"pages":34,"image":"fictional"})),
@@ -527,9 +560,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["pages"], 34);
-        assert_eq!(result["pages_inspected"], PAGE_LIMIT);
-        assert_eq!(result["complete"], false);
+        assert_eq!(result["pages_inspected"], 34);
+        assert_eq!(result["complete"], true);
         assert!(needs_followup(&complete_review(result)));
+    }
+    #[test]
+    fn cancellation_preserves_completed_pages() {
+        let cancelled = AtomicBool::new(false);
+        let report = inspect(
+            b"fictional",
+            |_, _| {
+                ensure_not_cancelled(&cancelled)?;
+                Ok(json!({"pages": 2, "image": "fictional"}))
+            },
+            |_| {
+                cancelled.store(true, Ordering::Relaxed);
+                Ok(json!({"issues": [{"category": "layout", "description": "Check alignment"}]}))
+            },
+        )
+        .unwrap();
+        assert_eq!(report["pages_inspected"], 1);
+        assert_eq!(report["complete"], false);
+        assert_eq!(report["error"], "Visual review stopped by user");
+        assert_eq!(
+            report["findings"][0]["issues"][0]["description"],
+            "Check alignment"
+        );
+    }
+    #[test]
+    fn reviews_the_maximum_supported_page_count() {
+        let report = inspect(
+            b"fictional",
+            |_, _| Ok(json!({"pages": 50, "image": "fixture"})),
+            |_| Ok(json!({"issues": []})),
+        )
+        .unwrap();
+        assert_eq!(report["pages_inspected"], 50);
+        assert_eq!(report["complete"], true);
     }
     #[test]
     fn later_page_failure_preserves_incomplete_findings() {

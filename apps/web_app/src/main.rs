@@ -4632,6 +4632,14 @@ fn serve(
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", document_visual::poll(id)?);
         }
+        "/api/documents/visual-review-cancel" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"requested":document_visual::cancel(id)?}),
+            );
+        }
         "/api/documents/visual-review-candidates" => {
             let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
                 .map_err(|e| e.to_string())?;
