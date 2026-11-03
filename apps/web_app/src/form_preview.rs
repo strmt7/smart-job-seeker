@@ -277,10 +277,15 @@ fn required_value_valid(
         valid_multi_select,
     };
     match (&field.field_type, value) {
-        (
-            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
-            PacketValue::Text(text),
-        ) => !text.trim().is_empty() && text_fits_field(field, text),
+        (FormFieldType::Text | FormFieldType::TextArea, PacketValue::Text(text)) => {
+            !text.trim().is_empty() && text_fits_field(field, text)
+        }
+        (FormFieldType::Email, PacketValue::Text(text)) => {
+            // Every HTML email address requires an @. This is only an early
+            // check; the live browser must still validate syntax and any
+            // multiple-address or site-specific constraints.
+            text.contains('@') && text_fits_field(field, text)
+        }
         (
             FormFieldType::Select { options } | FormFieldType::Radio { options },
             PacketValue::Text(text),
@@ -1211,6 +1216,19 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
                     )
                 }),
         )
+        .chain(
+            preview
+                .schema
+                .fields
+                .iter()
+                .filter(|field| matches!(field.field_type, FormFieldType::Email))
+                .map(|field| {
+                    format!(
+                        "Email address needs an @: {}",
+                        field_review_label(&preview.schema, field)
+                    )
+                }),
+        )
         .collect();
     preview.manual_review.retain(|reason| {
         // The aggregate suggestion diagnostic is replaced by the field-specific
@@ -1286,6 +1304,16 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
             .map(|label| format!("Required field needs review: {label}")),
     );
     for field in &preview.schema.fields {
+        if matches!(field.field_type, FormFieldType::Email)
+            && preview.suggestions.iter().any(|mapping| {
+                mapping.field_selector == field.selector
+                    && matches!(&mapping.value, PacketValue::Text(text) if !text.trim().is_empty() && !text.contains('@'))
+            })
+        {
+            preview.manual_review.push(format!("Email address needs an @: {}", field_review_label(&preview.schema, field)));
+        }
+    }
+    for field in &preview.schema.fields {
         let FormFieldType::Number { min, max, .. } = &field.field_type else {
             continue;
         };
@@ -1315,6 +1343,48 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn incomplete_email_stays_in_review_until_corrected() {
+        let field = waypoint_applications::form_mapping::FormField {
+            selector: "#email".into(),
+            label: "Email".into(),
+            field_type: FormFieldType::Email,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some("email".into()),
+        };
+        let mut preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![field],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![ProposedMapping {
+                field_selector: "#email".into(),
+                value: PacketValue::Text("incomplete".into()),
+            }],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        refresh_required_review(&mut preview);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Email address needs an @: Email"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Required field needs review: Email"));
+        preview.suggestions[0].value = PacketValue::Text("avery@example.invalid".into());
+        refresh_required_review(&mut preview);
+        assert!(preview.manual_review.is_empty());
+    }
 
     #[test]
     fn hidden_required_control_explains_review_without_changing_wall_binding() {
