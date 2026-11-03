@@ -69,9 +69,12 @@ where
     {
         return Err("Local model returned invalid or empty transcription".into());
     }
-    let uncertain = response["uncertain"]
+    let model_uncertain = response["uncertain"]
         .as_bool()
         .ok_or("Local model did not report uncertainty")?;
+    // The model may contradict its own flag while following the requested
+    // placeholder convention. Never show that transcription as certain.
+    let uncertain = model_uncertain || text.to_ascii_lowercase().contains("[unreadable]");
     Ok(
         json!({"page":page,"pages":pages,"region":region,"image":image,"text":text,"uncertain":uncertain,"document_sha256":waypoint_domain::sha256_hex(bytes)}),
     )
@@ -481,6 +484,12 @@ mod tests {
         })
         .unwrap();
         assert_eq!(lines["text"], "First\nSecond");
+        assert_eq!(lines["uncertain"], false);
+        let contradiction = transcribe(b"fictional", 1, "full", render, |_| {
+            Ok(json!({"text":"Experience: [UNREADABLE]","uncertain":false}))
+        })
+        .unwrap();
+        assert_eq!(contradiction["uncertain"], true);
         assert!(transcribe(b"fictional", 1, "full", render, |_| Ok(
             json!({"text":["First",42],"uncertain":false})
         ))
