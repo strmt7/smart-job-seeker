@@ -115,6 +115,12 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- After interrupted browser or fixture tests, check for orphaned Waypoint-owned
+  browser profiles and fixture servers before concluding that host memory is
+  unavailable. Verify each process's identity and that its test parent is gone
+  before stopping it; never close another active workload. Browser `Drop` cleanup
+  does not run if its parent process is forcibly terminated. Record what was
+  actually measured rather than assuming all memory pressure is due to the app.
 - **Ollama `think:true` + strict JSON/schema format silently returns an empty
   `response`** while filling `thinking` (done_reason=length): structured generation
   in `ollama.rs` therefore pins `think:false`. Reasoning probes check the separate
