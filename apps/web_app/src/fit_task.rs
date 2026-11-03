@@ -2510,6 +2510,19 @@ fn insufficient_stated_duration(excerpt: &str, fact: &str, context: &str) -> boo
             .is_some_and(|(required, stated)| stated < required)
 }
 
+// A lower bound can retrieve a candidate fact, but must never be used to
+// conclude that a candidate has insufficient experience.
+fn retrieval_duration_months(fact: &str) -> Option<u64> {
+    let lower = fact.to_lowercase();
+    if let Some((before, after)) = lower.split_once("at least ") {
+        if after.contains("at least ") {
+            return None;
+        }
+        return simple_duration_months(&format!("{before}{after}"), true);
+    }
+    simple_duration_months(&lower, true)
+}
+
 /// Retrieve one possible fact for a simple single-term duration requirement.
 /// This lexical match is not a judgment and cannot bypass model comparison.
 fn unique_duration_candidate(excerpt: &str, context: &str, facts: &[String]) -> Option<usize> {
@@ -2614,7 +2627,7 @@ fn unique_duration_candidate(excerpt: &str, context: &str, facts: &[String]) -> 
         if has_explicit_negation(fact)
             || negated_contraction
             || upper_bound_candidate_duration(fact)
-            || simple_duration_months(fact, true).is_none_or(|duration| duration < required)
+            || retrieval_duration_months(fact).is_none_or(|duration| duration < required)
         {
             continue;
         }
@@ -5510,6 +5523,38 @@ mod tests {
                 "five years of Python",
                 listing,
                 &["Used Python for one year".into()]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["Used Python for at least six years".into()]
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["Used Python for at least one year".into()]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["Used Python for about six years".into()]
+            ),
+            None
+        );
+        assert_eq!(
+            unique_duration_candidate(
+                "five years of Python",
+                listing,
+                &["Used Python for at least six years and three months".into()]
             ),
             None
         );
