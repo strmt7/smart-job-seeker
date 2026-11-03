@@ -19,5 +19,12 @@ assert.equal(selected.get('https://example.test/1').search_context.indexed_date,
 context.webBatchPage=1;render(batch);select();assert.equal(selected.size,80);
 context.webBatchPage=2;render(batch);select();assert.equal(selected.size,100);assert.match(notices[0],/20 listings were not selected/);
 const clear=panel.children[0].children.find(item=>item.textContent==='Clear selected listings');clear.listeners.click();assert.equal(selected.size,0);
+context.webBatchPage=0;
+const retried={priorGroups:[{query:'earlier',page:1,data:{results:[{url:'https://example.test/prior',title:'Earlier',snippet:''}]}}],groups:[{query:'retry',page:2,data:{results:[{url:'https://example.test/new',title:'New',snippet:''}]}}]};
+render(retried);
+assert.ok(panel.children.some(item=>item.textContent.includes('Earlier results are retained')));
+assert.ok(panel.children.some(item=>item.tag==='article' && item.children.some(child=>child.href==='https://example.test/prior')));
+assert.ok(panel.children.some(item=>item.tag==='article' && item.children.some(child=>child.href==='https://example.test/new')));
+assert.equal(retried.groups.length,1);
 assert.ok(source.includes('pending.items.length<=100'));
 console.log('Web candidate page selection checks passed.');

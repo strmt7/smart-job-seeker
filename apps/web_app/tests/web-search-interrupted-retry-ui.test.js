@@ -13,3 +13,6 @@ assert.deepEqual(Array.from(context.unfinishedWebSearchQueries(sparse)),['second
 items.length=0;form.elements.queries.value='';context.offerInterruptedSearchRetry(sparse);items.find(item=>item.tag==='button').click();
 assert.equal(form.elements.pages.value,'3');
 assert.equal(JSON.stringify(form._waypointRetry.plan),JSON.stringify([{query:'second',page:1},{query:'second',page:3}]));
+const tooMany={...recovery,history:[{query:'first',page:1,data:{results:Array(601).fill({url:'https://example.invalid/'})}}]};
+items.length=0;form.elements.queries.value='';context.offerInterruptedSearchRetry(tooMany);items.find(item=>item.tag==='button').click();
+assert.equal(form.elements.queries.value,'');assert.match(notices.at(-1),/Too many earlier results/);
