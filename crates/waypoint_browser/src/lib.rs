@@ -792,7 +792,7 @@ impl CdpDriver {
         ))
     }
 
-    /// Capture a uniquely referenced visible question label when possible.
+    /// Capture uniquely referenced question labels in one bounded visible region.
     /// Otherwise capture the bounded group context for manual/visual review.
     pub fn screenshot_custom_radio_question(
         &mut self,
@@ -812,8 +812,19 @@ impl CdpDriver {
         let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
             if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'radiogroup') return null;
             const refs=this.getAttribute('aria-labelledby'); if (refs===null) return this;
-            const ids=refs.trim().split(/\s+/).filter(Boolean); if(ids.length!==1 || refs.length>256) return null;
-            const labels=this.getRootNode().querySelectorAll('#'+CSS.escape(ids[0])); return labels.length===1 ? labels[0] : null;
+            const ids=refs.trim().split(/\s+/).filter(Boolean); if(!ids.length || ids.length>16 || refs.length>512 || new Set(ids).size!==ids.length) return null;
+            const root=this.getRootNode(), labels=[];
+            for(const id of ids) { const matches=root.querySelectorAll('#'+CSS.escape(id)); if(matches.length!==1) return null; labels.push(matches[0]); }
+            if(labels.length===1) return labels[0];
+            let ancestor=labels[0];
+            while(ancestor && !labels.every(label=>ancestor.contains(label))) ancestor=ancestor.parentElement;
+            if(!ancestor || ['HTML','BODY'].includes(ancestor.tagName)) return null;
+            const bounds=ancestor.getBoundingClientRect();
+            for(const label of labels) {
+                const rect=label.getBoundingClientRect(), style=getComputedStyle(label);
+                if(!rect.width || !rect.height || style.visibility!=='visible' || style.display==='none' || Number(style.opacity)===0 || rect.left<bounds.left || rect.right>bounds.right || rect.top<bounds.top || rect.bottom>bounds.bottom) return null;
+            }
+            return ancestor;
         }"#,"returnByValue":false}));
         let released = self
             .cdp

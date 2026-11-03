@@ -5138,6 +5138,10 @@ fn custom_radio_shared_question_labels_keep_only_option_text() {
         ["Yes", "No"]
     );
     assert!(!group.incomplete);
+    assert!(!driver
+        .screenshot_custom_radio_question(&group.selector)
+        .unwrap()
+        .is_empty());
     let duplicate = &inventory.groups[1];
     assert!(duplicate.incomplete);
     assert!(driver
@@ -5153,6 +5157,19 @@ fn custom_radio_shared_question_labels_keep_only_option_text() {
         .trace
         .iter()
         .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
+fn custom_radio_question_capture_rejects_hidden_label_parts() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_radio_hidden_label.html"))
+        .unwrap();
+    let inventory = driver.page_custom_radio_groups().unwrap();
+    assert!(driver
+        .screenshot_custom_radio_question(&inventory.groups[0].selector)
+        .is_err());
 }
 
 #[test]
