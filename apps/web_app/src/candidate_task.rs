@@ -923,6 +923,17 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
     if initial != "not_vacancy" || source.len() <= 4000 {
         return (initial, false);
     }
+    if source.len() > 6000 {
+        // The initial request may exceed the resident model's context. Include
+        // the middle as well as both ends before treating a long page as a
+        // likely non-vacancy, and never present an inconclusive check as a
+        // confirmed negative.
+        let sample = sampled_page_kind_text(source);
+        return match classify_page_segment(inference, &sample).as_str() {
+            "not_vacancy" => ("not_vacancy".into(), true),
+            _ => ("uncertain".into(), true),
+        };
+    }
     let start = source.floor_char_boundary(source.len() - 4000);
     if classify_page_segment(inference, &source[start..]) == "vacancy" {
         ("uncertain".into(), false)
@@ -4789,6 +4800,60 @@ mod tests {
                 "vacancy incorrectly flagged as an article"
             );
         });
+    }
+
+    #[test]
+    fn long_negative_classification_checks_middle_and_preserves_uncertainty() {
+        struct Model {
+            calls: usize,
+            second: &'static str,
+        }
+        impl Inference for Model {
+            fn probe(
+                &mut self,
+            ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError>
+            {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
+            {
+                self.calls += 1;
+                if self.calls == 2 {
+                    assert!(prompt.contains("middle vacancy marker"));
+                    assert!(prompt.contains("[Excerpt omitted]"));
+                }
+                Ok((
+                    json!({"kind":if self.calls == 1 {"not_vacancy"} else {self.second}}),
+                    waypoint_inference::UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let source = format!(
+            "{}middle vacancy marker{}",
+            "a".repeat(5010),
+            "b".repeat(4990)
+        );
+        for (second, expected) in [
+            ("vacancy", "uncertain"),
+            ("uncertain", "uncertain"),
+            ("not_vacancy", "not_vacancy"),
+        ] {
+            let mut model = Model { calls: 0, second };
+            assert_eq!(
+                classify_page_kind_with_sample(&mut model, &source),
+                (expected.into(), true)
+            );
+            assert_eq!(model.calls, 2);
+        }
     }
 
     #[test]
