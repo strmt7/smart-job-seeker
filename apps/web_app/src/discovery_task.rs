@@ -328,8 +328,12 @@ pub fn cancel(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These lifecycle fixtures exercise the same process-wide task slot.
+    static TASK_FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn rate_limit_skips_same_source_and_continues_other_providers() {
+        let _guard = TASK_FIXTURE_LOCK.lock().unwrap();
         use std::sync::atomic::AtomicUsize;
         struct RateLimited(Arc<AtomicUsize>);
         impl Fetcher for RateLimited {
@@ -400,6 +404,7 @@ mod tests {
 
     #[test]
     fn background_results_are_persisted_incrementally() {
+        let _guard = TASK_FIXTURE_LOCK.lock().unwrap();
         let target = DiscoveryTarget::new("greenhouse", "fixture");
         let plan = waypoint_connectors::discovery_plan(
             &waypoint_workspace::default_registry(),
