@@ -4781,7 +4781,14 @@ fn serve(
             ws.job(&id)
                 .map_err(|e| e.to_string())?
                 .ok_or("Job not found")?;
-            let mut listing = attempt_record::list(ws, &id)?;
+            let page = match body.get("page") {
+                None => 0,
+                Some(value) => value
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or("Invalid application history page")?,
+            };
+            let mut listing = attempt_record::list_page(ws, &id, page)?;
             let (handoffs, truncated) = ws.email_handoff_history(&id)?;
             listing["email_handoffs"] = json!(handoffs.into_iter().map(|item| json!({"attempt_id":item.id,"state":item.state,"reconciliation":item.reconciliation,"created_at":item.created_at})).collect::<Vec<_>>());
             listing["email_handoffs_truncated"] = json!(truncated);
@@ -10119,7 +10126,20 @@ mod tests {
             std::fs::create_dir(&folder).unwrap();
             std::fs::write(folder.join("attempt.json"), json!({"attempt_id":other,"job_id":job.as_str(),"status":"manual_review","started_at":1}).to_string()).unwrap();
         }
-        assert_eq!(attempt_record::list(&ws, &job).unwrap()["truncated"], true);
+        let first_page = attempt_record::list_page(&ws, &job, 0).unwrap();
+        let second_page = attempt_record::list_page(&ws, &job, 1).unwrap();
+        assert_eq!(first_page["truncated"], true);
+        assert_eq!(first_page["has_more"], true);
+        assert_eq!(first_page["scan_truncated"], false);
+        assert_eq!(first_page["attempts"].as_array().unwrap().len(), 50);
+        assert_eq!(second_page["attempts"].as_array().unwrap().len(), 1);
+        assert_eq!(second_page["has_more"], false);
+        assert!(!first_page["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["attempt_id"] == second_page["attempts"][0]["attempt_id"]));
+        assert!(attempt_record::list_page(&ws, &job, 40).is_err());
         let start = |ws: &mut Workspace| {
             call(
                 ws,

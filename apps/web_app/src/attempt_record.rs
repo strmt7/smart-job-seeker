@@ -1011,6 +1011,14 @@ fn reviewed_export_document_id(dir: &std::path::Path) -> Option<String> {
 
 /// List a bounded number of locally saved attempts without reading their materials.
 pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
+    list_page(ws, id, 0)
+}
+
+/// Return one bounded page from the first 2,000 directory entries inspected.
+pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Value, String> {
+    if page >= 40 {
+        return Err("Application history page exceeds the scan limit".into());
+    }
     let root = ws
         .db_path
         .as_ref()
@@ -1018,7 +1026,9 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
         .ok_or("Attempt records require a disk-backed workspace")?
         .join("application-records");
     if !root.exists() {
-        return Ok(json!({"attempts":[],"truncated":false,"unreadable":0}));
+        return Ok(
+            json!({"attempts":[],"truncated":false,"unreadable":0,"page":page,"has_more":false,"scan_truncated":false}),
+        );
     }
     let hash = Sha256Digest::of(id.as_str());
     let prefix = format!("{}-", &hash.as_str()[..16]);
@@ -1087,11 +1097,17 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
         };
         attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
-    attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
-    if attempts.len() > 50 {
-        attempts.truncate(50);
-        truncated = true;
-    }
+    attempts.sort_by(|a, b| {
+        b["started_at"]
+            .as_i64()
+            .cmp(&a["started_at"].as_i64())
+            .then_with(|| b["attempt_id"].as_str().cmp(&a["attempt_id"].as_str()))
+    });
+    let scan_truncated = truncated;
+    let start = page * 50;
+    let has_more = attempts.len() > start + 50;
+    truncated |= start > 0 || has_more;
+    let mut attempts: Vec<_> = attempts.into_iter().skip(start).take(50).collect();
     let mut integrity_budget = 32 * 1024 * 1024u64;
     let current_job = ws.job(id).ok().flatten();
     let current_description = ws.job_description(id).ok().flatten();
@@ -1111,7 +1127,9 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
         attempt["page_capture_integrity"] = json!(original);
         attempt["followup_capture_integrity"] = json!(followup);
     }
-    Ok(json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable}))
+    Ok(
+        json!({"attempts":attempts,"truncated":truncated,"unreadable":unreadable,"page":page,"has_more":has_more,"scan_truncated":scan_truncated}),
+    )
 }
 
 fn attempt_directory(
