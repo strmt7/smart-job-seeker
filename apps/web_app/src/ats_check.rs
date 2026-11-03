@@ -57,7 +57,7 @@ fn words(text: &str) -> Vec<String> {
 fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     if !name.to_ascii_lowercase().ends_with(".docx") {
         return Ok(vec![
-            "PDF visual layout, columns, images and headers are not assessed by this text check."
+            "PDF visual layout, columns, images, headers and footers are not assessed by this text check."
                 .into(),
         ]);
     }
@@ -65,10 +65,12 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     let mut zip =
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
     let mut headers = false;
+    let mut footers = false;
     for i in 0..zip.len() {
         let entry = zip.by_index_raw(i).map_err(|_| "Invalid DOCX entry")?;
         let name = entry.name().map_err(|_| "Invalid DOCX entry name")?;
         headers |= name.starts_with("word/header") && name.ends_with(".xml");
+        footers |= name.starts_with("word/footer") && name.ends_with(".xml");
     }
     let mut body = zip
         .by_name("word/document.xml")
@@ -216,6 +218,9 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     if headers {
         notes.push("DOCX has header files; some parsers may miss header content, so check that contact details are also present in the body.".into());
     }
+    if footers {
+        notes.push("DOCX has footer files; some parsers may miss footer content, so check that important details are also present in the body.".into());
+    }
     notes.push("DOCX visual layout, column order and hidden formatting inherited from styles or other parts are not fully assessed.".into());
     Ok(notes)
 }
@@ -303,7 +308,7 @@ fn report(name: &str, bytes: &[u8], listing: &str, facts: &[String]) -> Result<V
         .map(|line| line.chars().take(240).collect::<String>())
         .collect();
     Ok(
-        json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching (two-letter ASCII alphabetic terms require uppercase spelling); not a real ATS result. Inspect the extracted reading order, layout, headers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
+        json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching (two-letter ASCII alphabetic terms require uppercase spelling); not a real ATS result. Inspect the extracted reading order, layout, headers, footers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
     )
 }
 pub fn start(
@@ -485,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_docx_table_text_box_and_header() {
+    fn detects_docx_table_text_box_header_and_footer() {
         use std::io::Write;
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
@@ -493,6 +498,8 @@ mod tests {
         zip.write_all(br#"<d:document xmlns:d="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><d:body><d:tbl><d:tr><d:tc><d:p><d:r><d:t>Rust experience</d:t></d:r></d:p></d:tc></d:tr></d:tbl><d:txbxContent><d:p><d:r><d:rPr><d:vanish/></d:rPr><d:t>Example</d:t></d:r></d:p></d:txbxContent></d:body></d:document>"#).unwrap();
         zip.start_file("word/header1.xml", options).unwrap();
         zip.write_all(b"<header/>").unwrap();
+        zip.start_file("word/footer1.xml", options).unwrap();
+        zip.write_all(b"<footer/>").unwrap();
         let bytes = zip.finish().unwrap().into_inner();
         let result = report("fixture.docx", &bytes, "Rust role", &[]).unwrap();
         let notes = result["structure_notes"].to_string();
@@ -500,11 +507,25 @@ mod tests {
             notes.contains("table")
                 && notes.contains("text box")
                 && notes.contains("header")
+                && notes.contains("footer")
                 && notes.contains("hidden-text")
         );
         assert!(result["reading_order_preview"]
             .to_string()
             .contains("Rust experience"));
+    }
+    #[test]
+    fn footer_warning_requires_a_footer_part() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#).unwrap();
+        let notes = structure_notes("cv.docx", &zip.finish().unwrap().into_inner()).unwrap();
+        assert!(!notes.iter().any(|note| note.contains("footer files")));
     }
     #[test]
     fn warns_when_document_body_contains_tracked_revisions() {
