@@ -632,6 +632,18 @@ pub fn apply_reviewed_text_fields_with_replacements(
             .iter()
             .find(|f| f.selector == mapping.field_selector)
             .ok_or("Unknown field")?;
+        if let (FormFieldType::Number { min, max, .. }, PacketValue::Text(value)) =
+            (&field.field_type, &mapping.value)
+        {
+            if waypoint_applications::form_mapping::valid_number(value)
+                && !number_within_known_bounds(value, min.as_deref(), max.as_deref())
+            {
+                return Err(
+                    "A numeric answer is outside the observed range; review it before filling"
+                        .into(),
+                );
+            }
+        }
         let valid = match (&field.field_type, &mapping.value) {
             (FormFieldType::Number { .. }, PacketValue::Text(value)) => {
                 waypoint_applications::form_mapping::valid_number(value)
@@ -4737,6 +4749,32 @@ mod tests {
             consumed: false,
             expired: false,
         };
+        let mut invalid_preview = preview.clone();
+        invalid_preview.suggestions[0].value = PacketValue::Text("11".into());
+        let original_payload = grant.bound_payload_sha256.clone();
+        grant.bound_payload_sha256 =
+            Sha256Digest::of(&serde_json::to_string(&invalid_preview.suggestions).unwrap());
+        let mut completed = Vec::new();
+        let invalid = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &invalid_preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap_err();
+        assert!(invalid.contains("outside the observed range"), "{invalid}");
+        assert!(!grant.consumed && completed.is_empty());
+        driver.verify_text_value("#years", "3").unwrap();
+        grant.bound_payload_sha256 = original_payload;
         driver
             .execute(&BrowserCommand::Click {
                 selector: "#change-max".into(),
