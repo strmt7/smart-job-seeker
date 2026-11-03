@@ -35,6 +35,10 @@ assert.equal(status(field, [field], [observed, observed], true), 'not uniquely o
 assert.equal(status(field, [field, field], [observed], true), 'not uniquely observed');
 assert.equal(status(field, [field], [{label: 'Email', visible_value: 'other'}], true), 'transcription differs from reviewed answer');
 const multiline = {label: 'First name', expected: 'Example', dom_status:'matches'};
+assert.equal(status(multiline, [multiline], [{label:'Application — First name',visible_value:'Example'}], true), 'transcription and live value match reviewed answer');
+assert.equal(status(multiline, [multiline,{label:'Reference — First name',expected:'Another'}], [{label:'Application — First name',visible_value:'Example'}], true), 'not uniquely observed');
+assert.equal(status(multiline, [multiline], [{label:'Application — First name',visible_value:'Example'},{label:'Reference — First name',visible_value:'Another'}], true), 'not uniquely observed');
+assert.equal(status({...multiline,label:'Applicant — First name'}, [{...multiline,label:'Applicant — First name'}], [{label:'First name',visible_value:'Example'}], true), 'not uniquely observed');
 assert.equal(status(multiline, [multiline], [{label: ' FIRST\n  NAME ', visible_value: 'Example'}], true), 'transcription and live value match reviewed answer');
 assert.equal(status(multiline, [multiline, {label: 'FIRST\nNAME', expected: 'Example'}], [{label: 'First name', visible_value: 'Example'}], true), 'not uniquely observed');
 assert.equal(status(multiline, [multiline], [{label: 'FIRST NAME', visible_value: 'Example'}, {label: 'First\nname', visible_value: 'Example'}], true), 'not uniquely observed');
