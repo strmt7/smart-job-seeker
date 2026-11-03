@@ -1679,8 +1679,10 @@ mod tests {
             "freeserp-batch-evaluation".into(),
             "https://freeserp.ai/".into(),
             vec![
-                "microscopy technician careers".into(),
-                "payroll accountant careers".into(),
+                std::env::var("WAYPOINT_SEARCH_FIXTURE_QUERY_1")
+                    .unwrap_or_else(|_| "microscopy technician careers".into()),
+                std::env::var("WAYPOINT_SEARCH_FIXTURE_QUERY_2")
+                    .unwrap_or_else(|_| "payroll accountant careers".into()),
             ],
             2,
         )

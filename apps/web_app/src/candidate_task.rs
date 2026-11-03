@@ -5318,6 +5318,40 @@ mod tests {
     #[test]
     #[ignore = "loads a resource-gated model and reads an explicitly supplied private research receipt"]
     fn resource_gated_public_listing_closure_advice() {
+        struct Diagnostic<'a>(&'a mut dyn Inference);
+        impl Inference for Diagnostic<'_> {
+            fn probe(
+                &mut self,
+            ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError>
+            {
+                self.0.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                max: u32,
+            ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
+            {
+                let result = self.0.generate_structured(schema, prompt, max);
+                if let Err(error) = &result {
+                    eprintln!("Closure model request failed: {error}");
+                }
+                result
+            }
+            fn set_context_tags(&mut self, tags: &[&str]) {
+                self.0.set_context_tags(tags);
+            }
+            fn set_request_guard(
+                &mut self,
+                guard: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+            ) {
+                self.0.set_request_guard(guard);
+            }
+            fn cancel(&mut self) -> Result<(), waypoint_inference::InferenceError> {
+                self.0.cancel()
+            }
+        }
         let path = std::env::var_os("WAYPOINT_CLOSURE_RESEARCH_RECEIPT")
             .expect("provide a captured public listing receipt");
         let title = std::env::var("WAYPOINT_CLOSURE_RESEARCH_TITLE")
@@ -5339,7 +5373,8 @@ mod tests {
                 model,
                 crate::resident_model_identity,
             );
-            let evidence = possible_listing_closure(&mut llm, text, &title).unwrap();
+            let evidence =
+                possible_listing_closure(&mut Diagnostic(&mut llm), text, &title).unwrap();
             println!(
                 "Public listing closure advice returned exact evidence: {}",
                 evidence.is_some()
