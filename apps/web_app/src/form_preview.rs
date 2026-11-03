@@ -3024,6 +3024,7 @@ mod tests {
         struct MappingEvidence<'a> {
             inner: &'a mut dyn Inference,
             nonempty_responses: usize,
+            responses: Vec<Value>,
         }
         impl Inference for MappingEvidence<'_> {
             fn set_context_tags(&mut self, tags: &[&str]) {
@@ -3054,6 +3055,10 @@ mod tests {
                 {
                     self.nonempty_responses += 1;
                 }
+                if let Some((value, _)) = result.as_ref().ok().filter(|_| schema == "form_mapping")
+                {
+                    self.responses.push(value.clone());
+                }
                 result
             }
             fn cancel(&mut self) -> Result<(), InferenceError> {
@@ -3063,11 +3068,29 @@ mod tests {
         let mut llm = MappingEvidence {
             inner: &mut resident,
             nonempty_responses: 0,
+            responses: Vec::new(),
         };
         let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
         let first = inspect_and_suggest(&mut driver, &mut llm, &url, &profile).unwrap();
         assert!(llm.nonempty_responses > 0, "first step had no nonempty model mapping; exact-label fallback can still supply suggestions");
+        let maps = |responses: &[Value], selector: &str, key: &str| {
+            responses.iter().any(|response| {
+                response["mappings"].as_array().is_some_and(|mappings| {
+                    mappings.iter().any(|mapping| {
+                        mapping["selector"] == selector && mapping["profile_key"] == key
+                    })
+                }) && response["manual_review"]
+                    .as_array()
+                    .is_some_and(|review| !review.iter().any(|item| item == selector))
+            })
+        };
+        assert!(
+            maps(&llm.responses, "#given", "first_name"),
+            "model did not map given name: {:?}",
+            llm.responses
+        );
         let first_model_responses = llm.nonempty_responses;
+        let first_response_count = llm.responses.len();
         assert!(
             !first
                 .manual_review
@@ -3182,6 +3205,11 @@ mod tests {
         assert_ne!(first.schema, live.schema);
         let second = suggest_for_live_form(live, &mut llm, &profile).unwrap();
         assert!(llm.nonempty_responses > first_model_responses, "second step had no nonempty model mapping; exact-label fallback can still supply suggestions");
+        assert!(
+            maps(&llm.responses[first_response_count..], "#email", "email"),
+            "model did not map email: {:?}",
+            &llm.responses[first_response_count..]
+        );
         assert!(
             !second
                 .manual_review
