@@ -3254,6 +3254,10 @@ the shared-label capture and a hidden-label refusal. The tests establish capture
 availability and refusal, not model visual accuracy or coverage of real sites.
 An additional fixture checks refusal when a label's ancestor is transparent;
 clipping and partial occlusion remain possible sources of visual uncertainty.
+In a separate resource-gated run, Qwen3.5:9b transcribed the shared-label
+question from its captured image exactly. The fictional browser was closed
+before model loading, no controls were clicked, and the model was unloaded.
+This is one positive observation, not a visual accuracy benchmark.
 
 ### Multipage PDF conversion and recovery (2026-11-03)
 

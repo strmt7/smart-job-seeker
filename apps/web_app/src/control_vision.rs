@@ -445,6 +445,50 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "loads one resource-gated local vision model for a fictional shared-label question"]
+    fn resource_gated_vision_reads_shared_radio_question() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(
+                "../../crates/waypoint_browser/tests/fixtures/form_custom_radio_shared_label.html",
+            )
+            .canonicalize()
+            .unwrap();
+        let (label, image) = {
+            let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            driver
+                .open(url::Url::from_file_path(fixture).unwrap().as_str())
+                .unwrap();
+            let inventory = driver.page_custom_radio_groups().unwrap();
+            let group = &inventory.groups[0];
+            let image = driver
+                .screenshot_custom_radio_question(&group.selector)
+                .unwrap();
+            assert!(driver
+                .trace
+                .iter()
+                .all(|entry| !entry.contains("clicked") && !entry.contains("submitted")));
+            (group.label.clone(), image)
+        };
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let result = crate::visual_review::generate_vision(
+                "127.0.0.1:11434".parse().unwrap(),
+                "qwen3.5:9b",
+                &image,
+                visual_prompt(true, false, false),
+            )
+            .unwrap();
+            let observed = validate(&result).unwrap();
+            println!("fictional shared-label question target={label:?}, observed={observed:?}");
+            assert_eq!(
+                choice_label_comparison(&label, false, &observed),
+                "label_observed"
+            );
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "loads one resource-gated local vision model against a fictional radio fixture"]
     fn resource_gated_radio_question_and_option_vision() {
         use waypoint_applications::driver::BrowserDriver;
