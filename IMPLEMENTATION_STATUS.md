@@ -1,6 +1,6 @@
 ## Local model multi-step fixture — 2026-11-03
 
-- In one resource-gated run on a fictional two-step local form, `qwen3.5:9b` suggested a given name and email, the browser filled them using separate fixture grants, and the vision model transcribed both visible values correctly. The sensitive work-authorization field stayed empty. The test simulated the navigation gesture and did not submit; it does not establish autonomous navigation or real-employer reliability. A hidden-required-control review warning remained on the second step. The model was unloaded after the run.
+- In resource-gated runs on a fictional two-step local form, the browser filled a given name and email using separate fixture grants, and `qwen3.5:9b` transcribed both visible values correctly. A later run also confirmed a nonempty model mapping response at each step; it did not prove that the final accepted suggestions came from those responses rather than exact-label fallback. The sensitive work-authorization field stayed empty. The test simulated the navigation gesture and did not submit; it does not establish autonomous navigation or real-employer reliability. A hidden-required-control review warning remained on the second step. The model was unloaded after the run.
 
 ## Local model and startup memory observation — 2026-11-03
 

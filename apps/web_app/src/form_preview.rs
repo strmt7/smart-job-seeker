@@ -3012,7 +3012,7 @@ mod tests {
             llm.with_resident_context()
         };
         let checked_model = model.clone();
-        let mut llm =
+        let mut resident =
             crate::resident_inference::ResidentInference::new(llm, model.clone(), move || {
                 crate::visual_review::benchmark_target(&checked_model).map(|_| {
                     Some(crate::resident_inference::ResidentIdentity {
@@ -3021,8 +3021,53 @@ mod tests {
                     })
                 })
             });
+        struct MappingEvidence<'a> {
+            inner: &'a mut dyn Inference,
+            nonempty_responses: usize,
+        }
+        impl Inference for MappingEvidence<'_> {
+            fn set_context_tags(&mut self, tags: &[&str]) {
+                self.inner.set_context_tags(tags);
+            }
+            fn set_request_guard(
+                &mut self,
+                guard: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+            ) {
+                self.inner.set_request_guard(guard);
+            }
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                self.inner.probe()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                limit: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let result = self.inner.generate_structured(schema, prompt, limit);
+                if schema == "form_mapping"
+                    && result
+                        .as_ref()
+                        .ok()
+                        .and_then(|(value, _)| value["mappings"].as_array())
+                        .is_some_and(|items| !items.is_empty())
+                {
+                    self.nonempty_responses += 1;
+                }
+                result
+            }
+            fn cancel(&mut self) -> Result<(), InferenceError> {
+                self.inner.cancel()
+            }
+        }
+        let mut llm = MappingEvidence {
+            inner: &mut resident,
+            nonempty_responses: 0,
+        };
         let profile = json!({"first_name":"Avery", "email":"avery@example.invalid"});
         let first = inspect_and_suggest(&mut driver, &mut llm, &url, &profile).unwrap();
+        assert!(llm.nonempty_responses > 0, "first step had no nonempty model mapping; exact-label fallback can still supply suggestions");
+        let first_model_responses = llm.nonempty_responses;
         assert!(
             !first
                 .manual_review
@@ -3136,6 +3181,7 @@ mod tests {
         let live = driver.inspect_current().unwrap();
         assert_ne!(first.schema, live.schema);
         let second = suggest_for_live_form(live, &mut llm, &profile).unwrap();
+        assert!(llm.nonempty_responses > first_model_responses, "second step had no nonempty model mapping; exact-label fallback can still supply suggestions");
         assert!(
             !second
                 .manual_review
