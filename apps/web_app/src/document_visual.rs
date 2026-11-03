@@ -119,6 +119,9 @@ where
 }
 /// A completed model pass can still contain findings or lack a geometry check.
 pub fn needs_followup(review: &Value) -> bool {
+    if review["status"] != "complete" || !review["error"].is_null() {
+        return true;
+    }
     let report = &review["report"];
     let Some(pages) = report["pages"]
         .as_u64()
@@ -304,7 +307,9 @@ mod tests {
             Ok(json!({"issues":[]}))
         })
         .unwrap();
-        assert!(needs_followup(&json!({"report":clipped_review})));
+        assert!(needs_followup(
+            &json!({"status":"complete","report":clipped_review})
+        ));
         let mut calls = 0;
         let partial = inspect(bytes, crate::pdf_extract::render_page_for_review, |_| {
             calls += 1;
@@ -323,18 +328,30 @@ mod tests {
                 .unwrap()
                 > 0
         );
-        assert!(needs_followup(&json!({"report":partial})));
+        assert!(needs_followup(
+            &json!({"status":"complete","report":partial})
+        ));
         let completed = inspect(bytes, crate::pdf_extract::render_page_for_review, |_| {
             Ok(json!({"issues":[]}))
         })
         .unwrap();
         assert_eq!(completed["complete"], true);
-        assert!(needs_followup(&json!({"report":completed})));
+        assert!(needs_followup(
+            &json!({"status":"complete","report":completed})
+        ));
     }
     #[test]
     fn followup_distinguishes_completed_review_from_clean_observations() {
-        let clean = json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}]}});
+        let clean = json!({"status":"complete","report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}]}});
         assert!(!needs_followup(&clean));
+        for status in [json!("failed"), json!("partial"), Value::Null] {
+            let mut inconsistent = clean.clone();
+            inconsistent["status"] = status;
+            assert!(needs_followup(&inconsistent));
+        }
+        let mut error = clean.clone();
+        error["error"] = json!("Review failed");
+        assert!(needs_followup(&error));
         for (key, value) in [
             ("complete", json!(false)),
             ("pages_inspected", json!(0)),
@@ -359,7 +376,7 @@ mod tests {
             json!({"page":2,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}),
         ] {
             assert!(needs_followup(
-                &json!({"report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[page]}})
+                &json!({"status":"complete","report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[page]}})
             ));
         }
         assert!(needs_followup(&json!({"report":{"pages":1,"findings":[]}})));
@@ -423,7 +440,9 @@ mod tests {
                 .unwrap()
                 > 0
         );
-        assert!(needs_followup(&json!({"report":report})));
+        assert!(needs_followup(
+            &json!({"status":"complete","report":report})
+        ));
         assert!(
             report["findings"][1]["issues"]
                 .as_array()

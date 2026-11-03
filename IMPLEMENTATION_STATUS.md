@@ -3372,3 +3372,11 @@ incomplete capture, and four narrow/wide capture fixtures passed. The wide
 fixture's last-tile assertion was corrected to match the planner's bottom-aligned
 overlap. Blinking or changing content can still make a capture incomplete;
 these limited runs do not prove universal screenshot reliability.
+
+### Document review status consistency (2026-11-03)
+
+An attached document's visual report now requires an explicit complete status
+and no top-level error in addition to complete, clean per-page findings. Failed,
+partial, missing or contradictory status metadata requires follow-up even if a
+report body appears clean. This is an integrity check, not proof of document
+quality or of the model's visual accuracy.
