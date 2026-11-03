@@ -3987,7 +3987,12 @@ fn serve(
                                     || doc.name.to_lowercase().ends_with(".docx"))
                         });
                     if !valid {
-                        return Err(format!("{key} must refer to a saved PDF or DOCX"));
+                        let label = if key == "cv_template_id" {
+                            "CV"
+                        } else {
+                            "cover letter"
+                        };
+                        return Err(format!("The selected {label} template is unavailable. Choose a saved PDF or DOCX, or clear the selection."));
                     }
                 }
             }
@@ -13196,6 +13201,18 @@ mod tests {
         let current = call("GET", "/api/state", Value::Null).unwrap();
         assert_eq!(current["profile"]["first_name"], "Avery");
         assert_eq!(current["profile_revision"], saved["profile_revision"]);
+        for (key, label) in [
+            ("cv_template_id", "CV"),
+            ("cover_template_id", "cover letter"),
+        ] {
+            let body = json!({key:"missing-fixture", "first_name":"Changed", "_expected_profile_revision":saved["profile_revision"]});
+            let error = call("POST", "/api/profile", body).unwrap_err();
+            assert!(error.contains(&format!("selected {label} template is unavailable")));
+            assert!(error.contains("or clear the selection"));
+            let unchanged = call("GET", "/api/state", Value::Null).unwrap();
+            assert_eq!(unchanged["profile"]["first_name"], "Avery");
+            assert_eq!(unchanged["profile_revision"], saved["profile_revision"]);
+        }
     }
 
     #[test]

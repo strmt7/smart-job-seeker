@@ -3693,3 +3693,5 @@ model accuracy or visual quality.
 2026-11-03: The forced-parent browser termination fixture passed once locally on Windows when run alone; no process with a Waypoint browser profile was found immediately afterward. Available system memory was approximately 15.11 GiB before and 14.46 GiB after, not a peak measurement. The earlier hosted failure reported 128 surviving observed process IDs; its cause remains unverified and this single local pass does not close it.
 
 2026-11-03: The termination fixture now reports up to 20 surviving process IDs and executable names on failure, without command lines, before its scoped cleanup. IDs can be reused, so these diagnostics alone do not establish process ownership. The fixture passed again locally; the new failure diagnostics have not been exercised on the hosted runner.
+
+2026-11-03: Saving a profile with an unavailable selected template now identifies whether the CV or cover letter needs a replacement or a cleared selection. A fictional API test verified both messages and that the rejected save leaves the prior profile and revision unchanged. The rendered error path was not checked.
