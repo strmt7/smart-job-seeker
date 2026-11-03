@@ -95,6 +95,14 @@ pub trait BrowserDriver {
     fn verify_text_value(&mut self, _selector: &str, _expected: &str) -> Result<(), DriverError> {
         Err(DriverError("Post-fill verification is unavailable".into()))
     }
+    /// Check a numeric candidate without changing the live field.
+    fn check_numeric_candidate(
+        &mut self,
+        _selector: &str,
+        _value: &str,
+    ) -> Result<(), DriverError> {
+        Err(DriverError("Numeric preflight is unavailable".into()))
+    }
     /// Refuse to replace an existing, different text value without manual review.
     fn ensure_text_replaceable(
         &mut self,

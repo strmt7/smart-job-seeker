@@ -643,6 +643,11 @@ pub fn apply_reviewed_text_fields_with_replacements(
                         .into(),
                 );
             }
+            if waypoint_applications::form_mapping::valid_number(value) {
+                driver
+                    .check_numeric_candidate(&field.selector, value)
+                    .map_err(|e| e.to_string())?;
+            }
         }
         let valid = match (&field.field_type, &mapping.value) {
             (FormFieldType::Number { .. }, PacketValue::Text(value)) => {
@@ -4708,6 +4713,7 @@ mod tests {
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = driver.open(url.as_str()).unwrap();
         let preview = suggest_without_model(live, &json!({}), "offline").unwrap();
+        driver.check_numeric_candidate("#years", "5").unwrap();
         let (preview, _) = crate::prepare_reviewed_fill(
             &preview,
             &json!({"selectors":[],"answers":[{"selector":"#years","value":"5"}]}),
@@ -4772,6 +4778,31 @@ mod tests {
         )
         .unwrap_err();
         assert!(invalid.contains("outside the observed range"), "{invalid}");
+        assert!(!grant.consumed && completed.is_empty());
+        driver.verify_text_value("#years", "3").unwrap();
+        invalid_preview.suggestions[0].value = PacketValue::Text("4".into());
+        grant.bound_payload_sha256 =
+            Sha256Digest::of(&serde_json::to_string(&invalid_preview.suggestions).unwrap());
+        let invalid_step = apply_reviewed_text_fields(
+            &mut ws,
+            &job_id,
+            &mut driver,
+            url.as_str(),
+            &invalid_preview,
+            &mut grant,
+            FillContext {
+                intent: &intent,
+                packet_digest: &packet,
+                source_reviewed: true,
+                timestamp: 1,
+                completed: &mut completed,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            invalid_step.contains("current constraints"),
+            "{invalid_step}"
+        );
         assert!(!grant.consumed && completed.is_empty());
         driver.verify_text_value("#years", "3").unwrap();
         grant.bound_payload_sha256 = original_payload;
