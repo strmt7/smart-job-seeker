@@ -1404,6 +1404,20 @@ fn accessible_current_step_indicates_a_multistep_form() {
 }
 
 #[test]
+#[ignore = "launches one local browser to check normal shutdown"]
+fn normal_browser_shutdown_closes_its_private_profile() {
+    let mut browser =
+        waypoint_browser::cdp::BrowserProcess::launch(std::time::Duration::from_secs(20)).unwrap();
+    let profile = browser.user_data_dir.clone();
+    assert!(profile.is_dir());
+    browser.shutdown();
+    assert!(
+        !profile.exists(),
+        "owned browser profile remained after shutdown"
+    );
+}
+
+#[test]
 #[ignore = "launches one local browser and immediately exercises startup timeout cleanup"]
 fn timed_out_browser_start_cleans_its_private_profile() {
     let temp = std::env::temp_dir();

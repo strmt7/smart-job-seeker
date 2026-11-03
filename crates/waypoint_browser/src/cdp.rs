@@ -514,6 +514,33 @@ impl BrowserProcess {
 
     /// Stop the browser and delete its private profile.
     pub fn shutdown(&mut self) {
+        // Ask the owned browser to close its own process tree before falling
+        // back to a forced kill. Bound the handshake and wait: an unhealthy
+        // browser must never hold the app open indefinitely.
+        if self.port != 0 && !self.ws_url.is_empty() && matches!(self.child.try_wait(), Ok(None)) {
+            let prefix = format!("ws://127.0.0.1:{}/", self.port);
+            if self.ws_url.starts_with(&prefix) {
+                let address = std::net::SocketAddr::from(([127, 0, 0, 1], self.port));
+                if let Ok(socket) = TcpStream::connect_timeout(&address, Duration::from_millis(250))
+                {
+                    let _ = socket.set_read_timeout(Some(Duration::from_millis(250)));
+                    let _ = socket.set_write_timeout(Some(Duration::from_millis(250)));
+                    if let Ok((mut ws, _)) = tungstenite::client(self.ws_url.as_str(), socket) {
+                        let _ = ws.send(Message::Text(
+                            json!({"id":1,"method":"Browser.close"}).to_string().into(),
+                        ));
+                    }
+                }
+            }
+            self.ws_url.clear();
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            while Instant::now() < deadline {
+                match self.child.try_wait() {
+                    Ok(Some(_)) | Err(_) => break,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                }
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.user_data_dir);

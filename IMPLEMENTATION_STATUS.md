@@ -1,3 +1,7 @@
+## Owned browser shutdown — 2026-11-03
+
+- Normal browser shutdown now makes a bounded local DevTools `Browser.close` request before the existing forced-kill fallback and profile cleanup. A fictional local browser test confirmed the private profile was removed; no Waypoint browser process remained in a subsequent process inventory. Browser unit tests passed (21, three ignored), the targeted live shutdown test passed, and browser Clippy passed. This does not prove descendant cleanup in every failure mode and cannot prevent an orphan if the parent is forcibly terminated; OS-level process-tree ownership remains to be implemented and tested.
+
 ## Linked DOCX part PDF fixture — 2026-11-03
 
 - A self-contained fictional DOCX with custom-named linked header and footer was edited, converted with local LibreOffice and checked with the existing bundled Python PDF runtime. Extracted PDF text contained the edited header, body and footer; a Poppler render of the single page showed those three lines without visible clipping. The first run converted the document but could not find `pypdf` in the test process; a subsequent run explicitly selected the existing bundled runtime and passed. This is one simple fixture and does not establish layout fidelity for arbitrary real CVs or clean-host dependency setup.
