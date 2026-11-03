@@ -1,3 +1,7 @@
+## Semantic fit fixture — 2026-11-03
+
+- In one resource-gated fictional candidate comparison, `qwen3.5:9b` scored the candidate with relevant experience above an unrelated candidate, recognized coaching engineers as supporting mentoring and administering production clusters as supporting Kubernetes operations. All three criteria remained unknown for the unrelated candidate, with a 0–100 score range. This is one controlled example; it does not establish calibration, repeatability or performance across occupations. The test made no external application.
+
 ## Local model multi-step fixture — 2026-11-03
 
 - In resource-gated runs on a fictional two-step local form, the browser filled a given name and email using separate fixture grants, and `qwen3.5:9b` transcribed both visible values correctly. A later run checked the raw model responses and confirmed the expected given-name and email profile-key associations, without a same-response review flag; the final suggestions also pass deterministic validation and may use exact-label fallback. The sensitive work-authorization field stayed empty. The test simulated the navigation gesture and did not submit; it does not establish autonomous navigation or real-employer reliability. A hidden-required-control review warning remained on the second step. The model was unloaded after the run.
