@@ -701,6 +701,7 @@ pub struct Cdp {
     pub events: Vec<(String, Value)>,
     pub timeout: Duration,
     observed_non_read_requests: u64,
+    paused_event_lost: bool,
 }
 
 fn is_non_read_request(value: &Value) -> bool {
@@ -718,13 +719,14 @@ fn is_non_read_request(value: &Value) -> bool {
     }
 }
 
-fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize) {
+// Returns true if a paused request cannot be retained for servicing.
+fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize) -> bool {
     let Some(name) = value
         .get("method")
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
-        return;
+        return false;
     };
     // Keep only bounded metadata for document responses. Network events can
     // contain headers and URLs; neither is needed to check the HTTP status.
@@ -732,7 +734,7 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
         if name != "Network.responseReceived"
             || value.pointer("/params/type").and_then(Value::as_str) != Some("Document")
         {
-            return;
+            return false;
         }
         json!({"params":{"frameId":value.pointer("/params/frameId"),"loaderId":value.pointer("/params/loaderId"),"status":value.pointer("/params/response/status")}})
     } else if name == "Fetch.requestPaused" {
@@ -743,7 +745,7 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control))
         else {
-            return;
+            return true;
         };
         let method = value
             .pointer("/params/request/method")
@@ -755,6 +757,9 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
             .get("sessionId")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control));
+        if value.get("sessionId").is_some() && session.is_none() {
+            return true;
+        }
         let response_status = value
             .pointer("/params/responseStatusCode")
             .and_then(Value::as_u64)
@@ -762,7 +767,7 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
         json!({"sessionId":session,"params":{"requestId":id,"request":{"method":method},"responseStatusCode":response_status}})
     } else {
         if raw_len > MAX_EVENT_BYTES {
-            return;
+            return false;
         }
         value
     };
@@ -773,12 +778,23 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
         let oldest_non_load = events
             .iter()
             .position(|(event, _)| {
-                event != "Page.loadEventFired" && event != "Network.responseReceived"
+                event != "Page.loadEventFired"
+                    && event != "Network.responseReceived"
+                    && event != "Fetch.requestPaused"
             })
-            .unwrap_or(0);
-        events.remove(oldest_non_load);
+            .or_else(|| {
+                events
+                    .iter()
+                    .position(|(event, _)| event != "Fetch.requestPaused")
+            });
+        if let Some(index) = oldest_non_load {
+            events.remove(index);
+        } else {
+            return name == "Fetch.requestPaused";
+        }
     }
     events.push((name, value));
+    false
 }
 
 impl Cdp {
@@ -790,6 +806,7 @@ impl Cdp {
             events: vec![],
             timeout: Duration::from_secs(20),
             observed_non_read_requests: 0,
+            paused_event_lost: false,
         };
         let target = cdp.call_browser("Target.createTarget", json!({ "url": "about:blank" }))?;
         let target_id = target
@@ -880,7 +897,7 @@ impl Cdp {
             if is_non_read_request(&value) {
                 self.observed_non_read_requests = self.observed_non_read_requests.saturating_add(1);
             }
-            retain_event(&mut self.events, value, raw.len());
+            self.paused_event_lost |= retain_event(&mut self.events, value, raw.len());
         }
     }
 
@@ -900,7 +917,7 @@ impl Cdp {
                             self.observed_non_read_requests =
                                 self.observed_non_read_requests.saturating_add(1);
                         }
-                        retain_event(&mut self.events, value, t.len());
+                        self.paused_event_lost |= retain_event(&mut self.events, value, t.len());
                     }
                 }
                 Ok(Message::Binary(b)) => {
@@ -909,7 +926,7 @@ impl Cdp {
                             self.observed_non_read_requests =
                                 self.observed_non_read_requests.saturating_add(1);
                         }
-                        retain_event(&mut self.events, value, b.len());
+                        self.paused_event_lost |= retain_event(&mut self.events, value, b.len());
                     }
                 }
                 Ok(_) => {}
@@ -928,6 +945,9 @@ impl Cdp {
     /// callers must separately arrange attachment, interception and servicing.
     /// A failed protocol command leaves the event available for diagnosis.
     pub fn fail_next_paused_request(&mut self) -> Result<bool, CdpError> {
+        if self.paused_event_lost {
+            return err("paused request event lost; interception state is incomplete");
+        }
         let Some((_, event)) = self
             .events
             .iter()
@@ -949,6 +969,9 @@ impl Cdp {
             json!({"requestId":request_id,"errorReason":"BlockedByClient"}),
             session.clone(),
         )?;
+        if self.paused_event_lost {
+            return err("paused request event lost; interception state is incomplete");
+        }
         if let Some(index) = self.events.iter().position(|(name, event)| {
             name == "Fetch.requestPaused"
                 && event.pointer("/params/requestId").and_then(Value::as_str)
@@ -977,6 +1000,36 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paused_requests_are_preserved_and_overflow_is_reported() {
+        let mut events = Vec::new();
+        for index in 0..MAX_EVENTS {
+            assert!(!retain_event(
+                &mut events,
+                json!({"method":"Fetch.requestPaused","sessionId":"s","params":{"requestId":format!("r{index}"),"request":{"method":"GET"}}}),
+                100
+            ));
+        }
+        assert!(!retain_event(
+            &mut events,
+            json!({"method":"Other.event"}),
+            100
+        ));
+        assert_eq!(events.len(), MAX_EVENTS);
+        assert!(events.iter().all(|(name, _)| name == "Fetch.requestPaused"));
+        assert!(retain_event(
+            &mut events,
+            json!({"method":"Fetch.requestPaused","sessionId":"s","params":{"requestId":"overflow"}}),
+            100
+        ));
+        assert!(retain_event(
+            &mut events,
+            json!({"method":"Fetch.requestPaused","sessionId":"","params":{"requestId":"bad-session"}}),
+            100
+        ));
+        assert_eq!(events.len(), MAX_EVENTS);
+    }
 
     #[cfg(windows)]
     #[test]
@@ -1299,6 +1352,7 @@ mod tests {
             events: vec![],
             timeout: Duration::from_secs(2),
             observed_non_read_requests: 0,
+            paused_event_lost: false,
         };
         cdp.pump(Duration::from_millis(40));
         let response = cdp
@@ -1332,6 +1386,7 @@ mod tests {
             events: vec![],
             timeout: Duration::from_secs(2),
             observed_non_read_requests: 0,
+            paused_event_lost: false,
         };
         let error = cdp.call_browser("Test.deep", json!({})).unwrap_err();
         assert!(
