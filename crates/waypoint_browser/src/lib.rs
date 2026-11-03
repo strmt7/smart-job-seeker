@@ -2794,7 +2794,11 @@ impl CdpDriver {
 
     /// Find nearby rendered text for an otherwise unnamed textarea. This is
     /// advisory context, not an accessible association or permission to fill.
-    fn rendered_unassociated_question(&mut self, node: u64) -> Result<Option<String>, DriverError> {
+    fn rendered_unassociated_question(
+        &mut self,
+        node: u64,
+        checkbox: bool,
+    ) -> Result<Option<String>, DriverError> {
         if !self.control_visibility_and_path(node)?.0 {
             return Ok(None);
         }
@@ -2807,7 +2811,7 @@ impl CdpDriver {
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Field disappeared".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
-            if (!this.isConnected || !(this instanceof HTMLTextAreaElement)) return null;
+            if (!this.isConnected || !(this instanceof HTMLTextAreaElement || (arguments[0] === true && this instanceof HTMLInputElement && this.type === 'checkbox'))) return null;
             let branch = this;
             for (let depth = 0; depth < 4; depth++) {
                 const parent = branch.parentElement;
@@ -2827,7 +2831,7 @@ impl CdpDriver {
                 branch = parent;
             }
             return null;
-        }"#, "returnByValue":true}));
+        }"#, "arguments":[{"value":checkbox}], "returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -3603,7 +3607,7 @@ impl CdpDriver {
                     true
                 });
                 let label_text = label_text.split_whitespace().collect::<Vec<_>>().join(" ");
-                if let Some(for_id) = attrs.get("for") {
+                if let Some(for_id) = attrs.get("for").filter(|value| !value.is_empty()) {
                     if labels.contains_key(for_id) {
                         duplicate_labels.insert(for_id.clone());
                     }
@@ -4370,7 +4374,7 @@ impl CdpDriver {
             if unassociated_textarea && unassociated_question_count < 16 {
                 unassociated_question_count += 1;
                 if let Ok(Some(context)) = self.with_review_timeout(|driver| {
-                    driver.rendered_unassociated_question(control.node_id)
+                    driver.rendered_unassociated_question(control.node_id, false)
                 }) {
                     label = format!("Possible question (review): {context}");
                 }
@@ -4623,7 +4627,27 @@ impl CdpDriver {
                 label = format!("Question context not inspected (review): {label}");
                 walls.push("a custom control needs manual review: Checkbox question context exceeded the inspection limit".into());
             }
-            let sensitive = label_unverified
+            let checkbox_text = if input_type == "checkbox"
+                && !has_usable_label
+                && unassociated_checkbox_group.is_none()
+                && !checkbox_context_limit_hit
+                && unassociated_question_count < 16
+            {
+                unassociated_question_count += 1;
+                self.with_review_timeout(|driver| {
+                    driver.rendered_unassociated_question(control.node_id, true)
+                })
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+            if let Some(text) = &checkbox_text {
+                label = format!("Possible checkbox text (review): {text}");
+                walls.push("a custom control needs manual review: Nearby checkbox text is not an accessible label".into());
+            }
+            let sensitive = checkbox_text.is_some()
+                || label_unverified
                 || may_be_unannotated_choice
                 || unsupported_native
                 || unassociated_textarea

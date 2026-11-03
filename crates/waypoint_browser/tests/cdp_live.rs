@@ -2368,6 +2368,39 @@ fn nearby_visible_required_markers_are_reviewed_without_guessing_ambiguous_label
 }
 
 #[test]
+#[ignore = "launches a browser against fictional unassociated labels"]
+fn empty_for_label_is_not_associated_with_an_idless_checkbox() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_empty_for_labels.html"))
+        .unwrap();
+    assert!(live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.label == "Full Name" && field.required));
+    let checkbox = live
+        .schema
+        .fields
+        .iter()
+        .find(|field| matches!(field.field_type, FormFieldType::Checkbox))
+        .unwrap();
+    assert!(
+        !checkbox.label.contains("Full Name"),
+        "{:?}",
+        checkbox.label
+    );
+    assert!(checkbox
+        .label
+        .contains("I agree to the terms and conditions"));
+    assert!(checkbox.sensitive, "unassociated terms must be reviewed");
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
