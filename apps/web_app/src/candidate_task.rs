@@ -436,6 +436,11 @@ fn attach_page_closure_hint(job: &mut Value, capture: &Value) {
         "applications are closed",
         "applications closed",
         "no longer accepting applications",
+        "oferta de empleo ya no está disponible",
+        "oferta de empleo ya no esta disponible",
+        "vacante ya no está disponible",
+        "vacante ya no esta disponible",
+        "ya no se aceptan solicitudes",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -1967,6 +1972,31 @@ fn inspection_error_with_page_hint(mut reason: String, page_text: &str) -> Strin
     reason
 }
 
+fn inspection_error_with_page_samples(
+    browser: &mut waypoint_browser::CdpDriver,
+    current: &str,
+    error: String,
+    text: &str,
+    truncated: bool,
+) -> Result<String, String> {
+    let initial = inspection_error_with_page_hint(error.clone(), text);
+    if initial != error || !truncated {
+        return Ok(initial);
+    }
+    let Ok((tail, _)) = browser.page_text_tail_bounded(16_000) else {
+        return Ok(initial);
+    };
+    ensure_listing_address(browser, current)?;
+    let hinted = inspection_error_with_page_hint(error, &tail);
+    if hinted != initial {
+        Ok(format!(
+            "{hinted} The page was sampled; intervening text was not checked."
+        ))
+    } else {
+        Ok(initial)
+    }
+}
+
 pub(crate) fn redirect_review_destination(metadata: &Value) -> Option<String> {
     let original = url::Url::parse(metadata["requested_url"].as_str()?).ok()?;
     let reached = url::Url::parse(metadata["source_url"].as_str()?).ok()?;
@@ -2025,10 +2055,10 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
             let frame_warnings = match listing_embedded_warnings(&page.walls) {
                 Ok(warnings) => warnings,
                 Err(error) => {
-                    if let Ok((text, _)) = browser.page_text_bounded(16_000) {
+                    if let Ok((text, truncated)) = browser.page_text_bounded(16_000) {
                         ensure_listing_address(&mut browser, &current)?;
                         if require_readable_listing(&page.walls, &text).is_ok() {
-                            return Err(inspection_error_with_page_hint(error, &text));
+                            return Err(inspection_error_with_page_samples(&mut browser, &current, error, &text, truncated)?);
                         }
                     }
                     return Err(error);
@@ -2060,7 +2090,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 // A short challenge page is not evidence of a job listing.
                 // Longer pages still require exact-source extraction and review.
                 require_readable_listing(&page.walls, &page_text)?;
-                let mut job = (|| -> Result<Value, String> {
+                let job = (|| -> Result<Value, String> {
                     let model = crate::resident_model()?.ok_or_else(|| no_model_inspection_reason(
                         &original,
                         &reached,
@@ -2070,7 +2100,11 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                     let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
                     let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model_identity);
                     extract_page_text_with_hint(&mut inference,&page_text,&current,section_hint.as_deref(),section_text.as_ref().map(|(text, _)| text.as_str()))
-                })().map_err(|error| inspection_error_with_page_hint(error, &page_text))?;
+                })();
+                let mut job = match job {
+                    Ok(job) => job,
+                    Err(error) => return Err(inspection_error_with_page_samples(&mut browser, &current, error, &page_text, truncated)?),
+                };
                 job["page_text_truncated"]=json!(truncated);
                 if let Some((text, truncated)) = section_text.as_ref() {
                     job["observed_section"] = json!({"text":text,"truncated":truncated});
@@ -2192,6 +2226,11 @@ mod tests {
                     .contains("possible closure wording")
             );
         }
+        assert!(super::inspection_error_with_page_hint(
+            "Review".into(),
+            "Esta oferta de empleo ya no está disponible."
+        )
+        .contains("possible closure wording"));
         for text in ["The vacancy has not expired.", "A new job is open."] {
             assert!(
                 !super::inspection_error_with_page_hint("Review".into(), text)

@@ -449,6 +449,13 @@ impl CdpDriver {
             truncated,
         ))
     }
+    /// Extract the end of the current DOM text without retaining the preceding text.
+    pub fn page_text_tail_bounded(&mut self, limit: usize) -> Result<(String, bool), DriverError> {
+        if limit == 0 || limit > 32_000 {
+            return Err(DriverError("Invalid page-text limit".into()));
+        }
+        Ok(tail_text(&self.document()?, limit))
+    }
     /// Read bounded JSON-LD script bodies from the current DOM without running scripts.
     pub fn structured_data_scripts(&mut self) -> Result<Vec<String>, DriverError> {
         let root = self.document()?;
@@ -6721,6 +6728,45 @@ fn walk<F: FnMut(&Value, bool) -> bool>(node: &Value, in_control: bool, cb: &mut
     }
 }
 
+fn tail_text(root: &Value, limit: usize) -> (String, bool) {
+    let mut chars = std::collections::VecDeque::new();
+    let mut bytes = 0usize;
+    let mut truncated = false;
+    walk(root, false, &mut |node, in_control| {
+        let tag = node.get("nodeName").and_then(Value::as_str).unwrap_or("");
+        if ["script", "style", "noscript", "template"]
+            .iter()
+            .any(|name| tag.eq_ignore_ascii_case(name))
+        {
+            return false;
+        }
+        if tag == "#text" && !in_control {
+            if let Some(value) = node.get("nodeValue").and_then(Value::as_str) {
+                for c in value.chars().chain(std::iter::once(' ')) {
+                    while bytes + c.len_utf8() > limit {
+                        let Some(old): Option<char> = chars.pop_front() else {
+                            truncated = true;
+                            break;
+                        };
+                        bytes -= old.len_utf8();
+                        truncated = true;
+                    }
+                    if c.len_utf8() <= limit {
+                        chars.push_back(c);
+                        bytes += c.len_utf8();
+                    }
+                }
+            }
+        }
+        true
+    });
+    let text: String = chars.into_iter().collect();
+    (
+        text.split_whitespace().collect::<Vec<_>>().join(" "),
+        truncated,
+    )
+}
+
 fn unique_section_text(root: &Value, id: &str, limit: usize) -> Option<(String, bool)> {
     let mut matches = 0usize;
     let mut result = None;
@@ -7035,6 +7081,17 @@ mod traversal_tests {
         }));
         assert_eq!(remaining, 0);
         assert_eq!(visited, 4);
+    }
+
+    #[test]
+    fn tail_text_is_bounded_and_skips_controls_and_scripts() {
+        let root = json!({"nodeName":"BODY","children":[{"nodeName":"#text","nodeValue":"beginning"},{"nodeName":"INPUT","children":[{"nodeName":"#text","nodeValue":"private value"}]},{"nodeName":"SCRIPT","children":[{"nodeName":"#text","nodeValue":"script text"}]},{"nodeName":"#text","nodeValue":"end café"}]});
+        let (text, truncated) = tail_text(&root, 10);
+        assert_eq!(text, "end café");
+        assert!(truncated);
+        let (text, truncated) = tail_text(&root, 100);
+        assert_eq!(text, "beginning end café");
+        assert!(!truncated);
     }
 
     #[test]
