@@ -31,4 +31,15 @@ assert.ok(prior.children.some(item=>item.textContent.includes('first, second')))
 assert.equal(retried.groups[0].data.results.length,2);
 assert.equal(retried.groups.length,1);
 assert.ok(source.includes('pending.items.length<=100'));
+for(const [reported,expected] of [[0,false],[2,true],[null,true]]){
+ selected.clear();context.webBatchPage=0;
+ const data={results:[{url:'https://example.test/coverage',title:'Role',snippet:''}],unresponsive_engines:reported};
+ render({groups:[{query:'coverage',page:1,data}]});select();
+ assert.equal(selected.get('https://example.test/coverage').search_context.coverage_limited,expected);
+}
+for(const state of [{inProgress:true},{recovery:{status:'complete',coverage:{unattempted_pages:1}}},{recovery:{status:'complete',limit_reached:true}},{recovery:{recovered_partial:true}}]){
+ selected.clear();context.webBatchPage=0;
+ render({...state,groups:[{query:'coverage',page:1,data:{results:[{url:'https://example.test/partial',title:'Role',snippet:''}],unresponsive_engines:0}}]});select();
+ assert.equal(selected.get('https://example.test/partial').search_context.coverage_limited,true);
+}
 console.log('Web candidate page selection checks passed.');

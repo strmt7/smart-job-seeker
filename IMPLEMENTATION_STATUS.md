@@ -3329,3 +3329,12 @@ decomposition remained supported. Focused tests and local-model checks of the
 earlier conjunction and alternative examples passed. This bounded text check
 does not establish semantic completeness for every language or list format;
 ambiguous cases can require review. Earlier assessments are marked stale.
+
+### Search-result coverage context (2026-11-03)
+
+Selected web-search candidates now retain a limited-coverage flag when engine
+availability is unknown or degraded, a search is running or interrupted, or
+the candidate limit stopped the run. The card points to the search summary;
+the existing selection notice still asks the user to reselect for later reports.
+Four focused search and selection UI tests passed. This does not establish
+provider completeness or verify any listing.
