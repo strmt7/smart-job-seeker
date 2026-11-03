@@ -1,3 +1,7 @@
+## Local model multi-step fixture — 2026-11-03
+
+- In one resource-gated run on a fictional two-step local form, `qwen3.5:9b` suggested a given name and email, the browser filled them using separate fixture grants, and the vision model transcribed both visible values correctly. The sensitive work-authorization field stayed empty. The test simulated the navigation gesture and did not submit; it does not establish autonomous navigation or real-employer reliability. A hidden-required-control review warning remained on the second step. The model was unloaded after the run.
+
 ## Local model and startup memory observation — 2026-11-03
 
 - The startup estimate now requires available system RAM of at least the model's disk size plus 9 GiB, reduced from 10 GiB. The separate runtime memory guard and 2 GiB reported offload limit remain unchanged. Both are snapshots, not reservations, so they cannot guarantee immunity from memory pressure. Seven focused startup tests passed (four live tests ignored), and the model-start UI check and formatting check passed.
