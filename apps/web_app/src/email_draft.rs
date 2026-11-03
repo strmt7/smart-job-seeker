@@ -42,6 +42,44 @@ fn extended_filename(name: &str) -> String {
     encoded
 }
 
+// Split RFC 2231 continuations between complete percent escapes, not inside one.
+fn extended_filename_parameters(name: &str) -> String {
+    let encoded = extended_filename(name);
+    if encoded.len() <= 48 {
+        return format!("filename*=UTF-8''{encoded}");
+    }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut chars = encoded.chars();
+    while let Some(c) = chars.next() {
+        let token = if c == '%' {
+            format!(
+                "%{}{}",
+                chars.next().unwrap_or_default(),
+                chars.next().unwrap_or_default()
+            )
+        } else {
+            c.to_string()
+        };
+        if current.len() + token.len() > 48 {
+            chunks.push(std::mem::take(&mut current));
+        }
+        current.push_str(&token);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let charset = if index == 0 { "UTF-8''" } else { "" };
+            format!("filename*{index}*={charset}{chunk}")
+        })
+        .collect::<Vec<_>>()
+        .join(";\r\n ")
+}
+
 pub fn build(
     recipient: &str,
     subject: &str,
@@ -103,8 +141,8 @@ pub fn build(
                 "PDF attachment names conflict after sanitizing; rename one and try again".into(),
             );
         }
-        let extended = extended_filename(&portable);
-        message.push_str(&format!("--{boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"{safe}\";\r\n filename*=UTF-8''{extended}\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", lines(bytes)));
+        let extended = extended_filename_parameters(&portable);
+        message.push_str(&format!("--{boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment;\r\n {extended};\r\n filename=\"{safe}\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", lines(bytes)));
     }
     message.push_str(&format!("--{boundary}--\r\n"));
     Ok(message.into_bytes())
@@ -215,6 +253,48 @@ mod tests {
         )
         .unwrap();
         assert!(!injected.contains("\r\nBcc:"));
+    }
+
+    #[test]
+    fn long_international_filename_uses_safe_rfc2231_continuations() {
+        let name = format!("{}.pdf", "履歴書".repeat(12));
+        let portable = crate::attempt_record::attachment_filename(&name);
+        let parts = extended_filename_parameters(&portable);
+        assert!(parts.starts_with("filename*0*=UTF-8''"));
+        let mut reconstructed = String::new();
+        for (index, line) in parts.split(";\r\n ").enumerate() {
+            let (key, value) = line.split_once('=').unwrap();
+            assert_eq!(key, format!("filename*{index}*"));
+            let value = if index == 0 {
+                value.strip_prefix("UTF-8''").unwrap()
+            } else {
+                value
+            };
+            assert!(value.len() <= 48);
+            assert!(!value.ends_with('%'));
+            assert!(!value
+                .as_bytes()
+                .get(value.len().saturating_sub(2))
+                .is_some_and(|c| *c == b'%'));
+            reconstructed.push_str(value);
+        }
+        assert_eq!(reconstructed, extended_filename(&portable));
+        let draft = String::from_utf8(
+            build(
+                "hiring@example.org",
+                "Subject",
+                "Body",
+                &[(name, b"%PDF-fictional".to_vec())],
+                "boundary",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(draft.contains(&parts));
+        assert!(draft.split("\r\n").all(|line| line.len() <= 998));
+        if let Ok(path) = std::env::var("WAYPOINT_FICTIONAL_MIME_OUTPUT") {
+            std::fs::write(path, draft).unwrap();
+        }
     }
 
     #[test]
