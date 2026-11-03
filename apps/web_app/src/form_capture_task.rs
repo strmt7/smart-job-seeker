@@ -262,6 +262,7 @@ mod tests {
                 job_id: job.clone(),
                 inspection_task_id: "fixture".into(),
                 inspection_pending_revision: 0,
+                experience_revisions: vec![],
                 url: url.to_string(),
                 route_binding: None,
                 profile_digest: Sha256Digest::of(&json!({}).to_string()),

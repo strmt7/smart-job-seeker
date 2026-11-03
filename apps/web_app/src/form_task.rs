@@ -3080,6 +3080,7 @@ mod tests {
             job_id: job,
             inspection_task_id: "live-visible-inspection".into(),
             inspection_pending_revision: 0,
+            experience_revisions: vec![],
             url: url.clone(),
             route_binding: None,
             profile_digest: finished.profile_digest,

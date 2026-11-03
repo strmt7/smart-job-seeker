@@ -113,6 +113,7 @@ struct ReviewSession {
     job_id: JobIdentityId,
     inspection_task_id: String,
     inspection_pending_revision: i64,
+    experience_revisions: Vec<(String, u64)>,
     url: String,
     route_binding: Option<(String, String)>,
     profile_digest: Sha256Digest,
@@ -5184,6 +5185,7 @@ fn serve(
                 job_id,
                 inspection_task_id: task_id.to_owned(),
                 inspection_pending_revision: pending_revision,
+                experience_revisions: experience_revisions.clone(),
                 url,
                 route_binding,
                 profile_digest,
@@ -6644,6 +6646,7 @@ fn serve(
                     )
                 }
                 Some(Ok((mut current, pending_revision, experience_revisions))) => {
+                    current.experience_revisions = experience_revisions.clone();
                     if !experience_revisions.is_empty() {
                         let lessons = ws.form_experiences();
                         protect_navigation_experience_snapshot(
@@ -7496,6 +7499,18 @@ fn serve(
             };
             if Sha256Digest::of(&profile.to_string()) != current.profile_digest {
                 return Err("Profile changed; inspect the current page again".into());
+            }
+            if !current.experience_revisions.is_empty() {
+                let lessons = ws
+                    .form_experiences()
+                    .map_err(|_| "Form lessons could not be checked; inspect again")?;
+                if !experience_selection_current(
+                    &current.experience_revisions,
+                    &current.preview.schema,
+                    &lessons,
+                ) {
+                    return Err("The lessons used for these suggestions changed; inspect the current page again".into());
+                }
             }
             verify_selected_choices(current)?;
             let (prepared, omitted) = prepare_reviewed_fill(&current.preview, &body)?;
@@ -9292,6 +9307,7 @@ mod tests {
             job_id: job.clone(),
             inspection_task_id: "fixture-inspection".into(),
             inspection_pending_revision: revision,
+            experience_revisions: vec![],
             url,
             route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
@@ -9447,6 +9463,7 @@ mod tests {
             job_id: JobIdentityId::new("fixture-job").unwrap(),
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
+            experience_revisions: vec![],
             url,
             route_binding: None,
             profile_digest: Sha256Digest::of("fixture"),
@@ -10521,6 +10538,7 @@ mod tests {
                 job_id: JobIdentityId::new("fixture").unwrap(),
                 inspection_task_id: "fixture".into(),
                 inspection_pending_revision: 1,
+                experience_revisions: vec![],
                 url: url.to_string(),
                 route_binding: None,
                 profile_digest: Sha256Digest::of("fixture"),
@@ -13832,6 +13850,10 @@ mod tests {
             posted_at: None,
         })
         .unwrap();
+        assert_eq!(
+            ws.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("existing-value-endpoint")
+        );
         let profile = json!({});
         ws.save_candidate_profile(&profile.to_string()).unwrap();
         let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
@@ -13872,6 +13894,7 @@ mod tests {
             job_id: job.clone(),
             inspection_task_id: "inspection".into(),
             inspection_pending_revision: 0,
+            experience_revisions: vec![],
             url,
             route_binding: None,
             profile_digest: Sha256Digest::of(&profile.to_string()),
@@ -13912,6 +13935,55 @@ mod tests {
                 .map_err(|e| e.to_string())
         };
         let fill = |selectors: Value, replacements: Value| json!({"session_id":"existing-session","reviewed":true,"selectors":selectors,"answers":[],"reviewed_replacements":replacements});
+        use waypoint_workspace::form_experience::{
+            Control, Experience, Observation, Outcome, Response, Stage,
+        };
+        let lesson_id = "a".repeat(32);
+        let lesson = Experience {
+            version: 1,
+            reviewed: true,
+            enabled: true,
+            observed_at: 1,
+            platform: None,
+            stage: Stage::EnterInformation,
+            control: Control::Text,
+            observation: Observation::ValueChanged,
+            response: Response::VerifyValueAgain,
+            outcome: Outcome::Unknown,
+            note: None,
+            use_note_in_model: false,
+        };
+        let revision = ws.save_form_experience(&lesson_id, 0, &lesson).unwrap();
+        session.as_mut().unwrap().experience_revisions = vec![(lesson_id.clone(), revision)];
+        assert!(experience_selection_current(
+            &session.as_ref().unwrap().experience_revisions,
+            &session.as_ref().unwrap().preview.schema,
+            &ws.form_experiences().unwrap()
+        ));
+        assert!(ws.revoke_form_experience(&lesson_id, revision).unwrap());
+        let stale = request(
+            &mut ws,
+            &mut session,
+            "/api/form/fill",
+            fill(json!(["#first"]), json!([])),
+        )
+        .unwrap_err();
+        assert!(
+            stale.contains("lessons used for these suggestions changed"),
+            "{stale}"
+        );
+        assert_eq!(
+            session
+                .as_mut()
+                .unwrap()
+                .driver
+                .text_value_snapshot("#first")
+                .unwrap()
+                .value,
+            ""
+        );
+        assert!(!session.as_ref().unwrap().fill_attempted);
+        session.as_mut().unwrap().experience_revisions.clear();
         let error = request(
             &mut ws,
             &mut session,
@@ -14305,6 +14377,7 @@ mod tests {
             job_id: id.clone(),
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
+            experience_revisions: vec![],
             url,
             route_binding: None,
             profile_digest: Sha256Digest::of(&profile.to_string()),
@@ -14453,6 +14526,7 @@ mod tests {
             job_id: id.clone(),
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
+            experience_revisions: vec![],
             url,
             route_binding: None,
             profile_digest: Sha256Digest::of(&profile.to_string()),
@@ -14591,6 +14665,7 @@ mod tests {
             job_id: id.clone(),
             inspection_task_id: "fixture".into(),
             inspection_pending_revision: 0,
+            experience_revisions: vec![],
             url,
             route_binding: None,
             profile_digest: Sha256Digest::of(&profile.to_string()),
@@ -14791,6 +14866,7 @@ mod tests {
                 job_id: id.clone(),
                 inspection_task_id: "fixture-inspection".into(),
                 inspection_pending_revision,
+                experience_revisions: vec![],
                 url,
                 route_binding: None,
                 profile_digest: Sha256Digest::of(&profile.to_string()),
