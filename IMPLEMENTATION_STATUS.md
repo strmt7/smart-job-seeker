@@ -52,6 +52,8 @@
 
 ## Public application control observation — 2026-11-03
 
+- Application-check summaries now identify a required disabled or read-only field and unavailable fields, and explicitly report when the form did not settle during its bounded loading check. The text uses fixed messages rather than echoing page content. Application-check tests passed (20 passed, 22 ignored) and Windows web Clippy passed; no employer site or model was used.
+
 - The live visibility check now flags required controls hidden by CSS as needing review, rather than silently omitting them. Separate fictional local pages tested `display: none`, `visibility: hidden`, and an optional hidden control; 12 hidden-control browser tests and browser Clippy passed. The first broader run found an outdated no-warning expectation from the previous change; the fixture was updated to expect the warning while still verifying the visible duplicate can be filled. An inactive hidden required field can still need human interpretation, and uninspected frames remain outside this check. No employer page was opened or application submitted.
 
 - Form inspection now reports required input, select or textarea controls hidden by an ancestor with `aria-hidden` or the HTML `hidden` attribute, as it already did for directly hidden controls. Two fictional local-browser tests covered direct and inherited hiding; browser Clippy passed. CSS-only hiding, controls in uninspected frames and the relevance of inactive hidden sections still require review. No employer site was used and no application was submitted.

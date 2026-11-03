@@ -101,6 +101,18 @@ fn obstacle_message(walls: &[String]) -> String {
     {
         signals.push("a required hidden control");
     }
+    if walls
+        .iter()
+        .any(|wall| wall == "a required field is disabled or read-only")
+    {
+        signals.push("a required field that is disabled or read-only");
+    }
+    if walls
+        .iter()
+        .any(|wall| wall == "an unavailable field needs manual review")
+    {
+        signals.push("an unavailable field");
+    }
     if dialog {
         signals.push("a dialog covering form fields");
     }
@@ -127,7 +139,7 @@ fn obstacle_message(walls: &[String]) -> String {
     message
 }
 
-fn report_loading_field_loss(message: &mut String, walls: &[String]) {
+fn report_loading_instability(message: &mut String, walls: &[String]) {
     if walls
         .iter()
         .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
@@ -135,6 +147,12 @@ fn report_loading_field_loss(message: &mut String, walls: &[String]) {
         message.push_str(
             " Fields seen during loading disappeared; inspect the entire application again.",
         );
+    }
+    if walls
+        .iter()
+        .any(|wall| wall == waypoint_browser::DYNAMIC_UNSETTLED_REVIEW)
+    {
+        message.push_str(" The form was still changing during inspection; wait for it to load and inspect the entire application again.");
     }
 }
 
@@ -172,9 +190,9 @@ fn ensure_inspected_form(
             .iter()
             .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
         {
-            report_loading_field_loss(&mut message, &previous.walls);
+            report_loading_instability(&mut message, &previous.walls);
         } else {
-            report_loading_field_loss(&mut message, &current.walls);
+            report_loading_instability(&mut message, &current.walls);
         }
         return Err(message);
     }
@@ -808,7 +826,7 @@ pub fn start_bound(
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
-            report_loading_field_loss(&mut message, &page.walls);
+            report_loading_instability(&mut message, &page.walls);
             for (page_label, inventory) in contact_inventories {
                 if let Some(note) = email_contact_note_for_page(&inventory, page_label) {
                     message.push(' ');
@@ -1028,11 +1046,15 @@ mod tests {
             "captcha present".to_owned(),
             "a required custom control needs manual review: untrusted page text".to_owned(),
             "a required hidden control needs manual review".to_owned(),
+            "a required field is disabled or read-only".to_owned(),
+            "an unavailable field needs manual review".to_owned(),
         ];
         let message = super::obstacle_message(&walls);
         assert!(message.contains("possible CAPTCHA"));
         assert!(message.contains("required custom controls"));
         assert!(message.contains("required hidden control"));
+        assert!(message.contains("required field that is disabled or read-only"));
+        assert!(message.contains("unavailable field"));
         assert!(!message.contains("untrusted page text"));
         let unknown = super::obstacle_message(&["another obstacle".into()]);
         assert!(!unknown.contains("CAPTCHA"));
@@ -1050,14 +1072,16 @@ mod tests {
         let walls = vec![
             "captcha present".into(),
             waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW.into(),
+            waypoint_browser::DYNAMIC_UNSETTLED_REVIEW.into(),
         ];
         let mut message = super::obstacle_message(&walls);
-        super::report_loading_field_loss(&mut message, &walls);
+        super::report_loading_instability(&mut message, &walls);
         assert!(message.contains("possible CAPTCHA"));
         assert!(message.contains("Fields seen during loading disappeared"));
+        assert!(message.contains("form was still changing"));
         assert!(message.contains("manual review"));
         let mut unchanged = "Existing summary.".to_owned();
-        super::report_loading_field_loss(&mut unchanged, &["untrusted page text".into()]);
+        super::report_loading_instability(&mut unchanged, &["untrusted page text".into()]);
         assert_eq!(unchanged, "Existing summary.");
     }
 
