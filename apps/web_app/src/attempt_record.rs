@@ -428,6 +428,36 @@ pub struct GeneratedEvidenceLookup {
     pub incomplete: bool,
 }
 
+/// Append a recheck only to the already validated export attempt.
+pub fn record_export_text_recheck(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    result: &Value,
+    timestamp: i64,
+) -> Result<(), String> {
+    let attempt = result["attempt_id"]
+        .as_str()
+        .ok_or("Missing export attempt")?;
+    if attempt.len() != 32 || !attempt.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid export attempt".into());
+    }
+    let root = ws
+        .db_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .ok_or("Application records require a disk workspace")?;
+    let hash = Sha256Digest::of(job.as_str());
+    let dir = root
+        .join("application-records")
+        .join(format!("{}-{attempt}", &hash.as_str()[..16]));
+    let metadata = fs::symlink_metadata(&dir).map_err(|_| "Export record unavailable")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Invalid export record".into());
+    }
+    let mut record = AttemptRecord { dir, sequence: 0 };
+    record.event(json!({"type":"export_text_rechecked","time":timestamp,"document_id":result["document_id"],"pdf_sha256":result["pdf_sha256"],"reviewed_text_sha256":result["text_sha256"],"text_check":result["text_check"],"note":"Selectable text comparison only; visual layout and factual correctness require separate review."}))
+}
+
 /// Find evidence only for the exact saved document and bytes in this job's
 /// bounded attempt listing. Missing receipts are normal for user-supplied PDFs.
 pub fn matching_generated_evidence(

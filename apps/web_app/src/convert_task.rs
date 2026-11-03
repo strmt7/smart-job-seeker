@@ -36,7 +36,7 @@ fn compare_plain_text(source: &[u8], extracted: Result<String, String>) -> Value
     json!({"status":if source == normalize(&extracted) {"matches"} else {"differs"}})
 }
 
-fn compare_pdf_text(source: &[u8], extracted: Result<(String, Value), String>) -> Value {
+pub(crate) fn compare_pdf_text(source: &[u8], extracted: Result<(String, Value), String>) -> Value {
     match extracted {
         Ok((text, coverage)) => {
             let mut check = compare_plain_text(source, Ok(text));

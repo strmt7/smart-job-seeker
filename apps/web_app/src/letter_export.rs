@@ -17,6 +17,99 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+struct RecheckTask {
+    id: String,
+    job: String,
+    document: String,
+    attempt: String,
+    pdf_hash: String,
+    text_hash: String,
+    outcome: Option<Value>,
+}
+static RECHECK: Mutex<Option<RecheckTask>> = Mutex::new(None);
+static RECHECK_COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+
+pub fn start_recheck(
+    id: String,
+    job: String,
+    document: String,
+    attempt: String,
+    pdf: Vec<u8>,
+    text: Vec<u8>,
+) -> Result<(), String> {
+    let mut task = RECHECK.lock().map_err(|_| "PDF text recheck unavailable")?;
+    if task.as_ref().is_some_and(|task| task.outcome.is_none()) {
+        return Err("A PDF text recheck is running".into());
+    }
+    *task = Some(RecheckTask {
+        id: id.clone(),
+        job,
+        document,
+        attempt,
+        pdf_hash: waypoint_domain::sha256_hex(&pdf),
+        text_hash: waypoint_domain::sha256_hex(&text),
+        outcome: None,
+    });
+    drop(task);
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(|| {
+            crate::convert_task::compare_pdf_text(
+                &text,
+                crate::pdf_extract::extract_checked_with_coverage(&pdf),
+            )
+        })
+        .unwrap_or_else(
+            |_| json!({"status":"unavailable","reason":"PDF text recheck stopped unexpectedly"}),
+        );
+        if let Ok(mut tasks) = RECHECK.lock() {
+            if let Some(task) = tasks.as_mut().filter(|task| task.id == id) {
+                task.outcome = Some(result);
+            }
+        }
+    });
+    Ok(())
+}
+
+pub fn poll_recheck(id: &str) -> Result<Value, String> {
+    let tasks = RECHECK.lock().map_err(|_| "PDF text recheck unavailable")?;
+    let Some(task) = tasks.as_ref().filter(|task| task.id == id) else {
+        return RECHECK_COMPLETED
+            .lock()
+            .map_err(|_| "PDF text recheck unavailable")?
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| "PDF text recheck not found".into());
+    };
+    Ok(match &task.outcome {
+        None => json!({"status":"running"}),
+        Some(check) => {
+            json!({"status":"complete","job_id":task.job,"document_id":task.document,"attempt_id":task.attempt,"pdf_sha256":task.pdf_hash,"text_sha256":task.text_hash,"text_check":check})
+        }
+    })
+}
+
+pub fn complete_recheck(id: &str, result: Value) -> Result<Value, String> {
+    let mut tasks = RECHECK.lock().map_err(|_| "PDF text recheck unavailable")?;
+    let mut completed = RECHECK_COMPLETED
+        .lock()
+        .map_err(|_| "PDF text recheck unavailable")?;
+    if tasks
+        .as_ref()
+        .is_some_and(|task| task.id == id && task.outcome.is_some())
+    {
+        *completed = Some((id.to_owned(), result.clone()));
+        *tasks = None;
+        Ok(result)
+    } else {
+        completed
+            .as_ref()
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| "PDF text recheck not found".into())
+    }
+}
 pub fn pending() -> Result<Option<(String, String)>, String> {
     Ok(TASK
         .lock()

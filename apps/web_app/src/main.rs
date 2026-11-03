@@ -4232,6 +4232,79 @@ fn serve(
             }
             json_reply(stream, "200 OK", result);
         }
+        "/api/documents/export-text-recheck-start" => {
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let document = body["document_id"].as_str().ok_or("missing document id")?;
+            let pdf = ws
+                .document_content(document)
+                .map_err(|e| e.to_string())?
+                .ok_or("Document not found")?;
+            let lookup = attempt_record::matching_generated_evidence(ws, &job, document, &pdf)?;
+            if lookup.incomplete {
+                return Err(
+                    "Export records could not be checked completely; review the document manually"
+                        .into(),
+                );
+            }
+            let evidence = lookup.found.ok_or("Matching export record not found")?;
+            let text = evidence.reviewed_text.ok_or(
+                "This older export has no bound reviewed text; export again or review manually",
+            )?;
+            let task_id = random_id()?;
+            letter_export::start_recheck(
+                task_id.clone(),
+                job.as_str().into(),
+                document.into(),
+                evidence.attempt_id,
+                pdf,
+                text,
+            )?;
+            json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/documents/export-text-recheck-status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            let mut result = letter_export::poll_recheck(id)?;
+            if result["status"] == "complete" && result["validated"] != true {
+                let job = JobIdentityId::new(result["job_id"].as_str().ok_or("missing job id")?)
+                    .map_err(|e| e.to_string())?;
+                let document = result["document_id"]
+                    .as_str()
+                    .ok_or("missing document id")?;
+                let current = ws.document_content(document).map_err(|e| e.to_string())?;
+                let current = current.filter(|pdf| {
+                    waypoint_domain::sha256_hex(pdf) == result["pdf_sha256"].as_str().unwrap_or("")
+                });
+                let matched = current
+                    .as_ref()
+                    .and_then(|pdf| {
+                        attempt_record::matching_generated_evidence(ws, &job, document, pdf).ok()
+                    })
+                    .filter(|lookup| !lookup.incomplete)
+                    .and_then(|lookup| lookup.found)
+                    .filter(|found| {
+                        Some(found.attempt_id.as_str()) == result["attempt_id"].as_str()
+                    })
+                    .and_then(|found| found.reviewed_text)
+                    .is_some_and(|text| {
+                        waypoint_domain::sha256_hex(&text)
+                            == result["text_sha256"].as_str().unwrap_or("")
+                    });
+                if !matched {
+                    result = json!({"status":"failed","error":"The saved PDF or reviewed text changed during the recheck; review again"});
+                } else {
+                    let saved =
+                        attempt_record::record_export_text_recheck(ws, &job, &result, now())
+                            .is_ok();
+                    result["record_saved"] = json!(saved);
+                    result["validated"] = json!(true);
+                }
+            }
+            if result["status"] != "running" {
+                result = letter_export::complete_recheck(id, result)?;
+            }
+            json_reply(stream, "200 OK", result);
+        }
         "/api/documents/convert-pdf-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
             let doc = ws
@@ -9973,6 +10046,101 @@ mod tests {
             &[json!({"selector":"#email"}), json!({"selector":"#phone"})],
         );
         assert_eq!(completed, ["#name", "#email", "#phone"]);
+    }
+
+    #[test]
+    fn export_text_recheck_replays_and_rejects_changed_reviewed_text() {
+        fn call(ws: &mut Workspace, path: &str, body: Value) -> Value {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = body.to_string();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            if let Err(error) = serve(&mut server, ws, &mut None, "fixture-token", port) {
+                json_reply(&mut server, "400 Bad Request", json!({"error":error}));
+            }
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+        }
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let added = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.invalid/fictional","title":"Role","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let pdf = std::env::var_os("WAYPOINT_RECHECK_TEST_PDF")
+            .map(|path| std::fs::read(path).unwrap())
+            .unwrap_or_else(|| b"%PDF-fictional".to_vec());
+        ws.add_document("fictional-doc", "cv.pdf", &pdf, 1).unwrap();
+        letter_export::record_generated_fixture(
+            &ws,
+            &job,
+            "fictional-doc",
+            &pdf,
+            Sha256Digest::of("context").as_str(),
+        )
+        .unwrap();
+        let start = |ws: &mut Workspace| {
+            call(
+                ws,
+                "/api/documents/export-text-recheck-start",
+                json!({"job_id":job.as_str(),"document_id":"fictional-doc"}),
+            )["task_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let poll = |ws: &mut Workspace, id: &str| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let result = call(
+                    ws,
+                    "/api/documents/export-text-recheck-status",
+                    json!({"task_id":id}),
+                );
+                if result["status"] != "running" {
+                    break result;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let id = start(&mut ws);
+        let first = poll(&mut ws, &id);
+        assert_eq!(first["status"], "complete");
+        assert_eq!(first["record_saved"], true);
+        if std::env::var_os("WAYPOINT_RECHECK_TEST_PDF").is_some() {
+            assert_eq!(first["text_check"]["status"], "differs");
+        }
+        assert_eq!(poll(&mut ws, &id), first);
+        assert_eq!(ws.documents().unwrap().len(), 1);
+        let dir = std::fs::read_dir(root.path().join("application-records"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let events = std::fs::read_to_string(dir.join("events.jsonl")).unwrap();
+        assert_eq!(events.matches("export_text_rechecked").count(), 1);
+        let id = start(&mut ws);
+        let receipt: Value =
+            serde_json::from_slice(&std::fs::read(dir.join("document-export.json")).unwrap())
+                .unwrap();
+        std::fs::write(
+            dir.join("materials")
+                .join(receipt["reviewed_text"].as_str().unwrap()),
+            b"changed",
+        )
+        .unwrap();
+        let stale = poll(&mut ws, &id);
+        assert_eq!(stale["status"], "failed");
+        assert!(stale["error"].as_str().unwrap().contains("changed"));
     }
 
     #[test]
