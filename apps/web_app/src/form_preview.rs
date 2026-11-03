@@ -688,6 +688,15 @@ pub fn apply_reviewed_text_fields_with_replacements(
         if field.sensitive || preview.model_review_selectors.contains(&field.selector) || !valid {
             return Err("Field requires manual handling".into());
         }
+        if let (
+            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea,
+            PacketValue::Text(value),
+        ) = (&field.field_type, &mapping.value)
+        {
+            driver
+                .check_text_candidate(&field.selector, value)
+                .map_err(|e| e.to_string())?;
+        }
         check_existing_value(driver, field, &mapping.value, intent.as_str(), replacements)?;
     }
     let payload_digest = fill_payload_digest(preview, replacements)?;
@@ -1532,6 +1541,17 @@ mod tests {
             network_available: bool,
         }
         impl BrowserDriver for FixtureDriver {
+            fn check_text_candidate(
+                &mut self,
+                selector: &str,
+                value: &str,
+            ) -> Result<(), DriverError> {
+                if selector == "#name" && !value.is_empty() {
+                    Ok(())
+                } else {
+                    Err(DriverError("invalid fixture text".into()))
+                }
+            }
             fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
                 Ok(self.live.clone())
             }
@@ -4701,6 +4721,84 @@ mod tests {
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
             && !entry.contains("clicked")
             && !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser on a fictional form without submitting"]
+    fn text_preflight_rejects_invalid_later_fields_before_any_write() {
+        use waypoint_domain::GrantId;
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form-preflight-text.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = suggest_without_model(live, &json!({}), "offline").unwrap();
+        let mut ws = Workspace::in_memory().unwrap();
+        let job_id = JobIdentityId::new("text-preflight-fixture").unwrap();
+        ws.import_job(waypoint_store::StoredJob {
+            id: job_id.clone(),
+            title: "Role".into(),
+            employer: "Fixture".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.to_string()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let intent = IntentId::new("text-preflight-intent").unwrap();
+        let packet = Sha256Digest::of("fictional profile");
+        for (email, code) in [
+            ("invalid-email", "AB"),
+            ("candidate@example.invalid", "abc"),
+        ] {
+            let (candidate, _) = crate::prepare_reviewed_fill(&preview, &json!({"selectors":[],"answers":[{"selector":"#name","value":"Fictional"},{"selector":"#email","value":email},{"selector":"#code","value":code}]})).unwrap();
+            let mut grant = ApprovalGrant {
+                id: GrantId::new("text-preflight-grant").unwrap(),
+                intent_id: intent.clone(),
+                bound_payload_sha256: Sha256Digest::of(
+                    &serde_json::to_string(&candidate.suggestions).unwrap(),
+                ),
+                profile_revision: 1,
+                packet_sha256: packet.clone(),
+                form_schema_sha256: Sha256Digest::of(&candidate.schema.schema_hash_input()),
+                destination_origin: candidate.schema.origin.clone(),
+                operation: GrantOperation::Prefill,
+                nonce: "fixture".into(),
+                explicit_user_gesture: true,
+                consumed: false,
+                expired: false,
+            };
+            let mut completed = Vec::new();
+            let error = apply_reviewed_text_fields(
+                &mut ws,
+                &job_id,
+                &mut driver,
+                url.as_str(),
+                &candidate,
+                &mut grant,
+                FillContext {
+                    intent: &intent,
+                    packet_digest: &packet,
+                    source_reviewed: true,
+                    timestamp: 1,
+                    completed: &mut completed,
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("Text field needs review"), "{error}");
+            assert!(!grant.consumed && completed.is_empty());
+            driver.verify_text_value("#name", "").unwrap();
+        }
+        assert!(driver
+            .trace
+            .iter()
+            .all(|event| !event.contains("submitted")));
     }
 
     #[test]

@@ -5663,6 +5663,20 @@ fn retain_loading_observations(previous: LiveForm, next: &mut LiveForm) {
 }
 
 impl BrowserDriver for CdpDriver {
+    fn check_text_candidate(&mut self, selector: &str, value: &str) -> Result<(), DriverError> {
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Text field is unavailable".into()))?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Text field cannot be inspected".into()))?;
+        CdpDriver::check_text_candidate(self, object, value)
+    }
     fn check_numeric_candidate(&mut self, selector: &str, value: &str) -> Result<(), DriverError> {
         let node = self
             .node_id(selector)?

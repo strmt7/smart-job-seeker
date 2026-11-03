@@ -103,6 +103,10 @@ pub trait BrowserDriver {
     ) -> Result<(), DriverError> {
         Err(DriverError("Numeric preflight is unavailable".into()))
     }
+    /// Check a text candidate without changing the live field.
+    fn check_text_candidate(&mut self, _selector: &str, _value: &str) -> Result<(), DriverError> {
+        Err(DriverError("Text preflight is unavailable".into()))
+    }
     /// Refuse to replace an existing, different text value without manual review.
     fn ensure_text_replaceable(
         &mut self,
