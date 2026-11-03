@@ -392,11 +392,10 @@ pub(crate) fn parse_excluding(
     for item in results.iter().take(500) {
         examined += 1;
         let explicitly_advertised = item["is_ad"] == true
-            || item["sponsored"] == true
             || item["type"].as_str().is_some_and(|kind| {
                 matches!(
                     kind.trim().to_ascii_lowercase().as_str(),
-                    "ad" | "advertisement" | "sponsored"
+                    "ad" | "advertisement"
                 )
             });
         if explicitly_advertised {
@@ -665,14 +664,15 @@ mod tests {
             {"url":"https://example.org/job","title":"Sponsored","type":" Ad "},
             {"url":"https://example.org/job","title":"Role"},
             {"url":"https://example.org/ad2","title":"Ad","is_ad":true},
-            {"url":"https://example.org/ad3","title":"Ad","sponsored":true},
+            {"url":"https://example.org/sponsorship","title":"Role","sponsored":true},
+            {"url":"https://example.org/sponsorship2","title":"Role","type":"sponsored"},
             {"url":"https://example.org/research","title":"Sponsored research role"},
             {"url":"http://example.org/no","title":"Unsupported"}
         ]});
         let result = parse_excluding(&data.to_string(), &Default::default()).unwrap();
-        assert_eq!(result["advertisements_omitted"], 3);
+        assert_eq!(result["advertisements_omitted"], 2);
         assert_eq!(result["results_rejected"], 1);
-        assert_eq!(result["results"].as_array().unwrap().len(), 2);
+        assert_eq!(result["results"].as_array().unwrap().len(), 4);
         assert_eq!(result["results"][0]["title"], "Role");
     }
     #[test]
