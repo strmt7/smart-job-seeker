@@ -201,6 +201,7 @@ try:
         before_image = before_bitmap.to_pil()
         after_image = after_bitmap.to_pil()
         rectangle = None
+        approved_right = None
         if page_index == index:
             if original_page.get_rotation() != 0:
                 raise ValueError('Rotated PDF pages need manual editing')
@@ -213,6 +214,26 @@ try:
                     raise ValueError('Edited text lies outside the page; review manually')
                 rectangle.append((math.floor((left-page_left)*scale)-4, math.floor((page_top-top)*scale)-4,
                                   math.ceil((right-page_left)*scale)+4, math.ceil((page_top-bottom)*scale)+4))
+            # A single text object may grow rightward only into pixels that
+            # were entirely white on the original page. Other pages and all
+            # pixels outside the approved area still have to match exactly.
+            if len(old_bounds) == 1 and len(expected_parts) == 1:
+                trial_text = p.get_textpage()
+                candidates = [o for o in p.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=1, textpage=trial_text) if o.extract() == expected_parts[0]]
+                if len(candidates) == 1:
+                    l, b, r, t = candidates[0].get_bounds()
+                    old_l, old_b, old_r, old_t = old_bounds[0]
+                    if (old_r + 1 < r <= min(page_right, old_r + 160)
+                            and abs(l-old_l) <= 1 and b >= old_b-1 and t <= old_t+1):
+                        start = math.ceil((old_r-page_left)*scale) + 2
+                        end = min(before_image.width, math.ceil((r-page_left)*scale) + 4)
+                        y0 = max(0, math.floor((page_top-max(t, old_t))*scale)-4)
+                        y1 = min(before_image.height, math.ceil((page_top-min(b, old_b))*scale)+4)
+                        if blank_right_extension(before_image, start, end, y0, y1):
+                            approved_right = r
+                            old_rect = rectangle[0]
+                            rectangle[0] = (old_rect[0], old_rect[1], end, old_rect[3])
+                trial_text.close()
         visual_change, change_bounds = changed_outside(before_image, after_image, rectangle)
         before_image.close()
         after_image.close()
@@ -262,10 +283,12 @@ try:
             for obj, expected_object, bounds in zip(selected, expected_parts, old_bounds):
                 l,b,r,top = obj.get_bounds()
                 old_l,old_b,old_r,old_top = bounds
-                if l < old_l - 1 or b < old_b - 1 or r > old_r + 1 or top > old_top + 1:
+                right_limit = approved_right if approved_right is not None and len(old_bounds) == 1 else old_r + 1
+                if l < old_l - 1 or b < old_b - 1 or r > right_limit or top > old_top + 1:
                     raise ValueError('Replacement extends outside the original text area; review manually')
                 obj_addr = ctypes.cast(obj.raw, ctypes.c_void_p).value
                 observed = []
+                observed_indices = []
                 for char_index in range(t.count_chars()):
                     char_obj = raw.FPDFText_GetTextObject(t, char_index)
                     if not char_obj or ctypes.cast(char_obj, ctypes.c_void_p).value != obj_addr:
@@ -275,12 +298,25 @@ try:
                     if not char:
                         raise ValueError('A glyph could not be verified; review manually')
                     observed.append(char)
+                    observed_indices.append(char_index)
                     if not char.isspace():
-                        left,bottom,right,upper = t.get_charbox(char_index)
-                        if right - left < 0.01 or upper - bottom < 0.01 or raw.FPDFText_HasUnicodeMapError(t, char_index):
+                        box = t.get_charbox(char_index)
+                        if not visible_glyph_box(box) or raw.FPDFText_HasUnicodeMapError(t, char_index):
                             raise ValueError('A glyph may be missing in the original font; review manually')
                 if ''.join(observed) != expected_object:
                     raise ValueError('Edited glyphs could not be matched to the text object; review manually')
+                # Some subset fonts map a space to a zero-advance glyph. Text
+                # extraction still reports a space although words visually join.
+                # Check internal word gaps when an edit adds spaces; uncertain
+                # geometry is a manual-review case, not a verified export.
+                if after.count(' ') > before.count(' '):
+                    for i in range(1, len(observed)-1):
+                        if observed[i] != ' ' or observed[i-1].isspace() or observed[i+1].isspace():
+                            continue
+                        previous = t.get_charbox(observed_indices[i-1])
+                        following = t.get_charbox(observed_indices[i+1])
+                        if not visible_word_gap(previous, following):
+                            raise ValueError('Word spacing could not be verified in the original font; review manually')
         t.close()
         p.close()
     check.close()

@@ -102,6 +102,28 @@ result = subprocess.run([sys.executable, "-c", program], input=payload,
                         capture_output=True, timeout=30, check=False)
 assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
 assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "WWWiiiii"
+# A single object may expand into an otherwise blank part of the page.
+payload = json.dumps({"pdf": fixture(b"(Alpha) Tj"), "before": "Alpha", "after": "AlphaBeta"}).encode()
+result = subprocess.run([sys.executable, "-c", program], input=payload,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
+assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "AlphaBeta"
+# An inserted word must retain a visible gap, not merely extract as a space.
+guard = {}
+exec((src / "pdf_visual_guard.py").read_text(encoding="utf-8"), guard)
+assert not guard["visible_word_gap"]((0, 0, 5, 10), (6, 0, 11, 10))
+assert guard["visible_word_gap"]((0, 0, 5, 10), (8, 0, 13, 10))
+assert not guard["visible_glyph_box"]((0, 0, 4, 0.01))
+assert guard["visible_glyph_box"]((0, 0, 4, 1))
+payload = json.dumps({"pdf": fixture(b"(Alpha) Tj"), "before": "Alpha", "after": "Alpha Beta"}).encode()
+result = subprocess.run([sys.executable, "-c", program], input=payload,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
+# The same expansion cannot overwrite another visible object.
+payload = json.dumps({"pdf": fixture(b"(Alpha) Tj 40 0 Td (Nearby) Tj"), "before": "Alpha", "after": "AlphaBetaLong"})
+result = subprocess.run([sys.executable, "-c", program], input=payload, text=True,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode != 0 and "review manually" in result.stdout
 # Expansions that do not fit remain subject to the geometry check.
 payload = json.dumps({"pdf": fixture(b"(Alpha) Tj (Beta) Tj"), "before": "AlphaBeta", "after": "AlphaBetaLong"})
 result = subprocess.run([sys.executable, "-c", program], input=payload, text=True,
