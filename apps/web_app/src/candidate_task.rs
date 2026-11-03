@@ -488,6 +488,50 @@ fn attach_page_closure_hint(job: &mut Value, capture: &Value) {
     job["extraction_warnings"].as_array_mut().expect("warnings array").insert(0, json!(format!("The captured page contains possible closure wording: {excerpt}. It may concern another role or an old notice; verify the current status.")));
 }
 
+fn attach_tail_closure_hint(
+    job: &mut Value,
+    capture: &mut ListingCapture,
+    tail: &str,
+    tail_truncated: bool,
+) {
+    if capture.metadata["page_text_status"] != "truncated" || tail.len() > 16_000 {
+        return;
+    }
+    let before = job["extraction_warnings"].as_array().map_or(0, Vec::len);
+    attach_page_closure_hint(
+        job,
+        &json!({"page_text_status":"captured", "page_text":tail}),
+    );
+    let Some(warnings) = job["extraction_warnings"].as_array_mut() else {
+        return;
+    };
+    if warnings.len() == before {
+        return;
+    }
+    if let Some(warning) = warnings[0].as_str() {
+        warnings[0] = json!(format!(
+            "Page-tail sample; intervening text was not checked. {warning}"
+        ));
+    }
+    capture.metadata["page_tail_text"] = json!(tail);
+    capture.metadata["page_tail_status"] = json!(if tail_truncated {
+        "truncated"
+    } else {
+        "captured"
+    });
+    if serde_json::to_vec(&capture.metadata)
+        .ok()
+        .is_none_or(|bytes| bytes.len() > 500 * 1024)
+    {
+        capture
+            .metadata
+            .as_object_mut()
+            .expect("capture metadata")
+            .remove("page_tail_text");
+        capture.metadata["page_tail_status"] = json!("omitted_size_limit");
+    }
+}
+
 fn attach_provenance(capture: &mut ListingCapture, job: &Value) {
     let kind = job["extraction"]
         .as_str()
@@ -2125,7 +2169,16 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
             }
             let mut capture=capture_listing(&mut browser,&url,&current,&scripts);
             ensure_listing_address(&mut browser, &current)?;
+            let warnings_before = job["extraction_warnings"].as_array().map_or(0, Vec::len);
             attach_page_closure_hint(&mut job, &capture.metadata);
+            if capture.metadata["page_text_status"] == "truncated"
+                && job["extraction_warnings"].as_array().map_or(0, Vec::len) == warnings_before
+            {
+                if let Ok((tail, tail_truncated)) = browser.page_text_tail_bounded(16_000) {
+                    ensure_listing_address(&mut browser, &current)?;
+                    attach_tail_closure_hint(&mut job, &mut capture, &tail, tail_truncated);
+                }
+            }
             let mut email_links = match browser.with_review_timeout(|browser| browser.page_links()) {
                 Ok(links) if browser.current_url().ok().as_deref() == Some(current.as_str()) => {
                     attach_role_targets(&mut job, &current, &links);
@@ -5330,6 +5383,43 @@ mod tests {
             &json!({"page_text_status":"captured","page_text":"Applications are open."}),
         );
         assert!(job["extraction_warnings"].is_null());
+    }
+
+    #[test]
+    fn structured_listing_retains_tail_advisory_and_sample_without_claiming_closure() {
+        let mut job = json!({"extraction":"structured","extraction_warnings":[]});
+        let mut capture = ListingCapture {
+            metadata: json!({"page_text_status":"truncated","page_text":"Earlier text"}),
+            segments: vec![],
+        };
+        attach_tail_closure_hint(
+            &mut job,
+            &mut capture,
+            "Esta oferta de empleo ya no está disponible.",
+            true,
+        );
+        let warning = job["extraction_warnings"][0].as_str().unwrap();
+        assert!(warning.contains("intervening text was not checked"));
+        assert!(warning.contains("oferta de empleo ya no está disponible"));
+        assert_eq!(capture.metadata["page_tail_status"], "truncated");
+        assert!(capture.metadata["page_tail_text"]
+            .as_str()
+            .unwrap()
+            .contains("no está disponible"));
+        assert!(job["possible_closure_evidence"].is_null());
+        attach_provenance(&mut capture, &job);
+        assert!(capture.metadata["extraction_provenance"]["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("intervening text"));
+        let mut complete = ListingCapture {
+            metadata: json!({"page_text_status":"captured"}),
+            segments: vec![],
+        };
+        let mut other = json!({});
+        attach_tail_closure_hint(&mut other, &mut complete, "The vacancy has expired.", false);
+        assert!(other["extraction_warnings"].is_null());
+        assert!(complete.metadata["page_tail_text"].is_null());
     }
 
     #[test]

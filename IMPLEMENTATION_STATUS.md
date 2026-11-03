@@ -1,3 +1,7 @@
+## Tail evidence for saved listings — 2026-11-03
+
+- Successful listing inspections now also check a bounded tail sample for advisory closure wording when the captured first sample was truncated and contained no such warning. When a match is found, the source sample is retained in listing metadata if it fits the existing size budget; otherwise its omission is marked. The warning and provenance say that intervening text was not checked. A fictional structured-listing test covered retained evidence and the absence of a closure verdict; Windows web Clippy passed. A complete live structured-listing flow with a tail-only notice has not been tested.
+
 ## Bounded tail sample for unavailable listings — 2026-11-03
 
 - A Spanish-language search result on elempleo.com stated that the vacancy was unavailable; the source's native Crawl4AI receipt is retained outside Git (SHA-256 `4f5ac83866d7d1531ef161d6057ee2f353ef056b8abfba820817d94a05ff1cc7`). Its notice was absent from the first bounded DOM-text sample. When listing inspection stops for review and that sample is truncated, the browser can now check a bounded 16 KB tail sample for a small set of Spanish and English advisory phrases; a warning explicitly states that intervening text was not checked. A read-only endpoint test on the real result surfaced the unavailable notice without saving a job. A fictional Unicode/control-exclusion test and browser/web Clippy passed. This does not inspect all page text, cover all languages, or classify vacancy status conclusively. No application was submitted.
