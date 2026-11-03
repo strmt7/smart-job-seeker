@@ -31,7 +31,7 @@ const context = {
   calls.length=0; refreshes=0; messages.length=0; await run('fictional-selector');
   assert.equal(calls.length,1);
   assert.equal(calls[0].target_selector,'fictional-selector');
-  assert.ok(messages.some(message=>message.includes('could not be identified')));
+  assert.ok(messages.some(message=>message.includes('could not be identified') && message.includes('overlay or scrolling') && message.includes('manual review')));
   assert.equal(refreshes,1);
   assert.equal(store.size,0);
   assert.equal(context.visualButton.disabled,false);
