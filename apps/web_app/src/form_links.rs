@@ -610,6 +610,42 @@ fn require_checked_previous_answers(
     Ok(())
 }
 
+fn verify_navigation_state(session: &mut ReviewSession) -> Result<(), String> {
+    crate::check_answer_page(session)?;
+    if let Some(first) = session.completed_selectors.first() {
+        let check = session.driver.with_review_timeout(|driver| {
+            form_preview::verify_completed_fields(
+                driver,
+                &session.preview,
+                &session.completed_selectors,
+                first,
+            )
+        });
+        require_checked_previous_answers(&check)?;
+    }
+    if !crate::choice_attachments_verified(session) {
+        return Err("A previously attached file changed or could not be verified. Review the current section before navigating.".into());
+    }
+    Ok(())
+}
+
+fn reviewed_target_present(
+    session: &mut ReviewSession,
+    target: &str,
+    allow_other: bool,
+    reviewed_label: Option<&str>,
+) -> Result<bool, String> {
+    if allow_other {
+        Ok(other_candidates(&mut session.driver)?.iter().any(|link| {
+            reviewed_label.is_some_and(|label| reviewed_link_matches(link, target, label))
+        }))
+    } else {
+        Ok(candidates(&mut session.driver)?
+            .iter()
+            .any(|candidate| candidate == target))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn start_with_destination_check(
     id: String,
@@ -653,21 +689,7 @@ fn start_with_destination_check(
         let navigation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<form_preview::FormPreview, String> {
                 if navigating {
-                    crate::check_answer_page(&mut session)?;
-                    if let Some(first) = session.completed_selectors.first() {
-                        let check = session.driver.with_review_timeout(|driver| {
-                            form_preview::verify_completed_fields(
-                                driver,
-                                &session.preview,
-                                &session.completed_selectors,
-                                first,
-                            )
-                        });
-                        require_checked_previous_answers(&check)?;
-                    }
-                    if !crate::choice_attachments_verified(&mut session) {
-                        return Err("A previously attached file changed or could not be verified. Review the current section before navigating.".into());
-                    }
+                    verify_navigation_state(&mut session)?;
                 }
                 let fresh = session
                     .driver
@@ -677,15 +699,7 @@ fn start_with_destination_check(
                     if !fresh.walls.is_empty() {
                         return Err("The current page requires manual review".into());
                     }
-                    let found = if allow_other {
-                        other_candidates(&mut session.driver)?.iter().any(|link| {
-                            reviewed_label
-                                .as_deref()
-                                .is_some_and(|label| reviewed_link_matches(link, &target, label))
-                        })
-                    } else {
-                        candidates(&mut session.driver)?.contains(&target)
-                    };
+                    let found = reviewed_target_present(&mut session, &target, allow_other, reviewed_label.as_deref())?;
                     if !found {
                         return Err("The selected link changed; inspect again".into());
                     }
@@ -698,6 +712,12 @@ fn start_with_destination_check(
                             }
                         }
                         None => navigation_capture_warning = Some("The previous section could not be captured because the application record is unavailable".into()),
+                    }
+                    // Capture may take time or trigger page changes. Recheck the
+                    // reviewed page and values before leaving the section.
+                    verify_navigation_state(&mut session)?;
+                    if !reviewed_target_present(&mut session, &target, allow_other, reviewed_label.as_deref())? {
+                        return Err("The selected link changed during capture; inspect again".into());
                     }
                     let live = session.driver.open(&target).map_err(|e| e.to_string())?;
                     let actual = session.driver.current_url().map_err(|e| e.to_string())?;
@@ -950,7 +970,7 @@ mod tests {
             })
             .unwrap();
         driver.attach_local_file("#resume", &staged).unwrap();
-        let session = crate::ReviewSession {
+        let mut session = crate::ReviewSession {
             id: "preflight-session".into(),
             job_id: JobIdentityId::new("preflight-job").unwrap(),
             inspection_task_id: "preflight-inspection".into(),
@@ -976,6 +996,22 @@ mod tests {
             last_visual_freshness_key: None,
             record: None,
         };
+        session
+            .driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#given".into(),
+                value: PacketValue::Text("Avery".into()),
+            })
+            .unwrap();
+        assert!(super::verify_navigation_state(&mut session).is_ok());
+        session
+            .driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#given".into(),
+                value: PacketValue::Text("Changed".into()),
+            })
+            .unwrap();
+        assert!(super::verify_navigation_state(&mut session).is_err());
         fn fixture_check(_: &str, _: waypoint_policy::Operation) -> Result<(), String> {
             Ok(())
         }

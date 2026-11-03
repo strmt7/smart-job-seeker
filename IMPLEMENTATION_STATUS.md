@@ -33,6 +33,8 @@
 
 ## Verify answers before link navigation — 2026-11-03
 
+- Reviewed-link navigation now rechecks the page schema, filled values, current attachments and selected link after the potentially lengthy screenshot capture, immediately before opening the destination. A fictional browser test exercised retained and changed answers and the existing worker preflight; it did not simulate a change during capture itself. Windows web Clippy passed. These checks narrow the timing window but cannot eliminate later page changes.
+
 - The fictional navigation-worker test also restored the staged file and then cleared the browser's file input. The worker stopped for review and remained on the original page, confirming that an intact staged file alone does not pass the attachment check.
 
 - Reviewed-link navigation now also rechecks current-section attachments, including staged-file hashes and browser file selection, within the existing group and time limits. A changed or unverified attachment stops navigation for review. A fictional worker test changed the staged file and confirmed that the browser stayed on the original page. This does not verify attachments after manual navigation or on real employer sites.
