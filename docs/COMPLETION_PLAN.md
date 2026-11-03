@@ -75,6 +75,15 @@ build and configuration.
    not prevent this. Treat protection against script-triggered writes across
    clicks, typing, uploads, frames, navigation and other browser channels as a
    release blocker; prove it with adversarial fixtures before relying on it.
+   The current synchronous CDP client only observes network events while it is
+   processing commands or pumping events. A possible design needs a continuously
+   serviced interception layer, installed before interaction, that covers related
+   targets and fails closed on disconnect. CDP Fetch request-stage interception
+   can pause requests before transmission; target auto-attachment has to be
+   handled recursively for related frames and workers. Do not assume GET is
+   harmless or that Fetch covers existing WebSocket connections, browser-level
+   traffic, service workers or every external side effect. Those channels and
+   interception failure, asynchronous actions and teardown need separate tests.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,
    PDF conversion and page-by-page review. Compare ATS-readable text and visual
