@@ -1,3 +1,7 @@
+## Verify answers before link navigation — 2026-11-03
+
+- Before opening a reviewed application link, the navigation worker now checks previously filled fields on the current page and stops for review if a value changed, verification fails or the bounded check cannot cover all fields. This check does not establish attachment retention or cover manual navigation. A fictional browser fixture verified the check detects a changed value, and the form-link tests (15 passed, 5 ignored) and Windows web Clippy passed. No real application was contacted or submitted.
+
 ## Navigation advice coverage — 2026-11-03
 
 - Follow-up control advice now supplies only the remaining controls in its prompt, retaining their original indices instead of repeating the full list alongside them. Four focused scripted tests and the fictional resource-gated `qwen3.5:9b` test passed; the unscripted case again selected six navigation controls and omitted the submission control. This is not real-site qualification.

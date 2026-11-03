@@ -598,6 +598,18 @@ pub fn start(
     )
 }
 
+fn require_checked_previous_answers(
+    check: &form_preview::CompletedFieldCheck,
+) -> Result<(), String> {
+    if !check.failed_labels.is_empty() {
+        return Err("A previously filled answer changed or could not be verified. Review the current section before navigating.".into());
+    }
+    if check.unverified != 0 {
+        return Err("Not all previously filled answers could be checked before navigation. Review the current section before continuing.".into());
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn start_with_destination_check(
     id: String,
@@ -642,6 +654,17 @@ fn start_with_destination_check(
             || -> Result<form_preview::FormPreview, String> {
                 if navigating {
                     crate::check_answer_page(&mut session)?;
+                    if let Some(first) = session.completed_selectors.first() {
+                        let check = session.driver.with_review_timeout(|driver| {
+                            form_preview::verify_completed_fields(
+                                driver,
+                                &session.preview,
+                                &session.completed_selectors,
+                                first,
+                            )
+                        });
+                        require_checked_previous_answers(&check)?;
+                    }
                 }
                 let fresh = session
                     .driver
@@ -866,6 +889,22 @@ pub fn acknowledge_failure(id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn navigation_requires_previous_answers_to_be_checked() {
+        let mut check = crate::form_preview::CompletedFieldCheck {
+            selected_retained: true,
+            verified: 2,
+            unverified: 0,
+            failed_labels: vec![],
+            failed_details: vec![],
+        };
+        assert!(super::require_checked_previous_answers(&check).is_ok());
+        check.unverified = 1;
+        assert!(super::require_checked_previous_answers(&check).is_err());
+        check.unverified = 0;
+        check.failed_labels.push("First name".into());
+        assert!(super::require_checked_previous_answers(&check).is_err());
+    }
     use super::*;
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
@@ -1067,6 +1106,24 @@ mod tests {
                 field_selector: "#given".into(),
                 value: PacketValue::Text("Avery".into()),
             });
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#given".into(),
+                value: PacketValue::Text("Avery".into()),
+            })
+            .unwrap();
+        let completed = vec!["#given".to_string()];
+        let check =
+            form_preview::verify_completed_fields(&mut driver, &preview, &completed, "#given");
+        assert!(super::require_checked_previous_answers(&check).is_ok());
+        driver
+            .execute(&BrowserCommand::Click {
+                selector: "#mutate".into(),
+            })
+            .unwrap();
+        let check =
+            form_preview::verify_completed_fields(&mut driver, &preview, &completed, "#given");
+        assert!(super::require_checked_previous_answers(&check).is_err());
         driver
             .execute(&BrowserCommand::Fill {
                 selector: "#given".into(),
