@@ -1187,12 +1187,21 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
                     "Required field needs review: {}",
                     field_review_label(&preview.schema, field)
                 ),
-                format!(
-                    "Suggested number is outside the observed range: {}",
-                    field_review_label(&preview.schema, field)
-                ),
             ]
         })
+        .chain(
+            preview
+                .schema
+                .fields
+                .iter()
+                .filter(|field| matches!(field.field_type, FormFieldType::Number { .. }))
+                .map(|field| {
+                    format!(
+                        "Suggested number is outside the observed range: {}",
+                        field_review_label(&preview.schema, field)
+                    )
+                }),
+        )
         .collect();
     preview.manual_review.retain(|reason| {
         // The aggregate suggestion diagnostic is replaced by the field-specific
@@ -1255,7 +1264,7 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
             .into_iter()
             .map(|label| format!("Required field needs review: {label}")),
     );
-    for field in preview.schema.fields.iter().filter(|field| field.required) {
+    for field in &preview.schema.fields {
         let FormFieldType::Number { min, max, .. } = &field.field_type else {
             continue;
         };
@@ -3507,6 +3516,32 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason == "Visual review required"));
+        preview.schema.fields.last_mut().unwrap().required = false;
+        preview.suggestions.last_mut().unwrap().value = PacketValue::Text("11".into());
+        refresh_required_review(&mut preview);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Suggested number is outside the observed range: Years"));
+        assert!(!preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Required field needs review: Years"));
+        refresh_required_review(&mut preview);
+        assert_eq!(
+            preview
+                .manual_review
+                .iter()
+                .filter(|reason| reason.contains("outside the observed range: Years"))
+                .count(),
+            1
+        );
+        preview.suggestions.last_mut().unwrap().value = PacketValue::Text("5".into());
+        refresh_required_review(&mut preview);
+        assert!(!preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Years")));
     }
 
     #[test]

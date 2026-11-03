@@ -50,6 +50,8 @@
 
 ## Public application control observation — 2026-11-03
 
+- Form review now also flags optional numeric suggestions outside observed minimum or maximum bounds, and clears that warning when the answer is corrected. This makes the existing prefill rejection visible earlier; it does not validate dynamic constraints or numeric steps. The form-preview tests passed (28 passed, 46 ignored) and Windows web Clippy passed; no model or employer site was used.
+
 - Required numeric suggestions outside a form's observed minimum or maximum now remain marked for review before filling. A focused typed-answer test covered boundaries, malformed values and invalid bound attributes; Windows web Clippy passed. This early check does not cover step constraints or replace live browser validity checks.
 
 - The fill preflight now rejects out-of-range numeric answers before consuming the prefill grant or writing any field, including optional numeric answers. A fictional local-browser test verified the value remained unchanged and the grant unconsumed; it also retained the changed-schema check. Browser validity checks remain necessary for step and dynamic constraints. No application was submitted.
