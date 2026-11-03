@@ -1346,24 +1346,38 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut pages = 0;
         let mut retained = 0;
+        let mut errors = Vec::new();
         loop {
             let result = poll("freeserp-batch-evaluation", pages).unwrap();
             if result["status"] == "complete" {
-                println!("coverage: {}; retained: {retained}", result["coverage"]);
+                println!(
+                    "coverage: {}; retained: {retained}; errors: {errors:?}",
+                    result["coverage"]
+                );
                 assert_eq!(result["coverage"]["succeeded_pages"], 4);
                 assert_eq!(result["coverage"]["failed_pages"], 0);
                 break;
             }
             assert_ne!(result["status"], "failed", "{result}");
             if result.get("query").is_some() {
-                assert!(result.get("error").is_none(), "{result}");
-                assert_eq!(result["data"]["provider"], "freeserp");
-                let count = result["data"]["results"].as_array().unwrap().len();
-                retained += count;
-                println!(
-                    "query={} page={} retained={count}",
-                    result["query"], result["page"]
-                );
+                if let Some(error) = result["error"].as_str() {
+                    errors.push(error.to_owned());
+                } else {
+                    assert_eq!(result["data"]["provider"], "freeserp");
+                    let count = result["data"]["results"].as_array().unwrap().len();
+                    retained += count;
+                    println!(
+                        "query={} page={} retained={count}",
+                        result["query"], result["page"]
+                    );
+                    for candidate in result["data"]["results"].as_array().unwrap().iter().take(3) {
+                        println!(
+                            "candidate: {} {}",
+                            candidate["title"].as_str().unwrap_or(""),
+                            candidate["url"].as_str().unwrap_or("")
+                        );
+                    }
+                }
                 pages += 1;
             }
             assert!(Instant::now() < deadline, "public search did not finish");

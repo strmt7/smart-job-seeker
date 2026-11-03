@@ -1,5 +1,7 @@
 ## Public web-search batch observation — 2026-11-03
 
+- Later FreeSerp batch reruns failed on their first page because the provider reported that its general web index was unavailable and had fallen back to a different index. Waypoint surfaced that error instead of treating the fallback as general web results; the remaining relevance sample was not collected. The live test now prints a few candidate titles and URLs on successful pages and waits for final coverage before asserting provider success. Provider availability can change between runs.
+
 - The web-search batch worker queried Wiby with three generic job phrases. All three requests succeeded, but two retained no candidates and the six retained for “remote rust jobs” included unrelated pages. A separate FreeSerp test returned 40 retained candidates across two phrases and two pages, with four successful requests. These are provider-returned candidates, not verified current jobs or application routes; the tests did not assess FreeSerp relevance. No candidate details were sent and no applications were opened or submitted.
 
 ## Windows web integration check — 2026-11-03
