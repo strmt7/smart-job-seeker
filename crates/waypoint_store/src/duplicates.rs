@@ -141,7 +141,39 @@ fn job_title_score(a: &StoredJob, b: &StoredJob) -> u32 {
 }
 
 fn title_terms(title: &str) -> BTreeSet<String> {
-    title
+    // Normalize the common R&D abbreviation only when it stands alone;
+    // this is a candidate signal, not evidence that two roles are identical.
+    let chars: Vec<char> = title.chars().collect();
+    let mut normalized = String::with_capacity(title.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index].eq_ignore_ascii_case(&'r')
+            && (index == 0 || !chars[index - 1].is_alphanumeric())
+        {
+            let mut next = index + 1;
+            while chars.get(next).is_some_and(|c| matches!(c, ' ' | '\t')) {
+                next += 1;
+            }
+            if chars.get(next) == Some(&'&') {
+                next += 1;
+                while chars.get(next).is_some_and(|c| matches!(c, ' ' | '\t')) {
+                    next += 1;
+                }
+                if chars
+                    .get(next)
+                    .is_some_and(|c| c.eq_ignore_ascii_case(&'d'))
+                    && chars.get(next + 1).is_none_or(|c| !c.is_alphanumeric())
+                {
+                    normalized.push_str("research development");
+                    index = next + 1;
+                    continue;
+                }
+            }
+        }
+        normalized.push(chars[index]);
+        index += 1;
+    }
+    normalized
         .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
         .map(|word| word.trim_start_matches(['+', '#']))
         .filter(|word| word.chars().any(char::is_alphanumeric))
@@ -2353,6 +2385,44 @@ mod tests {
         assert_eq!(pairs.len(), 1);
         assert!(pairs[0].reason.contains("Matching requisition"));
         assert!(store.has_duplicate_hold("a").unwrap());
+    }
+
+    #[test]
+    fn research_abbreviation_rechecks_existing_jobs_for_review_without_merging() {
+        assert!(title_score("R & D Engineer", "Research and Development Engineer") >= 65);
+        assert!(title_score("r&d engineer", "Research Development Engineer") >= 65);
+        assert!(!title_words("BR&D Engineer").contains("research"));
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        #[cfg(feature = "sqlcipher")]
+        conn.execute_batch("PRAGMA key = 'fictional-test-key';")
+            .unwrap();
+        for migration in &crate::MIGRATIONS[..47] {
+            conn.execute_batch(migration).unwrap();
+        }
+        for (id, title) in [
+            ("a", "R & D Engineer"),
+            ("b", "Research and Development Engineer"),
+        ] {
+            conn.execute("INSERT INTO jobs(id,title,employer,location,state) VALUES(?1,?2,'Example Labs','','\"discovered\"')", params![id,title]).unwrap();
+            conn.execute(
+                "INSERT INTO job_employer_tokens(job_id,token) VALUES(?1,'example'),(?1,'labs')",
+                [id],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO job_employer_indexed(job_id) VALUES(?1)", [id])
+                .unwrap();
+        }
+        let store = Store::migrate(conn).unwrap();
+        assert!(store.duplicate_index_pending().unwrap());
+        assert_eq!(
+            store.index_next_duplicate_job("").unwrap().as_deref(),
+            Some("a")
+        );
+        let pairs = store.possible_duplicates().unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].status, "pending");
+        assert!(store.has_duplicate_hold("a").unwrap());
+        assert!(store.has_duplicate_hold("b").unwrap());
     }
 
     #[test]

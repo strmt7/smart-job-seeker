@@ -409,6 +409,11 @@ const MIGRATIONS: &[&str] = &[
     "INSERT INTO meta(key,value)
        SELECT 'duplicate_unicode_location_cursor','' WHERE EXISTS (SELECT 1 FROM jobs LIMIT 1);
      UPDATE meta SET value='47' WHERE key='schema_version';",
+    // v48 — recheck R&D abbreviations incrementally through the duplicate index.
+    "DELETE FROM job_employer_indexed WHERE job_id IN (
+       SELECT id FROM jobs WHERE lower(replace(replace(title,' ',''),char(9),'')) LIKE '%r&d%'
+     );
+     UPDATE meta SET value='48' WHERE key='schema_version';",
 ];
 
 pub mod documents;
