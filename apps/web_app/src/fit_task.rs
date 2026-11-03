@@ -122,6 +122,9 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
     let mut added = 0;
     let mut removed = 0;
     let mut changed = 0;
+    let mut changed_weights = 0;
+    let mut changed_statuses = 0;
+    let mut changed_evidence = 0;
     for item in old_items {
         match new_items
             .iter()
@@ -133,7 +136,11 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
                     .iter()
                     .any(|field| candidate[*field] != item[*field]) =>
             {
-                changed += 1
+                changed += 1;
+                changed_weights += usize::from(candidate["importance"] != item["importance"]);
+                changed_statuses += usize::from(candidate["status"] != item["status"]);
+                changed_evidence +=
+                    usize::from(candidate["qualification"] != item["qualification"]);
             }
             Some(_) => {}
         }
@@ -147,7 +154,7 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
         }
     }
     Some(
-        json!({"previous_score":old_score,"score_change":new_score-old_score,"range_change":range_change,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"identity_basis":"digest_context_snapshots"}),
+        json!({"previous_score":old_score,"score_change":new_score-old_score,"range_change":range_change,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"changed_weights":changed_weights,"changed_statuses":changed_statuses,"changed_evidence":changed_evidence,"identity_basis":"digest_context_snapshots"}),
     )
 }
 
@@ -4918,6 +4925,9 @@ mod tests {
         assert_eq!(comparison["score_change"], -25);
         assert_eq!(comparison["same_rubric"], false);
         assert_eq!(comparison["changed_judgments"], 1);
+        assert_eq!(comparison["changed_weights"], 0);
+        assert_eq!(comparison["changed_statuses"], 1);
+        assert_eq!(comparison["changed_evidence"], 1);
         assert_eq!(comparison["added_criteria"], 0);
         assert_eq!(comparison["removed_criteria"], 0);
         assert!(comparison["range_change"].is_null());
@@ -4943,6 +4953,12 @@ mod tests {
         wide["assessment"]["score_range"] = json!({"lower":80,"upper":100});
         assert!(repeatability_comparison(&narrow, &wide).unwrap()["range_change"].is_null());
         assert!(repeatability_comparison(&prior, &prior).unwrap()["same_rubric"] == true);
+        let mut weighted = prior.clone();
+        weighted["assessment"]["rubric"][0]["importance"] = json!("preferred");
+        let weights = repeatability_comparison(&prior, &weighted).unwrap();
+        assert_eq!(weights["changed_weights"], 1);
+        assert_eq!(weights["changed_statuses"], 0);
+        assert_eq!(weights["changed_evidence"], 0);
         let mut replaced = prior.clone();
         replaced["assessment"]["rubric"][0]["excerpt"] = json!("SQL");
         let replacement = repeatability_comparison(&prior, &replaced).unwrap();

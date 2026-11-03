@@ -15,6 +15,12 @@ assert.match(rangeMessage({previous_lower:75,previous_upper:75,lower_change:-25,
 assert.equal(rangeMessage(null), 'Previous range unavailable. ');
 assert.equal(rangeMessage({previous_lower:75,previous_upper:75,lower_change:50,upper_change:0}), 'Previous range unavailable. ');
 assert.ok(source.includes('repeatabilityRangeMessage(r.range_change)'), 'repeatability display must include range changes');
+const dimensionLine = source.split('\n').find(value => value.startsWith('function repeatabilityDimensionMessage('));
+assert.ok(dimensionLine);
+const dimensions = vm.runInNewContext(`(${dimensionLine})`);
+assert.match(dimensions({changed_weights:1,changed_statuses:2,changed_evidence:1}), /1 weight change, 2 judgment changes and 1 evidence change.*overlap/);
+assert.equal(dimensions({changed_judgments:1}), '');
+assert.ok(source.includes('repeatabilityDimensionMessage(r)'));
 const line = source.split('\n').find(value => value.startsWith('function fitBadgeLabel('));
 assert.ok(line, 'fit badge formatter must exist');
 const label = vm.runInNewContext(`(${line})`);

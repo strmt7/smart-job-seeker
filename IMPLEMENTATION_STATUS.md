@@ -36,6 +36,8 @@
 
 ## Qualification coverage in match estimates — 2026-11-03
 
+- Comparisons of repeated assessments now separately count changes in weight, judgment and cited qualification for exactly matched source excerpts. Counts can overlap and do not validate the model's decisions or match score. Focused comparison and UI logic tests and Windows web Clippy passed; no live-model repeatability measurement was made in this change.
+
 - Fictional saved-assessment and batch API tests confirm the “no qualifications used” coverage is recomputed after reading a saved result and reaches the job-list response without exposing the qualification text. Both tests passed.
 
 - When reviewed qualifications exist but the selection report says none were supplied to an assessment, the job badge now says “no qualifications used” instead of implying a subset was selected or showing only a generic limit. The distinction is derived from recorded input counts and does not change the score or prove the model used any supplied text. Focused Rust and UI checks passed.
