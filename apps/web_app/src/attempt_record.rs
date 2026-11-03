@@ -2403,6 +2403,21 @@ pub fn capture_page(
     record: &mut AttemptRecord,
     timestamp: i64,
 ) -> Result<(), String> {
+    // Chromium's first beyond-viewport capture can change its reported content
+    // width while it initializes scrollbar/layout state. Warm the same bounded
+    // capture path before planning tiles, without treating the image as evidence.
+    let before = driver.current_url().map_err(|error| error.to_string())?;
+    let (width, height) = driver
+        .page_dimensions()
+        .map_err(|error| error.to_string())?;
+    if let Some((x, y, tile_width, tile_height)) = capture_tiles(width, height).0.first().copied() {
+        driver
+            .screenshot_tile(x, y, tile_width, tile_height)
+            .map_err(|error| error.to_string())?;
+    }
+    if driver.current_url().map_err(|error| error.to_string())? != before {
+        return Err("Page address changed before capture; inspect and capture again".into());
+    }
     for attempt in 0..2 {
         match capture_page_once(driver, record, timestamp) {
             Ok(()) => return Ok(()),
@@ -3140,8 +3155,13 @@ mod tests {
             .filter(|event| event["type"] == "page_capture_segment")
             .collect();
         assert_eq!(segments.len(), 4);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "page_capture")
+            .unwrap();
+        let last_y = (completed["page_height"].as_f64().unwrap() - 2000.0).max(0.0);
         assert!(segments.iter().any(
-            |event| event["x"].as_f64() == Some(2048.0) && event["y"].as_f64() == Some(2000.0)
+            |event| event["x"].as_f64() == Some(2048.0) && event["y"].as_f64() == Some(last_y)
         ));
         assert!(events
             .iter()

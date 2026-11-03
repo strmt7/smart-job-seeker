@@ -3362,3 +3362,13 @@ that an existing selected option and checkbox were retained without change
 events. The larger fictional prefill endpoint test passed twice after two
 failures at its screenshot-segment assertion; that capture instability remains
 unresolved, so these runs do not establish reliable screenshot coverage.
+
+Follow-up diagnostics observed a 15-pixel reported width change after the first
+beyond-viewport screenshot and differing focused-field image hashes. Capture
+now performs one bounded warm-up screenshot before measuring and retains the
+address, dimensions and first-tile change checks. The endpoint fixture passed
+four consecutive runs afterward; a changing-page fixture still reported an
+incomplete capture, and four narrow/wide capture fixtures passed. The wide
+fixture's last-tile assertion was corrected to match the planner's bottom-aligned
+overlap. Blinking or changing content can still make a capture incomplete;
+these limited runs do not prove universal screenshot reliability.

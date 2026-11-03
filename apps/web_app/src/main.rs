@@ -15209,10 +15209,13 @@ mod tests {
                     .len(),
                 2
             );
-            assert!(event_values
-                .iter()
-                .skip(incomplete + 1)
-                .any(|event| event["type"] == "page_capture" && event["segments"] == 2));
+            assert!(
+                event_values
+                    .iter()
+                    .skip(incomplete + 1)
+                    .any(|event| event["type"] == "page_capture" && event["segments"] == 2),
+                "{events}"
+            );
             let failure_viewport = event_values
                 .iter()
                 .skip(incomplete + 1)
