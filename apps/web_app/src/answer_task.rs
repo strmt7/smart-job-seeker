@@ -1016,6 +1016,21 @@ mod tests {
                 })
                 .expect("the unsupported claim must be reviewed");
             assert_ne!(dashboard["status"], "supported", "{check}");
+            let other = json!({"text":"Organized onboarding sessions and led the department.","sources":["User-selected template passage (not independently verified): Organized onboarding sessions."]});
+            let review = check_evidence(&mut model, &other);
+            println!("fictional unsupported leadership review: {review}");
+            assert_eq!(review["status"], "completed");
+            let leadership = review["claims"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|claim| {
+                    claim["excerpt"]
+                        .as_str()
+                        .is_some_and(|text| text.to_lowercase().contains("department"))
+                })
+                .expect("leadership claim must be reviewed");
+            assert_ne!(leadership["status"], "supported", "{review}");
         });
     }
 

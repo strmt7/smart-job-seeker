@@ -123,6 +123,15 @@ pub fn needs_followup(review: &Value) -> bool {
         return true;
     }
     let report = &review["report"];
+    let Some(digest) = review["document_sha256"]
+        .as_str()
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    else {
+        return true;
+    };
+    if report["document_sha256"].as_str() != Some(digest) {
+        return true;
+    }
     let Some(pages) = report["pages"]
         .as_u64()
         .filter(|pages| *pages > 0 && *pages <= PAGE_LIMIT as u64)
@@ -275,6 +284,10 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn complete_review(report: Value) -> Value {
+        let digest = report["document_sha256"].clone();
+        json!({"status":"complete","document_sha256":digest,"report":report})
+    }
     #[test]
     #[ignore = "requires the local PDF worker"]
     fn detects_fictional_overprinted_text_geometry() {
@@ -307,9 +320,7 @@ mod tests {
             Ok(json!({"issues":[]}))
         })
         .unwrap();
-        assert!(needs_followup(
-            &json!({"status":"complete","report":clipped_review})
-        ));
+        assert!(needs_followup(&complete_review(clipped_review)));
         let mut calls = 0;
         let partial = inspect(bytes, crate::pdf_extract::render_page_for_review, |_| {
             calls += 1;
@@ -328,22 +339,28 @@ mod tests {
                 .unwrap()
                 > 0
         );
-        assert!(needs_followup(
-            &json!({"status":"complete","report":partial})
-        ));
+        assert!(needs_followup(&complete_review(partial)));
         let completed = inspect(bytes, crate::pdf_extract::render_page_for_review, |_| {
             Ok(json!({"issues":[]}))
         })
         .unwrap();
         assert_eq!(completed["complete"], true);
-        assert!(needs_followup(
-            &json!({"status":"complete","report":completed})
-        ));
+        assert!(needs_followup(&complete_review(completed)));
     }
     #[test]
     fn followup_distinguishes_completed_review_from_clean_observations() {
-        let clean = json!({"status":"complete","report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}]}});
+        let digest = "a".repeat(64);
+        let clean = json!({"status":"complete","document_sha256":digest,"report":{"document_sha256":digest,"pages":1,"pages_inspected":1,"complete":true,"findings":[{"page":1,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}]}});
         assert!(!needs_followup(&clean));
+        let mut mismatched = clean.clone();
+        mismatched["report"]["document_sha256"] = json!("b".repeat(64));
+        assert!(needs_followup(&mismatched));
+        let mut missing_digest = clean.clone();
+        missing_digest
+            .as_object_mut()
+            .unwrap()
+            .remove("document_sha256");
+        assert!(needs_followup(&missing_digest));
         for status in [json!("failed"), json!("partial"), Value::Null] {
             let mut inconsistent = clean.clone();
             inconsistent["status"] = status;
@@ -376,7 +393,7 @@ mod tests {
             json!({"page":2,"vision_status":"complete","issues":[],"text_geometry":{"status":"checked","overlapping_pairs":0,"clipped_chars":0}}),
         ] {
             assert!(needs_followup(
-                &json!({"status":"complete","report":{"pages":1,"pages_inspected":1,"complete":true,"findings":[page]}})
+                &json!({"status":"complete","document_sha256":digest,"report":{"document_sha256":digest,"pages":1,"pages_inspected":1,"complete":true,"findings":[page]}})
             ));
         }
         assert!(needs_followup(&json!({"report":{"pages":1,"findings":[]}})));
@@ -440,9 +457,7 @@ mod tests {
                 .unwrap()
                 > 0
         );
-        assert!(needs_followup(
-            &json!({"status":"complete","report":report})
-        ));
+        assert!(needs_followup(&complete_review(report.clone())));
         assert!(
             report["findings"][1]["issues"]
                 .as_array()

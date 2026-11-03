@@ -3403,3 +3403,10 @@ change it marked that claim unsupported while recognizing the cited Python
 claim. A normal fictional rewrite check also passed. These observations do not
 establish general evidence accuracy; the existing unverified-template guard and
 candidate review remain necessary.
+
+The same local evidence check also flagged an unsupported fictional leadership
+claim while retaining its cited onboarding claim as supported. Separately,
+document visual follow-up now requires the page report's PDF hash to match the
+outer saved-review hash; missing or conflicting hashes require review. Focused
+tests and a fictional PDF geometry check passed. These checks do not prove
+model accuracy or visual quality.
