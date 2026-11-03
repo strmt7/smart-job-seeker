@@ -7501,15 +7501,24 @@ fn serve(
                 return Err("Profile changed; inspect the current page again".into());
             }
             if !current.experience_revisions.is_empty() {
-                let lessons = ws
-                    .form_experiences()
-                    .map_err(|_| "Form lessons could not be checked; inspect again")?;
-                if !experience_selection_current(
-                    &current.experience_revisions,
-                    &current.preview.schema,
-                    &lessons,
-                ) {
-                    return Err("The lessons used for these suggestions changed; inspect the current page again".into());
+                let stale_reason = match ws.form_experiences() {
+                    Ok(lessons) if experience_selection_current(&current.experience_revisions, &current.preview.schema, &lessons) => None,
+                    Ok(_) => Some("The lessons used for these suggestions changed; inspect the current page again"),
+                    Err(_) => Some("Form lessons could not be checked; inspect the current page again"),
+                };
+                if let Some(reason) = stale_reason {
+                    let mut error = reason.to_owned();
+                    if let Err(problem) = ws.mark_manual_review(&current.job_id, reason, now()) {
+                        error.push_str(&format!(
+                            "; manual-review status could not be saved: {problem}"
+                        ));
+                    }
+                    if let Some(record) = &mut current.record {
+                        if let Err(problem) = record.event(json!({"type":"lesson_mapping_invalidated","time":now(),"reason":reason})) {
+                            error.push_str(&format!("; attempt event could not be saved: {problem}"));
+                        }
+                    }
+                    return Err(error);
                 }
             }
             verify_selected_choices(current)?;
@@ -13961,6 +13970,9 @@ mod tests {
             &ws.form_experiences().unwrap()
         ));
         assert!(ws.revoke_form_experience(&lesson_id, revision).unwrap());
+        let record = required_attempt_record(&ws, &job).unwrap();
+        let events_path = record.test_directory().join("events.jsonl");
+        session.as_mut().unwrap().record = Some(record);
         let stale = request(
             &mut ws,
             &mut session,
@@ -13983,6 +13995,19 @@ mod tests {
             ""
         );
         assert!(!session.as_ref().unwrap().fill_attempted);
+        assert!(ws
+            .manual_review_reasons(&job)
+            .unwrap()
+            .iter()
+            .any(|reason| reason
+                .reason
+                .contains("lessons used for these suggestions changed")));
+        let events = std::fs::read_to_string(events_path).unwrap();
+        assert!(events
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|event| event["type"] == "lesson_mapping_invalidated"));
+        session.as_mut().unwrap().record = None;
         session.as_mut().unwrap().experience_revisions.clear();
         let error = request(
             &mut ws,
