@@ -2268,6 +2268,35 @@ fn css_hidden_required_controls_need_review_but_optional_controls_do_not() {
 }
 
 #[test]
+#[ignore = "launches a browser against fictional hidden buttons"]
+fn visible_controls_are_found_after_css_hidden_candidates() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_hidden_buttons.html")).unwrap();
+    let inventory = driver.page_controls().unwrap();
+    assert!(inventory
+        .controls
+        .iter()
+        .any(|control| control.label == "Continue"));
+    assert!(inventory
+        .controls
+        .iter()
+        .any(|control| control.label == "Submit application"));
+    assert!(inventory
+        .controls
+        .iter()
+        .all(|control| !control.label.starts_with("Hidden ")));
+    assert!(!inventory.incomplete);
+    driver.open(&file_url("form_many_buttons.html")).unwrap();
+    let capped = driver.page_controls().unwrap();
+    assert_eq!(capped.controls.len(), 30);
+    assert!(capped.incomplete);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

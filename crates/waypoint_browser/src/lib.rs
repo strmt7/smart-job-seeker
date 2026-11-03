@@ -581,7 +581,9 @@ impl CdpDriver {
                         )
                     }));
             if button && !hidden {
-                if candidates.len() >= 30 {
+                // Hidden DOM buttons can precede the useful controls. Scan a
+                // bounded larger set, while retaining at most 30 visible ones.
+                if candidates.len() >= 120 {
                     incomplete = true;
                     return true;
                 }
@@ -617,7 +619,7 @@ impl CdpDriver {
         let started = Instant::now();
         let mut controls = Vec::new();
         for (id, label, disabled) in candidates {
-            if started.elapsed() >= Duration::from_secs(4) {
+            if controls.len() >= 30 || started.elapsed() >= Duration::from_secs(4) {
                 incomplete = true;
                 break;
             }
