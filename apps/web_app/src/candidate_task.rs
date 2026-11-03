@@ -2780,6 +2780,29 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "read-only public listing; requires a previously verified HTTP 410 URL"]
+    fn live_gone_listing_is_rejected_without_claiming_closure() {
+        let url = std::env::var("WAYPOINT_GONE_LISTING_URL").expect("public gone listing URL");
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        crate::form_links::check_job_and_destination(
+            source,
+            &parsed.origin().ascii_serialization(),
+            waypoint_policy::Operation::Read,
+        )
+        .unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let error =
+            open_listing(&mut browser, &url).expect_err("gone listing must not be accepted");
+        assert!(error.contains("HTTP 410"), "unexpected result: {error}");
+        assert!(error.contains("does not establish whether the vacancy is closed"));
+        assert!(!error.contains(&url));
+        assert!(browser.trace.iter().all(|entry| !entry.contains("typed")
+            && !entry.contains("clicked")
+            && !entry.contains("submitted")));
+    }
+
+    #[test]
     fn truncated_address_at_text_boundary_is_not_reported() {
         let mut email = email_link_candidates(&[]);
         add_page_text_contacts(
