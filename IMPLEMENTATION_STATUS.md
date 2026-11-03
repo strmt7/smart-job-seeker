@@ -3233,3 +3233,14 @@ not an end-to-end retest of the app's browser extraction or a reliability
 benchmark; sampled text and multiple roles can still mislead the model. The
 model was unloaded. Forty-eight candidate tests passed (22 ignored), both
 focused UI tests and web-app Clippy passed.
+
+### Shared-label radio advice (2026-11-03)
+
+A resource-gated Qwen3.5:9b evaluation read a fictional form whose radio
+options reference the same question labels as their group. The browser exposed
+the question and distinct Yes/No options, and marked a second group with
+duplicate option labels incomplete. The model selected Yes and No for explicit
+positive and negative availability statements, respectively, and abstained for
+an unrelated statement. No form controls were clicked. This three-case check is
+not a general reliability measurement or a visual verification of a real
+application; the model was unloaded after the test.

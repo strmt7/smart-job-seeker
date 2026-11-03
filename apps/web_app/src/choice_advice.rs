@@ -351,6 +351,63 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    #[ignore = "opens a fictional form and loads a resource-gated local model"]
+    fn resource_gated_shared_label_radio_advice() {
+        use waypoint_applications::driver::BrowserDriver;
+
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(
+                "../../crates/waypoint_browser/tests/fixtures/form_custom_radio_shared_label.html",
+            )
+            .canonicalize()
+            .unwrap();
+        let (question, choices) = {
+            let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            browser
+                .open(url::Url::from_file_path(fixture).unwrap().as_str())
+                .unwrap();
+            let inventory = browser.page_custom_radio_groups().unwrap();
+            let group = &inventory.groups[0];
+            assert!(!group.incomplete);
+            assert!(inventory.groups[1].incomplete);
+            assert!(group
+                .options
+                .iter()
+                .all(|option| option.checked == Some(false)));
+            (
+                group.label.clone(),
+                group
+                    .options
+                    .iter()
+                    .map(|option| option.label.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(question, "Are you available for travel?");
+        assert_eq!(choices, ["Yes", "No"]);
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let model = crate::resident_model().unwrap().expect("resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model_identity,
+            );
+            for (answer, expected) in [
+                ("I am available to travel for work.", Some("Yes")),
+                ("I am not available to travel for work.", Some("No")),
+                ("I have five years of experience in accounting.", None),
+            ] {
+                let advice = suggest(&mut llm, &question, answer, &choices).unwrap();
+                println!("fictional shared-label radio: {answer:?} => {advice}");
+                assert_eq!(advice["option"].as_str(), expected);
+            }
+        });
+    }
+    #[cfg(windows)]
+    #[test]
     #[ignore = "loads a resource-gated local model for fictional radio advice"]
     fn resource_gated_radio_advice_examples() {
         struct Recorder<T> {
