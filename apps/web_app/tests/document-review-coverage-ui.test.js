@@ -31,4 +31,10 @@ assert.match(resolved.children.map(item=>item.textContent).join('\n'),/appended.
 const unresolved=node('div');
 render(unresolved,{excerpts:[],coverage:{kind:'docx',footnote_references:1,endnote_references:2,unresolved_note_references:1}});
 assert.match(unresolved.children.map(item=>item.textContent).join('\n'),/1 note reference.*could not be resolved/i);
+const auxiliary=node('div');
+render(auxiliary,{excerpts:[],coverage:{kind:'docx',footnote_references:0,endnote_references:0,unresolved_note_references:0,header_footer_parts:2,header_footer_usage_verified:false}});
+assert.match(auxiliary.children.map(item=>item.textContent).join('\n'),/2 header or footer part.*may include unused template content/i);
+const oldCoverage=node('div');
+render(oldCoverage,{excerpts:[],coverage:{kind:'docx',footnote_references:0,endnote_references:0,unresolved_note_references:0}});
+assert.match(oldCoverage.children.map(item=>item.textContent).join('\n'),/header and footer extraction coverage is unavailable/i);
 assert.ok(source.includes('documentExtractionCoverageNotice(documentResult.coverage)'));

@@ -268,7 +268,9 @@ fn extract_docx(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
         }
         extract_docx_xml(&xml, &mut output)?;
     }
-    let (notes, coverage) = crate::docx_notes::extract(&mut archive, &names)?;
+    let (notes, mut coverage) = crate::docx_notes::extract(&mut archive, &names)?;
+    coverage["header_footer_parts"] = serde_json::json!(names.len().saturating_sub(1));
+    coverage["header_footer_usage_verified"] = serde_json::json!(false);
     if !notes.is_empty() {
         if !output.is_empty() && !output.ends_with('\n') {
             output.push('\n');
@@ -412,8 +414,12 @@ mod tests {
             .start_file("word/_rels/document.xml.rels", options)
             .unwrap();
         writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="h" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="custom/top.xml"/><Relationship Id="f" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="custom/bottom.xml"/></Relationships>"#).unwrap();
-        let text = extract("cv.docx", &writer.finish().unwrap().into_inner()).unwrap();
+        let (text, coverage) =
+            extract_for_review("cv.docx", &writer.finish().unwrap().into_inner()).unwrap();
         assert_eq!(text, "Header\nBody\nFooter");
+        let coverage = coverage.unwrap();
+        assert_eq!(coverage["header_footer_parts"], 2);
+        assert_eq!(coverage["header_footer_usage_verified"], false);
     }
 
     #[test]

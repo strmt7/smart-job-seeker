@@ -235,6 +235,9 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     if footers {
         notes.push("DOCX has footer files; some parsers may miss footer content, so check that important details are also present in the body.".into());
     }
+    if headers || footers {
+        notes.push("Extracted header or footer text may include unused template parts; compare it with the visible document before using it.".into());
+    }
     notes.push("DOCX visual layout, column order and hidden formatting inherited from styles or other parts are not fully assessed.".into());
     Ok(notes)
 }
