@@ -220,7 +220,7 @@ pub(crate) fn parse_provider(
         if entries.len() > 500 {
             return Err("Provider returned too many results".into());
         }
-        let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("url"),"title":item.get("title"),"content":item.get("snippet"),"publishedDate":item.get("published_at"),"indexedDate":item.get("crawled_at"),"engine":"FreeSerp Global"})).collect();
+        let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("url"),"title":item.get("title"),"content":item.get("snippet"),"publishedDate":item.get("published_at"),"indexedDate":item.get("crawled_at"),"type":item.get("type"),"is_ad":item.get("is_ad"),"sponsored":item.get("sponsored"),"engine":"FreeSerp Global"})).collect();
         let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
         parsed["provider"] = json!("freeserp");
         return Ok(parsed);
@@ -386,10 +386,23 @@ pub(crate) fn parse_excluding(
     let mut previously_seen = 0;
     let mut within_page_duplicates = 0usize;
     let mut result_limit_omitted = 0usize;
+    let mut advertisements_omitted = 0usize;
     // A provider can repeat earlier pages before returning new results. Scan a
     // larger bounded prefix while still retaining at most 100 new links.
     for item in results.iter().take(500) {
         examined += 1;
+        let explicitly_advertised = item["is_ad"] == true
+            || item["sponsored"] == true
+            || item["type"].as_str().is_some_and(|kind| {
+                matches!(
+                    kind.trim().to_ascii_lowercase().as_str(),
+                    "ad" | "advertisement" | "sponsored"
+                )
+            });
+        if explicitly_advertised {
+            advertisements_omitted += 1;
+            continue;
+        }
         let Some(raw) = item.get("url").and_then(Value::as_str) else {
             continue;
         };
@@ -569,7 +582,7 @@ pub(crate) fn parse_excluding(
         }
     }
     Ok(
-        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len() || result_limit_omitted > 0,"result_limit_omitted":result_limit_omitted,"results_rejected":examined-links.len()-previously_seen-within_page_duplicates-result_limit_omitted,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len() || result_limit_omitted > 0,"result_limit_omitted":result_limit_omitted,"advertisements_omitted":advertisements_omitted,"results_rejected":examined-links.len()-previously_seen-within_page_duplicates-result_limit_omitted-advertisements_omitted,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
     )
 }
 
@@ -646,6 +659,22 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicitly_labelled_ads_are_counted_without_hiding_organic_results() {
+        let data = json!({"results":[
+            {"url":"https://example.org/job","title":"Sponsored","type":" Ad "},
+            {"url":"https://example.org/job","title":"Role"},
+            {"url":"https://example.org/ad2","title":"Ad","is_ad":true},
+            {"url":"https://example.org/ad3","title":"Ad","sponsored":true},
+            {"url":"https://example.org/research","title":"Sponsored research role"},
+            {"url":"http://example.org/no","title":"Unsupported"}
+        ]});
+        let result = parse_excluding(&data.to_string(), &Default::default()).unwrap();
+        assert_eq!(result["advertisements_omitted"], 3);
+        assert_eq!(result["results_rejected"], 1);
+        assert_eq!(result["results"].as_array().unwrap().len(), 2);
+        assert_eq!(result["results"][0]["title"], "Role");
+    }
     #[test]
     fn local_openserp_search_preserves_limits_and_excludes_ads() {
         use std::io::{Read, Write};
@@ -821,6 +850,10 @@ mod tests {
         assert_eq!(result["provider"], "freeserp");
         assert_eq!(result["results"][0]["published_date"], "2026-10-01");
         assert_eq!(result["results"][0]["indexed_date"], "2026-10-03");
+        let labelled = json!({"ok":true,"index":"web","results":[{"url":"https://example.org/ad","type":"ad"},{"url":"https://example.org/job","title":"Role"}]}).to_string();
+        let result = parse_provider(&labelled, &url, &Default::default()).unwrap();
+        assert_eq!(result["advertisements_omitted"], 1);
+        assert_eq!(result["results"].as_array().unwrap().len(), 1);
         for payload in [
             json!({"ok":true,"index":"sites","results":[]}),
             json!({"ok":true,"index":"web","engine_fallback":true,"results":[]}),

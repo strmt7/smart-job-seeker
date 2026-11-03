@@ -1,5 +1,7 @@
 ## Public web-search batch observation — 2026-11-03
 
+- Search parsing now omits results explicitly marked as advertisements by supported provider fields and reports their count separately from invalid results. A labelled ad does not suppress a later unlabelled result at the same URL. Fictional parser and coverage UI tests passed; provider labelling varies, so unlabelled ads can remain and listings still require verification. No live provider was contacted for this change.
+
 - If loading carried search history fails during same-tab recovery, the interface now reports the issue but still reconnects to the active task. A later terminal response restores its sealed prior history. Focused UI tests covered the transient lookup failure and terminal restoration; this does not guarantee recovery if both backend requests fail.
 
 - When a retry carries earlier pages, exact repeated URLs now appear as one candidate card. Later reports are retained as repeated-result evidence and contribute bounded provider/date metadata; the stored histories are unchanged. Similar URLs remain separate for review, and repeated-report limits remain visible. Focused candidate-selection, retry and restart UI checks passed.
