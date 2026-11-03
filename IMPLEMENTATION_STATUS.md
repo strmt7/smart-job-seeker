@@ -115,6 +115,8 @@
 
 - When no eligible entry-stage experience exists for a control type, form mapping can now include reviewed review-stage observations for that control as advisory fallback. Entry-stage observations remain preferred, and unsupported, disabled or undated records are excluded. Selection and context tests plus Windows web Clippy passed. The local model was not loaded because available system memory was below the startup estimate; the fallback's effect on mapping accuracy is unmeasured.
 
+- The inspection endpoint previously filtered out review-stage observations before the fallback selector received them. It now supplies both stages. A fictional Windows workspace test verifies that a review-stage record reaches selection and that correcting it invalidates the captured revision; Windows web Clippy passed. This verifies wiring, not model accuracy.
+
 - The form-mapping model wrapper now independently excludes disabled, unreviewed, unsupported-version and undated experiences before applying its ten-item limit. Normal workspace selection already enforced these conditions; this closes an assumption at the wrapper boundary and prevents rejected records from consuming the limit. Fictional context tests passed (5 passed, 7 ignored), as did Windows web Clippy. No local model or application was used in this check.
 
 ## Match input coverage — 2026-11-02

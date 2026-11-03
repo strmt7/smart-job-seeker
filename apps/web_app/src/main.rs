@@ -340,7 +340,10 @@ fn navigation_experiences(
         .into_iter()
         .filter(|item| {
             item.experience.enabled
-                && item.experience.stage == Stage::EnterInformation
+                && matches!(
+                    item.experience.stage,
+                    Stage::EnterInformation | Stage::Review
+                )
                 && matches!(item.experience.control, Control::Text | Control::Choice)
         })
         .collect())
@@ -12640,6 +12643,72 @@ mod tests {
             .unwrap()
             .is_empty());
         worker.join().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inspection_inventory_includes_review_stage_and_tracks_corrections() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
+        use waypoint_workspace::form_experience::{
+            Control, Experience, Observation, Outcome, Response, Stage,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let added = manual_job::add(
+            &mut ws,
+            &json!({"url":"https://example.org/job","title":"Role","employer":"Fixture"}),
+            1,
+        )
+        .unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let id = "a".repeat(32);
+        let experience = Experience {
+            version: 1,
+            reviewed: true,
+            enabled: true,
+            observed_at: 1,
+            platform: None,
+            stage: Stage::Review,
+            control: Control::Text,
+            observation: Observation::ValueChanged,
+            response: Response::VerifyValueAgain,
+            outcome: Outcome::Unknown,
+            note: None,
+            use_note_in_model: false,
+        };
+        ws.save_form_experience(&id, 0, &experience).unwrap();
+        let schema = FormSchema {
+            origin: "https://example.org".into(),
+            fields: vec![FormField {
+                selector: "#name".into(),
+                label: "Name".into(),
+                field_type: FormFieldType::Text,
+                required: false,
+                sensitive: false,
+                editing_mode: None,
+                max_length_utf16: None,
+                min_length_utf16: None,
+                pattern: None,
+                autocomplete: None,
+            }],
+            multi_step: false,
+            steps: 1,
+        };
+        let inventory = navigation_experiences(&ws, &job).unwrap();
+        let selected = form_task::relevant_experiences(&schema, &inventory);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].experience.stage, Stage::Review);
+        let revisions = form_task::used_experience_revisions(&selected, true);
+        assert!(experience_snapshot_current(
+            &revisions,
+            &ws.form_experiences().unwrap()
+        ));
+        ws.correct_form_experience_outcome(&id, 1, Outcome::DidNotHelp)
+            .unwrap();
+        assert!(!experience_snapshot_current(
+            &revisions,
+            &ws.form_experiences().unwrap()
+        ));
     }
 
     #[test]
