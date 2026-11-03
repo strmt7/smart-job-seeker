@@ -3935,6 +3935,14 @@ impl CdpDriver {
                     css_paths.insert(control.node_id, path);
                     visible.push(control);
                 } else {
+                    let required = control.attrs.contains_key("required")
+                        || control
+                            .attrs
+                            .get("aria-required")
+                            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+                    if !rendered && required {
+                        wall_flags.push("a required hidden control needs manual review".into());
+                    }
                     if needs_review {
                         wall_flags.push("a custom control needs manual review".into());
                         wall_flags.push("a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into());
@@ -3943,11 +3951,6 @@ impl CdpDriver {
                         }
                     }
                     if rendered && !available {
-                        let required = control.attrs.contains_key("required")
-                            || control
-                                .attrs
-                                .get("aria-required")
-                                .is_some_and(|value| value.eq_ignore_ascii_case("true"));
                         wall_flags.push(if required {
                             "a required field is disabled or read-only".into()
                         } else {

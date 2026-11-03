@@ -2231,6 +2231,43 @@ fn required_control_hidden_by_ancestor_requires_review() {
 }
 
 #[test]
+#[ignore = "launches a browser against fictional CSS-hidden form controls"]
+fn css_hidden_required_controls_need_review_but_optional_controls_do_not() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_css_hidden.html")).unwrap();
+    assert!(live.schema.fields.iter().any(|field| field.label == "Name"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector.contains("missing-required")
+            || field.selector.contains("hidden-aria")));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review"));
+    let invisible = driver.open(&file_url("form_css_visibility.html")).unwrap();
+    assert!(invisible
+        .walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review"));
+    assert!(!invisible
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector.contains("hidden-aria")));
+    let optional = driver.open(&file_url("form_css_optional.html")).unwrap();
+    assert!(!optional
+        .walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
@@ -4816,7 +4853,10 @@ fn hidden_duplicate_does_not_hide_the_active_form_field() {
     let live = driver
         .open(&file_url("form_hidden_duplicate.html"))
         .expect("open fixture");
-    assert!(live.walls.is_empty(), "{:?}", live.walls);
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review"));
     assert_eq!(live.schema.fields.len(), 1);
     let field = &live.schema.fields[0];
     driver
