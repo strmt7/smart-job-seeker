@@ -3695,3 +3695,5 @@ model accuracy or visual quality.
 2026-11-03: The termination fixture now reports up to 20 surviving process IDs and executable names on failure, without command lines, before its scoped cleanup. IDs can be reused, so these diagnostics alone do not establish process ownership. The fixture passed again locally; the new failure diagnostics have not been exercised on the hosted runner.
 
 2026-11-03: Saving a profile with an unavailable selected template now identifies whether the CV or cover letter needs a replacement or a cleared selection. A fictional API test verified both messages and that the rejected save leaves the prior profile and revision unchanged. The rendered error path was not checked.
+
+2026-11-03: The Windows web test suite passed 699 tests with 385 ignored, using one build job and two test threads on local source commit `54db3e43`. Ignored live-browser and model checks are not included in that result. The three denied unmaintained notices originate in the older desktop UI's Unix accessibility dependency chain; no dependency was removed or suppressed in this check. Hosted qualification remains separate.
