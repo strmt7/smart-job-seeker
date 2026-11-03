@@ -18,6 +18,8 @@
 
 ## Public application control observation — 2026-11-03
 
+- The read-only application-check worker was also run against the ENFOS Workable form. Its initial inspection saw five fields, 13 review reasons and an incomplete custom-choice inventory; the worker reported an obscuring dialog and manual review. The test passed, but this is not confirmation that the application can be completed. No candidate data was entered and no application was submitted.
+
 - The focused visual-review message now suggests checking overlays and scrolling when the selected field is not identified, then inspecting again while retaining the manual-review caveat. The targeted UI fixture passed. This guidance does not automatically dismiss overlays or establish why an observation failed.
 
 - A resource-gated visual check targeted the empty phone field on the same public application. The first test expected a visible field and failed because the model returned no observation; inspection of its screenshot showed a cookie overlay covering the target area. A separate obscured-field expectation then passed with `qwen3.5:9b` returning `unobserved` instead of matching the fictional value. No candidate value was entered, no control clicked and no application submitted. This covers one obstruction, not reliable visual verification in general.
