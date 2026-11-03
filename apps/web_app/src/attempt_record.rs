@@ -1332,7 +1332,8 @@ fn screenshot_context(
         partial = true;
     }
     let mut contexts = serde_json::Map::new();
-    let mut missing = std::collections::HashSet::new();
+    let mut seen_references = std::collections::HashSet::new();
+    let mut missing_references = 0usize;
     for (index, line) in bytes
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
@@ -1371,13 +1372,14 @@ fn screenshot_context(
             continue;
         };
         if screenshot_number(name).is_some()
+            && seen_references.insert(name.to_owned())
             && !fs::symlink_metadata(directory.join(name)).is_ok_and(|meta| {
                 meta.is_file()
                     && !meta.file_type().is_symlink()
                     && (8..=6 * 1024 * 1024).contains(&meta.len())
             })
         {
-            missing.insert(name.to_owned());
+            missing_references += 1;
         }
         if !names.iter().any(|expected| expected == name) {
             continue;
@@ -1513,7 +1515,7 @@ fn screenshot_context(
     (
         Value::Object(contexts),
         if partial { "partial" } else { "available" },
-        Some(missing.len()),
+        Some(missing_references),
     )
 }
 
