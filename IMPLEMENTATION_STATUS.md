@@ -117,6 +117,8 @@
 
 - The inspection endpoint previously filtered out review-stage observations before the fallback selector received them. It now supplies both stages. A fictional Windows workspace test verifies that a review-stage record reaches selection and that correcting it invalidates the captured revision; Windows web Clippy passed. This verifies wiring, not model accuracy.
 
+- Inspection results that used experience hints now re-evaluate the selected set, as well as individual revisions, before retaining suggestions. A fictional workspace check confirmed that adding a preferred entry-stage lesson invalidates an in-flight review-stage selection; revision and revocation checks and Windows web Clippy passed. This does not prove that the local model used the hints correctly.
+
 - The form-mapping model wrapper now independently excludes disabled, unreviewed, unsupported-version and undated experiences before applying its ten-item limit. Normal workspace selection already enforced these conditions; this closes an assumption at the wrapper boundary and prevents rejected records from consuming the limit. Fictional context tests passed (5 passed, 7 ignored), as did Windows web Clippy. No local model or application was used in this check.
 
 ## Match input coverage — 2026-11-02

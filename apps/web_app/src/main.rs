@@ -311,16 +311,29 @@ fn experience_snapshot_current(
     })
 }
 
+fn experience_selection_current(
+    revisions: &[(String, u64)],
+    schema: &waypoint_applications::form_mapping::FormSchema,
+    current: &[waypoint_workspace::form_experience::ExperienceMatch],
+) -> bool {
+    experience_snapshot_current(revisions, current)
+        && form_task::used_experience_revisions(
+            &form_task::relevant_experiences(schema, current),
+            true,
+        ) == revisions
+}
+
 fn protect_navigation_experience_snapshot(
     preview: &mut form_preview::FormPreview,
     revisions: &[(String, u64)],
     current: Option<&[waypoint_workspace::form_experience::ExperienceMatch]>,
 ) {
     if !revisions.is_empty()
-        && !current.is_some_and(|items| experience_snapshot_current(revisions, items))
+        && !current
+            .is_some_and(|items| experience_selection_current(revisions, &preview.schema, items))
     {
         preview.suggestions.clear();
-        preview.manual_review.push("A lesson changed or could not be checked during inspection; suggestions were discarded. Inspect again.".into());
+        preview.manual_review.push("The selected lessons changed or could not be checked during inspection; suggestions were discarded. Inspect again.".into());
     }
 }
 
@@ -5076,9 +5089,9 @@ fn serve(
             };
             if !experience_revisions.is_empty() {
                 let current = ws.form_experiences().map_err(|e| e.to_string())?;
-                if !experience_snapshot_current(&experience_revisions, &current) {
+                if !experience_selection_current(&experience_revisions, &preview.schema, &current) {
                     preview.suggestions.clear();
-                    preview.manual_review.push("A lesson changed during inspection; suggestions were discarded. Inspect again.".into());
+                    preview.manual_review.push("The selected lessons changed during inspection; suggestions were discarded. Inspect again.".into());
                 }
             }
             let job = ws
@@ -12703,6 +12716,20 @@ mod tests {
             &revisions,
             &ws.form_experiences().unwrap()
         ));
+        assert!(experience_selection_current(
+            &revisions,
+            &schema,
+            &ws.form_experiences().unwrap()
+        ));
+        let mut preferred = experience.clone();
+        preferred.stage = Stage::EnterInformation;
+        ws.save_form_experience(&"b".repeat(32), 0, &preferred)
+            .unwrap();
+        assert!(!experience_selection_current(
+            &revisions,
+            &schema,
+            &ws.form_experiences().unwrap()
+        ));
         ws.correct_form_experience_outcome(&id, 1, Outcome::DidNotHelp)
             .unwrap();
         assert!(!experience_snapshot_current(
@@ -12767,7 +12794,18 @@ mod tests {
         let preview = || form_preview::FormPreview {
             schema: waypoint_applications::form_mapping::FormSchema {
                 origin: "https://example.org".into(),
-                fields: vec![],
+                fields: vec![waypoint_applications::form_mapping::FormField {
+                    selector: "#fictional".into(),
+                    label: "Fictional".into(),
+                    field_type: waypoint_applications::form_mapping::FormFieldType::Text,
+                    required: false,
+                    sensitive: false,
+                    editing_mode: None,
+                    max_length_utf16: None,
+                    min_length_utf16: None,
+                    pattern: None,
+                    autocomplete: None,
+                }],
                 multi_step: false,
                 steps: 1,
             },
