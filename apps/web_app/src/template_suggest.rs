@@ -677,6 +677,38 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated local model for a fictional template passage"]
+    fn resource_gated_contracted_template_voice() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let passage = "I’ve collaborated with designers to improve web accessibility.";
+            let mut input = input_with_passage(passage, passage);
+            input.facts.clear();
+            input.listing = "Frontend role working with designers on web accessibility.".into();
+            input.instructions = "Be concise and preserve my first-person voice.".into();
+            let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                "qwen3.5:9b".into(),
+                crate::resident_model_identity,
+            );
+            let result = suggest(&mut model, input).unwrap();
+            let replacement = result["text"].as_str().unwrap();
+            println!(
+                "Fictional contracted template rewrite: {replacement}; voice change flagged: {}",
+                result["first_person_opening_changed"]
+            );
+            assert_eq!(
+                result["first_person_opening_changed"],
+                !first_person_opening(replacement)
+            );
+            assert_eq!(result["evidence_check"]["status"], "completed");
+        });
+    }
+
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_two_template_passages_are_drafted_sequentially() {
