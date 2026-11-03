@@ -113,6 +113,26 @@ fn obstacle_message(walls: &[String]) -> String {
     {
         signals.push("an unavailable field");
     }
+    if walls.iter().any(|wall| {
+        wall == "a field has an unresolved or ambiguous accessible label"
+            || wall == "ambiguous form controls need manual review"
+    }) {
+        signals.push("ambiguous field labels or controls");
+    }
+    if walls
+        .iter()
+        .any(|wall| wall == "login required (page asks for a password)")
+    {
+        signals.push("a possible sign-in requirement");
+    }
+    if walls.iter().any(|wall| {
+        wall == "a custom control needs manual review"
+            || (wall.starts_with("a custom control needs manual review: ")
+                && !wall.contains("A dialog covers a form field")
+                && !wall.contains("A field may be obscured, clipped or transparent"))
+    }) {
+        signals.push("custom controls or field requirements needing review");
+    }
     if dialog {
         signals.push("a dialog covering form fields");
     }
@@ -1092,6 +1112,9 @@ mod tests {
             "a required hidden control needs manual review".to_owned(),
             "a required field is disabled or read-only".to_owned(),
             "an unavailable field needs manual review".to_owned(),
+            "a field has an unresolved or ambiguous accessible label".to_owned(),
+            "a custom control needs manual review: private fixture label".to_owned(),
+            "login required (page asks for a password)".to_owned(),
         ];
         let message = super::obstacle_message(&walls);
         assert!(message.contains("possible CAPTCHA"));
@@ -1099,6 +1122,10 @@ mod tests {
         assert!(message.contains("required hidden control"));
         assert!(message.contains("required field that is disabled or read-only"));
         assert!(message.contains("unavailable field"));
+        assert!(message.contains("ambiguous field labels or controls"));
+        assert!(message.contains("custom controls or field requirements"));
+        assert!(message.contains("possible sign-in requirement"));
+        assert!(!message.contains("private fixture label"));
         assert!(!message.contains("untrusted page text"));
         let unknown = super::obstacle_message(&["another obstacle".into()]);
         assert!(!unknown.contains("CAPTCHA"));
