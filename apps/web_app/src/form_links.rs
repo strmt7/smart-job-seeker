@@ -665,6 +665,9 @@ fn start_with_destination_check(
                         });
                         require_checked_previous_answers(&check)?;
                     }
+                    if !crate::choice_attachments_verified(&mut session) {
+                        return Err("A previously attached file changed or could not be verified. Review the current section before navigating.".into());
+                    }
                 }
                 let fresh = session
                     .driver
@@ -908,7 +911,7 @@ mod tests {
 
     #[test]
     #[ignore = "starts a local browser and tests navigation preflight"]
-    fn changed_answer_prevents_worker_opening_a_reviewed_link() {
+    fn changed_answer_or_attachment_prevents_worker_opening_a_reviewed_link() {
         use waypoint_applications::{
             driver::BrowserDriver,
             form_mapping::{BrowserCommand, PacketValue, ProposedMapping},
@@ -916,6 +919,16 @@ mod tests {
         use waypoint_domain::{JobIdentityId, Sha256Digest};
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/form-local-model-wizard.html");
+        let temp = tempfile::tempdir().unwrap();
+        let source = std::fs::read_to_string(fixture).unwrap().replace(
+            "<button type=\"button\" id=\"next\"",
+            "<label for=\"resume\">Resume</label><input type=\"file\" id=\"resume\"><button type=\"button\" id=\"next\"",
+        );
+        let fixture = temp.path().join("wizard.html");
+        std::fs::write(&fixture, source).unwrap();
+        let staged = temp.path().join("fictional.pdf");
+        let original = b"%PDF-fictional";
+        std::fs::write(&staged, original).unwrap();
         let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
             .unwrap()
             .to_string();
@@ -936,6 +949,7 @@ mod tests {
                 value: PacketValue::Text("Changed".into()),
             })
             .unwrap();
+        driver.attach_local_file("#resume", &staged).unwrap();
         let session = crate::ReviewSession {
             id: "preflight-session".into(),
             job_id: JobIdentityId::new("preflight-job").unwrap(),
@@ -971,7 +985,7 @@ mod tests {
             Some("https://example.invalid/next".into()),
             false,
             None,
-            profile,
+            profile.clone(),
             (0, vec![]),
             fixture_check
         )
@@ -993,6 +1007,44 @@ mod tests {
             .manual_review
             .iter()
             .any(|reason| reason.contains("previously filled answer changed")));
+        // Reinspect the same page, then change the staged file after attachment.
+        let live = returned.driver.inspect_current().unwrap();
+        returned.preview = form_preview::suggest_without_model(live, &profile, "fixture").unwrap();
+        returned.completed_selectors.clear();
+        returned.attachments = vec![(
+            "#resume".into(),
+            staged.clone(),
+            returned.id.clone(),
+            waypoint_domain::sha256_hex(original),
+        )];
+        std::fs::write(&staged, b"%PDF-changed").unwrap();
+        assert!(super::start_with_destination_check(
+            "attachment-preflight".into(),
+            returned,
+            Some("https://example.invalid/next".into()),
+            false,
+            None,
+            profile,
+            (0, vec![]),
+            fixture_check
+        )
+        .is_ok());
+        let mut returned = loop {
+            if let Some(result) = super::poll("attachment-preflight").unwrap() {
+                break match result {
+                    Ok((session, _, _)) => session,
+                    Err(failure) => panic!("navigation failed: {}", failure.reason),
+                };
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(returned.driver.current_url().unwrap(), url);
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("previously attached file changed")));
     }
     use super::*;
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};

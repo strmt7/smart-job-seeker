@@ -1,5 +1,7 @@
 ## Verify answers before link navigation — 2026-11-03
 
+- Reviewed-link navigation now also rechecks current-section attachments, including staged-file hashes and browser file selection, within the existing group and time limits. A changed or unverified attachment stops navigation for review. A fictional worker test changed the staged file and confirmed that the browser stayed on the original page. This does not verify attachments after manual navigation or on real employer sites.
+
 - A fictional live-browser worker test now changes a filled answer before requesting a reviewed link. The worker reported the changed answer and the browser remained on the original page. An initial test compile failed because the error type lacks `Debug`; the corrected test passed. The destination was never contacted.
 
 - Before opening a reviewed application link, the navigation worker now checks previously filled fields on the current page and stops for review if a value changed, verification fails or the bounded check cannot cover all fields. This check does not establish attachment retention or cover manual navigation. A fictional browser fixture verified the check detects a changed value, and the form-link tests (15 passed, 5 ignored) and Windows web Clippy passed. No real application was contacted or submitted.
