@@ -12080,6 +12080,63 @@ mod tests {
         format!("{response}\nfacts={facts}")
     }
 
+    #[test]
+    fn selected_search_pages_flow_through_batch_api() {
+        let _guard = web_search_batch::TEST_LOCK.lock().unwrap();
+        let invalid = json!({"provider":"http://127.0.0.1:9/","queries":["first"],"pages":2,"page_plan":[{"query":"other","page":1}]}).to_string();
+        assert!(
+            request("/api/web-search/batch-start", "test-token", &invalid)
+                .contains("Selected-page queries must match")
+        );
+        let provider = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = provider.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = provider.accept().unwrap();
+            let mut bytes = [0u8; 4096];
+            let size = stream.read(&mut bytes).unwrap();
+            let request = std::str::from_utf8(&bytes[..size]).unwrap();
+            assert!(request.contains("q=first") && request.contains("pageno=2"));
+            let body = r#"{"results":[]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let body = json!({"provider":format!("http://127.0.0.1:{port}/"),"queries":["first"],"pages":2,"page_plan":[{"query":"first","page":2}]}).to_string();
+        let response = request("/api/web-search/batch-start", "test-token", &body);
+        assert!(response.contains("200 OK"), "{response}");
+        let result: Value = serde_json::from_str(
+            response
+                .split_once("\r\n\r\n")
+                .unwrap()
+                .1
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(result["checkpoint_saved"].is_boolean());
+        let id = result["task_id"].as_str().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = web_search_batch::poll(id, acknowledged).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["plan"], json!([{"query":"first","page":2}]));
+                assert_eq!(result["coverage"]["succeeded_pages"], 1);
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        worker.join().unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn reviewed_form_experience_api_persists_and_revokes() {

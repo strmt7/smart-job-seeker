@@ -1,5 +1,7 @@
 ## Public web-search batch observation — 2026-11-03
 
+- A local API integration test now verifies that a selected-page retry rejects a query outside the reviewed phrases, requests only the chosen page from a fictional provider and returns an explicit checkpoint-saved status. The test passed; it does not verify restart recovery for this new plan or contact a public provider.
+
 - Completed or stopped web-search batches retain their bounded request plan and provider, allowing “Prepare unfinished searches” to identify failed and unattempted pages without waiting for a restart. A prepared retry requests only those query/page pairs unless the user edits the prepared phrases or page count, in which case the normal full batch runs. Preparing preserves displayed candidates; starting a new batch replaces the displayed results. Local provider and UI checks passed; this does not automatically switch providers or confirm candidate relevance.
 
 - Later FreeSerp batch reruns failed on their first page because the provider reported that its general web index was unavailable and had fallen back to a different index. Waypoint surfaced that error instead of treating the fallback as general web results; the remaining relevance sample was not collected. The live test now prints a few candidate titles and URLs on successful pages and waits for final coverage before asserting provider success. Provider availability can change between runs.
