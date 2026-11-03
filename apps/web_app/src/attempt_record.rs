@@ -2210,18 +2210,20 @@ impl AttemptRecord {
         if bytes.len() > MAX_SCREENSHOT_BYTES {
             return Err("Screenshot exceeds limit".into());
         }
+        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            return Err("Invalid screenshot content".into());
+        }
         self.sequence = self
             .sequence
             .checked_add(1)
             .ok_or("Screenshot sequence exhausted")?;
         let name = format!("{:04}.png", self.sequence);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(self.dir.join("screenshots").join(&name))
-            .map_err(|e| e.to_string())?;
+        let directory = self.dir.join("screenshots");
+        let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
         file.write_all(&bytes).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
+        file.persist_noclobber(directory.join(&name))
+            .map_err(|e| e.to_string())?;
         Ok(name)
     }
     pub fn material(&mut self, name: &str, bytes: &[u8]) -> Result<String, String> {
@@ -2791,12 +2793,13 @@ mod tests {
             dir: directory.path().to_owned(),
             sequence: 0,
         };
-        assert!(record.failure_viewport(Ok("aGVsbG8=".into()), 3).unwrap());
+        let image = STANDARD.encode(b"\x89PNG\r\n\x1a\nfixture");
+        assert!(record.failure_viewport(Ok(image.clone()), 3).unwrap());
         let events = fs::read_to_string(directory.path().join("events.jsonl")).unwrap();
         assert!(events.contains("capture_incomplete"));
         assert!(!events.contains("fill_failure_viewport"));
         fs::create_dir(directory.path().join("screenshots")).unwrap();
-        assert!(!record.failure_viewport(Ok("aGVsbG8=".into()), 4).unwrap());
+        assert!(!record.failure_viewport(Ok(image), 4).unwrap());
         let events = fs::read_to_string(directory.path().join("events.jsonl")).unwrap();
         assert!(events.contains("fill_failure_viewport"));
         // If even the gap cannot be logged, the caller must surface that error.
@@ -3642,11 +3645,13 @@ mod tests {
             dir: dir.path().to_path_buf(),
             sequence: 0,
         };
-        let name = record.screenshot_with_name("aW1hZ2U=").unwrap();
+        let image = b"\x89PNG\r\n\x1a\nfictional";
+        let encoded = STANDARD.encode(image);
+        let name = record.screenshot_with_name(&encoded).unwrap();
         record.event(json!({"type":"visual_capture","task_id":"test-task","screenshot":format!("screenshots/{name}")})).unwrap();
         assert_eq!(
             std::fs::read(dir.path().join("screenshots").join(&name)).unwrap(),
-            b"image"
+            image
         );
         let event: Value =
             serde_json::from_slice(&std::fs::read(dir.path().join("events.jsonl")).unwrap())
@@ -3654,10 +3659,16 @@ mod tests {
         assert_eq!(event["task_id"], "test-task");
         assert_eq!(event["screenshot"], format!("screenshots/{name}"));
         fs::write(dir.path().join("screenshots/0002.png"), b"existing").unwrap();
-        assert!(record.screenshot_with_name("bmV3").is_err());
+        assert!(record.screenshot_with_name(&encoded).is_err());
         assert_eq!(
             fs::read(dir.path().join("screenshots/0002.png")).unwrap(),
             b"existing"
+        );
+        assert_eq!(
+            fs::read_dir(dir.path().join("screenshots"))
+                .unwrap()
+                .count(),
+            2
         );
     }
     #[test]
@@ -3682,8 +3693,15 @@ mod tests {
             0
         );
         assert!(record.screenshot_with_name("!").is_err());
+        assert_eq!(
+            record.screenshot_with_name("aW1hZ2U=").unwrap_err(),
+            "Invalid screenshot content"
+        );
+        assert_eq!(record.sequence, 0);
         drop(oversized);
-        let boundary = "A".repeat((6 * 1024 * 1024 / 3) * 4);
+        let mut bytes = vec![0; 6 * 1024 * 1024];
+        bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        let boundary = STANDARD.encode(bytes);
         let name = record.screenshot_with_name(&boundary).unwrap();
         assert_eq!(
             fs::metadata(dir.path().join("screenshots").join(name))
