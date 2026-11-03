@@ -40,6 +40,7 @@ fn words(text: &str) -> Vec<String> {
             });
         if word.len() <= 48
             && (word.chars().count() >= 3
+                || (word.len() == 2 && word.bytes().all(|byte| byte.is_ascii_uppercase()))
                 || matches!(word, "C" | "R")
                 || word.eq_ignore_ascii_case("c#")
                 || word.eq_ignore_ascii_case("f#"))
@@ -302,7 +303,7 @@ fn report(name: &str, bytes: &[u8], listing: &str, facts: &[String]) -> Result<V
         .map(|line| line.chars().take(240).collect::<String>())
         .collect();
     Ok(
-        json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching; not a real ATS result. Inspect the extracted reading order, layout, headers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
+        json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching (two-letter ASCII alphabetic terms require uppercase spelling); not a real ATS result. Inspect the extracted reading order, layout, headers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
     )
 }
 pub fn start(
@@ -614,6 +615,35 @@ mod tests {
                 .any(|fact| fact == "Used Python for research")
         );
         assert!(report("cv.txt", b"", "A role", &[]).is_err());
+    }
+
+    #[test]
+    fn uppercase_two_letter_acronyms_are_compared_without_matching_lowercase_words() {
+        let result = report(
+            "cv.txt",
+            b"Fictional applicant: AI and ML; working in research.",
+            "AI ML QA IT and in-house work",
+            &[],
+        )
+        .unwrap();
+        let terms = result["terms"].as_array().unwrap();
+        for term in ["ai", "ml"] {
+            assert!(
+                terms
+                    .iter()
+                    .any(|item| item["term"] == term && item["present"] == true),
+                "{term}"
+            );
+        }
+        for term in ["qa", "it"] {
+            assert!(
+                terms
+                    .iter()
+                    .any(|item| item["term"] == term && item["present"] == false),
+                "{term}"
+            );
+        }
+        assert!(!terms.iter().any(|item| item["term"] == "in"));
     }
 
     #[test]
