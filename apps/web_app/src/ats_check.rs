@@ -321,8 +321,10 @@ fn report(name: &str, bytes: &[u8], listing: &str, facts: &[String]) -> Result<V
         .map(|fact| words(fact).into_iter().collect::<HashSet<_>>())
         .collect();
     let terms: Vec<_> = terms.into_iter().take(30).map(|(term,count)| {
-        let sources: Vec<_> = facts.iter().zip(&fact_words).filter(|(_,words)| words.contains(&term)).take(3).map(|(fact,_)|fact).collect();
-        json!({"present":resume_words.contains(&term),"term":term,"posting_occurrences":count,"matching_qualifications":sources})
+        let mut matching = facts.iter().zip(&fact_words).filter(|(_,words)| words.contains(&term));
+        let sources: Vec<_> = matching.by_ref().take(3).map(|(fact,_)|fact).collect();
+        let qualifications_truncated = matching.next().is_some();
+        json!({"present":resume_words.contains(&term),"term":term,"posting_occurrences":count,"matching_qualifications":sources,"qualifications_truncated":qualifications_truncated})
     }).collect();
     let lines: Vec<_> = text
         .lines()
@@ -690,6 +692,34 @@ mod tests {
                 .any(|fact| fact == "Used Python for research")
         );
         assert!(report("cv.txt", b"", "A role", &[]).is_err());
+    }
+
+    #[test]
+    fn reports_when_matching_qualifications_are_omitted() {
+        let facts: Vec<String> = (0..4).map(|n| format!("Python project {n}")).collect();
+        let result = report("cv.txt", b"Fictional engineer", "Python engineer", &facts).unwrap();
+        let term = result["terms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["term"] == "python")
+            .unwrap();
+        assert_eq!(term["matching_qualifications"].as_array().unwrap().len(), 3);
+        assert_eq!(term["qualifications_truncated"], true);
+        let result = report(
+            "cv.txt",
+            b"Fictional engineer",
+            "Python engineer",
+            &facts[..3],
+        )
+        .unwrap();
+        let term = result["terms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["term"] == "python")
+            .unwrap();
+        assert_eq!(term["qualifications_truncated"], false);
     }
 
     #[test]
