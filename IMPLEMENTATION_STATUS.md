@@ -1,3 +1,7 @@
+## Linked DOCX part editing — 2026-11-03
+
+- The shared DOCX part inventory now includes internally linked custom-named headers and footers, allowing the existing unique-passage editor and accepted-revision preparation to process them. Fictional tests verified a header edit with relationships preserved and removal of deleted header text in a temporary accepted view. The focused editor suite passed (9, five conversion tests ignored), revision suite passed (2), extraction suite passed (13), and conversion unit checks passed (6, two conversion tests ignored); Windows web Clippy passed. A real-world DOCX or PDF render for these custom parts was not tested, and this does not establish general template-editing fidelity.
+
 ## DOCX relationship-based text extraction — 2026-11-03
 
 - Document text extraction now reads internal header and footer parts named by document relationships, including nonstandard part names, within existing part and size limits. The CV review flags those linked parts as well. Missing, duplicated or unsupported linked parts stop extraction with an error. Extraction still reads conventional parts and can include unused headers or footers; it does not establish visual reading order or edit support for arbitrary part names. Fictional extraction tests passed (13); CV checks passed (11, one PDF test ignored); Windows web Clippy passed. No real CV or employer site was used.

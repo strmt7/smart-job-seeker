@@ -191,6 +191,44 @@ pub(crate) fn docx_text_parts(
             (2, name.clone())
         }
     });
+    let mut total = 0;
+    let rel_name = "word/_rels/document.xml.rels";
+    let rel_count = (0..archive.len())
+        .filter(|&index| {
+            archive
+                .by_index_raw(index)
+                .ok()
+                .and_then(|entry| entry.name().ok().map(|name| name == rel_name))
+                .unwrap_or(false)
+        })
+        .count();
+    if rel_count > 1 {
+        return Err("Duplicate DOCX relationships part".into());
+    }
+    if rel_count == 1 {
+        let relationships = read_docx_text_part(archive, rel_name, &mut total)?;
+        for (header, part) in related_header_footer_parts(&relationships)? {
+            let count = (0..archive.len())
+                .filter(|&index| {
+                    archive
+                        .by_index_raw(index)
+                        .ok()
+                        .and_then(|entry| entry.name().ok().map(|name| name == part))
+                        .unwrap_or(false)
+                })
+                .count();
+            if count != 1 {
+                return Err("DOCX header or footer part is missing or duplicated".into());
+            }
+            if !names.contains(&part) {
+                if names.len() >= 32 {
+                    return Err("DOCX has too many text parts".into());
+                }
+                let index = if header { 0 } else { names.len() };
+                names.insert(index, part);
+            }
+        }
+    }
     Ok(names)
 }
 
@@ -220,46 +258,9 @@ pub(crate) fn read_docx_text_part(
 fn extract_docx(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
-    let mut names = docx_text_parts(&mut archive)?;
+    let names = docx_text_parts(&mut archive)?;
     let mut output = String::new();
     let mut total = 0;
-    let rel_name = "word/_rels/document.xml.rels";
-    let rel_count = (0..archive.len())
-        .filter(|&index| {
-            archive
-                .by_index_raw(index)
-                .ok()
-                .and_then(|entry| entry.name().ok().map(|name| name == rel_name))
-                .unwrap_or(false)
-        })
-        .count();
-    if rel_count > 1 {
-        return Err("Duplicate DOCX relationships part".into());
-    }
-    if rel_count == 1 {
-        let relationships = read_docx_text_part(&mut archive, rel_name, &mut total)?;
-        for (header, part) in related_header_footer_parts(&relationships)? {
-            let count = (0..archive.len())
-                .filter(|&index| {
-                    archive
-                        .by_index_raw(index)
-                        .ok()
-                        .and_then(|entry| entry.name().ok().map(|name| name == part))
-                        .unwrap_or(false)
-                })
-                .count();
-            if count != 1 {
-                return Err("DOCX header or footer part is missing or duplicated".into());
-            }
-            if !names.contains(&part) {
-                if names.len() >= 32 {
-                    return Err("DOCX has too many text parts".into());
-                }
-                let index = if header { 0 } else { names.len() };
-                names.insert(index, part);
-            }
-        }
-    }
     for name in &names {
         let xml = read_docx_text_part(&mut archive, name, &mut total)?;
         if !output.is_empty() && !output.ends_with('\n') {

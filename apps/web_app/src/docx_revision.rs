@@ -167,6 +167,31 @@ pub fn accepted_view(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
 mod tests {
     use super::*;
     #[test]
+    fn accepted_view_cleans_linked_custom_header() {
+        use std::io::{Read, Write};
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(br#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:t>Body</w:t></w:r></w:p>"#).unwrap();
+        zip.start_file("word/custom/header.xml", options).unwrap();
+        zip.write_all(br#"<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:t>Current</w:t></w:r><w:del><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p>"#).unwrap();
+        zip.start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        zip.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="custom/header.xml"/></Relationships>"#).unwrap();
+        let source = zip.finish().unwrap().into_inner();
+        let revised = accepted_view(&source).unwrap().unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(revised)).unwrap();
+        let mut header = String::new();
+        archive
+            .by_name("word/custom/header.xml")
+            .unwrap()
+            .read_to_string(&mut header)
+            .unwrap();
+        assert!(header.contains("Current"));
+        assert!(!header.contains("Removed"));
+    }
+
+    #[test]
     fn removes_only_supported_inline_revisions() {
         let xml = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Current</w:t></w:r><w:del><w:r><w:delText>Removed</w:delText></w:r></w:del><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom></w:p></w:document>"#;
         let result = String::from_utf8(remove_revisions(xml).unwrap().unwrap()).unwrap();

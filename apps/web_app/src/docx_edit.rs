@@ -513,6 +513,38 @@ mod tests {
             .contains("more than once"));
     }
     #[test]
+    fn edits_linked_custom_header_and_preserves_other_parts() {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, text) in [
+            ("word/document.xml", "Body text"),
+            ("word/custom/contact.xml", "Header name"),
+        ] {
+            writer.start_file(name, options).unwrap();
+            write!(writer, "<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:r><w:t>{text}</w:t></w:r></w:p>").unwrap();
+        }
+        writer
+            .start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        let relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="h" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="custom/contact.xml"/></Relationships>"#;
+        writer.write_all(relationships).unwrap();
+        let doc = writer.finish().unwrap().into_inner();
+        let edited = replace(&doc, "Header name", "Updated name").unwrap();
+        assert_eq!(
+            crate::document_extract::extract("sample.docx", &edited).unwrap(),
+            "Updated name\nBody text"
+        );
+        let mut archive = zip::ZipArchive::new(Cursor::new(edited)).unwrap();
+        let mut preserved = Vec::new();
+        archive
+            .by_name("word/_rels/document.xml.rels")
+            .unwrap()
+            .read_to_end(&mut preserved)
+            .unwrap();
+        assert_eq!(preserved, relationships);
+    }
+
+    #[test]
     fn ambiguous_or_cross_paragraph_matches_are_rejected() {
         let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Repeated</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:body></w:document>"#;
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
