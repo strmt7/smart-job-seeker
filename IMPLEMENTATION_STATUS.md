@@ -1,3 +1,7 @@
+## Workable obstruction screenshot — 2026-11-03
+
+- A read-only screenshot of the previously reviewed SmartNews application showed a cookie dialog and dimmed form behind it. First-name, last-name and email labels are visible in the screenshot, while the browser inventory reported five standard fields and seven custom radio groups with an incomplete inventory. This suggests the obstruction contributes to incomplete inspection; the form was not reinspected after the dialog was resolved, so the cause is not established. The local screenshot is retained under ignored `target/` for development. No dialog choice was made, no fields were filled and no application was submitted.
+
 ## Workable form-worker inspection — 2026-11-03
 
 - A separate read-only form-worker run on the previously reviewed SmartNews Workable listing followed the application link and returned five standard fields, one required, with 28 review warnings. These included a possible verification challenge, an obstructing dialog, required custom controls and a hidden control. With no local model or candidate profile supplied, it proposed no field answers. The worker returned a reviewable result; this does not establish that the whole form was observed or can be filled. No candidate data was entered and no application was submitted.
