@@ -3246,8 +3246,11 @@ not a general reliability measurement or a visual verification of a real
 application; the model was unloaded after the test.
 
 The browser can now capture a bounded common region for a radio question made
-up of multiple uniquely referenced labels. It refuses missing, ambiguous,
+up of multiple uniquely referenced labels, without capturing the entire form.
+The fictional shared-label form is 1,600 pixels tall. It refuses missing, ambiguous,
 some hidden or oversized label regions rather than treating a partial crop as
 complete. Six focused fictional browser tests passed, including
 the shared-label capture and a hidden-label refusal. The tests establish capture
 availability and refusal, not model visual accuracy or coverage of real sites.
+An additional fixture checks refusal when a label's ancestor is transparent;
+clipping and partial occlusion remain possible sources of visual uncertainty.

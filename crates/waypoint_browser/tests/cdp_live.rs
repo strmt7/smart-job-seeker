@@ -5170,6 +5170,9 @@ fn custom_radio_question_capture_rejects_hidden_label_parts() {
     assert!(driver
         .screenshot_custom_radio_question(&inventory.groups[0].selector)
         .is_err());
+    assert!(driver
+        .screenshot_custom_radio_question(&inventory.groups[1].selector)
+        .is_err());
 }
 
 #[test]

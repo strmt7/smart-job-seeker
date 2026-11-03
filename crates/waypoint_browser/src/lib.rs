@@ -811,48 +811,41 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Radio group disappeared".into()))?;
         let found = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
             if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'radiogroup') return null;
-            const refs=this.getAttribute('aria-labelledby'); if (refs===null) return this;
+            const refs=this.getAttribute('aria-labelledby'); if (refs===null) return {group:true};
             const ids=refs.trim().split(/\s+/).filter(Boolean); if(!ids.length || ids.length>16 || refs.length>512 || new Set(ids).size!==ids.length) return null;
             const root=this.getRootNode(), labels=[];
             for(const id of ids) { const matches=root.querySelectorAll('#'+CSS.escape(id)); if(matches.length!==1) return null; labels.push(matches[0]); }
-            if(labels.length===1) return labels[0];
-            let ancestor=labels[0];
-            while(ancestor && !labels.every(label=>ancestor.contains(label))) ancestor=ancestor.parentElement;
-            if(!ancestor || ['HTML','BODY'].includes(ancestor.tagName)) return null;
-            const bounds=ancestor.getBoundingClientRect();
+            let left=Infinity, top=Infinity, right=-Infinity, bottom=-Infinity;
             for(const label of labels) {
                 const rect=label.getBoundingClientRect(), style=getComputedStyle(label);
-                if(!rect.width || !rect.height || style.visibility!=='visible' || style.display==='none' || Number(style.opacity)===0 || rect.left<bounds.left || rect.right>bounds.right || rect.top<bounds.top || rect.bottom>bounds.bottom) return null;
+                if(!rect.width || !rect.height || style.visibility!=='visible' || style.display==='none' || Number(style.opacity)===0) return null;
+                let parent=label.parentElement, depth=0;
+                while(parent && depth++<128) {
+                    const s=getComputedStyle(parent), r=parent.getBoundingClientRect();
+                    if(s.display==='none' || s.visibility!=='visible' || Number(s.opacity)===0) return null;
+                    if(/^(hidden|clip|scroll|auto)$/.test(s.overflowX) && (rect.left<r.left || rect.right>r.right)) return null;
+                    if(/^(hidden|clip|scroll|auto)$/.test(s.overflowY) && (rect.top<r.top || rect.bottom>r.bottom)) return null;
+                    parent=parent.parentElement;
+                }
+                if(parent) return null;
+                left=Math.min(left,rect.left); top=Math.min(top,rect.top); right=Math.max(right,rect.right); bottom=Math.max(bottom,rect.bottom);
             }
-            return ancestor;
-        }"#,"returnByValue":false}));
+            return {bounds:[left,top,right,top,right,bottom,left,bottom]};
+        }"#,"returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
         let found = found.map_err(derr)?;
         released.map_err(derr)?;
-        let label = found
-            .pointer("/result/objectId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DriverError("Radio question label is unavailable or ambiguous".into())
-            })?;
-        let requested = self.cdp.call("DOM.requestNode", json!({"objectId":label}));
-        let released = self
-            .cdp
-            .call("Runtime.releaseObject", json!({"objectId":label}));
-        let requested = requested.map_err(derr)?;
-        released.map_err(derr)?;
-        let label_node = requested
-            .get("nodeId")
-            .and_then(Value::as_u64)
-            .filter(|id| *id != 0)
-            .ok_or_else(|| DriverError("Radio question label disappeared".into()))?;
-        if label_node == node {
-            self.screenshot_node(node, true, false)
-        } else {
-            self.screenshot_node(label_node, false, true)
+        let value = &found["result"]["value"];
+        if value["group"] == true {
+            return self.screenshot_node(node, true, false);
         }
+        let bounds = value["bounds"].as_array().ok_or_else(|| {
+            DriverError("Radio question label is unavailable or ambiguous".into())
+        })?;
+        let numbers: Vec<f64> = bounds.iter().filter_map(Value::as_f64).collect();
+        self.screenshot_bounds(&numbers, false, true)
     }
 
     /// Capture the option before a caller seeks independent visual review.
@@ -1835,6 +1828,15 @@ impl CdpDriver {
             .and_then(Value::as_array)
             .ok_or_else(|| DriverError("Field has no capture bounds".into()))?;
         let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
+        self.screenshot_bounds(&numbers, context, allow_wide)
+    }
+
+    fn screenshot_bounds(
+        &mut self,
+        numbers: &[f64],
+        context: bool,
+        allow_wide: bool,
+    ) -> Result<String, DriverError> {
         if numbers.len() != 8 || numbers.iter().any(|number| !number.is_finite()) {
             return Err(DriverError("Invalid field capture bounds".into()));
         }
