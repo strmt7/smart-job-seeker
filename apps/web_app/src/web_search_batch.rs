@@ -368,7 +368,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 task.total,
                 task.cancel.load(Ordering::Acquire),
             );
-            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history});
+            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history,"plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),"provider":task.provider});
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone(), false));
             *tasks = None;
@@ -389,7 +389,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
             report["attempted_pages"] = json!(task.history.len().saturating_add(unreported));
             report["unattempted_pages"] =
                 json!(total.saturating_sub(task.history.len().saturating_add(unreported)));
-            let response = if cancelled {
+            let mut response = if cancelled {
                 json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"coverage":report,"history":task.history})
             } else {
                 let error = if task.timed_out.load(Ordering::Acquire) {
@@ -399,6 +399,12 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 };
                 json!({"status":"failed","processed":processed,"total":total,"error":error,"coverage":report,"history":task.history})
             };
+            response["plan"] = json!(task
+                .plan
+                .iter()
+                .map(|(query, page)| json!({"query":query,"page":page}))
+                .collect::<Vec<_>>());
+            response["provider"] = json!(task.provider);
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone(), false));
             *tasks = None;
@@ -941,6 +947,15 @@ mod tests {
                 assert_eq!(result["coverage"]["attempted_pages"], 1);
                 assert_eq!(result["coverage"]["failed_pages"], 1);
                 assert_eq!(result["coverage"]["unattempted_pages"], 3);
+                assert_eq!(result["provider"], format!("http://127.0.0.1:{port}/"));
+                assert_eq!(
+                    result["plan"],
+                    json!([
+                        {"query":"first role","page":1}, {"query":"second role","page":1},
+                        {"query":"first role","page":2}, {"query":"second role","page":2}
+                    ])
+                );
+                assert!(result["history"][0]["error"].is_string());
                 assert!(result["history"][0]["error"]
                     .as_str()
                     .unwrap()
