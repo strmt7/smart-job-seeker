@@ -701,15 +701,21 @@ fn parse_structured(
         let raw_location = if let Some(text) = address.as_str() {
             text.to_owned()
         } else {
-            let parts: Vec<&str> = ["addressLocality", "addressRegion", "addressCountry"]
-                .iter()
-                .filter_map(|key| {
-                    address[*key]
-                        .as_str()
-                        .or_else(|| address[*key]["name"].as_str())
-                })
-                .filter(|s| !s.trim().is_empty())
-                .collect();
+            let mut parts = Vec::new();
+            for key in ["addressLocality", "addressRegion", "addressCountry"] {
+                let value = &address[key];
+                if value.is_null() {
+                    continue;
+                }
+                let text = value.as_str().or_else(|| value["name"].as_str());
+                if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
+                    parts.push(text);
+                } else {
+                    // Do not treat the remaining fragments as a complete
+                    // location when a provided component cannot be read.
+                    location_incomplete = true;
+                }
+            }
             parts.join(", ")
         };
         let text = bounded(&raw_location, 200);
@@ -3799,6 +3805,9 @@ mod tests {
             json!(locations),
             json!([{"address":"X".repeat(201)}]),
             json!([{"address":"Berlin"},{"name":"Another office"}]),
+            json!([{"address":{"addressLocality":"Berlin","addressCountry":{"@id":"https://example.org/country"}}}]),
+            json!([{"address":{"addressLocality":"Berlin","addressRegion":42}}]),
+            json!([{"address":{"addressLocality":"Berlin","addressCountry":"   "}}]),
         ] {
             let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"jobLocation":places}).to_string();
             let job = parse(&[posting], "https://example.org/job")
