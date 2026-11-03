@@ -13,6 +13,9 @@ as part of this plan.
 - Development and qualification must not submit a real application or email an
   application. A future external submission requires a separate, explicit user
   authorization and the existing one-use, destination- and content-bound grant.
+- Development and test automation must run headlessly without taking focus or
+  interacting with the user's desktop. User-operated product interfaces remain
+  available; do not open them for agent testing unless the user later requests it.
 - Use free local software and services. Preserve source permissions, licensing,
   provenance and personal-data boundaries. Do not put real CVs, contact details,
   credentials or application contents into the repository.
@@ -63,6 +66,10 @@ build and configuration.
    platforms without tailoring the evaluation to them. Never submit an
    application during these checks. The current single-site and fixture
    observations do not establish majority coverage or visual reliability.
+   A reviewed Lever privacy-notice control was refused because its click could
+   submit or navigate. Investigate general, bounded consent handling with
+   adversarial local fixtures and intercepted external writes before considering
+   any broader action; uncertain controls remain in manual review.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,
    PDF conversion and page-by-page review. Compare ATS-readable text and visual
