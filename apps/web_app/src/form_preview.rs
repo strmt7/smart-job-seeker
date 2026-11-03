@@ -1059,6 +1059,12 @@ fn build_preview(
                 && !is_custom_review(wall)
         });
     let mut manual_review = live.walls;
+    if manual_review
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review")
+    {
+        manual_review.push("A required control is hidden. It may belong to another step or to a custom widget; inspect the visible browser and review all steps before proceeding.".into());
+    }
     if blocked && !live.schema.fields.is_empty() {
         manual_review.push("Field suggestions were not attempted because the page has a blocking inspection warning. Resolve the warning and inspect again.".into());
     }
@@ -1309,6 +1315,28 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn hidden_required_control_explains_review_without_changing_wall_binding() {
+        let wall = "a required hidden control needs manual review".to_string();
+        let live = LiveForm {
+            origin: "https://example.invalid".into(),
+            schema: FormSchema {
+                origin: "https://example.invalid".into(),
+                fields: vec![],
+                multi_step: true,
+                steps: 2,
+            },
+            walls: vec![wall.clone()],
+        };
+        let preview = suggest_without_model(live, &json!({}), "Model unavailable").unwrap();
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|message| message.contains("another step or to a custom widget")));
+        assert!(same_reviewable_walls(&preview, &[wall]));
+        assert!(!same_reviewable_walls(&preview, &[]));
+    }
 
     #[test]
     fn authentication_hint_is_reviewed_without_a_model() {
