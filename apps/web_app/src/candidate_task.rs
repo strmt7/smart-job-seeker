@@ -894,18 +894,25 @@ fn extract_page_text(
     extract_page_text_with_hint(inference, source, url, None, None)
 }
 
+fn earlier_page_kind_text(source: &str) -> &str {
+    let start = source.floor_char_boundary(source.len() / 3 - 1000);
+    let end = source.floor_char_boundary((start + 2000).min(source.len()));
+    &source[start..end]
+}
+
 fn sampled_page_kind_text(source: &str) -> String {
     if source.len() <= 6000 {
         return source.to_owned();
     }
-    let head = source.floor_char_boundary(2000);
     let middle = source.floor_char_boundary(source.len() / 2 - 1000);
     let middle_end = source.floor_char_boundary((middle + 2000).min(source.len()));
+    // The initial classification already includes the first 4000 bytes. Use
+    // this excerpt for a different region rather than repeating the head.
     let tail = source.floor_char_boundary(source.len() - 2000);
     format!(
-        "[Middle excerpt]\n{}\n[Excerpt omitted]\n[Beginning excerpt]\n{}\n[Excerpt omitted]\n[End excerpt]\n{}",
+        "[Middle excerpt]\n{}\n[Excerpt omitted]\n[Earlier excerpt]\n{}\n[Excerpt omitted]\n[End excerpt]\n{}",
         &source[middle..middle_end],
-        &source[..head],
+        earlier_page_kind_text(source),
         &source[tail..]
     )
 }
@@ -920,7 +927,9 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
     let initial = classify_page_segment(inference, initial_source);
     if initial == "uncertain" && source.len() > 6000 {
         let sample = sampled_page_kind_text(source);
-        if classify_page_segment(inference, &sample) == "not_vacancy" {
+        if classify_page_segment(inference, &sample) == "not_vacancy"
+            && classify_page_segment(inference, earlier_page_kind_text(source)) == "not_vacancy"
+        {
             // A partial sample cannot prove a vacancy. This negative remains
             // review-only, and the UI identifies the sampling limitation.
             return ("not_vacancy".into(), true);
@@ -934,10 +943,12 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
         // likely non-vacancy, and never present an inconclusive check as a
         // confirmed negative.
         let sample = sampled_page_kind_text(source);
-        return match classify_page_segment(inference, &sample).as_str() {
-            "not_vacancy" => ("not_vacancy".into(), true),
-            _ => ("uncertain".into(), true),
-        };
+        if classify_page_segment(inference, &sample) == "not_vacancy"
+            && classify_page_segment(inference, earlier_page_kind_text(source)) == "not_vacancy"
+        {
+            return ("not_vacancy".into(), true);
+        }
+        return ("uncertain".into(), true);
     }
     let start = source.floor_char_boundary(source.len() - 4000);
     if classify_page_segment(inference, &source[start..]) == "vacancy" {
@@ -4815,16 +4826,38 @@ mod tests {
             let filler = paragraph.repeat(55);
             let vacancy = "\nExample Laboratory is hiring a microscopy technician in Berlin. Full-time role. Responsibilities include preparing specimens and operating microscopes. Apply through the employer's career page.\n";
             let mixed = format!("{filler}{vacancy}{filler}");
+            let shifted = format!("{}{vacancy}{filler}{}", &filler[..4400], &filler[4400..]);
             let (article_kind, article_sampled) = classify_page_kind_with_sample(&mut llm, &filler);
             let (mixed_kind, mixed_sampled) = classify_page_kind_with_sample(&mut llm, &mixed);
+            let (shifted_kind, shifted_sampled) =
+                classify_page_kind_with_sample(&mut llm, &shifted);
             println!("fictional long guide={article_kind}, sampled={article_sampled}; mixed guide and vacancy={mixed_kind}, sampled={mixed_sampled}");
+            println!("fictional earlier vacancy={shifted_kind}, sampled={shifted_sampled}");
             assert_ne!(article_kind, "vacancy");
             assert_ne!(
                 mixed_kind, "not_vacancy",
                 "the embedded vacancy was incorrectly dismissed"
             );
             assert!(mixed_sampled);
+            assert_ne!(
+                shifted_kind, "not_vacancy",
+                "the earlier vacancy was incorrectly dismissed"
+            );
+            assert!(shifted_sampled);
         });
+    }
+
+    #[test]
+    fn sampled_classification_covers_an_additional_region_without_repeating_head() {
+        let source = format!(
+            "{}additional vacancy marker{}",
+            "a".repeat(5320),
+            "b".repeat(10680)
+        );
+        let sample = sampled_page_kind_text(&source);
+        assert!(sample.contains("additional vacancy marker"));
+        assert!(sample.contains("[Earlier excerpt]"));
+        assert!(sample.len() < 6100);
     }
 
     #[test]
@@ -4881,7 +4914,7 @@ mod tests {
                 classify_page_kind_with_sample(&mut model, &source),
                 (expected.into(), true)
             );
-            assert_eq!(model.calls, 2);
+            assert_eq!(model.calls, if second == "not_vacancy" { 3 } else { 2 });
         }
     }
 
@@ -4954,8 +4987,8 @@ mod tests {
         }
         let source = format!(
             "{} This vacancy has expired. {}",
-            "a".repeat(3000),
-            "b".repeat(6000)
+            "a".repeat(6000),
+            "b".repeat(3000)
         );
         assert!(!sampled_page_kind_text(&source).contains("This vacancy has expired."));
         assert_eq!(
@@ -5272,7 +5305,7 @@ mod tests {
         }
         let source = "é".repeat(4000);
         let mut negative = Model {
-            responses: vec!["uncertain", "not_vacancy"],
+            responses: vec!["uncertain", "not_vacancy", "not_vacancy"],
             calls: 0,
         };
         assert_eq!(
