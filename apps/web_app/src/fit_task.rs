@@ -1934,6 +1934,78 @@ fn find_unknown_qualification_evidence(
     (original, Some(report))
 }
 
+// Check that each explicit list segment has a quoted component. This is only a
+// completeness check, not a semantic parser or proof that the components are
+// correct; unsupported or ambiguous groupings still require review.
+fn grouped_components_cover_segments(
+    requirement: &str,
+    quotes: &std::collections::HashSet<String>,
+) -> bool {
+    let normalize = |text: &str| {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let text = normalize(requirement)
+        .replace(" and ", ",")
+        .replace(" or ", ",")
+        .replace('&', ",");
+    let segments: Vec<_> = text
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    if segments.len() < 2 || segments.len() > quotes.len() || quotes.len() > 12 {
+        return false;
+    }
+    let quotes: Vec<_> = quotes.iter().map(|quote| normalize(quote)).collect();
+    fn contains_component(segment: &str, quote: &str) -> bool {
+        if quote.is_empty() {
+            return false;
+        }
+        segment.match_indices(quote).any(|(start, _)| {
+            let before = segment[..start].chars().next_back();
+            let after = segment[start + quote.len()..].chars().next();
+            !(quote.chars().next().is_some_and(char::is_alphanumeric)
+                && before.is_some_and(char::is_alphanumeric))
+                && !(quote.chars().next_back().is_some_and(char::is_alphanumeric)
+                    && after.is_some_and(char::is_alphanumeric))
+        })
+    }
+    fn assign(
+        segment: usize,
+        segments: &[&str],
+        quotes: &[String],
+        seen: &mut [bool],
+        assigned: &mut [Option<usize>],
+    ) -> bool {
+        for (index, quote) in quotes.iter().enumerate() {
+            if seen[index] || !contains_component(segments[segment], quote) {
+                continue;
+            }
+            seen[index] = true;
+            if assigned[index]
+                .is_none_or(|previous| assign(previous, segments, quotes, seen, assigned))
+            {
+                assigned[index] = Some(segment);
+                return true;
+            }
+        }
+        false
+    }
+    let mut assigned = vec![None; quotes.len()];
+    (0..segments.len()).all(|segment| {
+        assign(
+            segment,
+            &segments,
+            &quotes,
+            &mut vec![false; quotes.len()],
+            &mut assigned,
+        )
+    })
+}
+
 // Grouped criteria need a separate, source-grounded decomposition: one cited
 // fact cannot establish a conjunction merely by matching one element.
 fn review_grouped_support(
@@ -2059,6 +2131,9 @@ fn review_grouped_support(
                     let simple_alternative = words.contains(&"or")
                         && !words.contains(&"and")
                         && !requirement.contains('&');
+                    if !grouped_components_cover_segments(requirement, &quotes) {
+                        return false;
+                    }
                     let complete = match relation {
                         "all" => supported == components.len(),
                         "any" => simple_alternative && supported > 0,
@@ -9483,6 +9558,27 @@ mod tests {
     }
 
     #[test]
+    fn grouped_component_coverage_requires_distinct_segment_quotes() {
+        let quotes = |parts: &[&str]| parts.iter().map(|part| (*part).to_owned()).collect();
+        assert!(grouped_components_cover_segments(
+            "Python, SQL and Docker",
+            &quotes(&["Python", "SQL", "Docker"])
+        ));
+        assert!(!grouped_components_cover_segments(
+            "Python, SQL and Docker",
+            &quotes(&["Python", "SQL"])
+        ));
+        assert!(!grouped_components_cover_segments(
+            "Python and PostgreSQL",
+            &quotes(&["Python", "SQL"])
+        ));
+        assert!(grouped_components_cover_segments(
+            "Python or SQL",
+            &quotes(&["Python", "SQL"])
+        ));
+    }
+
+    #[test]
     fn grouped_support_requires_source_backed_components() {
         struct Fixture(Value);
         impl Inference for Fixture {
@@ -9542,6 +9638,33 @@ mod tests {
             Some(alternative_listing),
         );
         assert_eq!(assessment["rubric"][0]["status"], "supported");
+        let three_listing = "Required: Python, SQL and Docker.";
+        let three_source = json!({"summary":"Review","criteria":[{"source":"listing","excerpt":"Python, SQL and Docker","importance":"required","status":"supported","fact_index":1,"explanation":"Review"}]});
+        let three_facts = vec!["Used Python, SQL and Docker".to_owned()];
+        let three_baseline =
+            validate(three_source.clone(), &three_facts, "", three_listing).unwrap();
+        for (components, expected) in [
+            (
+                json!([{"requirement_quote":"Python","fact_quote":"Python"},{"requirement_quote":"SQL","fact_quote":"SQL"}]),
+                "unknown",
+            ),
+            (
+                json!([{"requirement_quote":"Python","fact_quote":"Python"},{"requirement_quote":"SQL","fact_quote":"SQL"},{"requirement_quote":"Docker","fact_quote":"Docker"}]),
+                "supported",
+            ),
+        ] {
+            let response = json!({"items":[{"id":1,"relation":"all","components":components}]});
+            let (_, assessment) = review_grouped_support(
+                &mut Fixture(response),
+                three_source.clone(),
+                three_baseline.clone(),
+                &three_facts,
+                "",
+                three_listing,
+                Some(three_listing),
+            );
+            assert_eq!(assessment["rubric"][0]["status"], expected);
+        }
         let overlapping = json!({"items":[{"id":1,"relation":"all","components":[{"requirement_quote":"Python or SQL","fact_quote":"Python"},{"requirement_quote":"Python","fact_quote":"Python"}]}]});
         let mut overlapping_source = source.clone();
         overlapping_source["criteria"][0]["excerpt"] = json!("Python or SQL");

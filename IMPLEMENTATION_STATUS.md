@@ -3321,3 +3321,11 @@ The match badge also reports missing or unrecognized preference, requirement,
 audit and qualification coverage rather than silently displaying a score with
 no coverage warning. Focused badge, batch-failure and source-coverage UI tests
 passed; this does not validate the underlying match model.
+
+Grouped qualification validation now requires distinct source-quoted components
+to cover each explicit list segment. A fictional response that omitted Docker
+from “Python, SQL and Docker” was downgraded to unknown, while a complete
+decomposition remained supported. Focused tests and local-model checks of the
+earlier conjunction and alternative examples passed. This bounded text check
+does not establish semantic completeness for every language or list format;
+ambiguous cases can require review. Earlier assessments are marked stale.
