@@ -12095,6 +12095,102 @@ mod tests {
         format!("{response}\nfacts={facts}")
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn retry_api_carries_only_matching_sealed_history() {
+        let _guard = web_search_batch::TEST_LOCK.lock().unwrap();
+        fn open(path: &std::path::Path) -> Workspace {
+            #[cfg(feature = "sqlcipher")]
+            {
+                Workspace::open_encrypted(path).unwrap()
+            }
+            #[cfg(not(feature = "sqlcipher"))]
+            {
+                Workspace::open(path).unwrap()
+            }
+        }
+        fn post(ws: &mut Workspace, body: &Value) -> (String, Value) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let text = body.to_string();
+            write!(client, "POST /api/web-search/batch-start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{text}", text.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            if let Err(error) = serve(&mut server, ws, &mut None, "fixture-token", port) {
+                json_reply(&mut server, "400 Bad Request", json!({"error":error}));
+            }
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+            (headers.to_owned(), serde_json::from_str(body).unwrap())
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let mut ws = open(dir.path());
+        ws.save_latest_web_search("original-task", &serde_json::to_vec(&json!({"status":"complete","history":[{"query":"first","page":1,"data":{"results":[{"url":"https://example.org/old","title":"Previous"}]}},{"query":"first","page":2,"error":"unavailable"}]})).unwrap()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap();
+            assert!(std::str::from_utf8(&request[..n])
+                .unwrap()
+                .contains("pageno=2"));
+            let body = r#"{"results":[]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let mut body = json!({"provider":format!("http://127.0.0.1:{port}/"),"queries":["first"],"pages":2,"page_plan":[{"query":"first","page":2}],"retry_source_task":"wrong-task","prior_history":[{"data":{"results":[{"title":"injected"}]}}]});
+        let (status, error) = post(&mut ws, &body);
+        assert!(
+            status.contains("400")
+                && error["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("earlier search changed")
+        );
+        body["retry_source_task"] = json!("original-task");
+        let (status, result) = post(&mut ws, &body);
+        assert!(status.contains("200"));
+        assert_eq!(result["checkpoint_saved"], true);
+        let id = result["task_id"].as_str().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = web_search_batch::poll(id, acknowledged).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(
+                    result["prior_history"][0]["data"]["results"][0]["title"],
+                    "Previous"
+                );
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(web_search_batch::persist_completed(&ws).unwrap());
+        worker.join().unwrap();
+        drop(ws);
+        let reopened = open(dir.path());
+        let (_, bytes) = reopened.latest_web_search().unwrap().unwrap();
+        let stored: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(stored["prior_history"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            stored["prior_history"][0]["data"]["results"][0]["title"],
+            "Previous"
+        );
+        assert!(!String::from_utf8(bytes).unwrap().contains("injected"));
+    }
+
     #[test]
     fn selected_search_pages_flow_through_batch_api() {
         let _guard = web_search_batch::TEST_LOCK.lock().unwrap();
