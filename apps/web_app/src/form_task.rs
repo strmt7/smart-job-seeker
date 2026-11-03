@@ -208,6 +208,13 @@ fn open_application_page(
         if original.origin() != final_url.origin() {
             live.walls
                 .push("The application link redirected to another site; continue manually".into());
+        } else {
+            let requested = url::Url::parse(&destination).map_err(|_| "Invalid application URL")?;
+            if let Some(warning) =
+                crate::application_check::application_path_redirect_notice(&requested, &final_url)
+            {
+                return Ok((live, Some(warning.into())));
+            }
         }
     } else if !links.is_empty() {
         return Ok((
@@ -2221,6 +2228,51 @@ mod tests {
         fn commit(&mut self) -> Result<SiteAck, DriverError> {
             panic!("inspection must not submit")
         }
+    }
+
+    struct RedirectedApplicationDriver(FakeDriver);
+    impl BrowserDriver for RedirectedApplicationDriver {
+        fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
+            let page = self.0.open(url)?;
+            if self.0.opened.len() == 2 {
+                self.0.current = "https://jobs.example.org/other-role?token=fictional".into();
+            }
+            Ok(page)
+        }
+        fn current_url(&mut self) -> Result<String, DriverError> {
+            self.0.current_url()
+        }
+        fn application_links(&mut self) -> Result<Vec<String>, DriverError> {
+            self.0.application_links()
+        }
+        fn page_links(
+            &mut self,
+        ) -> Result<Vec<waypoint_applications::driver::PageLink>, DriverError> {
+            self.0.page_links()
+        }
+        fn execute(&mut self, _: &BrowserCommand) -> Result<(), DriverError> {
+            panic!("inspection must not fill")
+        }
+        fn commit(&mut self) -> Result<SiteAck, DriverError> {
+            panic!("inspection must not submit")
+        }
+    }
+
+    #[test]
+    fn followed_application_redirect_warns_about_role_without_exposing_query() {
+        let mut driver = RedirectedApplicationDriver(FakeDriver {
+            current: String::new(),
+            links: vec!["/role/apply".into()],
+            opened: vec![],
+            redirect: None,
+            direct_upload: false,
+        });
+        let (_, warning) =
+            open_application_page(&mut driver, "https://jobs.example.org/role").unwrap();
+        let warning = warning.expect("redirect must require review");
+        assert!(warning.contains("verify the role"));
+        assert!(!warning.contains("fictional"));
+        assert_eq!(driver.0.opened.len(), 2);
     }
 
     struct EmbeddedDriver(FakeDriver);

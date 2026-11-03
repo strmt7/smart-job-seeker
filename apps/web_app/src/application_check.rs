@@ -521,7 +521,10 @@ pub(crate) fn same_origin_path_redirect_notice(
 
 /// A followed application URL can redirect to a different role or generic
 /// page on the same host. A form at that destination does not prove identity.
-fn application_path_redirect_notice(original: &Url, reached: &Url) -> Option<&'static str> {
+pub(crate) fn application_path_redirect_notice(
+    original: &Url,
+    reached: &Url,
+) -> Option<&'static str> {
     (original.origin() == reached.origin() && original.path() != reached.path()).then_some(
         "The application link redirected to a different page on the same site; verify the role and destination.",
     )
