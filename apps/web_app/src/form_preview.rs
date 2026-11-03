@@ -237,16 +237,27 @@ pub fn fill_coverage(preview: &FormPreview) -> (Vec<String>, Vec<String>) {
         .schema
         .fields
         .iter()
-        .filter(|field| {
-            field.required
-                && !preview.suggestions.iter().any(|mapping| {
-                    mapping.field_selector == field.selector
-                        && required_value_valid(field, &mapping.value)
-                })
-        })
+        .filter(|field| field.required && !has_valid_reviewed_mapping(preview, field))
         .map(|field| field_review_label(&preview.schema, field))
         .collect();
     (filled, remaining)
+}
+
+fn has_valid_reviewed_mapping(
+    preview: &FormPreview,
+    field: &waypoint_applications::form_mapping::FormField,
+) -> bool {
+    if field.sensitive || preview.model_review_selectors.contains(&field.selector) {
+        return false;
+    }
+    let mut matches = preview
+        .suggestions
+        .iter()
+        .filter(|mapping| mapping.field_selector == field.selector);
+    matches
+        .next()
+        .is_some_and(|mapping| required_value_valid(field, &mapping.value))
+        && matches.next().is_none()
 }
 
 // A proposed answer is not evidence of a filled page, but an invalid answer
@@ -1094,6 +1105,13 @@ fn build_preview(
 }
 
 pub fn refresh_required_review(preview: &mut FormPreview) {
+    let valid_selectors: std::collections::HashSet<_> = preview
+        .schema
+        .fields
+        .iter()
+        .filter(|field| has_valid_reviewed_mapping(preview, field))
+        .map(|field| field.selector.clone())
+        .collect();
     let field_warnings: std::collections::HashSet<_> = preview
         .schema
         .fields
@@ -1136,12 +1154,7 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
                 .fields
                 .iter()
                 .filter(|other| other.label == field.label)
-                .all(|other| {
-                    preview
-                        .suggestions
-                        .iter()
-                        .any(|mapping| mapping.field_selector == other.selector)
-                });
+                .all(|other| valid_selectors.contains(&other.selector));
             if all_answered {
                 return false;
             }
@@ -1159,12 +1172,9 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
                     .filter(|field| field.label == label)
                     .collect();
                 if !fields.is_empty()
-                    && fields.iter().all(|field| {
-                        preview
-                            .suggestions
-                            .iter()
-                            .any(|mapping| mapping.field_selector == field.selector)
-                    })
+                    && fields
+                        .iter()
+                        .all(|field| valid_selectors.contains(&field.selector))
                 {
                     return false;
                 }
@@ -5501,8 +5511,31 @@ mod tests {
             .any(|item| item == "Required field needs review: First name"));
         preview.suggestions.push(ProposedMapping {
             field_selector: "#first".into(),
-            value: PacketValue::Text("Al".into()),
+            value: PacketValue::Text("Long".into()),
         });
+        refresh_required_review(&mut preview);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Suggested value exceeds field limit: First name"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Required field needs review: First name"));
+        preview.suggestions.last_mut().unwrap().value = PacketValue::Text("Al".into());
+        preview
+            .suggestions
+            .push(preview.suggestions.last().unwrap().clone());
+        refresh_required_review(&mut preview);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Suggested value exceeds field limit: First name"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|item| item == "Required field needs review: First name"));
+        preview.suggestions.pop();
         refresh_required_review(&mut preview);
         assert!(!preview
             .manual_review
