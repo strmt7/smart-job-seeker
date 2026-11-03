@@ -12,6 +12,7 @@ assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'matches',accepted_revision_view:true}}), /temporary accepted view.*saved DOCX keeps its revision history/);
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'differs'}}), /differs/);
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'unavailable'}}), /could not be compared/);
+assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'unavailable',reason_code:'missing_pdf_tools'}}), /Set up PDF tools/);
 assert.match(context.templateTextCheck({docx_name:'cv.docx',text_check:{status:'matches',pdf_coverage:{pages:1,pages_without_selectable_text:[],pages_with_images_and_text:[1]}}}),/may contain text missing from the extraction/);
 assert.equal(context.templateTextCheck({docx_name:null,text_check:{status:'not_checked'}}), '');
 console.log('Template text comparison UI checks passed.');

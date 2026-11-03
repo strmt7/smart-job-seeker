@@ -3254,3 +3254,13 @@ the shared-label capture and a hidden-label refusal. The tests establish capture
 availability and refusal, not model visual accuracy or coverage of real sites.
 An additional fixture checks refusal when a label's ancestor is transparent;
 clipping and partial occlusion remain possible sources of visual uncertainty.
+
+### Multipage PDF conversion and recovery (2026-11-03)
+
+A 140-line fictional multilingual text document converted to a three-page
+PDF through LibreOffice; selectable text matched the source with the isolated
+PDF worker configured. An initial run without that worker produced a PDF but
+could not compare its text. Conversion and template-edit results now show a
+setup or Python-override recovery hint for this specific missing-tools case;
+other worker errors are not exposed as document text. This does not establish
+visual quality or fidelity for arbitrary documents and templates.

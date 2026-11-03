@@ -43,7 +43,15 @@ fn compare_pdf_text(source: &[u8], extracted: Result<(String, Value), String>) -
             check["pdf_coverage"] = coverage;
             check
         }
-        Err(error) => compare_plain_text(source, Err(error)),
+        Err(error) => {
+            let mut check = compare_plain_text(source, Err(String::new()));
+            if error.starts_with("PDF extraction requires pypdf")
+                || error.starts_with("PDF operations need a local Python runtime")
+            {
+                check["reason_code"] = json!("missing_pdf_tools");
+            }
+            check
+        }
     }
 }
 
@@ -244,6 +252,19 @@ mod tests {
             "unavailable"
         );
     }
+
+    #[test]
+    fn comparison_reports_missing_tools_without_exposing_worker_errors() {
+        let missing = compare_pdf_text(
+            b"Fictional text",
+            Err("PDF extraction requires pypdf in the selected Python runtime".into()),
+        );
+        assert_eq!(missing["status"], "unavailable");
+        assert_eq!(missing["reason_code"], "missing_pdf_tools");
+        let other = compare_pdf_text(b"Fictional text", Err("private worker detail".into()));
+        assert!(other.get("reason_code").is_none());
+        assert!(!other.to_string().contains("private worker detail"));
+    }
     #[cfg(windows)]
     #[test]
     #[ignore = "uses the installed PDF worker on a fictional mixed-content document"]
@@ -342,6 +363,43 @@ mod tests {
                     .unwrap();
                 assert!(pdf.starts_with(b"%PDF-"));
                 assert_eq!(poll("text-task", &ws).unwrap(), result);
+                assert_eq!(ws.documents().unwrap().len(), 1);
+                break;
+            }
+            assert_eq!(result["status"], "running", "{result}");
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "uses installed LibreOffice and the PDF worker on a fictional multipage document"]
+    fn background_multipage_text_conversion_checks_all_pages() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let ws = Workspace::in_memory().unwrap();
+        let mut source = String::from("Fictional professional history\n");
+        for index in 1..=140 {
+            source.push_str(&format!(
+                "Project {index}: München and São Paulo delivery.\n"
+            ));
+        }
+        start(
+            "multipage-text-task".into(),
+            "fictional-multipage.pdf".into(),
+            source.into_bytes(),
+            ConversionKind::PlainText,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(65);
+        loop {
+            let result = poll("multipage-text-task", &ws).unwrap();
+            if result["status"] == "complete" {
+                println!("Fictional multipage conversion: {}", result["text_check"]);
+                assert_eq!(result["text_check"]["status"], "matches");
+                assert!(result["text_check"]["pdf_coverage"]["pages"]
+                    .as_u64()
+                    .is_some_and(|pages| pages > 1));
                 assert_eq!(ws.documents().unwrap().len(), 1);
                 break;
             }
