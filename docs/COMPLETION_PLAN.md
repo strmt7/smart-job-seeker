@@ -81,8 +81,12 @@ build and configuration.
    targets and fails closed on disconnect. CDP Fetch request-stage interception
    can pause requests before transmission. A headless loopback test rejected
    requests in two manually attached targets; automatic attachment remains
-   unproven. Target auto-attachment has to be
-   handled recursively for related frames and workers. A headless fictional
+   unproven. In a headless loopback experiment on this host, auto-attachment
+   paused a dedicated worker, but its session rejected `Fetch.enable` as an
+   unknown command. The worker was not resumed and no fixture request arrived.
+   This is a blocker for assuming target-level Fetch covers workers; another
+   independently verified network isolation boundary is needed. Target
+   auto-attachment has to be handled recursively for related frames and workers. A headless fictional
    loopback test showed that a scripted form GET reaches the server while the
    click returns success; GET is not necessarily read-only. Do not assume Fetch
    covers existing WebSocket connections, browser-level

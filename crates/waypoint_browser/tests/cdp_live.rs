@@ -3051,6 +3051,112 @@ fn fetch_request_stage_can_block_a_loopback_post() {
 }
 
 #[test]
+#[ignore = "headless protocol experiment with a paused fictional worker and loopback server"]
+fn auto_attached_worker_fetch_domain_qualification() {
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+    use waypoint_browser::cdp::{BrowserProcess, Cdp};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let received = Arc::new(AtomicBool::new(false));
+    let (worker_stop, worker_received) = (stopped.clone(), received.clone());
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !worker_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                    let mut request = [0u8; 4096];
+                    let size = stream.read(&mut request).unwrap_or(0);
+                    if request[..size].starts_with(b"GET /fictional-submit ") {
+                        worker_received.store(true, Ordering::Relaxed);
+                    }
+                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call("Page.enable", json!({})).unwrap();
+    cdp.call(
+        "Page.navigate",
+        json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cdp.saw_event("Page.loadEventFired") && Instant::now() < deadline {
+        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    }
+    assert!(cdp.saw_event("Page.loadEventFired"));
+    cdp.call(
+        "Target.setAutoAttach",
+        json!({"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true}),
+    )
+    .unwrap();
+    cdp.call("Runtime.evaluate", json!({"expression":"window.fixtureWorker = new Worker(URL.createObjectURL(new Blob([\"fetch('/fictional-submit').catch(()=>{})\"], {type:'text/javascript'}))); 'created'","returnByValue":true})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cdp.events.iter().any(|(name, event)| {
+        name == "Target.attachedToTarget"
+            && event
+                .pointer("/params/targetInfo/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("worker")
+    }) && Instant::now() < deadline
+    {
+        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    }
+    let worker_session = cdp
+        .events
+        .iter()
+        .find(|(name, event)| {
+            name == "Target.attachedToTarget"
+                && event
+                    .pointer("/params/targetInfo/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("worker")
+        })
+        .and_then(|(_, event)| {
+            event
+                .pointer("/params/sessionId")
+                .and_then(serde_json::Value::as_str)
+        })
+        .expect("worker was not auto-attached")
+        .to_owned();
+    assert!(
+        !received.load(Ordering::Relaxed),
+        "worker ran before interception setup"
+    );
+    let fetch_error = cdp
+        .call_session(
+            &worker_session,
+            "Fetch.enable",
+            json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
+        )
+        .expect_err("worker Fetch support changed; reassess interception strategy");
+    assert!(fetch_error.to_string().contains("wasn't found"));
+    stopped.store(true, Ordering::Relaxed);
+    drop(cdp);
+    server.join().unwrap();
+    assert!(
+        !received.load(Ordering::Relaxed),
+        "worker request reached server"
+    );
+}
+
+#[test]
 #[ignore = "uses a local browser and loopback server to observe a fictional input-triggered request"]
 fn observes_non_read_request_triggered_by_field_input() {
     use std::io::{Read, Write};
