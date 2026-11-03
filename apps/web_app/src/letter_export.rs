@@ -583,6 +583,11 @@ mod tests {
             .unwrap()
             .unwrap()
             .path();
+        let listing = crate::attempt_record::list(&ws, &id).unwrap();
+        assert_eq!(
+            listing["attempts"][0]["export_document_id"],
+            "fictional-doc"
+        );
         let event: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.join("events.jsonl")).unwrap()).unwrap();
         assert_eq!(event["type"], "draft_exported");

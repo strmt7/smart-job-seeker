@@ -966,6 +966,34 @@ fn listing_snapshot_comparison(
     }
 }
 
+fn reviewed_export_document_id(dir: &std::path::Path) -> Option<String> {
+    let path = dir.join("document-export.json");
+    let meta = fs::symlink_metadata(&path).ok()?;
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 65_536 {
+        return None;
+    }
+    let receipt: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let document = receipt["document_id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control))?;
+    let text = receipt["reviewed_text"].as_str()?;
+    if std::path::Path::new(text).components().count() != 1
+        || !matches!(
+            std::path::Path::new(text).components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+        || !["reviewed_text_sha256", "pdf_sha256"].iter().all(|key| {
+            receipt[*key]
+                .as_str()
+                .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        })
+    {
+        return None;
+    }
+    // The recheck endpoint independently validates the receipt and file bytes.
+    Some(document.to_owned())
+}
+
 /// List a bounded number of locally saved attempts without reading their materials.
 pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     let root = ws
@@ -1042,7 +1070,7 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by_key(|item| std::cmp::Reverse(item["started_at"].as_i64().unwrap_or_default()));
     if attempts.len() > 50 {
@@ -2604,6 +2632,30 @@ pub fn capture_before_navigation(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn export_recheck_hint_requires_reviewed_text_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("document-export.json");
+        let mut receipt = serde_json::json!({"document_id":"doc", "reviewed_text":"reviewed.txt", "reviewed_text_sha256":"a".repeat(64), "pdf_sha256":"b".repeat(64)});
+        let write = |receipt: &serde_json::Value| {
+            std::fs::write(&path, serde_json::to_vec(receipt).unwrap()).unwrap()
+        };
+        write(&receipt);
+        assert_eq!(
+            super::reviewed_export_document_id(dir.path()).as_deref(),
+            Some("doc")
+        );
+        receipt.as_object_mut().unwrap().remove("reviewed_text");
+        write(&receipt);
+        assert!(super::reviewed_export_document_id(dir.path()).is_none());
+        receipt["reviewed_text"] = "../outside".into();
+        write(&receipt);
+        assert!(super::reviewed_export_document_id(dir.path()).is_none());
+        receipt["reviewed_text"] = "reviewed.txt".into();
+        receipt["pdf_sha256"] = "not a digest".into();
+        write(&receipt);
+        assert!(super::reviewed_export_document_id(dir.path()).is_none());
+    }
     #[test]
     fn capture_failure_guidance_is_specific_and_does_not_expose_raw_errors() {
         assert!(

@@ -1,0 +1,23 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const line=source.split('\n').find(x=>x.startsWith('function appendSavedExportRecheck('));
+assert.ok(line);
+assert.ok(source.includes('appendSavedExportRecheck(entry,job,record);'));
+(async()=>{
+  const calls=[];
+  const context={element:(tag,text)=>({tag,text,addEventListener:(_,fn)=>{context.click=fn;}}),recheckExportText:async(result,output)=>{calls.push([result,output]);}};
+  const run=vm.runInNewContext(`(${line})`,context);
+  const entry={children:[],append(...nodes){this.children.push(...nodes)}};
+  run(entry,{id:'job'},{});
+  assert.equal(entry.children.length,0);
+  run(entry,{id:'job'},{export_document_id:'doc'});
+  assert.equal(entry.children.length,2);
+  await context.click();
+  assert.equal(calls[0][0].job_id,'job');
+  assert.equal(calls[0][0].id,'doc');
+  assert.equal(calls[0][1],entry.children[1]);
+  assert.equal(entry.children[0].disabled,false);
+  console.log('Saved export recheck history UI checks passed.');
+})().catch(error=>{console.error(error);process.exitCode=1});
