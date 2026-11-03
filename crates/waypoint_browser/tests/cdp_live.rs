@@ -2906,7 +2906,7 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
 }
 
 #[test]
-#[ignore = "headless protocol experiment with a fictional loopback POST"]
+#[ignore = "headless protocol experiment with fictional loopback requests across two targets"]
 fn fetch_request_stage_can_block_a_loopback_post() {
     use serde_json::json;
     use std::io::{Read, Write};
@@ -2958,12 +2958,42 @@ fn fetch_request_stage_can_block_a_loopback_post() {
         cdp.pump(Duration::from_millis(100));
     }
     assert!(cdp.saw_event("Page.loadEventFired"));
+    cdp.take_events();
+    let target = cdp
+        .call_browser("Target.createTarget", json!({"url":"about:blank"}))
+        .unwrap();
+    let attached = cdp
+        .call_browser(
+            "Target.attachToTarget",
+            json!({"targetId":target["targetId"],"flatten":true}),
+        )
+        .unwrap();
+    let second = attached["sessionId"].as_str().unwrap().to_owned();
+    cdp.call_session(&second, "Page.enable", json!({})).unwrap();
+    cdp.call_session(
+        &second,
+        "Page.navigate",
+        json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cdp.saw_event("Page.loadEventFired") && Instant::now() < deadline {
+        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    }
+    assert!(cdp.saw_event("Page.loadEventFired"));
     cdp.call(
         "Fetch.enable",
         json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
     )
     .unwrap();
-    cdp.call("Runtime.evaluate", json!({"expression":"void fetch('/fictional-submit',{method:'POST',body:'fixture'}).catch(()=>{}); void fetch('/fictional-submit').catch(()=>{}); 'queued'","returnByValue":true})).unwrap();
+    cdp.call_session(
+        &second,
+        "Fetch.enable",
+        json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
+    )
+    .unwrap();
+    cdp.call("Runtime.evaluate", json!({"expression":"void fetch('/fictional-submit',{method:'POST',body:'fixture'}).catch(()=>{}); 'queued'","returnByValue":true})).unwrap();
+    cdp.call_session(&second, "Runtime.evaluate", json!({"expression":"void fetch('/fictional-submit').catch(()=>{}); 'queued'","returnByValue":true})).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !cdp.saw_event("Fetch.requestPaused") && Instant::now() < deadline {
         cdp.pump(Duration::from_millis(100));
@@ -2972,7 +3002,15 @@ fn fetch_request_stage_can_block_a_loopback_post() {
     cdp.take_events();
     assert!(cdp.saw_event("Fetch.requestPaused"));
     let mut failed = 0;
+    let mut sessions = std::collections::HashSet::new();
     while failed < 2 && Instant::now() < deadline {
+        if let Some((_, event)) = cdp
+            .events
+            .iter()
+            .find(|(name, _)| name == "Fetch.requestPaused")
+        {
+            sessions.insert(event["sessionId"].as_str().unwrap().to_owned());
+        }
         if cdp.fail_next_paused_request().unwrap() {
             failed += 1;
         } else {
@@ -2980,6 +3018,10 @@ fn fetch_request_stage_can_block_a_loopback_post() {
         }
     }
     assert_eq!(failed, 2, "both fictional requests must be paused");
+    assert_eq!(
+        sessions,
+        [cdp.session.clone(), second].into_iter().collect()
+    );
     cdp.events.push((
         "Fetch.requestPaused".into(),
         json!({"sessionId":cdp.session,"params":{"requestId":"fictional-invalid"}}),

@@ -79,7 +79,9 @@ build and configuration.
    processing commands or pumping events. A possible design needs a continuously
    serviced interception layer, installed before interaction, that covers related
    targets and fails closed on disconnect. CDP Fetch request-stage interception
-   can pause requests before transmission; target auto-attachment has to be
+   can pause requests before transmission. A headless loopback test rejected
+   requests in two manually attached targets; automatic attachment remains
+   unproven. Target auto-attachment has to be
    handled recursively for related frames and workers. A headless fictional
    loopback test showed that a scripted form GET reaches the server while the
    click returns success; GET is not necessarily read-only. Do not assume Fetch
