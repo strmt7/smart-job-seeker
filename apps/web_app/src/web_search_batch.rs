@@ -142,6 +142,13 @@ fn send_completion(
     send(tx, Message::Done(limited), cancel, timed_out, timeout)
 }
 
+fn protected_provider_call(
+    operation: impl FnOnce() -> (Result<Value, String>, bool) + std::panic::UnwindSafe,
+) -> (Result<Value, String>, bool) {
+    std::panic::catch_unwind(operation)
+        .unwrap_or_else(|_| (Err("Search stopped unexpectedly".into()), true))
+}
+
 /// Count requested provider pages, not jobs or distinct websites. Provider
 /// engine availability and provider-side truncation are reported separately.
 fn coverage(total: usize, history: &[Value]) -> Value {
@@ -417,7 +424,7 @@ fn start_requests(
                 break;
             }
             let (result, provider_stop) =
-                std::panic::catch_unwind(|| match crate::web_search::fetch(&url) {
+                protected_provider_call(|| match crate::web_search::fetch(&url) {
                     Ok(body) => {
                         let parsed =
                             crate::web_search::parse_provider(&body, &url, &seen.originals);
@@ -428,8 +435,7 @@ fn start_requests(
                         (parsed, stop)
                     }
                     Err(error) => (Err(error.message), error.stop_batch),
-                })
-                .unwrap_or_else(|_| (Err("Search stopped unexpectedly".into()), false));
+                });
             let result = result.map(|mut data| {
                 limit_reached = retain_batch_budget(&mut data, &mut seen);
                 data
@@ -664,6 +670,20 @@ pub fn cancel(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_panic_stops_batch_and_preserves_failure_accounting() {
+        let (result, stop) = protected_provider_call(|| panic!("fictional provider failure"));
+        assert!(stop);
+        let error = result.unwrap_err();
+        assert_eq!(error, "Search stopped unexpectedly");
+        let report = coverage(4, &[json!({"error":error})]);
+        assert_eq!(report["failed_pages"], 1);
+        assert_eq!(report["unattempted_pages"], 3);
+        let (result, stop) = protected_provider_call(|| (Err("temporary".into()), false));
+        assert!(!stop);
+        assert!(result.is_err());
+    }
 
     #[test]
     fn retry_carries_forward_unique_urls_and_shared_candidate_budget() {
