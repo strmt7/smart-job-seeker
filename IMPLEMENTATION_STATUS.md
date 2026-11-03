@@ -1,3 +1,7 @@
+## Workable form-worker inspection — 2026-11-03
+
+- A separate read-only form-worker run on the previously reviewed SmartNews Workable listing followed the application link and returned five standard fields, one required, with 28 review warnings. These included a possible verification challenge, an obstructing dialog, required custom controls and a hidden control. With no local model or candidate profile supplied, it proposed no field answers. The worker returned a reviewable result; this does not establish that the whole form was observed or can be filled. No candidate data was entered and no application was submitted.
+
 ## Application obstacle and field summary — 2026-11-03
 
 - A read-only Workable application check reported possible verification, custom and hidden controls, a dialog and potentially obscured fields. The check now retains its observed-field summary alongside those obstacles. On a retest of the previously reviewed SmartNews listing, it reported five detected fields including a file-upload signal and kept manual review required. This does not establish that every field was found or that the role remains open. The application-check suite passed (21 tests, 23 ignored) and Windows web Clippy passed. No model was loaded, no values were entered and no application was submitted.
