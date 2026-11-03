@@ -20,7 +20,7 @@ On Windows, build the local web prototype from the repository root:
 ./target/debug/waypoint_web.exe
 ```
 
-The build helper requires Rust and MSVC build tools; when no compatible OpenSSL developer installation is found, it can download and extract a pinned package into the local build cache. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. The current prototype does not submit applications or send application email. It can prepare drafts, send an explicit fixed Gmail self-test, and assist with reviewed form filling; real third-party forms vary and may need manual review.
+The build helper requires Rust and MSVC build tools; when no compatible OpenSSL developer installation is found, it can download and extract a pinned package into the local build cache. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. Waypoint has no application submission or application-email sending feature. However, a website can submit or transmit data in response to form interactions, including a button that does not look like submit. The prototype cannot yet prevent all such behavior; do not interact with real application forms when an application must not be sent. Draft preparation and an explicit fixed Gmail self-test are available.
 
 ## Workspace layout
 
