@@ -271,10 +271,16 @@ pub fn cancel(id: &str) -> Result<bool, String> {
     let tasks = TASK
         .lock()
         .map_err(|_| "Document visual review unavailable")?;
-    let task = tasks
-        .as_ref()
-        .filter(|task| task.id == id)
-        .ok_or("Document visual review not found")?;
+    let Some(task) = tasks.as_ref().filter(|task| task.id == id) else {
+        let completed = COMPLETED
+            .lock()
+            .map_err(|_| "Document visual review unavailable")?;
+        return if completed.as_ref().is_some_and(|(task_id, _)| task_id == id) {
+            Ok(false)
+        } else {
+            Err("Document visual review not found".into())
+        };
+    };
     if task.outcome.is_some() {
         return Ok(false);
     }
@@ -513,6 +519,19 @@ mod tests {
     }
     #[test]
     fn completed_partial_review_can_be_retrieved_again() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        *TASK.lock().unwrap() = Some(Task {
+            id: "fictional-review".into(),
+            outcome: None,
+            pages_processed: 0,
+            completed: None,
+            record_saved: false,
+            cancelled: cancelled.clone(),
+        });
+        assert!(cancel("another-review").is_err());
+        assert!(!cancelled.load(Ordering::Relaxed));
+        assert!(cancel("fictional-review").unwrap());
+        assert!(cancelled.load(Ordering::Relaxed));
         *TASK.lock().unwrap() = Some(Task {
             id: "fictional-review".into(),
             outcome: Some(Ok(
@@ -523,7 +542,10 @@ mod tests {
             record_saved: true,
             cancelled: Arc::new(AtomicBool::new(false)),
         });
+        assert!(!cancel("fictional-review").unwrap());
         let first = poll("fictional-review").unwrap();
+        assert!(!cancel("fictional-review").unwrap());
+        assert!(cancel("another-review").is_err());
         assert_eq!(first["report"]["complete"], false);
         assert_eq!(first, poll("fictional-review").unwrap());
         assert!(poll("another-review").is_err());
