@@ -1,6 +1,6 @@
 # Waypoint completion plan
 
-Status: active development, 2026-11-02. This plan translates the requested
+Status: active development, updated 2026-11-03. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no
 defensible completion percentage or delivery date yet: the unmeasured work is
@@ -41,6 +41,51 @@ as part of this plan.
   scanned documents, factual correctness, ATS extraction, visual quality and
   mandatory final PDF behavior require end-to-end evidence. Match scores are
   estimates and have not been calibrated as probabilities or hiring outcomes.
+
+## Current priorities and evidence needed
+
+The prototype is not release-ready, and the remaining work cannot be reduced to
+a defensible percentage or date. The following order reflects current evidence;
+each item remains open until its stated evidence is recorded against the exact
+build and configuration.
+
+1. **Restore a trustworthy integration baseline.** Confirm the current hosted
+   test and coverage results after the local fixture fixes. Investigate the
+   hosted browser termination failure using the bounded survivor diagnostics;
+   do not assume a local pass explains it. Resolve the three denied unmaintained
+   dependency notices through an appropriate dependency or architecture change,
+   not an unexplained suppression. Re-run the affected checks on the final SHA.
+2. **Measure the local application agent.** Run a controlled, versioned corpus
+   of unseen forms and a diverse set of permitted live vacancies through
+   discovery, inspection, reviewed filling and final-step handoff. Measure
+   incorrect and missed fields, navigation outcomes, manual-review reasons,
+   repeated-run variation and peak resources. Include Workable and other shared
+   platforms without tailoring the evaluation to them. Never submit an
+   application during these checks. The current single-site and fixture
+   observations do not establish majority coverage or visual reliability.
+3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
+   varied, privately retained sources through extraction, factual tailoring,
+   PDF conversion and page-by-page review. Compare ATS-readable text and visual
+   layout against the originals, with explicit failures and held-out examples.
+   Evaluate fit estimates against labeled cases and repeat runs; the recent
+   lower-bound retrieval change still lacks a live-model qualification.
+4. **Complete the dry-run journey and records.** Verify deduplication, source
+   capture, edited PDFs, answers, screenshots, recovery and review state as one
+   end-to-end workflow, including changed pages and interrupted sessions.
+   Email application delivery and real application submission remain disabled
+   in this prototype; any future delivery mechanism needs explicit one-use
+   authorization and separate evidence, not a test submission.
+5. **Qualify a Windows distribution.** Test a complete per-user package on
+   clean supported Windows installations with no assumed developer tools,
+   missing browser, offline dependencies, different GPU/RAM, upgrades and
+   rollback. Verify dependency integrity, credentials, encrypted settings and
+   job records, backup/recovery and resource bounds. The current unsigned bundle
+   and fixture installer checks do not prove clean-host installation.
+6. **Close experience and accessibility gaps.** Verify the actual rendered
+   flows, visual consistency, keyboard and screen-reader operation, DPI and
+   narrow layouts; resolve findings with representative users. Complete privacy,
+   licensing and release documentation against the exact build. Do not publish
+   a release as part of this work.
 
 ## Workstreams and acceptance gates
 
