@@ -18,6 +18,7 @@ const context = {
   document:{querySelector(selector){if(selector==='#profile-form')return form;if(!nodes.has(selector))nodes.set(selector,node());return nodes.get(selector);}},
 };
 vm.createContext(context);
+vm.runInContext(source.split('\n').find(value => value.startsWith('function setTemplateOptions(')),context);
 vm.runInContext(line,context);
 const data = marker => ({jobs:[],facts:[],reviews:[],documents:[],profile:{},sealing:marker});
 (async()=>{
@@ -38,5 +39,13 @@ const data = marker => ({jobs:[],facts:[],reviews:[],documents:[],profile:{},sea
   context.profileLoaded=false;
   const fifth=context.refresh();deferred[4].resolve({...data('initial'),profile:{first_name:'Fictional'},profile_revision:'c'.repeat(64)});await fifth;
   assert.equal(context.profileEditBaseline.first_name,'Fictional');assert.equal(context.profileEditRevision,'c'.repeat(64));
+  const template = {value:'',options:[],replaceChildren(...options){this.options=options;},append(option){this.options.push(option);}};
+  context.setTemplateOptions(template,'missing-id',[{id:'present',name:'CV.pdf'}]);
+  assert.equal(template.value,'missing-id');
+  assert.match(template.options.find(option=>option.value==='missing-id').label,/Unavailable document/);
+  context.setTemplateOptions(template,'missing-id',[{id:'missing-id',name:'Restored.docx'}]);
+  assert.equal(template.options.find(option=>option.value==='missing-id').label,'Restored.docx');
+  context.setTemplateOptions(template,'',[]);
+  assert.equal(template.value,'');assert.equal(template.options.length,1);
   console.log('State refresh ordering checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1});
