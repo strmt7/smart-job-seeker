@@ -900,6 +900,12 @@ fn earlier_page_kind_text(source: &str) -> &str {
     &source[start..end]
 }
 
+fn later_page_kind_text(source: &str) -> &str {
+    let start = source.floor_char_boundary((source.len() / 3) * 2 - 1000);
+    let end = source.floor_char_boundary((start + 2000).min(source.len()));
+    &source[start..end]
+}
+
 fn sampled_page_kind_text(source: &str) -> String {
     if source.len() <= 6000 {
         return source.to_owned();
@@ -929,6 +935,7 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
         let sample = sampled_page_kind_text(source);
         if classify_page_segment(inference, &sample) == "not_vacancy"
             && classify_page_segment(inference, earlier_page_kind_text(source)) == "not_vacancy"
+            && classify_page_segment(inference, later_page_kind_text(source)) == "not_vacancy"
         {
             // A partial sample cannot prove a vacancy. This negative remains
             // review-only, and the UI identifies the sampling limitation.
@@ -945,6 +952,7 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
         let sample = sampled_page_kind_text(source);
         if classify_page_segment(inference, &sample) == "not_vacancy"
             && classify_page_segment(inference, earlier_page_kind_text(source)) == "not_vacancy"
+            && classify_page_segment(inference, later_page_kind_text(source)) == "not_vacancy"
         {
             return ("not_vacancy".into(), true);
         }
@@ -4848,6 +4856,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    #[ignore = "resource-gated local model classification of another fictional page"]
+    fn resource_gated_later_vacancy_in_fictional_guide() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let model = crate::resident_model()
+                .unwrap()
+                .expect("eligible resident model");
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model_identity,
+            );
+            let filler = "Hospitality career guide: cooks learn kitchen safety, preparation methods and service skills. This is general educational advice. ".repeat(110);
+            let at = filler.floor_char_boundary(filler.len() * 2 / 3);
+            let source = format!("{}\nNorth Quay Bistro is hiring a pastry chef in Oslo. This full-time opening involves baking pastries and leading a small kitchen team. Apply on the restaurant career page.\n{}", &filler[..at], &filler[at..]);
+            let (kind, sampled) = classify_page_kind_with_sample(&mut llm, &source);
+            println!("fictional later vacancy classification={kind}, sampled={sampled}");
+            assert_ne!(
+                kind, "not_vacancy",
+                "the later vacancy was incorrectly dismissed"
+            );
+            assert!(sampled);
+        });
+    }
+
+    #[test]
     fn sampled_classification_covers_an_additional_region_without_repeating_head() {
         let source = format!(
             "{}additional vacancy marker{}",
@@ -4914,7 +4951,7 @@ mod tests {
                 classify_page_kind_with_sample(&mut model, &source),
                 (expected.into(), true)
             );
-            assert_eq!(model.calls, if second == "not_vacancy" { 3 } else { 2 });
+            assert_eq!(model.calls, if second == "not_vacancy" { 4 } else { 2 });
         }
     }
 
@@ -5305,7 +5342,7 @@ mod tests {
         }
         let source = "é".repeat(4000);
         let mut negative = Model {
-            responses: vec!["uncertain", "not_vacancy", "not_vacancy"],
+            responses: vec!["uncertain", "not_vacancy", "not_vacancy", "not_vacancy"],
             calls: 0,
         };
         assert_eq!(
