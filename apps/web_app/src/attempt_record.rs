@@ -1290,6 +1290,24 @@ fn screenshot_number(name: &str) -> Option<u32> {
     (number > 0 && name == format!("{number:04}.png")).then_some(number)
 }
 
+// This is a bounded header check, not a full image decode or integrity check.
+fn readable_screenshot_header(path: &std::path::Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.is_file()
+        || meta.file_type().is_symlink()
+        || !(8..=6 * 1024 * 1024).contains(&meta.len())
+    {
+        return false;
+    }
+    let mut signature = [0u8; 8];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut signature))
+        .is_ok()
+        && signature == *b"\x89PNG\r\n\x1a\n"
+}
+
 fn screenshot_directory(
     ws: &Workspace,
     job: &JobIdentityId,
@@ -1373,11 +1391,7 @@ fn screenshot_context(
         };
         if screenshot_number(name).is_some()
             && seen_references.insert(name.to_owned())
-            && !fs::symlink_metadata(directory.join(name)).is_ok_and(|meta| {
-                meta.is_file()
-                    && !meta.file_type().is_symlink()
-                    && (8..=6 * 1024 * 1024).contains(&meta.len())
-            })
+            && !readable_screenshot_header(&directory.join(name))
         {
             missing_references += 1;
         }
@@ -1549,20 +1563,7 @@ pub fn screenshot_index(
         if number <= after {
             continue;
         }
-        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
-            unreadable += 1;
-            continue;
-        };
-        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 6 * 1024 * 1024 {
-            unreadable += 1;
-            continue;
-        }
-        let mut signature = [0u8; 8];
-        if fs::File::open(entry.path())
-            .and_then(|mut file| file.read_exact(&mut signature))
-            .is_err()
-            || signature != *b"\x89PNG\r\n\x1a\n"
-        {
+        if !readable_screenshot_header(&entry.path()) {
             unreadable += 1;
             continue;
         }
@@ -2999,6 +3000,12 @@ mod tests {
             .event(json!({"type":"page_inspected","screenshot":"screenshots/9999.png"}))
             .unwrap();
         record
+            .event(json!({"type":"page_inspected","screenshot":"screenshots/9998.png"}))
+            .unwrap();
+        record
+            .event(json!({"type":"page_inspected","screenshot":"screenshots/9997.png"}))
+            .unwrap();
+        record
             .event(json!({"type":"page_inspected","screenshot":"screenshots/9999.png"}))
             .unwrap();
         record
@@ -3012,7 +3019,7 @@ mod tests {
         )
         .unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
-        assert_eq!(first["missing_references"], 1);
+        assert_eq!(first["missing_references"], 3);
         assert_eq!(first["contexts"]["0004.png"]["capture_outcome"], "changed");
         assert_eq!(first["contexts"]["0005.png"]["capture_outcome"], "complete");
         assert_eq!(

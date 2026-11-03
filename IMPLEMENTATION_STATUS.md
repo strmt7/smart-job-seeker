@@ -3707,3 +3707,5 @@ model accuracy or visual quality.
 2026-11-03: A subsequent isolated rendered-browser check displayed the missing-screenshot warning and partial-history notice using a fictional, mocked response; no page errors were observed. It did not exercise a real missing file through the UI. Hosted CI for commit `352cebc4` completed with browser, build/test, PDF and agent-tool jobs passing; the supply-chain audit failed on the three previously identified unmaintained dependency notices. This result does not cover later commits.
 
 2026-11-03: Screenshot-reference inspection now checks filesystem metadata once per unique canonical reference within the bounded event scan. The existing fictional screenshot viewer test passed; no storage performance measurement was made.
+
+2026-11-03: Screenshot references now also require an accessible file with a PNG signature, using the same bounded check as the screenshot list. A fictional test covered a missing file, an oversized file, a bad signature and duplicate references. A PNG signature is not a full decode or integrity check; later corruption may remain undetected.
