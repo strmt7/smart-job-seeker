@@ -1,3 +1,7 @@
+## Bounded closure-check excerpts — 2026-11-03
+
+- Closure advice now scans up to 16,000 bytes in overlapping 4,000-byte excerpts instead of sending the entire capture in one model request. A positive result must quote the excerpt exactly; a failed request or an all-negative multi-excerpt check remains explicitly unavailable because page-wide context may be missing. This can require up to five model calls and may be slower. Fictional boundary, Unicode and failure tests passed, along with Windows web Clippy. A live retry on the previously captured closed listing was stopped by the RAM guard at 10,187 MiB available; the model unloaded. Therefore improved live closure detection is not established.
+
 ## Wider-web discovery and closure evaluation — 2026-11-03
 
 - A FreeSerp batch using two generic occupation/location queries returned 40 candidates across four successful pages. Several leading candidates were articles or résumé examples, so raw result count is not a vacancy count. A job-looking University of Cyprus result was independently crawled with the bounded local provider: HTTP 200, with the page marking the position closed and showing an August 2025 deadline. Native receipt SHA-256 `be75b2667d6a99b2afae4e8d25466f17db0a0f8025688429fd774d1ea709a44f` is retained outside Git. An initial crawler command failed on its Python module path before opening a page; the isolated provider was then run successfully.
