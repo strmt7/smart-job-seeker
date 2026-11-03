@@ -603,6 +603,10 @@ fn http_request_guarded(
         }
     }
 
+    // Pressure or cancellation can arise while the final read is blocked.
+    // Recheck before accepting a complete response, including short responses
+    // that arrive between two periodic checks.
+    check()?;
     let split = find_headers_end(&raw).ok_or("malformed HTTP response")?;
     let status: u16 = String::from_utf8_lossy(&raw[..split])
         .lines()
@@ -707,6 +711,41 @@ mod tests {
             "memory pressure"
         );
         assert_eq!(writer.0, 2);
+    }
+
+    #[test]
+    fn guard_is_rechecked_when_final_response_arrives() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let pressured = Arc::new(AtomicBool::new(false));
+        let server_pressure = pressured.clone();
+        let (ready, wait) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            wait.recv_timeout(Duration::from_secs(3)).unwrap();
+            server_pressure.store(true, Ordering::Relaxed);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                .unwrap();
+        });
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let guard = || {
+            // The third check precedes the response read (no request body).
+            if checks.fetch_add(1, Ordering::Relaxed) == 2 {
+                ready.send(()).unwrap();
+                return Ok(());
+            }
+            if pressured.load(Ordering::Relaxed) {
+                Err("memory pressure".to_owned())
+            } else {
+                Ok(())
+            }
+        };
+        assert_eq!(
+            http_request_with_guard(addr, "GET", "/", None, 3000, &guard).unwrap_err(),
+            "memory pressure"
+        );
+        server.join().unwrap();
     }
 
     #[test]

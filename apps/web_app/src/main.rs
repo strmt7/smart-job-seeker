@@ -1851,7 +1851,7 @@ fn inference_memory_gate(available: u64, total: u64) -> Result<(), String> {
     }
     let floor = (total / 4).clamp(4 * GIB, 10 * GIB);
     if available < floor {
-        return Err(format!("Local inference paused: {} MiB system memory available; at least {} MiB is required before starting another request. Close other work and retry.", available / (1024 * 1024), floor.div_ceil(1024 * 1024)));
+        return Err(format!("Local inference paused: {} MiB system memory available; at least {} MiB is required to continue. Close other work and retry.", available / (1024 * 1024), floor.div_ceil(1024 * 1024)));
     }
     Ok(())
 }
