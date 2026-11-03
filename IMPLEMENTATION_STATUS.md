@@ -3296,3 +3296,15 @@ about third-party and ambiguous contact fields. In a fictional French case,
 the initial mapping was deliberately simulated as wrong and its review list
 omitted; Qwen3.5:9b's recovery pass flagged the contact, and the mapping was
 withheld. This is one local-model observation, not a guarantee for all wording.
+
+### Alternative qualifications in match assessment (2026-11-03)
+
+An initial fictional local-model assessment split “Python or SQL” into two
+required criteria and assigned 75 despite evidence for Python. Rubric
+instructions now preserve explicit alternatives as one criterion, and the
+grouped evidence check receives an alternative-specific example. In a later
+resource-gated run, Python evidence supported the combined criterion; unrelated
+Java evidence left it unknown. A separate three-case grouped check retained
+its expected supported/unknown/supported results. These small examples do not
+establish general score accuracy; grouped criteria and coverage still require
+review, and the model was unloaded.
