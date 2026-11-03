@@ -1,3 +1,7 @@
+## Application obstacle and field summary — 2026-11-03
+
+- A read-only Workable application check reported possible verification, custom and hidden controls, a dialog and potentially obscured fields. The check now retains its observed-field summary alongside those obstacles. On a retest of the previously reviewed SmartNews listing, it reported five detected fields including a file-upload signal and kept manual review required. This does not establish that every field was found or that the role remains open. The application-check suite passed (21 tests, 23 ignored) and Windows web Clippy passed. No model was loaded, no values were entered and no application was submitted.
+
 ## Visual comparison label alignment — 2026-11-03
 
 - The web interface now follows the backend's conservative page-heading/field-label matching when combining visual observations. A scripted multi-segment flow and focused tests cover a heading-prefixed field, duplicate leaf labels, conflicting observations and freshness checks. The interface still requires unique matching and a live-value confirmation; these tests do not establish model accuracy on real employer forms.

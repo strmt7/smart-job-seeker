@@ -846,7 +846,12 @@ pub fn start_bound(
                     true,
                 )
             } else if !page.walls.is_empty() {
-                (obstacle_message(&page.walls), true)
+                let mut message = obstacle_message(&page.walls);
+                if !page.schema.fields.is_empty() {
+                    message.push(' ');
+                    message.push_str(&classify_fields(&page.schema.fields, followed).0);
+                }
+                (message, true)
             } else {
                 classify_fields(&page.schema.fields, followed)
             };
