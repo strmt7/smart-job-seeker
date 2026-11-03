@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf('function formRescanDifference('),end=source.indexOf('async function followFormNavigation(',start);
+assert.ok(start>=0&&end>start);
+const difference=vm.runInNewContext(`(${source.slice(start,end).trim()})`);
+const before={fields:[{label:'Phone'},{label:'Resume'}]};
+const after={fields:[{label:'First name'},{label:'Last name'},{label:'Email'},{label:'Phone'},{label:'Resume'}]};
+assert.match(difference(before,after),/2 fields; current inspection: 5/);
+assert.match(difference(before,after),/3 newly observed label\(s\), 0 no longer observed/);
+assert.match(difference(before,after),/First name · Last name · Email/);
+assert.match(difference(after,before),/0 newly observed label\(s\), 3 no longer observed/);
+assert.match(difference({fields:[{label:'Name'},{label:'Name'}]},{fields:[{label:'Name'}]}),/1 no longer observed/);
+assert.equal(difference(null,after),null);
+assert.match(difference({fields:[]},{fields:[{}]}),/Unidentified field/);
+assert.match(difference(before,after),/does not prove completeness/);
+console.log('Form rescan comparison checks passed.');
