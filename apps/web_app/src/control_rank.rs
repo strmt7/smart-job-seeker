@@ -1214,6 +1214,83 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a resource-gated model for fictional controls"]
+    fn resource_gated_capped_navigation_followup() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            struct FirstPass<'a>(&'a mut dyn Inference, bool);
+            impl Inference for FirstPass<'_> {
+                fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                    self.0.probe()
+                }
+                fn generate_structured(
+                    &mut self,
+                    task: &str,
+                    prompt: &str,
+                    max: u32,
+                ) -> Result<(Value, UsageReport), InferenceError> {
+                    if !self.1 {
+                        self.1 = true;
+                        return Ok((
+                            json!({"indices":[0,1,2,3,4]}),
+                            UsageReport {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                wall_time_ms: 0,
+                            },
+                        ));
+                    }
+                    self.0.generate_structured(task, prompt, max)
+                }
+            }
+            let name = crate::resident_model_status().unwrap()["model"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let llm = OllamaInference::new("http://127.0.0.1:11434", &name)
+                .unwrap()
+                .with_resident_context();
+            let mut local = crate::resident_inference::ResidentInference::new(
+                llm,
+                name,
+                crate::resident_model_identity,
+            );
+            let controls = waypoint_browser::PageControls {
+                controls: [
+                    "Personal details",
+                    "Employment history",
+                    "Education",
+                    "Skills",
+                    "Documents",
+                    "Continue to questions",
+                    "Submit application",
+                ]
+                .into_iter()
+                .map(|label| waypoint_browser::PageControl {
+                    label: label.into(),
+                    disabled: false,
+                    selector: "fictional".into(),
+                })
+                .collect(),
+                incomplete: false,
+            };
+            let result = rank(
+                &mut FirstPass(&mut local, false),
+                &controls,
+                &json!({"fields":[],"walls":[]}),
+            )
+            .unwrap();
+            println!(
+                "Fictional follow-up suggestions: {:?}; incomplete: {}",
+                result.indices, result.navigation_incomplete
+            );
+            assert!(!result.navigation_incomplete);
+            assert!(result.indices.contains(&5));
+            assert!(!result.indices.contains(&6));
+        });
+    }
+
     #[test]
     #[ignore = "requires a resource-gated resident local model"]
     fn live_model_excludes_combined_review_and_submission_controls() {

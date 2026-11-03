@@ -1,5 +1,7 @@
 ## Navigation advice coverage — 2026-11-03
 
+- In one resource-gated fictional control test, `qwen3.5:9b` selected the remaining navigation control and omitted the submission control on the follow-up pass. The test injected the first five selections to force that pass; it did not measure the model's first-pass selection or real-site behavior. The model unloaded afterward. One concurrent system-memory snapshot showed 16,614,596 KiB available, not a measured minimum.
+
 - If a control-ranking response reaches its five-item limit, the advisor now makes at most one extra pass over controls not already suggested. Results retain their original page indices; invalid or repeated suggestions from that pass leave the earlier advice intact and flag the additional check as incomplete. The existing cap warning remains because the extra pass can also miss controls. Scripted model tests and the UI fixture passed; no live model or employer page was used.
 
 - The interface now warns when either local-model control-ranking pass returns its five-item limit, since additional relevant controls may have been omitted. The warning also appears if a submission-labeled item is removed afterward. Scripted model and UI tests passed; these do not establish navigation accuracy or exercise a live model. No application was submitted.
