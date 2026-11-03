@@ -7,6 +7,8 @@ use std::{
 };
 use std::{path::PathBuf, process::Command};
 
+pub(crate) const PDF_MAX_PAGES: usize = 50;
+
 fn is_store_alias_directory(path: &std::path::Path, local_app_data: &std::path::Path) -> bool {
     let normalize = |value: &std::path::Path| {
         value
@@ -333,7 +335,7 @@ fn extract_coverage_inner(
         .ok_or("PDF extractor returned invalid text")?;
     let pages = result["page_count"]
         .as_u64()
-        .filter(|pages| (1..=30).contains(pages))
+        .filter(|pages| (1..=PDF_MAX_PAGES as u64).contains(pages))
         .ok_or("PDF extractor returned invalid page count")?;
     let page_texts: Vec<String> = result["page_texts"]
         .as_array()
@@ -434,8 +436,8 @@ pub fn render_page_region(
     render_page_inner(bytes, page, region)
 }
 fn render_page_inner(bytes: &[u8], page: usize, region: &str) -> Result<serde_json::Value, String> {
-    if page > 29 {
-        return Err("Page number exceeds 30-page limit".into());
+    if page >= PDF_MAX_PAGES {
+        return Err("Page number exceeds 50-page limit".into());
     }
     let argument = if region == "full" {
         page.to_string()
@@ -549,6 +551,12 @@ mod tests {
         assert!(!text.trim().is_empty());
         assert_eq!(page["page"], 0);
         assert_eq!(page["pages"], coverage["pages"]);
+        let count = coverage["pages"].as_u64().unwrap() as usize;
+        if count > 30 {
+            let last = super::render_page_for_review(&bytes, count - 1).unwrap();
+            assert_eq!(last["page"], count - 1);
+            assert_eq!(last["pages"], count);
+        }
         assert!(page["image"]
             .as_str()
             .is_some_and(|image| image.starts_with("iVBOR")));
@@ -608,7 +616,7 @@ mod tests {
             .decode(page["image"].as_str().unwrap())
             .unwrap();
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
-        assert!(super::render_page(&bytes, 30).is_err());
+        assert!(super::render_page(&bytes, super::PDF_MAX_PAGES).is_err());
         assert!(super::render_page(b"%PDF-1.4 broken", 0).is_err());
     }
     #[test]

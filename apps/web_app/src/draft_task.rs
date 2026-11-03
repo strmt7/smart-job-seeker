@@ -93,7 +93,7 @@ where
         .ok_or("Invalid template transcription")?;
     let pages = result["pages"]
         .as_u64()
-        .filter(|n| (1..=30).contains(n))
+        .filter(|n| (1..=crate::pdf_extract::PDF_MAX_PAGES as u64).contains(n))
         .ok_or("Invalid template page count")?;
     if result["page"].as_u64() != Some(page as u64)
         || page as u64 >= pages
@@ -241,7 +241,9 @@ pub fn requested_scanned_template_page(
     page: u64,
 ) -> Result<usize, String> {
     validate_template_context(cached, job, kind, digest)?;
-    if !cached["draft"]["template_vision"].is_object() || !(1..=30).contains(&page) {
+    if !cached["draft"]["template_vision"].is_object()
+        || !(1..=crate::pdf_extract::PDF_MAX_PAGES as u64).contains(&page)
+    {
         return Err("Choose a scanned page from the current template".into());
     }
     let coverage = &cached["draft"]["template_pdf_coverage"];

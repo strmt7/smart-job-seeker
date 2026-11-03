@@ -4569,8 +4569,8 @@ fn serve(
         "/api/documents/preview-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
             let page = body["page"].as_u64().ok_or("missing page number")?;
-            if page >= 30 {
-                return Err("Page number exceeds 30-page limit".into());
+            if page >= pdf_extract::PDF_MAX_PAGES as u64 {
+                return Err("Page number exceeds 50-page limit".into());
             }
             let info = ws
                 .documents()

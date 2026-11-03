@@ -26,8 +26,8 @@ try:
     if reader.is_encrypted or '/AcroForm' in root or '/Perms' in root or b'/ByteRange' in source:
         raise ValueError('Encrypted, signed or interactive PDFs need manual editing')
     doc = pdfium.PdfDocument(source)
-    if not 1 <= len(doc) <= 30:
-        raise ValueError('PDF exceeds the 30-page limit')
+    if not 1 <= len(doc) <= 50:
+        raise ValueError('PDF exceeds the 50-page limit')
     def matches(text, needle):
         first = text.find(needle)
         if first < 0:

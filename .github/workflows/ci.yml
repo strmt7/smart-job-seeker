@@ -35,6 +35,8 @@ jobs:
         run: python -B apps/web_app/tests/pdf-stream-charmap.test.py
       - name: Check fictional PDF passage selection
         run: python -B apps/web_app/tests/pdf-edit-selection.test.py
+      - name: Check fictional PDF page limits
+        run: python -B apps/web_app/tests/pdf-page-limit.test.py
 
   build-and-test:
     runs-on: windows-latest

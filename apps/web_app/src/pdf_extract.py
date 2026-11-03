@@ -14,8 +14,8 @@ try:
     reader = PdfReader(io.BytesIO(payload), strict=True)
     if reader.is_encrypted:
         raise ValueError("Encrypted PDFs are not supported")
-    if len(reader.pages) > 30:
-        raise ValueError("PDF exceeds the 30-page limit")
+    if len(reader.pages) > 50:
+        raise ValueError("PDF exceeds the 50-page limit")
     def image_resources(page):
         # Inspect dictionaries only; never decode image streams. Forms may nest.
         remaining = [256]

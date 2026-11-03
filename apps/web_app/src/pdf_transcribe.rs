@@ -28,7 +28,7 @@ where
     let rendered = render(bytes, page)?;
     let pages = rendered["pages"]
         .as_u64()
-        .filter(|n| (1..=30).contains(n))
+        .filter(|n| (1..=crate::pdf_extract::PDF_MAX_PAGES as u64).contains(n))
         .ok_or("Invalid PDF page count")?;
     if !matches!(region, "full" | "top" | "bottom" | "left" | "right")
         || rendered["region"].as_str() != Some(region)
@@ -103,7 +103,7 @@ pub fn start(
     if !matches!(
         region.as_str(),
         "full" | "top" | "bottom" | "left" | "right"
-    ) || page >= 30
+    ) || page >= crate::pdf_extract::PDF_MAX_PAGES
         || bytes.len() > 10 * 1024 * 1024
         || !bytes.starts_with(b"%PDF-")
     {
@@ -445,6 +445,20 @@ mod tests {
 
     #[test]
     fn validates_page_and_transcription_without_saving_facts() {
+        let last_page = |_: &[u8], _: usize| {
+            Ok(json!({"page":49,"pages":50,"region":"full","image":"fictional"}))
+        };
+        assert!(transcribe(b"fictional", 49, "full", last_page, |_| Ok(
+            json!({"text":"x","uncertain":false})
+        ))
+        .is_ok());
+        let too_many = |_: &[u8], _: usize| {
+            Ok(json!({"page":49,"pages":51,"region":"full","image":"fictional"}))
+        };
+        assert!(transcribe(b"fictional", 49, "full", too_many, |_| Ok(
+            json!({"text":"x","uncertain":false})
+        ))
+        .is_err());
         let render = |_: &[u8], _: usize| {
             Ok(json!({"page":1,"pages":2,"region":"full","image":"fictional"}))
         };

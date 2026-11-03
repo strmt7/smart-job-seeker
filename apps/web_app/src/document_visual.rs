@@ -53,7 +53,7 @@ where
             let page = render(bytes, index)?;
             let count = page["pages"]
                 .as_u64()
-                .filter(|n| *n > 0 && *n <= 30)
+                .filter(|n| *n > 0 && *n <= crate::pdf_extract::PDF_MAX_PAGES as u64)
                 .ok_or("Invalid PDF page count")? as usize;
             if index == 0 {
                 total = count;
@@ -134,7 +134,7 @@ pub fn needs_followup(review: &Value) -> bool {
     }
     let Some(pages) = report["pages"]
         .as_u64()
-        .filter(|pages| *pages > 0 && *pages <= PAGE_LIMIT as u64)
+        .filter(|pages| *pages > 0 && *pages <= crate::pdf_extract::PDF_MAX_PAGES as u64)
     else {
         return true;
     };
@@ -513,10 +513,23 @@ mod tests {
     fn rejects_unsupported_page_counts() {
         assert!(inspect(
             b"fixture",
-            |_, _| Ok(json!({"pages":31,"image":"fictional"})),
+            |_, _| Ok(json!({"pages":51,"image":"fictional"})),
             |_| Ok(json!({"issues":[]}))
         )
         .is_err());
+    }
+    #[test]
+    fn longer_documents_report_partial_visual_coverage() {
+        let result = inspect(
+            b"fixture",
+            |_, _| Ok(json!({"pages":34,"image":"fictional"})),
+            |_| Ok(json!({"issues":[]})),
+        )
+        .unwrap();
+        assert_eq!(result["pages"], 34);
+        assert_eq!(result["pages_inspected"], PAGE_LIMIT);
+        assert_eq!(result["complete"], false);
+        assert!(needs_followup(&complete_review(result)));
     }
     #[test]
     fn later_page_failure_preserves_incomplete_findings() {

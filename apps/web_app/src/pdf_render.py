@@ -26,8 +26,8 @@ try:
         raise ValueError('Unsupported page region')
     document = pdfium.PdfDocument(data)
     count = len(document)
-    if count < 1 or count > 30 or index < 0 or index >= count:
-        raise ValueError('Page is unavailable or document exceeds 30 pages')
+    if count < 1 or count > 50 or index < 0 or index >= count:
+        raise ValueError('Page is unavailable or document exceeds 50 pages')
     page = document[index]
     width, height = page.get_size()
     if not all(math.isfinite(v) and 1 <= v <= 20000 for v in (width, height)):
