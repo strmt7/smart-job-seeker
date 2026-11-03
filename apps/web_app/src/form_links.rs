@@ -905,6 +905,95 @@ mod tests {
         check.failed_labels.push("First name".into());
         assert!(super::require_checked_previous_answers(&check).is_err());
     }
+
+    #[test]
+    #[ignore = "starts a local browser and tests navigation preflight"]
+    fn changed_answer_prevents_worker_opening_a_reviewed_link() {
+        use waypoint_applications::{
+            driver::BrowserDriver,
+            form_mapping::{BrowserCommand, PacketValue, ProposedMapping},
+        };
+        use waypoint_domain::{JobIdentityId, Sha256Digest};
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-local-model-wizard.html");
+        let url = url::Url::from_file_path(fixture.canonicalize().unwrap())
+            .unwrap()
+            .to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let profile = serde_json::json!({"first_name":"Avery"});
+        let mut preview = form_preview::suggest_without_model(live, &profile, "fixture").unwrap();
+        preview
+            .suggestions
+            .retain(|mapping| mapping.field_selector != "#given");
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#given".into(),
+            value: PacketValue::Text("Avery".into()),
+        });
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#given".into(),
+                value: PacketValue::Text("Changed".into()),
+            })
+            .unwrap();
+        let session = crate::ReviewSession {
+            id: "preflight-session".into(),
+            job_id: JobIdentityId::new("preflight-job").unwrap(),
+            inspection_task_id: "preflight-inspection".into(),
+            inspection_pending_revision: 0,
+            url: url.clone(),
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: std::time::Instant::now(),
+            ttl: std::time::Duration::from_secs(120),
+            filled: true,
+            fill_attempted: true,
+            completed_selectors: vec!["#given".into()],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        };
+        fn fixture_check(_: &str, _: waypoint_policy::Operation) -> Result<(), String> {
+            Ok(())
+        }
+        assert!(super::start_with_destination_check(
+            "preflight-task".into(),
+            session,
+            Some("https://example.invalid/next".into()),
+            false,
+            None,
+            profile,
+            (0, vec![]),
+            fixture_check
+        )
+        .is_ok());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut returned = loop {
+            if let Some(result) = super::poll("preflight-task").unwrap() {
+                break match result {
+                    Ok((session, _, _)) => session,
+                    Err(failure) => panic!("navigation failed: {}", failure.reason),
+                };
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(returned.driver.current_url().unwrap(), url);
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("previously filled answer changed")));
+    }
     use super::*;
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
