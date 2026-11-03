@@ -2210,6 +2210,27 @@ fn required_hidden_proxy_is_not_exposed_as_a_text_answer() {
 }
 
 #[test]
+#[ignore = "launches a browser against a fictional hidden-ancestor fixture"]
+fn required_control_hidden_by_ancestor_requires_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver.open(&file_url("form_hidden_ancestor.html")).unwrap();
+    assert!(live.schema.fields.iter().any(|field| field.label == "Name"));
+    assert!(!live
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector.contains("hidden-required")));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall == "a required hidden control needs manual review"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

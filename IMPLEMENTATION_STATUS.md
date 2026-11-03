@@ -50,6 +50,8 @@
 
 ## Public application control observation — 2026-11-03
 
+- Form inspection now reports required input, select or textarea controls hidden by an ancestor with `aria-hidden` or the HTML `hidden` attribute, as it already did for directly hidden controls. Two fictional local-browser tests covered direct and inherited hiding; browser Clippy passed. CSS-only hiding, controls in uninspected frames and the relevance of inactive hidden sections still require review. No employer site was used and no application was submitted.
+
 - Form review now also flags optional numeric suggestions outside observed minimum or maximum bounds, and clears that warning when the answer is corrected. This makes the existing prefill rejection visible earlier; it does not validate dynamic constraints or numeric steps. The form-preview tests passed (28 passed, 46 ignored) and Windows web Clippy passed; no model or employer site was used.
 
 - Required numeric suggestions outside a form's observed minimum or maximum now remain marked for review before filling. A focused typed-answer test covered boundaries, malformed values and invalid bound attributes; Windows web Clippy passed. This early check does not cover step constraints or replace live browser validity checks.

@@ -3443,9 +3443,7 @@ impl CdpDriver {
                     .is_some_and(|value| value.eq_ignore_ascii_case("true"));
             if required_custom
                 && matches!(tag.as_str(), "input" | "textarea" | "select")
-                && attrs
-                    .get("aria-hidden")
-                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                && hidden
                 && !attrs
                     .get("type")
                     .is_some_and(|kind| kind.eq_ignore_ascii_case("hidden"))
