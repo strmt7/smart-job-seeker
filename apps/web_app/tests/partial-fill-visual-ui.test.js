@@ -39,6 +39,11 @@ async function exercise(message, visionFails=false, status={active:true,session_
   assert.ok(recordFailure.events.every(event=>event[0]!=='inspect'));
   assert.equal(recordFailure.fill.disabled,false);
   assert.equal(recordFailure.context.fillCompleted,false);
+  const phoneHold = await exercise('No fields were filled: the phone-country control needs manual review. Clear the phone answer and retry other fields, then enter the phone number in the visible browser after checking the selected country.');
+  assert.ok(phoneHold.events.every(event=>event[0]!=='inspect' && event[0]!=='warning'));
+  assert.ok(phoneHold.events.some(event=>event[0]==='message' && event[1].includes('Clear the phone answer')));
+  assert.equal(phoneHold.fill.disabled,false);
+  assert.equal(phoneHold.context.fillCompleted,false);
   const preflight = await exercise('No fields were filled because network observation was unavailable: Check the employer site before retrying.');
   assert.ok(preflight.events.every(event=>event[0]!=='inspect'));
   assert.ok(preflight.events.some(event=>event[0]==='message' && event[1].includes('Check the employer site')));

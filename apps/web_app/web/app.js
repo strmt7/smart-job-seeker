@@ -783,7 +783,7 @@ function showFormPreview(job,result,previous=null){setWorkspaceView('application
  }
  async function reviewAfterFillFailure(error,fill){
   notify(error.message);
-  const noFieldsFilled=/^No fields were filled because (?:the attempt record could not be (?:created|written)|an existing value needs review|a replacement answer changed|network observation was unavailable):/.test(error.message);
+  const noFieldsFilled=/^No fields were filled because (?:the attempt record could not be (?:created|written)|an existing value needs review|a replacement answer changed|network observation was unavailable):/.test(error.message) || error.message.startsWith('No fields were filled: the phone-country control needs manual review.');
   const lessonsChanged=/^(?:The lessons used for these suggestions changed; inspect the current page again|Form lessons could not be checked; inspect the current page again)(?:;|$)/.test(error.message);
   if(noFieldsFilled||lessonsChanged){visualPanel.replaceChildren(element('p',`${lessonsChanged?'No fields were filled in this attempt. ':''}${error.message} The review session remains open.`, 'review-label'));await refresh().catch(()=>{});fill.disabled=lessonsChanged||error.message.startsWith('No fields were filled because network observation was unavailable:');return;}
   panel.append(element('p','Fill did not complete. Fields may have changed; inspect the browser before continuing.','review-label'));
