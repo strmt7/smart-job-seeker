@@ -64,6 +64,8 @@
 
 ## Public application control observation — 2026-11-03
 
+- Visible asterisk markers on verified associated or wrapping labels now also mark their fields as required with a manual-review warning. A fictional browser fixture covered visible, hidden and ambiguous labels; the separate 14 label-related browser tests and Windows web Clippy passed. This inference does not cover every required-marker convention or override ambiguity, and no employer page or model was used in this change.
+
 - The read-only public-form model evaluation now requires an actual structured-generation call, rejects deterministic fallback or blocked mapping as a success, and checks recognizable suggested values against a fictional profile. A resource-gated run attempted before this change stopped at startup: 16,491 MiB available versus 16,538 MiB required. The model never loaded and no inference was measured. The revised evaluation compiled under Windows web Clippy but has not yet run with sufficient resources. No candidate data was entered or submitted.
 
 - On the same real form, an empty `for` attribute incorrectly associated the first field's label with an ID-less consent checkbox. Empty associations are now ignored. When an otherwise unlabelled checkbox has one bounded nearby visible text candidate, that text is shown as unverified context and the checkbox remains sensitive for manual review. A read-only live check showed the consent text instead of the unrelated name label; no checkbox or other field was touched. A fictional browser fixture and 14 label-related browser tests passed, as did Windows web Clippy. Nearby text is not an accessible label and may not describe the checkbox on every site.

@@ -2401,6 +2401,34 @@ fn empty_for_label_is_not_associated_with_an_idless_checkbox() {
 }
 
 #[test]
+#[ignore = "launches one browser against fictional associated required markers"]
+fn associated_visible_required_markers_require_review() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_associated_markers.html"))
+        .unwrap();
+    let field = |selector: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|field| field.selector == selector)
+            .unwrap()
+    };
+    assert!(field("#first").required);
+    assert!(field("#phone").required);
+    assert!(!field("#email").required);
+    assert!(!field("#ambiguous").required);
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("visible required marker was inferred from the label")));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

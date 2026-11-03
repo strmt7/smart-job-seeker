@@ -4325,6 +4325,7 @@ impl CdpDriver {
                 })
                 .unwrap_or_else(|| "unlabelled field".into());
             let mut label_unverified = false;
+            let mut visible_label_required_marker = false;
             if !control.attrs.contains_key("aria-labelledby")
                 && control
                     .attrs
@@ -4350,6 +4351,7 @@ impl CdpDriver {
                         None
                     };
                     if let Some(rendered) = rendered {
+                        visible_label_required_marker = rendered.trim_end().ends_with('*');
                         label = rendered;
                     } else {
                         label_unverified = true;
@@ -4526,6 +4528,10 @@ impl CdpDriver {
                     .get(&control.node_id)
                     .copied()
                     .unwrap_or(false);
+            if !required && !label_unverified && visible_label_required_marker {
+                required = true;
+                walls.push("a custom control needs manual review: A visible required marker was inferred from the label; verify the field requirement".into());
+            }
             if !required
                 && !label_unverified
                 && !labels.contains_key(&id)
