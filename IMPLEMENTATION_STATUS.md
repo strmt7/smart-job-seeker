@@ -3355,3 +3355,10 @@ the matching field while an empty field was filled. A separate fixture still
 stopped before changing fields when an existing value conflicted. Twenty-seven
 non-ignored form-preview tests passed; this does not establish behavior on all
 application sites, and no application was submitted.
+
+The prefill result and attempt event now distinguish values entered by
+Waypoint from values that already matched. A fictional browser check confirmed
+that an existing selected option and checkbox were retained without change
+events. The larger fictional prefill endpoint test passed twice after two
+failures at its screenshot-segment assertion; that capture instability remains
+unresolved, so these runs do not establish reliable screenshot coverage.

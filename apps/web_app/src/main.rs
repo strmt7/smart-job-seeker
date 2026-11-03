@@ -7634,7 +7634,7 @@ fn serve(
                 Err(error) => {
                     let mut outcome_error = None;
                     if let Some(record) = &mut current.record {
-                        let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These commands completed before the failure; they are not proof that all values remain correct or that an application was submitted."});
+                        let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These fields were entered or already matched before the failure; they are not proof that values remain correct or that an application was submitted."});
                         if let Err(problem) = record.incomplete_fill(outcome, now()) {
                             outcome_error = Some(problem);
                         }
@@ -7689,6 +7689,11 @@ fn serve(
                     ));
                 }
             };
+            let already_matching = completed
+                .iter()
+                .filter(|item| item["already_matching"] == true)
+                .count();
+            let entered = filled.saturating_sub(already_matching);
             if let Some(error) = network_record_error {
                 current.created = Instant::now();
                 *session = Some(current);
@@ -7710,7 +7715,7 @@ fn serve(
                 return Err(reason.into());
             }
             if let Some(record) = &mut current.record {
-                if let Err(error) = record.answer_outcome(json!({"type":"fill_commands_verified","time":now(),"answer_file":requested_answer_file,"completed_commands":completed,"note":"All requested fields matched when checked after the fill commands. The site may change values later; this does not prove submission."})) {
+                if let Err(error) = record.answer_outcome(json!({"type":"fill_commands_verified","time":now(),"answer_file":requested_answer_file,"completed_commands":completed,"note":"All requested fields matched when checked after prefill. Some may already have matched; the site may change values later. This does not prove submission."})) {
                     let status_error = record.status("manual_review", now()).err();
                     let review_error = ws.mark_manual_review(&current.job_id, "Application record could not be written after filling", now()).err();
                     current.created = Instant::now();
@@ -7751,7 +7756,7 @@ fn serve(
                 if let Err(error) = record
                     .screenshot_with_name(&screenshot)
                     .and_then(|name| {
-                        record.event(json!({"type":"fields_filled","time":now(),"count":filled,"screenshot":format!("screenshots/{name}")}))
+                        record.event(json!({"type":"fields_filled","time":now(),"count":filled,"entered_count":entered,"already_matching_count":already_matching,"screenshot":format!("screenshots/{name}")}))
                     })
                     .and_then(|_| attempt_record::capture_page(&mut current.driver, record, now()))
                 {
@@ -7790,7 +7795,7 @@ fn serve(
             json_reply(
                 stream,
                 "200 OK",
-                json!({"filled":filled,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"non_read_request_observed":observed_request,"network_observation_unavailable":network_unavailable,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
+                json!({"filled":filled,"entered":entered,"already_matching":already_matching,"filled_fields":filled_fields,"completed_selectors":current.completed_selectors,"required_not_filled":required_not_filled,"screenshot":screenshot,"manual_review":current.preview.manual_review,"non_read_request_observed":observed_request,"network_observation_unavailable":network_unavailable,"expires_in_seconds":remaining_session_seconds(current.ttl,current.created.elapsed())}),
             );
             *session = Some(current);
         }
@@ -15292,6 +15297,10 @@ mod tests {
         let payload: Value =
             serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(payload["filled"], 7);
+        assert_eq!(
+            payload["entered"].as_u64().unwrap() + payload["already_matching"].as_u64().unwrap(),
+            7
+        );
         assert!(payload["filled_fields"]
             .as_array()
             .unwrap()

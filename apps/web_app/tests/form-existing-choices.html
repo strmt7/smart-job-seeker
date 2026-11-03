@@ -1,9 +1,9 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fictional choices</title></head><body><form>
 <label for="empty">Empty</label><select id="empty"><option value="">Choose</option><option value="a">Alpha</option><option value="b">Beta</option></select>
-<label for="chosen">Chosen</label><select id="chosen"><option value="">Choose</option><option value="a" selected>Alpha</option><option value="b">Beta</option></select>
+<label for="chosen">Chosen</label><select id="chosen" onchange="this.dataset.changeEvents=String(Number(this.dataset.changeEvents||0)+1)"><option value="">Choose</option><option value="a" selected>Alpha</option><option value="b">Beta</option></select>
 <label for="multi">Multiple</label><select id="multi" multiple><option selected>Alpha</option><option>Beta</option></select>
 <label for="empty-multi">Empty multiple</label><select id="empty-multi" multiple><option>Alpha</option><option>Beta</option></select>
 <fieldset><legend>Existing radio</legend><label><input type="radio" id="r1" name="existing" checked>Alpha</label><label><input type="radio" id="r2" name="existing">Beta</label></fieldset>
 <fieldset><legend>Empty radio</legend><label><input type="radio" id="r3" name="empty">Alpha</label><label><input type="radio" id="r4" name="empty">Beta</label></fieldset>
-<label><input type="checkbox" id="checked" checked>Existing checkbox</label><label><input type="checkbox" id="unchecked">Empty checkbox</label>
+<label><input type="checkbox" id="checked" checked onchange="this.dataset.changeEvents=String(Number(this.dataset.changeEvents||0)+1)">Existing checkbox</label><label><input type="checkbox" id="unchecked">Empty checkbox</label>
 </form></body></html>

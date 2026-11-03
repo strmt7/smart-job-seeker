@@ -1725,6 +1725,68 @@ mod tests {
 
     #[test]
     #[ignore = "starts a local browser against fictional preselected choices"]
+    fn already_matching_choices_are_verified_without_change_events() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-existing-choices.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let preview = FormPreview {
+            schema: live.schema,
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#chosen".into(),
+                    value: PacketValue::Text("Alpha".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#checked".into(),
+                    value: PacketValue::Bool(true),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut completed = Vec::new();
+        for mapping in &preview.suggestions {
+            let field = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == mapping.field_selector)
+                .unwrap();
+            let command = match &mapping.value {
+                PacketValue::Text(label) => BrowserCommand::SelectOption {
+                    selector: mapping.field_selector.clone(),
+                    label: label.clone(),
+                },
+                _ => BrowserCommand::Fill {
+                    selector: mapping.field_selector.clone(),
+                    value: mapping.value.clone(),
+                },
+            };
+            execute_and_verify_field(&mut driver, &preview, field, &command, &mut completed)
+                .unwrap();
+            assert_eq!(
+                driver
+                    .read_attribute(&field.selector, "data-change-events")
+                    .unwrap(),
+                None
+            );
+        }
+        assert_eq!(completed.len(), 2);
+        assert!(completed
+            .iter()
+            .all(|item| item["already_matching"] == true));
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against fictional preselected choices"]
     fn existing_choices_are_not_replaced_without_review() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/form-existing-choices.html")

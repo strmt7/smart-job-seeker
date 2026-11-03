@@ -1,0 +1,12 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const line = source.split('\n').find(value => value.startsWith('function prefillOutcomeSummary('));
+assert.ok(line);
+const summary = vm.runInNewContext(`(${line})`);
+assert.equal(summary({filled: 3, entered: 1, already_matching: 2}), 'Verified 3 fields: 1 entered and 2 already matched.');
+assert.equal(summary({filled: 2, entered: 1, already_matching: 2}), 'Reviewed fields were verified; inspect the current form.');
+assert.equal(summary({filled: 2}), 'Reviewed fields were verified; inspect the current form.');
+assert.ok(source.includes('prefillOutcomeSummary(outcome)'));
+console.log('Prefill outcome UI checks passed.');
