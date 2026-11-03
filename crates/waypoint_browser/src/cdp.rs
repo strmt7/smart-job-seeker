@@ -904,35 +904,64 @@ impl Cdp {
     /// Drain the socket for `duration`, recording any events that arrive.
     /// Used to wait for a load without blocking forever.
     pub fn pump(&mut self, duration: Duration) {
+        let _ = self.pump_checked(duration);
+    }
+
+    /// Drain events while distinguishing an ordinary idle timeout from loss of
+    /// the protocol stream. This does not itself continuously service Fetch.
+    pub fn pump_checked(&mut self, duration: Duration) -> Result<(), CdpError> {
         let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
             if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = self.ws.get_ref() {
                 let remaining = deadline.saturating_duration_since(Instant::now());
-                let _ = tcp.set_read_timeout(Some(remaining.max(Duration::from_millis(10))));
-            }
-            match self.ws.read() {
-                Ok(Message::Text(t)) => {
-                    if let Ok(value) = serde_json::from_str::<Value>(t.as_str()) {
-                        if is_non_read_request(&value) {
-                            self.observed_non_read_requests =
-                                self.observed_non_read_requests.saturating_add(1);
-                        }
-                        self.paused_event_lost |= retain_event(&mut self.events, value, t.len());
-                    }
+                if tcp
+                    .set_read_timeout(Some(remaining.max(Duration::from_millis(10))))
+                    .is_err()
+                {
+                    self.paused_event_lost = true;
+                    return err("cannot set browser event timeout");
                 }
-                Ok(Message::Binary(b)) => {
-                    if let Ok(value) = serde_json::from_str::<Value>(&String::from_utf8_lossy(&b)) {
-                        if is_non_read_request(&value) {
-                            self.observed_non_read_requests =
-                                self.observed_non_read_requests.saturating_add(1);
-                        }
-                        self.paused_event_lost |= retain_event(&mut self.events, value, b.len());
-                    }
-                }
-                Ok(_) => {}
-                Err(_) => break,
             }
+            let raw = match self.ws.read() {
+                Ok(Message::Text(t)) => t.to_string(),
+                Ok(Message::Binary(b)) => match String::from_utf8(b.to_vec()) {
+                    Ok(text) => text,
+                    Err(_) => {
+                        self.paused_event_lost = true;
+                        return err("invalid browser event encoding");
+                    }
+                },
+                Ok(Message::Close(_)) => {
+                    self.paused_event_lost = true;
+                    return err("browser event connection closed");
+                }
+                Ok(_) => continue,
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(())
+                }
+                Err(_) => {
+                    self.paused_event_lost = true;
+                    return err("browser event connection failed");
+                }
+            };
+            let value = match parse_protocol_message(&raw, false) {
+                Ok(value) => value,
+                Err(_) => {
+                    self.paused_event_lost = true;
+                    return err("invalid browser event");
+                }
+            };
+            if is_non_read_request(&value) {
+                self.observed_non_read_requests = self.observed_non_read_requests.saturating_add(1);
+            }
+            self.paused_event_lost |= retain_event(&mut self.events, value, raw.len());
         }
+        Ok(())
     }
 
     pub fn take_events(&mut self) -> Vec<(String, Value)> {
@@ -1000,6 +1029,33 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_pump_distinguishes_idle_from_invalid_protocol() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            std::thread::sleep(Duration::from_millis(120));
+            socket.send(Message::Text("invalid-json".into())).unwrap();
+        });
+        let (socket, _) = tungstenite::connect(format!("ws://{addr}")).unwrap();
+        let mut cdp = Cdp {
+            ws: socket,
+            next_id: 0,
+            session: String::new(),
+            events: vec![],
+            timeout: Duration::from_secs(2),
+            observed_non_read_requests: 0,
+            paused_event_lost: false,
+        };
+        assert!(cdp.pump_checked(Duration::from_millis(30)).is_ok());
+        assert!(!cdp.paused_event_lost);
+        assert!(cdp.pump_checked(Duration::from_secs(1)).is_err());
+        assert!(cdp.fail_next_paused_request().is_err());
+        worker.join().unwrap();
+    }
 
     #[test]
     fn paused_requests_are_preserved_and_overflow_is_reported() {
