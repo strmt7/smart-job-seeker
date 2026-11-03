@@ -104,6 +104,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Ground rules for agents (from the handoff, still binding)
 
+- Development and testing must be headless: do not open visible browser or app
+  windows, take focus, move the pointer, type on the user's desktop, or otherwise
+  show automated interactions. Do not use visible-session test fixtures unless
+  the user explicitly requests that interaction in a future instruction. This
+  constraint applies to agent work, not to the user's own use of the product.
 - Respect site terms/robots and the permission registry before any external fetch.
 - Never store credentials/secrets in code or fixtures. Fictional fixtures only.
 - Keep loops bounded (drafting ≤2 repairs, research has explicit budgets/stopping).
