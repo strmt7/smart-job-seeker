@@ -326,14 +326,20 @@ fn report(name: &str, bytes: &[u8], listing: &str, facts: &[String]) -> Result<V
         let qualifications_truncated = matching.next().is_some();
         json!({"present":resume_words.contains(&term),"term":term,"posting_occurrences":count,"matching_qualifications":sources,"qualifications_truncated":qualifications_truncated})
     }).collect();
+    let mut preview_line_truncated = false;
     let lines: Vec<_> = text
         .lines()
         .filter(|line| !line.trim().is_empty())
         .take(12)
-        .map(|line| line.chars().take(240).collect::<String>())
+        .map(|line| {
+            let mut chars = line.chars();
+            let preview: String = chars.by_ref().take(240).collect();
+            preview_line_truncated |= chars.next().is_some();
+            preview
+        })
         .collect();
     Ok(
-        json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching (two-letter ASCII alphabetic terms require uppercase spelling); not a real ATS result. Inspect the extracted reading order, layout, headers, footers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
+        json!({"document_sha256":waypoint_domain::sha256_hex(bytes),"job_text_sha256":Sha256Digest::of(listing).as_str(),"extracted_characters":text.chars().count(),"extracted_words":words(&text).len(),"reading_order_preview":lines,"preview_line_truncated":preview_line_truncated,"structure_notes":structure,"terms":terms,"terms_truncated":truncated,"limitations":"One local text extractor and literal single-word matching (two-letter ASCII alphabetic terms require uppercase spelling); not a real ATS result. Inspect the extracted reading order, layout, headers, footers and all claims. Missing terms may be irrelevant or not true for you; do not add unsupported claims."}),
     )
 }
 pub fn start(
@@ -692,6 +698,24 @@ mod tests {
                 .any(|fact| fact == "Used Python for research")
         );
         assert!(report("cv.txt", b"", "A role", &[]).is_err());
+    }
+
+    #[test]
+    fn flags_clipped_reading_order_lines_by_character_count() {
+        let full = "é".repeat(240);
+        let result = report("cv.txt", full.as_bytes(), "Engineer", &[]).unwrap();
+        assert_eq!(result["preview_line_truncated"], false);
+        let clipped = "é".repeat(241);
+        let result = report("cv.txt", clipped.as_bytes(), "Engineer", &[]).unwrap();
+        assert_eq!(result["preview_line_truncated"], true);
+        assert_eq!(
+            result["reading_order_preview"][0]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            240
+        );
     }
 
     #[test]

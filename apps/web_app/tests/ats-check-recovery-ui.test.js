@@ -11,7 +11,7 @@ function node(tag,text=''){return {tag,textContent:text,children:[],value:'',app
  const api=async(path)=>{
   if(path.endsWith('ats-check-active'))return {active};
   if(path.endsWith('ats-check-start')){starts++;active={task_id:'task-a',document_id:'doc-a',job_id:'job-a'};if(loseStart){loseStart=false;throw Error('Disconnected');}return {task_id:'task-a'};}
-  if(path.endsWith('ats-check-status')){statuses++;if(loseStatus){loseStatus=false;throw Error('Disconnected');}active=null;return {status:'complete',report:{extracted_words:1,extracted_characters:4,limitations:'Fixture',structure_notes:[],reading_order_preview:[],terms:[{term:'python',present:false,posting_occurrences:1,matching_qualifications:['Fictional Python experience'],qualifications_truncated:true}],terms_truncated:false}};}
+  if(path.endsWith('ats-check-status')){statuses++;if(loseStatus){loseStatus=false;throw Error('Disconnected');}active=null;return {status:'complete',report:{extracted_words:1,extracted_characters:4,limitations:'Fixture',structure_notes:[],reading_order_preview:[],preview_line_truncated:true,terms:[{term:'python',present:false,posting_occurrences:1,matching_qualifications:['Fictional Python experience'],qualifications_truncated:true}],terms_truncated:false}};}
   throw Error(path);
  };
  const ctx=vm.createContext({sessionStorage,api,state:{jobs:[{job:{id:'job-a',title:'Fictional',employer:'Example'}}]},setWorkspaceView(){},notify(){},element:node,document:{querySelector:()=>panel,createElement:node},Option:function(text,value){this.textContent=text;this.value=value;},setTimeout:fn=>fn()});
@@ -24,5 +24,6 @@ function node(tag,text=''){return {tag,textContent:text,children:[],value:'',app
  await button.click();assert.equal(starts,1);assert.equal(statuses,2);assert.equal(stored,null);
  assert.match(panel.children.find(x=>x.tag==='div').children.map(x=>x.textContent).join(' '),/Extracted 1 words/);
  assert.match(panel.children.find(x=>x.tag==='div').children.map(x=>x.textContent).join(' '),/Additional matching qualifications are not shown/);
+ assert.match(panel.children.find(x=>x.tag==='div').children.map(x=>x.textContent).join(' '),/Some preview lines are shortened/);
  console.log('CV check recovery UI checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
