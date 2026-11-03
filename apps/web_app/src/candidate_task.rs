@@ -1918,7 +1918,6 @@ fn no_model_inspection_reason(
     original: &url::Url,
     reached: &url::Url,
     course_hint: bool,
-    page_text: &str,
 ) -> String {
     let mut reason = String::new();
     if crate::application_check::same_origin_path_redirect_notice(original, reached).is_some() {
@@ -1929,6 +1928,10 @@ fn no_model_inspection_reason(
     } else {
         "No structured job found and no eligible local model is loaded; review manually"
     });
+    reason
+}
+
+fn inspection_error_with_page_hint(mut reason: String, page_text: &str) -> String {
     let mut advisory = json!({});
     attach_page_closure_hint(
         &mut advisory,
@@ -2023,16 +2026,17 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                 // A short challenge page is not evidence of a job listing.
                 // Longer pages still require exact-source extraction and review.
                 require_readable_listing(&page.walls, &page_text)?;
-                let model = crate::resident_model()?.ok_or_else(|| no_model_inspection_reason(
-                    &original,
-                    &reached,
-                    incomplete_structured.is_none() && structured_course_hint(&scripts),
-                    &page_text,
-                ))?;
-                let _lease = crate::doc_suggest::lease()?;
-                let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
-                let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model_identity);
-                let mut job=extract_page_text_with_hint(&mut inference,&page_text,&current,section_hint.as_deref(),section_text.as_ref().map(|(text, _)| text.as_str()))?;
+                let mut job = (|| -> Result<Value, String> {
+                    let model = crate::resident_model()?.ok_or_else(|| no_model_inspection_reason(
+                        &original,
+                        &reached,
+                        incomplete_structured.is_none() && structured_course_hint(&scripts),
+                    ))?;
+                    let _lease = crate::doc_suggest::lease()?;
+                    let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
+                    let mut inference = crate::resident_inference::ResidentInference::new(llm, model, crate::resident_model_identity);
+                    extract_page_text_with_hint(&mut inference,&page_text,&current,section_hint.as_deref(),section_text.as_ref().map(|(text, _)| text.as_str()))
+                })().map_err(|error| inspection_error_with_page_hint(error, &page_text))?;
                 job["page_text_truncated"]=json!(truncated);
                 if let Some((text, truncated)) = section_text.as_ref() {
                     job["observed_section"] = json!({"text":text,"truncated":truncated});
@@ -2130,10 +2134,8 @@ mod tests {
     fn missing_model_reports_path_redirect_without_exposing_query() {
         let original = url::Url::parse("https://example.org/jobs/123").unwrap();
         let reached = url::Url::parse("https://example.org/careers?secret=fictional").unwrap();
-        let reason = super::no_model_inspection_reason(
-            &original,
-            &reached,
-            false,
+        let reason = super::inspection_error_with_page_hint(
+            super::no_model_inspection_reason(&original, &reached, false),
             "Deadline: Closed Positions",
         );
         assert!(reason.contains("redirected to a different page"));
@@ -2142,8 +2144,10 @@ mod tests {
         assert!(reason.contains("another role"));
         assert!(!reason.contains("fictional"));
         let same_path = url::Url::parse("https://example.org/jobs/123?secret=fictional").unwrap();
-        let reason =
-            super::no_model_inspection_reason(&original, &same_path, true, "Applications are open");
+        let reason = super::inspection_error_with_page_hint(
+            super::no_model_inspection_reason(&original, &same_path, true),
+            "Applications are open",
+        );
         assert!(!reason.contains("redirected"));
         assert!(reason.contains("course metadata"));
         assert!(!reason.contains("closure wording"));
@@ -2622,6 +2626,14 @@ mod tests {
         let error =
             waypoint_inference::InferenceError::RuntimeUnreachable("private runtime detail".into());
         assert!(!listing_inference_error(error).contains("private"));
+        let error = waypoint_inference::InferenceError::BudgetExceeded;
+        let message = inspection_error_with_page_hint(
+            listing_inference_error(error).to_owned(),
+            "Deadline: Closed Positions",
+        );
+        assert!(message.contains("exceeded its listing budget"));
+        assert!(message.contains("Closed Positions"));
+        assert!(message.contains("another role"));
     }
 
     #[test]
