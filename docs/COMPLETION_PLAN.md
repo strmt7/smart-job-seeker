@@ -80,8 +80,10 @@ build and configuration.
    serviced interception layer, installed before interaction, that covers related
    targets and fails closed on disconnect. CDP Fetch request-stage interception
    can pause requests before transmission; target auto-attachment has to be
-   handled recursively for related frames and workers. Do not assume GET is
-   harmless or that Fetch covers existing WebSocket connections, browser-level
+   handled recursively for related frames and workers. A headless fictional
+   loopback test showed that a scripted form GET reaches the server while the
+   click returns success; GET is not necessarily read-only. Do not assume Fetch
+   covers existing WebSocket connections, browser-level
    traffic, service workers or every external side effect. Those channels and
    interception failure, asynchronous actions and teardown need separate tests.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
