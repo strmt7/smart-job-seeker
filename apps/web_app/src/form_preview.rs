@@ -5246,7 +5246,71 @@ mod tests {
                 model,
                 crate::resident_model_identity,
             );
-            let preview = suggest_for_live_form(live, &mut llm, &json!({"first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123"})).unwrap();
+            struct Counting<'a> {
+                inner: &'a mut dyn Inference,
+                calls: usize,
+                mapping_responses: usize,
+            }
+            impl Inference for Counting<'_> {
+                fn set_context_tags(&mut self, tags: &[&str]) {
+                    self.inner.set_context_tags(tags);
+                }
+                fn set_request_guard(
+                    &mut self,
+                    guard: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+                ) {
+                    self.inner.set_request_guard(guard);
+                }
+                fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                    self.inner.probe()
+                }
+                fn generate_structured(
+                    &mut self,
+                    schema: &str,
+                    prompt: &str,
+                    limit: u32,
+                ) -> Result<(Value, UsageReport), InferenceError> {
+                    self.calls += 1;
+                    let result = self.inner.generate_structured(schema, prompt, limit);
+                    if schema == "form_mapping"
+                        && result
+                            .as_ref()
+                            .ok()
+                            .and_then(|(value, _)| value["mappings"].as_array())
+                            .is_some_and(|items| !items.is_empty())
+                    {
+                        self.mapping_responses += 1;
+                    }
+                    result
+                }
+                fn cancel(&mut self) -> Result<(), InferenceError> {
+                    self.inner.cancel()
+                }
+            }
+            let mut counted = Counting {
+                inner: &mut llm,
+                calls: 0,
+                mapping_responses: 0,
+            };
+            let preview = suggest_for_live_form(live, &mut counted, &json!({"full_name":"Avery Example", "first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123"})).unwrap();
+            assert!(counted.calls > 0, "no local model generation was attempted");
+            assert!(
+                counted.mapping_responses > 0,
+                "the model returned no nonempty mapping response"
+            );
+            assert!(
+                !preview
+                    .manual_review
+                    .iter()
+                    .any(|reason| reason.contains("only exact labels")
+                        || reason.contains("suggestions were not attempted")),
+                "model mapping did not complete: {:?}",
+                preview.manual_review
+            );
+            assert!(
+                !preview.suggestions.is_empty(),
+                "model produced no reviewable suggestions"
+            );
             println!(
                 "fields={} suggestions={} review={:?}",
                 preview.schema.fields.len(),
@@ -5261,6 +5325,19 @@ mod tests {
                     .find(|field| field.selector == mapping.field_selector)
                     .expect("visible mapped field");
                 assert!(!field.sensitive, "sensitive field was proposed");
+                let expected = match field.label.trim().to_ascii_lowercase().as_str() {
+                    "full name" => Some("Avery Example"),
+                    "email" => Some("avery@example.invalid"),
+                    "phone" => Some("+12025550123"),
+                    _ => None,
+                };
+                if let Some(expected) = expected {
+                    assert_eq!(
+                        mapping.value,
+                        waypoint_applications::form_mapping::PacketValue::Text(expected.into()),
+                        "mapping does not match the fictional profile"
+                    );
+                }
                 println!(
                     "proposed field: {:?}, fictional value: {:?}",
                     field.label, mapping.value
