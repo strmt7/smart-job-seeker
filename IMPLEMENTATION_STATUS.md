@@ -33,6 +33,8 @@
 
 ## Verify answers before link navigation — 2026-11-03
 
+- A fictional browser test now changes a filled answer inside an injected capture callback. The shared post-capture check rejected navigation, kept the browser on the original page and retained a capture warning. This simulates a change during capture; it does not reproduce a third-party site's timing.
+
 - Reviewed-link navigation now rechecks the page schema, filled values, current attachments and selected link after the potentially lengthy screenshot capture, immediately before opening the destination. A fictional browser test exercised retained and changed answers and the existing worker preflight; it did not simulate a change during capture itself. Windows web Clippy passed. These checks narrow the timing window but cannot eliminate later page changes.
 
 - The fictional navigation-worker test also restored the staged file and then cleared the browser's file input. The worker stopped for review and remained on the original page, confirming that an intact staged file alone does not pass the attachment check.

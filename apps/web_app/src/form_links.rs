@@ -646,6 +646,22 @@ fn reviewed_target_present(
     }
 }
 
+fn capture_then_recheck(
+    session: &mut ReviewSession,
+    target: &str,
+    allow_other: bool,
+    reviewed_label: Option<&str>,
+    warning: &mut Option<String>,
+    capture: impl FnOnce(&mut ReviewSession) -> Option<String>,
+) -> Result<(), String> {
+    *warning = capture(session);
+    verify_navigation_state(session)?;
+    if !reviewed_target_present(session, target, allow_other, reviewed_label)? {
+        return Err("The selected link changed during capture; inspect again".into());
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn start_with_destination_check(
     id: String,
@@ -705,20 +721,12 @@ fn start_with_destination_check(
                     }
                     let parsed = waypoint_net::parse_url(&target).map_err(|e| e.to_string())?;
                     waypoint_net::resolve_public(&parsed).map_err(|e| e.to_string())?;
-                    match session.record.as_mut() {
-                        Some(record) => {
-                            if let Err(error) = crate::attempt_record::capture_before_navigation(&mut session.driver, record, crate::now()) {
-                                navigation_capture_warning = Some(format!("The previous section could not be fully captured before navigation: {error}"));
-                            }
+                    capture_then_recheck(&mut session, &target, allow_other, reviewed_label.as_deref(), &mut navigation_capture_warning, |session| {
+                        match session.record.as_mut() {
+                            Some(record) => crate::attempt_record::capture_before_navigation(&mut session.driver, record, crate::now()).err().map(|error| format!("The previous section could not be fully captured before navigation: {error}")),
+                            None => Some("The previous section could not be captured because the application record is unavailable".into()),
                         }
-                        None => navigation_capture_warning = Some("The previous section could not be captured because the application record is unavailable".into()),
-                    }
-                    // Capture may take time or trigger page changes. Recheck the
-                    // reviewed page and values before leaving the section.
-                    verify_navigation_state(&mut session)?;
-                    if !reviewed_target_present(&mut session, &target, allow_other, reviewed_label.as_deref())? {
-                        return Err("The selected link changed during capture; inspect again".into());
-                    }
+                    })?;
                     let live = session.driver.open(&target).map_err(|e| e.to_string())?;
                     let actual = session.driver.current_url().map_err(|e| e.to_string())?;
                     let actual =
@@ -1004,13 +1012,29 @@ mod tests {
             })
             .unwrap();
         assert!(super::verify_navigation_state(&mut session).is_ok());
-        session
-            .driver
-            .execute(&BrowserCommand::Fill {
-                selector: "#given".into(),
-                value: PacketValue::Text("Changed".into()),
-            })
-            .unwrap();
+        let mut warning = None;
+        let result = super::capture_then_recheck(
+            &mut session,
+            "https://example.invalid/next",
+            false,
+            None,
+            &mut warning,
+            |session| {
+                session
+                    .driver
+                    .execute(&BrowserCommand::Fill {
+                        selector: "#given".into(),
+                        value: PacketValue::Text("Changed".into()),
+                    })
+                    .unwrap();
+                Some("fictional capture warning".into())
+            },
+        );
+        assert!(result
+            .unwrap_err()
+            .contains("previously filled answer changed"));
+        assert_eq!(warning.as_deref(), Some("fictional capture warning"));
+        assert_eq!(session.driver.current_url().unwrap(), url);
         assert!(super::verify_navigation_state(&mut session).is_err());
         fn fixture_check(_: &str, _: waypoint_policy::Operation) -> Result<(), String> {
             Ok(())
