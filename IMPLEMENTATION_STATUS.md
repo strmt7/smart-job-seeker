@@ -1,3 +1,7 @@
+## Expired employer result — 2026-11-03
+
+- A bounded robots-checked Crawl4AI capture of the Experian result from the prior Bogotá search returned HTTP 200 and stated that the vacancy had expired. The native receipt is retained outside Git (SHA-256 `ba6782d65f678eeaefb524f21e10748057784b7a9247d04ec3cc4815a6df3243`). Listing inspection now recognizes a bounded set of English vacancy/position/role/job/opening phrases for expired, filled, closed or unpublished wording and reports a source excerpt as an advisory. A captured-page test and a read-only real endpoint test found the expired wording and saved no job; focused tests and Windows web Clippy passed. This is not exhaustive or multilingual, and wording can refer to another role or be misleading. No application was submitted.
+
 ## Wider-web result and unpublished listing — 2026-11-03
 
 - Two non-personal searches through the Waypoint interface returned ten candidate links each; leading results included employer pages as well as articles and job indexes. A bounded robots-checked Crawl4AI capture of a Fraunhofer employer result returned HTTP 200 but included “This position is currently not published.” The native receipt is retained outside Git (SHA-256 `1bb132903798ec380db61cace16517a3c0753323a9d2cb362e7cb65d0bdcc076`). The first capture command used the wrong Python environment and failed before opening the page; the isolated provider retry succeeded.

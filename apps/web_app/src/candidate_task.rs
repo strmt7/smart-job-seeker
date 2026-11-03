@@ -431,23 +431,45 @@ fn attach_page_closure_hint(job: &mut Value, capture: &Value) {
     else {
         return;
     };
-    let phrases = [
+    let mut phrases: Vec<String> = [
         "closed positions",
         "applications are closed",
         "applications closed",
         "no longer accepting applications",
-        "position is closed",
-        "position is currently not published",
-        "position has been filled",
-    ];
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    for subject in ["position", "vacancy", "role", "job", "opening"] {
+        for predicate in [
+            "is closed",
+            "has been filled",
+            "has expired",
+            "has now expired",
+            "is expired",
+            "is now expired",
+            "is currently not published",
+            "is no longer published",
+        ] {
+            phrases.push(format!("{subject} {predicate}"));
+        }
+    }
     let excerpt = text.lines().find_map(|line| {
         let lower = line.to_ascii_lowercase();
-        let (offset, phrase) = phrases
+        let (offset, length) = phrases
             .iter()
-            .filter_map(|phrase| lower.find(phrase).map(|offset| (offset, *phrase)))
+            .flat_map(|phrase| {
+                lower.match_indices(phrase).filter_map(|(offset, _)| {
+                    let before = lower[..offset].chars().next_back();
+                    let after = lower[offset + phrase.len()..].chars().next();
+                    (!before.is_some_and(char::is_alphanumeric)
+                        && !after.is_some_and(char::is_alphanumeric))
+                    .then_some((offset, phrase.len()))
+                })
+            })
             .min_by_key(|(offset, _)| *offset)?;
         let start = line.floor_char_boundary(offset.saturating_sub(50));
-        let end = line.floor_char_boundary((offset + phrase.len() + 50).min(line.len()));
+        let end = line.floor_char_boundary((offset + length + 50).min(line.len()));
         Some(line[start..end].trim())
     });
     let Some(excerpt) =
@@ -2160,6 +2182,22 @@ mod tests {
         );
         assert!(unpublished.contains("position is currently not published"));
         assert!(unpublished.contains("verify the current status"));
+        for text in [
+            "This vacancy has now expired.",
+            "The role is no longer published.",
+            "The job has been filled.",
+        ] {
+            assert!(
+                super::inspection_error_with_page_hint("Review".into(), text)
+                    .contains("possible closure wording")
+            );
+        }
+        for text in ["The vacancy has not expired.", "A new job is open."] {
+            assert!(
+                !super::inspection_error_with_page_hint("Review".into(), text)
+                    .contains("possible closure wording")
+            );
+        }
         assert!(!reason.contains("fictional"));
         let same_path = url::Url::parse("https://example.org/jobs/123?secret=fictional").unwrap();
         let reason = super::inspection_error_with_page_hint(
