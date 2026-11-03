@@ -2275,6 +2275,61 @@ mod tests {
         assert_eq!(driver.0.opened.len(), 2);
     }
 
+    #[test]
+    #[ignore = "starts a local browser against a fictional HTTP redirect"]
+    fn browser_redirect_destination_is_reported_for_review() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let finished = Arc::new(AtomicBool::new(false));
+        let server_finished = finished.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !server_finished.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                        let mut request = [0u8; 4096];
+                        let count = stream.read(&mut request).unwrap_or(0);
+                        let request = String::from_utf8_lossy(&request[..count]);
+                        if request.starts_with("GET /role/apply ") {
+                            let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /other-role\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        } else {
+                            let body = "<html><body><form><label>Name<input name='name'></label></form></body></html>";
+                            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let requested = url::Url::parse(&format!("{base}/role/apply")).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let page = browser.open(requested.as_str()).unwrap();
+        let reached = url::Url::parse(&browser.current_url().unwrap()).unwrap();
+        let warning =
+            crate::application_check::application_path_redirect_notice(&requested, &reached)
+                .unwrap();
+        assert!(warning.contains("verify the role"));
+        assert_eq!(page.schema.fields.len(), 1);
+        assert!(browser
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+        drop(browser);
+        finished.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+    }
+
     struct EmbeddedDriver(FakeDriver);
     impl BrowserDriver for EmbeddedDriver {
         fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
