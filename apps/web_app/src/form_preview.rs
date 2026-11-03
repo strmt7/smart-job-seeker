@@ -292,8 +292,8 @@ fn required_value_valid(
                     .count()
                     == 1
         }
-        (FormFieldType::Number { .. }, PacketValue::Text(value)) => {
-            waypoint_applications::form_mapping::valid_number(value)
+        (FormFieldType::Number { min, max, .. }, PacketValue::Text(value)) => {
+            number_within_known_bounds(value, min.as_deref(), max.as_deref())
         }
         (FormFieldType::MultiSelect { options }, PacketValue::TextList(values)) => {
             valid_multi_select(options, values)
@@ -306,6 +306,25 @@ fn required_value_valid(
         (FormFieldType::File, PacketValue::FileRef { name }) => !name.trim().is_empty(),
         _ => false,
     }
+}
+
+// This is an early review check, not a replacement for live browser validity.
+// Invalid or absent HTML bounds do not impose a constraint.
+fn number_within_known_bounds(value: &str, min: Option<&str>, max: Option<&str>) -> bool {
+    use waypoint_applications::form_mapping::valid_number;
+    if !valid_number(value) {
+        return false;
+    }
+    let Ok(number) = value.parse::<f64>() else {
+        return false;
+    };
+    let bound = |value: &str| {
+        valid_number(value)
+            .then(|| value.parse::<f64>().ok())
+            .flatten()
+    };
+    !min.and_then(bound).is_some_and(|min| number < min)
+        && !max.and_then(bound).is_some_and(|max| number > max)
 }
 
 /// Pair each reviewed value with the original site question before any browser
@@ -3425,6 +3444,29 @@ mod tests {
             &field,
             &PacketValue::Text("long".into())
         ));
+        field.field_type = FormFieldType::Number {
+            min: Some("2".into()),
+            max: Some("10".into()),
+            step: None,
+        };
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::Text("1".into())
+        ));
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::Text("11".into())
+        ));
+        assert!(required_value_valid(&field, &PacketValue::Text("2".into())));
+        assert!(required_value_valid(
+            &field,
+            &PacketValue::Text("10".into())
+        ));
+        assert!(!required_value_valid(
+            &field,
+            &PacketValue::Text("NaN".into())
+        ));
+        assert!(number_within_known_bounds("3", Some("invalid"), None));
     }
 
     #[test]
