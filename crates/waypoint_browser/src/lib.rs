@@ -6419,11 +6419,14 @@ fn application_links_from_document(root: &Value) -> Vec<String> {
             // Decorative arrows and punctuation are often part of a link's accessible name.
             // Keep the vocabulary conservative: this only proposes a destination, not a submission.
             let normalized = label.trim_matches(|c: char| !c.is_alphanumeric());
-            let candidate = [
+            let words: Vec<_> = normalized.split_whitespace().collect();
+            let candidate = matches!(
+                words.as_slice(),
+                ["apply", "for", "job" | "position" | "role"]
+                    | ["apply", "for", "this" | "the", "job" | "position" | "role"]
+            ) || [
                 "apply",
                 "apply now",
-                "apply for this job",
-                "apply for this position",
                 "start application",
                 "start your application",
                 "bewerben",

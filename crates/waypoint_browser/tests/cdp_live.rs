@@ -2310,6 +2310,25 @@ fn visible_controls_are_found_after_css_hidden_candidates() {
 }
 
 #[test]
+#[ignore = "launches one local browser against fictional application links"]
+fn application_link_variants_are_detected_without_final_actions() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver.open(&file_url("form_apply_variants.html")).unwrap();
+    let links = driver.application_links().unwrap();
+    assert_eq!(links.len(), 3);
+    for wanted in ["/one", "/two", "/three"] {
+        assert!(links.iter().any(|link| link == wanted));
+    }
+    assert!(!links
+        .iter()
+        .any(|link| link == "/never" || link == "/other"));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("clicked") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();

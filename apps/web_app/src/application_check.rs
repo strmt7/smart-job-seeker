@@ -1169,6 +1169,88 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "read-only live listing and application check; requires independently reviewed URLs"]
+    fn live_general_listing_and_application_are_inspected_without_submission() {
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let listing = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed listing URL");
+        let application =
+            std::env::var("WAYPOINT_LIVE_APPLICATION_URL").expect("reviewed application URL");
+        let first = url::Url::parse(&listing).unwrap();
+        let second = url::Url::parse(&application).unwrap();
+        assert_eq!(first.scheme(), "https");
+        assert_eq!(first.origin(), second.origin());
+        for url in [&listing, &application] {
+            crate::form_links::check_destination(url, waypoint_policy::Operation::Read)
+                .expect("source permits inspection");
+            let parsed = waypoint_net::parse_url(url).unwrap();
+            waypoint_net::resolve_public(&parsed).expect("public destination");
+        }
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let form = browser.open(&application).expect("application page open");
+        println!(
+            "Application fields: {}; review reasons: {}",
+            form.schema.fields.len(),
+            form.walls.len()
+        );
+        assert!(
+            !form.schema.fields.is_empty(),
+            "no form fields were detected"
+        );
+        let again = browser.inspect_current().expect("recheck application");
+        println!(
+            "Repeat inspection: fields {}; schema changed {}; walls changed {}",
+            again.schema.fields.len(),
+            form.schema.schema_hash_input() != again.schema.schema_hash_input(),
+            form.walls != again.walls
+        );
+        if form.schema.schema_hash_input() != again.schema.schema_hash_input() {
+            for field in &form.schema.fields {
+                if !again.schema.fields.contains(field) {
+                    println!("Earlier-only field label: {}", field.label);
+                }
+            }
+            for field in &again.schema.fields {
+                if !form.schema.fields.contains(field) {
+                    println!("Later-only field label: {}", field.label);
+                }
+            }
+        }
+        println!(
+            "Earlier walls: {:?}; later walls: {:?}",
+            form.walls, again.walls
+        );
+        browser.open(&listing).expect("listing page open");
+        let links = browser.application_links().unwrap();
+        let vetted = crate::form_links::candidates(&mut browser).unwrap();
+        assert_eq!(
+            super::vetted_application_destination(&listing, &links, &vetted, false).as_deref(),
+            Some(application.as_str())
+        );
+        assert!(browser.trace.iter().all(|line| !line.contains("typed")
+            && !line.contains("clicked")
+            && !line.contains("submitted")));
+        drop(browser);
+        super::start(
+            "live-general-check".into(),
+            "fictional-job".into(),
+            listing,
+            false,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let (_, _, result, review) = loop {
+            if let Some(done) = poll("live-general-check").unwrap() {
+                break done;
+            }
+            assert!(std::time::Instant::now() < deadline, "check timed out");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        acknowledge("live-general-check").unwrap();
+        println!("Listing check: {result}; manual review: {review}");
+        assert!(!result.contains("could not be opened"), "{result}");
+    }
+
+    #[test]
     #[ignore = "read-only live browser check; requires a reviewed public URL"]
     fn live_public_application_check_reports_result() {
         let _guard = TASK_TEST_LOCK.lock().unwrap();
