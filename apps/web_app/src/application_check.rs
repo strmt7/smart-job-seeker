@@ -1548,6 +1548,7 @@ mod tests {
         let after = browser.inspect_current().expect("reinspect same browser");
         assert_eq!(browser.current_url().unwrap(), url);
         println!("Before: {} fields, dialog {}; after: {} fields, dialog {}; remaining review reasons {}", before.schema.fields.len(), before.walls.iter().any(|w| w.contains("A dialog covers a form field")), after.schema.fields.len(), after.walls.iter().any(|w| w.contains("A dialog covers a form field")), after.walls.len());
+        println!("After review: {}", super::obstacle_message(&after.walls));
         assert!(browser
             .trace
             .iter()
