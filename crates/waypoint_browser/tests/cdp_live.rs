@@ -3919,6 +3919,46 @@ fn nested_frame_fields_are_bound_to_every_visible_ancestor() {
 }
 
 #[test]
+#[ignore = "launches a real browser against a fictional three-level embedded form"]
+fn three_level_frame_field_is_bound_to_every_ancestor() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let page = driver
+        .open(&file_url("form_iframe_three_levels.html"))
+        .unwrap();
+    let selector = page
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "Three-level name")
+        .expect("three-level field")
+        .selector
+        .clone();
+    assert_eq!(selector.matches("waypoint-frame:").count(), 3);
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: selector.clone(),
+            value: PacketValue::Text("Fictional".into()),
+        })
+        .unwrap();
+    driver.verify_text_value(&selector, "Fictional").unwrap();
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#replace".into(),
+        })
+        .unwrap();
+    assert!(driver
+        .execute(&BrowserCommand::Fill {
+            selector,
+            value: PacketValue::Text("Must not reach replacement".into())
+        })
+        .is_err());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches a real browser against a fictional staged form"]
 fn staged_form_is_inspected_until_the_schema_settles() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
