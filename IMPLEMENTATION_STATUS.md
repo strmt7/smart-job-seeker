@@ -1,3 +1,7 @@
+## Public web-search batch observation — 2026-11-03
+
+- The web-search batch worker queried Wiby with three generic job phrases. All three requests succeeded, but two retained no candidates and the six retained for “remote rust jobs” included unrelated pages. A separate FreeSerp test returned 40 retained candidates across two phrases and two pages, with four successful requests. These are provider-returned candidates, not verified current jobs or application routes; the tests did not assess FreeSerp relevance. No candidate details were sent and no applications were opened or submitted.
+
 ## Windows web integration check — 2026-11-03
 
 - After the recent template, match-coverage and navigation changes, the Windows web-app suite passed with 653 tests passed and 359 ignored. The ignored tests include live-model, browser and network cases; this run does not establish their behavior or end-to-end application capability. Tests ran serially with the model unloaded.
