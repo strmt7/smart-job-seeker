@@ -10151,13 +10151,13 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("digest"));
-        model_inventory_memory_snapshot(&mut inventory, &tags, 16 * gib - 1, &gpu);
+        model_inventory_memory_snapshot(&mut inventory, &tags, 15 * gib - 1, &gpu);
         assert_eq!(inventory["models"][0]["memory_check"]["state"], "not_ready");
         assert!(inventory["models"][0]["memory_check"]["reason"]
             .as_str()
             .unwrap()
-            .contains("16384 MiB required"));
-        model_inventory_memory_snapshot(&mut inventory, &tags, 16 * gib, &gpu);
+            .contains("15360 MiB required"));
+        model_inventory_memory_snapshot(&mut inventory, &tags, 15 * gib, &gpu);
         assert_eq!(
             inventory["models"][0]["memory_check"]["state"],
             "fits_snapshot"
