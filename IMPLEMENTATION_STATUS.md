@@ -1,3 +1,7 @@
+## Visual comparison label alignment — 2026-11-03
+
+- The web interface now follows the backend's conservative page-heading/field-label matching when combining visual observations. A scripted multi-segment flow and focused tests cover a heading-prefixed field, duplicate leaf labels, conflicting observations and freshness checks. The interface still requires unique matching and a live-value confirmation; these tests do not establish model accuracy on real employer forms.
+
 ## Listing inspection with unavailable local inference — 2026-11-03
 
 - A read-only test exercised the listing-inspection start and status endpoints on the previously captured University of Cyprus vacancy while no model was resident. It returned the page's possible closure wording for manual review and saved no job. The UI now retains an individual inspection failure message in the recovery panel; a focused JavaScript test checked that behavior. This is one external listing and a backend endpoint test, not a rendered UI or broad vacancy-classification evaluation. The no-model case was retested after extending the same advisory to model setup and extraction errors; the latter errors have only been exercised with a simulated inference failure. Windows web Clippy and focused tests passed. No application was submitted.
