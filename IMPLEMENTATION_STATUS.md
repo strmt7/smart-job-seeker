@@ -1,3 +1,7 @@
+## Broad-search employer rechecks — 2026-11-03
+
+- A broader non-personal search through Waypoint returned ten unverified candidates, including career articles and a Capital One employer result. A robots-checked Crawl4AI capture of that employer URL returned HTTP 404 (native receipt SHA-256 `33980b26581b0ac894e40f25856bb65011ed875438a24fd0f8167d57e2469137`), so it was not used as an application form. A separate previously observed DoorDash Greenhouse listing returned HTTP 200 with the expected title (native receipt SHA-256 `2fa54c964505714e72fb3c6d9f12b1529895f38257715b20d724830ea5078e4a`). Waypoint's read-only check initially saw eight fields and eleven custom choices with incomplete inventory, but the application check detected changing fields or review signals and required another inspection. This does not establish vacancy status or successful completion. No model was loaded, no applicant data was entered and no application was submitted.
+
 ## Empty wider-web search guidance — 2026-11-03
 
 - A site-restricted FreeSerp search through Waypoint returned zero provider results; this does not establish whether matching vacancies exist or why the provider returned none. The interface now explains that limitation and suggests broader terms, removing operators or another provider. Focused UI tests passed, and the guidance was rendered in the actual interface using a mocked empty response in an isolated workspace. No candidate information or application was submitted.
