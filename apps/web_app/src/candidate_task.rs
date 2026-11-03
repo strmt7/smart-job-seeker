@@ -1918,6 +1918,7 @@ fn no_model_inspection_reason(
     original: &url::Url,
     reached: &url::Url,
     course_hint: bool,
+    page_text: &str,
 ) -> String {
     let mut reason = String::new();
     if crate::application_check::same_origin_path_redirect_notice(original, reached).is_some() {
@@ -1928,6 +1929,15 @@ fn no_model_inspection_reason(
     } else {
         "No structured job found and no eligible local model is loaded; review manually"
     });
+    let mut advisory = json!({});
+    attach_page_closure_hint(
+        &mut advisory,
+        &json!({"page_text_status":"captured", "page_text":page_text}),
+    );
+    if let Some(warning) = advisory["extraction_warnings"][0].as_str() {
+        reason.push_str(". ");
+        reason.push_str(warning);
+    }
     reason
 }
 
@@ -2017,6 +2027,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
                     &original,
                     &reached,
                     incomplete_structured.is_none() && structured_course_hint(&scripts),
+                    &page_text,
                 ))?;
                 let _lease = crate::doc_suggest::lease()?;
                 let llm = OllamaInference::new("http://127.0.0.1:11434",model.clone()).map_err(|e|e.to_string())?.with_resident_context();
@@ -2119,14 +2130,23 @@ mod tests {
     fn missing_model_reports_path_redirect_without_exposing_query() {
         let original = url::Url::parse("https://example.org/jobs/123").unwrap();
         let reached = url::Url::parse("https://example.org/careers?secret=fictional").unwrap();
-        let reason = super::no_model_inspection_reason(&original, &reached, false);
+        let reason = super::no_model_inspection_reason(
+            &original,
+            &reached,
+            false,
+            "Deadline: Closed Positions",
+        );
         assert!(reason.contains("redirected to a different page"));
         assert!(reason.contains("may be stale"));
+        assert!(reason.contains("Deadline: Closed Positions"));
+        assert!(reason.contains("another role"));
         assert!(!reason.contains("fictional"));
         let same_path = url::Url::parse("https://example.org/jobs/123?secret=fictional").unwrap();
-        let reason = super::no_model_inspection_reason(&original, &same_path, true);
+        let reason =
+            super::no_model_inspection_reason(&original, &same_path, true, "Applications are open");
         assert!(!reason.contains("redirected"));
         assert!(reason.contains("course metadata"));
+        assert!(!reason.contains("closure wording"));
     }
 
     #[test]
