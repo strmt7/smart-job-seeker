@@ -222,6 +222,44 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             requests.push((query.clone(), page, page_url));
         }
     }
+    start_requests(id, provider, requests)
+}
+
+/// Start only explicitly requested query/page pairs, for a user-reviewed retry.
+pub fn start_selected(
+    id: String,
+    provider: String,
+    pairs: Vec<(String, u8)>,
+) -> Result<(), String> {
+    if crate::web_search::busy() {
+        return Err("A web search is active".into());
+    }
+    if pairs.is_empty() || pairs.len() > 50 {
+        return Err("Choose 1 to 50 search pages".into());
+    }
+    let mut seen = HashSet::new();
+    let mut phrases = HashSet::new();
+    let mut requests = Vec::new();
+    for (query, page) in pairs {
+        let query = query.trim().to_owned();
+        if !(1..=5).contains(&page) || !seen.insert((query.to_lowercase(), page)) {
+            return Err("Search pages must be distinct and numbered 1 to 5".into());
+        }
+        phrases.insert(query.to_lowercase());
+        if phrases.len() > 10 {
+            return Err("Choose at most 10 distinct search phrases".into());
+        }
+        let url = crate::web_search::request_url(&provider, &query)?;
+        requests.push((query, page, crate::web_search::page_url(&url, page)));
+    }
+    start_requests(id, provider, requests)
+}
+
+fn start_requests(
+    id: String,
+    provider: String,
+    requests: Vec<(String, u8, url::Url)>,
+) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Web search unavailable")?;
     if task.is_some() {
         return Err("A batch search is running or awaiting its result".into());
@@ -1456,6 +1494,68 @@ mod tests {
                 ("second".into(), 2)
             ]
         );
+        provider.join().unwrap();
+    }
+
+    #[test]
+    fn selected_retry_requests_only_the_chosen_pages() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let provider = std::thread::spawn(move || {
+            for (query, page) in [("first", 2), ("second", 1)] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096];
+                let n = stream.read(&mut request).unwrap();
+                let request = std::str::from_utf8(&request[..n]).unwrap();
+                assert!(request.contains(&format!("q={query}")));
+                assert!(request.contains(&format!("pageno={page}")));
+                let body = r#"{"results":[]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            listener.set_nonblocking(true).unwrap();
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+        });
+        let url = format!("http://127.0.0.1:{port}/");
+        assert!(start_selected("invalid".into(), url.clone(), vec![("first".into(), 0)]).is_err());
+        assert!(start_selected(
+            "invalid".into(),
+            url.clone(),
+            vec![("first".into(), 1), ("FIRST".into(), 1)]
+        )
+        .is_err());
+        start_selected(
+            "selected-pages".into(),
+            url,
+            vec![("first".into(), 2), ("second".into(), 1)],
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = poll("selected-pages", acknowledged).unwrap();
+            if result["status"] == "complete" {
+                assert_eq!(result["coverage"]["succeeded_pages"], 2);
+                assert_eq!(
+                    result["plan"],
+                    json!([{"query":"first","page":2},{"query":"second","page":1}])
+                );
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
         provider.join().unwrap();
     }
 

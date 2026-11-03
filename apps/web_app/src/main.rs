@@ -501,6 +501,32 @@ fn check_search_plan_binding(ws: &Workspace, body: &Value) -> Result<(), String>
     Ok(())
 }
 
+fn selected_search_pages(
+    plan: &Value,
+    queries: &[String],
+    pages: u64,
+) -> Result<Vec<(String, u8)>, String> {
+    let plan = plan
+        .as_array()
+        .filter(|items| !items.is_empty() && items.len() <= 50)
+        .ok_or("Invalid selected-page plan")?;
+    plan.iter()
+        .map(|item| {
+            let query = item["query"]
+                .as_str()
+                .ok_or("Invalid selected-page query")?;
+            if !queries.iter().any(|entered| entered.trim() == query) {
+                return Err("Selected-page queries must match the reviewed search phrases".into());
+            }
+            let page = item["page"]
+                .as_u64()
+                .filter(|page| *page >= 1 && *page <= pages && *page <= 5)
+                .ok_or("Invalid selected-page number")?;
+            Ok((query.to_owned(), page as u8))
+        })
+        .collect()
+}
+
 fn fit_inputs(
     ws: &Workspace,
     job_id: &JobIdentityId,
@@ -3045,6 +3071,9 @@ fn serve(
                         .ok_or("Search phrases must be text".to_owned())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            if queries.is_empty() || queries.len() > 10 {
+                return Err("Enter 1 to 10 search phrases".into());
+            }
             let id = random_id()?;
             let pages = body
                 .get("pages")
@@ -3053,7 +3082,12 @@ fn serve(
             if !(1..=5).contains(&pages) {
                 return Err("Choose 1 to 5 pages per search phrase".into());
             }
-            web_search_batch::start(id.clone(), provider.to_owned(), queries, pages as u8)?;
+            if let Some(plan) = body.get("page_plan") {
+                let pairs = selected_search_pages(plan, &queries, pages)?;
+                web_search_batch::start_selected(id.clone(), provider.to_owned(), pairs)?;
+            } else {
+                web_search_batch::start(id.clone(), provider.to_owned(), queries, pages as u8)?;
+            }
             // Make the plan recoverable before acknowledging the start. Search
             // can continue in memory if secure persistence is unavailable, but
             // the client must be told that restart recovery is not yet assured.
@@ -9569,6 +9603,25 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+    }
+
+    #[test]
+    fn selected_search_pages_must_match_reviewed_queries_and_bounds() {
+        let queries = vec!["first role".to_owned(), "second role".to_owned()];
+        assert_eq!(
+            selected_search_pages(&json!([{"query":"first role","page":2}]), &queries, 2).unwrap(),
+            vec![("first role".to_owned(), 2)]
+        );
+        assert!(
+            selected_search_pages(&json!([{"query":"other role","page":1}]), &queries, 2).is_err()
+        );
+        assert!(
+            selected_search_pages(&json!([{"query":"first role","page":3}]), &queries, 2).is_err()
+        );
+        assert!(
+            selected_search_pages(&json!([{"query":"first role","page":0}]), &queries, 2).is_err()
+        );
+        assert!(selected_search_pages(&json!([]), &queries, 2).is_err());
     }
 
     #[test]
