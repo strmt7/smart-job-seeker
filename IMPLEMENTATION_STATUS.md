@@ -1,3 +1,7 @@
+## Navigation advice coverage — 2026-11-03
+
+- The interface now warns when either local-model control-ranking pass returns its five-item limit, since additional relevant controls may have been omitted. The warning also appears if a submission-labeled item is removed afterward. Scripted model and UI tests passed; these do not establish navigation accuracy or exercise a live model. No application was submitted.
+
 ## Model startup memory snapshot — 2026-11-03
 
 - Startup now samples system and GPU memory after the runtime identity checks, closer to the actual load. This reduces the time in which its estimate can become stale; it is not a reservation and does not guarantee against later memory pressure. The resource-gate unit test and formatting check passed. No model was loaded for this change.
