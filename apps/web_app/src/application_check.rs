@@ -1581,6 +1581,57 @@ mod tests {
             .iter()
             .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
     }
+
+    #[test]
+    #[ignore = "headless diagnostic on one reviewed public form; attempts only its privacy-notice control"]
+    fn live_headless_reviewed_consent_reinspect() {
+        use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
+        let url = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed public URL");
+        assert_eq!(
+            url,
+            "https://jobs.lever.co/apex-ai/f2fa3bf3-ddf5-4a9a-9c92-4647a31ef486/apply"
+        );
+        crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
+        waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let before = browser.open(&url).unwrap();
+        assert_eq!(browser.current_url().unwrap(), url);
+        assert!(before
+            .walls
+            .iter()
+            .any(|w| w.contains("A dialog covers a form field")));
+        let action = browser.execute(&BrowserCommand::Click {
+            selector: "button.cc-dismiss".into(),
+        });
+        if let Err(error) = action {
+            assert!(
+                error.0.contains("Click target could submit or navigate"),
+                "unexpected refusal: {error}"
+            );
+            println!("Privacy notice control refused by the navigation/submit guard; manual review is required.");
+            assert!(browser
+                .trace
+                .iter()
+                .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+            return;
+        }
+        let after = browser.inspect_current().unwrap();
+        assert_eq!(browser.current_url().unwrap(), url);
+        println!(
+            "before fields={} after fields={}; after signal classes={:?}",
+            before.schema.fields.len(),
+            after.schema.fields.len(),
+            after
+                .walls
+                .iter()
+                .map(|wall| wall.split(':').next().unwrap_or(""))
+                .collect::<Vec<_>>()
+        );
+        assert!(browser
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
+    }
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn browser_start_errors_distinguish_missing_browser_without_exposing_details() {
