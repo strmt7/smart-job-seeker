@@ -751,6 +751,13 @@ fn execute_and_verify_field(
     command: &BrowserCommand,
     completed: &mut Vec<Value>,
 ) -> Result<(), String> {
+    // Avoid generating input/change events when the exact reviewed value is
+    // already visible and valid. Verification remains required and the field
+    // stays in the completed set for subsequent checks.
+    if verify_filled_field(driver, preview, &field.selector).is_ok() {
+        completed.push(serde_json::json!({"selector":field.selector,"label":field.label,"already_matching":true}));
+        return Ok(());
+    }
     driver.execute(command).map_err(|e| {
         format!(
             "Prefill stopped at {}; review the form: {e}",
@@ -1800,6 +1807,68 @@ mod tests {
             .trace
             .iter()
             .all(|event| !event.contains("submitted")));
+    }
+
+    #[test]
+    #[ignore = "starts a local browser against a fictional prefilled form"]
+    fn already_matching_text_is_verified_without_retyping() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-existing-value.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(path).unwrap().to_string();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = FormPreview {
+            schema: live.schema,
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#second".into(),
+                    value: PacketValue::Text("Existing answer".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#first".into(),
+                    value: PacketValue::Text("New response".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut completed = Vec::new();
+        for mapping in &preview.suggestions {
+            let field = preview
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.selector == mapping.field_selector)
+                .unwrap();
+            let command = BrowserCommand::Fill {
+                selector: mapping.field_selector.clone(),
+                value: mapping.value.clone(),
+            };
+            execute_and_verify_field(&mut driver, &preview, field, &command, &mut completed)
+                .unwrap();
+        }
+        assert_eq!(completed.len(), 2);
+        assert_eq!(completed[0]["already_matching"], true);
+        assert_eq!(
+            driver
+                .read_attribute("#second", "data-input-events")
+                .unwrap(),
+            None
+        );
+        assert!(driver
+            .read_attribute("#first", "data-input-events")
+            .unwrap()
+            .is_some());
+        driver
+            .verify_text_value("#second", "Existing answer")
+            .unwrap();
+        driver.verify_text_value("#first", "New response").unwrap();
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
     }
 
     #[test]

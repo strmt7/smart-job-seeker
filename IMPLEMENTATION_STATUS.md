@@ -3345,3 +3345,13 @@ new candidates share the 600-link limit. A retry that would exceed the stored
 50-page history limit is refused with a recovery explanation. Fictional local
 tests cover carryover, repeated references and both limits; no external search
 or employer application was performed in this check.
+
+### Existing application values (2026-11-03)
+
+During reviewed prefill, a value that already matches the reviewed answer is
+verified and retained instead of re-entered; it remains in the completed-field
+set for later checks. A fictional browser fixture confirmed no input event on
+the matching field while an empty field was filled. A separate fixture still
+stopped before changing fields when an existing value conflicted. Twenty-seven
+non-ignored form-preview tests passed; this does not establish behavior on all
+application sites, and no application was submitted.
