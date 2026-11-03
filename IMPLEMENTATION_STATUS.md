@@ -1,3 +1,7 @@
+## Workable reinspection after cookie dialog — 2026-11-03
+
+- In a temporary visible browser on the same SmartNews application, the operator declined optional cookies and the existing read-only reinspection test examined the same page again. The standard-field count increased from five to eight and the dialog warning cleared; 21 other review reasons remained. This confirms the dialog affected this inspection, not that all controls are now detectable or that the form can be completed. No model was loaded, no applicant information was entered, and no application was submitted. The browser test passed and its temporary browser closed.
+
 ## Workable obstruction screenshot — 2026-11-03
 
 - A read-only screenshot of the previously reviewed SmartNews application showed a cookie dialog and dimmed form behind it. First-name, last-name and email labels are visible in the screenshot, while the browser inventory reported five standard fields and seven custom radio groups with an incomplete inventory. This suggests the obstruction contributes to incomplete inspection; the form was not reinspected after the dialog was resolved, so the cause is not established. The local screenshot is retained under ignored `target/` for development. No dialog choice was made, no fields were filled and no application was submitted.
