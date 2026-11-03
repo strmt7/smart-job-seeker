@@ -10032,6 +10032,62 @@ mod tests {
         assert_eq!(result["search_context"]["engines"], json!(["fixture"]));
         assert_eq!(result["search_context_matches_url"], false);
     }
+    #[cfg(windows)]
+    #[test]
+    fn saved_tail_evidence_survives_workspace_reopen_and_endpoint() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let id;
+        {
+            let mut ws = Workspace::open(directory.path()).unwrap();
+            let added = manual_job::add(
+                &mut ws,
+                &json!({"url":"https://example.test/job","title":"Engineer","employer":"Example"}),
+                1,
+            )
+            .unwrap();
+            id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let current = json!({"title":"Engineer","employer":"Example","location":"","description":"","requisition_id":"","remote":false});
+            let digest = candidate_task::listing_digest(&current).unwrap();
+            let metadata = json!({"source_url":"https://example.test/job","requested_url":"https://example.test/job","captured_at":1750000000,"structured_source_status":"unavailable","page_text_status":"truncated","page_text":"Earlier page text","page_tail_status":"truncated","page_tail_text":"This fictional vacancy has expired.","extraction_provenance":{"kind":"structured","listing_digest":digest,"warnings":["Page-tail sample; intervening text was not checked."]}});
+            assert!(ws
+                .save_job_source_only(&id, &serde_json::to_vec(&metadata).unwrap())
+                .unwrap());
+        }
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"id":id.as_str()}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/listing-salary-evidence HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(result["matches_current_url"], true);
+        assert_eq!(
+            result["extraction_provenance"]["matches_current_listing"],
+            true
+        );
+        assert_eq!(
+            result["extraction_provenance"]["page_tail_status"],
+            "truncated"
+        );
+        assert_eq!(
+            result["extraction_provenance"]["page_tail_text"],
+            "This fictional vacancy has expired."
+        );
+        assert!(result["extraction_provenance"]["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("intervening text"));
+    }
+
     #[test]
     #[ignore = "queries the existing local Ollama inventory without loading a model"]
     fn model_inventory_http_reads_local_ollama() {
