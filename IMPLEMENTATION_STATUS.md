@@ -1,3 +1,7 @@
+## Form reinspection comparison UI — 2026-11-03
+
+- The form review now compares field labels from an immediately preceding inspection when the user selects Inspect current page. Added and missing labels are advisory: repeated labels, changed pages and incomplete inspection can make the comparison misleading. A browser test loaded the actual Waypoint interface in an isolated workspace, supplied fictional inspection responses, clicked the reinspection button and observed the rendered two-to-five-field summary. The first test attempt waited for the initially hidden panel and timed out; using an attached-element wait allowed the interaction to complete. This test mocked the inspection responses and does not establish an end-to-end employer-site rescan or model accuracy. The isolated browser and server were stopped.
+
 ## Workable reinspection after cookie dialog — 2026-11-03
 
 - In a temporary visible browser on the same SmartNews application, the operator declined optional cookies and the existing read-only reinspection test examined the same page again. The standard-field count increased from five to eight and the dialog warning cleared; 21 other review reasons remained. This confirms the dialog affected this inspection, not that all controls are now detectable or that the form can be completed. No model was loaded, no applicant information was entered, and no application was submitted. The browser test passed and its temporary browser closed.
