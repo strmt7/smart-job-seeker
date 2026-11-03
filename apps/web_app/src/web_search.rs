@@ -402,6 +402,12 @@ pub(crate) fn parse_excluding(
             advertisements_omitted += 1;
             continue;
         }
+        // The provider's generic marker can mean a sponsored listing or visa
+        // sponsorship. Retain it as ambiguous evidence rather than dropping it.
+        let sponsored_marker = item["sponsored"] == true
+            || item["type"]
+                .as_str()
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("sponsored"));
         let Some(raw) = item.get("url").and_then(Value::as_str) else {
             continue;
         };
@@ -509,6 +515,9 @@ pub(crate) fn parse_excluding(
                 .chain(repeated.iter_mut())
                 .find(|entry| entry["url"] == url.as_str())
             {
+                if sponsored_marker {
+                    earlier["provider_sponsored_marker"] = json!(true);
+                }
                 merge_result_provenance(
                     earlier,
                     &title,
@@ -543,12 +552,12 @@ pub(crate) fn parse_excluding(
         if excluded.contains(url.as_str()) {
             previously_seen += 1;
             if repeated.len() < 10 {
-                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
+                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"provider_sponsored_marker":sponsored_marker,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
             }
             continue;
         }
         if links.len() < 100 {
-            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
+            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"provider_sponsored_marker":sponsored_marker,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
         } else {
             result_limit_omitted += 1;
         }
@@ -674,6 +683,9 @@ mod tests {
         assert_eq!(result["results_rejected"], 1);
         assert_eq!(result["results"].as_array().unwrap().len(), 4);
         assert_eq!(result["results"][0]["title"], "Role");
+        assert_eq!(result["results"][1]["provider_sponsored_marker"], true);
+        assert_eq!(result["results"][2]["provider_sponsored_marker"], true);
+        assert_eq!(result["results"][3]["provider_sponsored_marker"], false);
     }
     #[test]
     fn local_openserp_search_preserves_limits_and_excludes_ads() {
@@ -1056,7 +1068,7 @@ mod tests {
     fn identical_urls_keep_bounded_engine_and_conflicting_date_evidence() {
         let rows = json!([
             {"url":"https://example.org/job", "title":"", "engines":["alpha"], "publishedDate":"2026-10-01"},
-            {"url":"https://example.org/job", "title":"Fictional role", "content":"Fictional description", "engines":["alpha","beta","gamma","delta","epsilon","zeta","eta","theta","iota"], "publishedDate":"2026-10-02"},
+            {"url":"https://example.org/job", "title":"Fictional role", "content":"Fictional description", "sponsored":true, "engines":["alpha","beta","gamma","delta","epsilon","zeta","eta","theta","iota"], "publishedDate":"2026-10-02"},
             {"url":"https://example.org/job", "engines":["beta"], "publishedDate":"2026-10-02"}
         ]);
         let data = parse(&json!({"results":rows}).to_string()).unwrap();
@@ -1064,6 +1076,7 @@ mod tests {
         assert_eq!(data["within_page_duplicates"], 2);
         assert_eq!(data["results_rejected"], 0);
         assert_eq!(item["title"], "Fictional role");
+        assert_eq!(item["provider_sponsored_marker"], true);
         assert_eq!(item["snippet"], "Fictional description");
         assert_eq!(item["engines"].as_array().unwrap().len(), 8);
         assert_eq!(item["engines_limited"], true);
@@ -1073,6 +1086,10 @@ mod tests {
         let repeated = parse_excluding(&json!({"results":rows}).to_string(), &excluded).unwrap();
         assert_eq!(repeated["previously_seen"], 1);
         assert_eq!(repeated["within_page_duplicates"], 2);
+        assert_eq!(
+            repeated["repeated_references"][0]["provider_sponsored_marker"],
+            true
+        );
         assert_eq!(
             repeated["repeated_references"][0]["title"],
             "Fictional role"

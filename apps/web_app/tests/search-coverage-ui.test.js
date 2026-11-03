@@ -45,3 +45,11 @@ assert.match(render({results_examined:4,tracking_equivalent_omitted:1,unresponsi
 
 assert.match(render({provider:'local_openserp',results_examined:1,results_reported:1,non_organic_omitted:2,unresponsive_engines:0}), /1 examined of 1 organic provider results.*2 non-organic or untyped results omitted/);
 assert.match(render({results_examined:4,advertisements_omitted:2,unresponsive_engines:0}), /2 explicitly labelled ads omitted/);
+
+const sponsoredLine = source.split('\n').find(line => line.startsWith('function sponsoredMarkerMessage('));
+assert.ok(sponsoredLine);
+const sponsoredMessage = vm.runInNewContext(`(${sponsoredLine})`);
+assert.match(sponsoredMessage(true), /advertising or job sponsorship/);
+assert.equal(sponsoredMessage(false), '');
+assert.equal(sponsoredMessage(undefined), '');
+assert.ok(source.includes('if(report.provider_sponsored_marker===true)merged.provider_sponsored_marker=true'));
