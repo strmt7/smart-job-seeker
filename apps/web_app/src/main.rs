@@ -3084,7 +3084,22 @@ fn serve(
             }
             if let Some(plan) = body.get("page_plan") {
                 let pairs = selected_search_pages(plan, &queries, pages)?;
-                web_search_batch::start_selected(id.clone(), provider.to_owned(), pairs)?;
+                let prior = match body
+                    .get("retry_source_task")
+                    .filter(|value| !value.is_null())
+                {
+                    Some(value) => web_search_batch::previous_successful_history(
+                        ws,
+                        value.as_str().ok_or("Invalid previous search identity")?,
+                    )?,
+                    None => Vec::new(),
+                };
+                web_search_batch::start_selected_with_history(
+                    id.clone(),
+                    provider.to_owned(),
+                    pairs,
+                    prior,
+                )?;
             } else {
                 web_search_batch::start(id.clone(), provider.to_owned(), queries, pages as u8)?;
             }

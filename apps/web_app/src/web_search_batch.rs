@@ -21,6 +21,7 @@ struct Task {
     checkpoint_failed: bool,
     pending: Option<Value>,
     history: Vec<Value>,
+    prior_history: Vec<Value>,
     timed_out: Arc<AtomicBool>,
     unreported: Arc<AtomicBool>,
 }
@@ -32,13 +33,67 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value, bool)>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Load only successfully collected pages from the user-sealed previous
+/// search. A retry must bind to the exact saved task, not arbitrary client data.
+pub fn previous_successful_history(
+    ws: &waypoint_workspace::Workspace,
+    source_task: &str,
+) -> Result<Vec<Value>, String> {
+    let (id, bytes) = ws
+        .latest_web_search()
+        .map_err(|error| error.to_string())?
+        .ok_or("The earlier search history is unavailable")?;
+    if id != source_task {
+        return Err(
+            "The earlier search changed; review the current results before retrying".into(),
+        );
+    }
+    let saved: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "Saved web search history is invalid")?;
+    let history = saved["history"]
+        .as_array()
+        .ok_or("Saved web search history is invalid")?;
+    let prior = match saved.get("prior_history") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(items)) => items.as_slice(),
+        _ => return Err("Saved earlier search results are invalid".into()),
+    };
+    let mut groups = Vec::new();
+    let mut count = 0usize;
+    for group in prior.iter().chain(history) {
+        if group.get("error").is_some() {
+            continue;
+        }
+        let results = group["data"]["results"]
+            .as_array()
+            .ok_or("Saved search page is invalid")?;
+        count = count
+            .checked_add(results.len())
+            .ok_or("Too many earlier search results")?;
+        if groups.len() >= 50 || count > 600 {
+            return Err("Too many earlier results to carry into a retry".into());
+        }
+        groups.push(group.clone());
+    }
+    if serde_json::to_vec(&groups)
+        .map_err(|_| "Could not serialize earlier search results")?
+        .len()
+        > 8 * 1024 * 1024
+    {
+        return Err("Earlier search results exceed the retry storage limit".into());
+    }
+    Ok(groups)
+}
 pub fn busy() -> bool {
     TASK.lock().map(|t| t.is_some()).unwrap_or(true)
 }
 pub fn pending() -> Result<Value, String> {
     let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     Ok(match tasks.as_ref() {
-        Some(task) => json!({"active":true,"task_id":task.id,"history":task.history}),
+        Some(task) => {
+            json!({"active":true,"task_id":task.id,"history":task.history,"prior_history":task.prior_history})
+        }
         None => {
             let completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
             match completed.as_ref() {
@@ -222,14 +277,24 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
             requests.push((query.clone(), page, page_url));
         }
     }
-    start_requests(id, provider, requests)
+    start_requests(id, provider, requests, Vec::new())
 }
 
 /// Start only explicitly requested query/page pairs, for a user-reviewed retry.
+#[cfg(test)]
 pub fn start_selected(
     id: String,
     provider: String,
     pairs: Vec<(String, u8)>,
+) -> Result<(), String> {
+    start_selected_with_history(id, provider, pairs, Vec::new())
+}
+
+pub fn start_selected_with_history(
+    id: String,
+    provider: String,
+    pairs: Vec<(String, u8)>,
+    prior_history: Vec<Value>,
 ) -> Result<(), String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
@@ -252,13 +317,14 @@ pub fn start_selected(
         let url = crate::web_search::request_url(&provider, &query)?;
         requests.push((query, page, crate::web_search::page_url(&url, page)));
     }
-    start_requests(id, provider, requests)
+    start_requests(id, provider, requests, prior_history)
 }
 
 fn start_requests(
     id: String,
     provider: String,
     requests: Vec<(String, u8, url::Url)>,
+    prior_history: Vec<Value>,
 ) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Web search unavailable")?;
     if task.is_some() {
@@ -288,6 +354,7 @@ fn start_requests(
         checkpoint_failed: false,
         pending: None,
         history: Vec::new(),
+        prior_history,
         timed_out,
         unreported,
     });
@@ -406,7 +473,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 task.total,
                 task.cancel.load(Ordering::Acquire),
             );
-            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history,"plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),"provider":task.provider});
+            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history,"prior_history":task.prior_history,"plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),"provider":task.provider});
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone(), false));
             *tasks = None;
@@ -443,6 +510,7 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
                 .map(|(query, page)| json!({"query":query,"page":page}))
                 .collect::<Vec<_>>());
             response["provider"] = json!(task.provider);
+            response["prior_history"] = json!(task.prior_history);
             *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
                 Some((id.to_owned(), response.clone(), false));
             *tasks = None;
@@ -504,7 +572,7 @@ pub fn persist_progress(ws: &waypoint_workspace::Workspace) -> Result<bool, Stri
     }
     let result = json!({
         "status":"failed", "processed":task.processed, "total":task.total,
-        "history":task.history, "history_saved":true, "recovered_partial":true,
+        "history":task.history, "prior_history":task.prior_history, "history_saved":true, "recovered_partial":true,
         "plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),
         "provider":task.provider,
         "error":"The app stopped before this search finished; another provider request may have been in progress"
@@ -631,6 +699,9 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: vec![
+                json!({"query":"earlier","page":1,"data":{"results":[{"url":"https://example.test/earlier"}]}}),
+            ],
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
@@ -639,6 +710,7 @@ mod tests {
             json!({"status":"complete","history":[]}),
             false,
         ));
+        assert_eq!(pending().unwrap()["prior_history"][0]["query"], "earlier");
         {
             let ws = open(dir.path());
             assert!(persist_progress(&ws).unwrap());
@@ -680,6 +752,70 @@ mod tests {
             ])
         );
         assert_eq!(result["history"][0]["page"], 2);
+        let prior = previous_successful_history(&ws, "active-fixture").unwrap();
+        assert_eq!(prior.len(), 2);
+        assert_eq!(prior[0]["query"], "earlier");
+        assert_eq!(prior[1]["page"], 2);
+        assert!(previous_successful_history(&ws, "older").is_err());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap();
+            assert!(std::str::from_utf8(&request[..n])
+                .unwrap()
+                .contains("pageno=3"));
+            let body = r#"{"results":[]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        start_selected_with_history(
+            "retry-fixture".into(),
+            format!("http://127.0.0.1:{port}/"),
+            vec![("other".into(), 3)],
+            prior,
+        )
+        .unwrap();
+        assert!(persist_progress(&ws).unwrap());
+        assert_eq!(
+            pending().unwrap()["prior_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut acknowledged = 0;
+        loop {
+            let result = poll("retry-fixture", acknowledged).unwrap();
+            if result["status"] == "complete" {
+                break;
+            }
+            if result.get("query").is_some() {
+                acknowledged += 1;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(persist_completed(&ws).unwrap());
+        worker.join().unwrap();
+        drop(ws);
+        *COMPLETED.lock().unwrap() = None;
+        let reopened = open(dir.path());
+        let saved = pending_with_saved(&reopened).unwrap();
+        assert_eq!(
+            saved["last"]["result"]["prior_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(saved["last"]["result"]["history"][0]["page"], 3);
         assert_eq!(
             result["history"][0]["data"]["results"][0]["url"],
             "https://example.test/job"
@@ -701,6 +837,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
@@ -756,6 +893,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
@@ -806,6 +944,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: timeout.clone(),
             unreported: unreported.clone(),
         });
@@ -880,6 +1019,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
@@ -1084,6 +1224,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
@@ -1120,6 +1261,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
@@ -1151,6 +1293,7 @@ mod tests {
             checkpoint_failed: false,
             pending: None,
             history: Vec::new(),
+            prior_history: Vec::new(),
             timed_out: Arc::new(AtomicBool::new(false)),
             unreported: Arc::new(AtomicBool::new(false)),
         });
