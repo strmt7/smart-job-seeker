@@ -163,9 +163,23 @@ fn qualify_unverified_support(suggestion: &mut Value, selected_source: &str) {
 }
 
 fn first_person_opening(text: &str) -> bool {
-    text.split_whitespace()
-        .next()
-        .is_some_and(|word| word.eq_ignore_ascii_case("i") || word.eq_ignore_ascii_case("we"))
+    let Some(word) = text.split_whitespace().next() else {
+        return false;
+    };
+    if word.eq_ignore_ascii_case("i") || word.eq_ignore_ascii_case("we") {
+        return true;
+    }
+    let Some((subject, ending)) = word.split_once(['\'', '’']) else {
+        return false;
+    };
+    (subject.eq_ignore_ascii_case("i")
+        && ["m", "ve", "d", "ll"]
+            .iter()
+            .any(|value| ending.eq_ignore_ascii_case(value)))
+        || (subject.eq_ignore_ascii_case("we")
+            && ["re", "ve", "d", "ll"]
+                .iter()
+                .any(|value| ending.eq_ignore_ascii_case(value)))
 }
 pub fn poll(id: &str) -> Result<Value, String> {
     let mut tasks = TASK
@@ -196,6 +210,28 @@ mod tests {
     use std::io::{Cursor, Write};
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn first_person_opening_recognizes_english_contractions() {
+        for text in [
+            "I designed",
+            "WE delivered",
+            "I've built",
+            "I’m building",
+            "we're ready",
+            "We’ll deliver",
+        ] {
+            assert!(first_person_opening(text), "{text}");
+        }
+        for text in [
+            "",
+            "Research experience",
+            "I/O systems",
+            "We'rewolf",
+            "I're invalid",
+        ] {
+            assert!(!first_person_opening(text), "{text}");
+        }
+    }
     struct Fake {
         calls: usize,
     }
@@ -263,6 +299,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(changed_voice["first_person_opening_changed"], true);
+        let contracted = suggest(
+            &mut model,
+            input_with_passage("I’ve researched", "I’ve researched"),
+        )
+        .unwrap();
+        assert_eq!(contracted["first_person_opening_changed"], true);
         let mut without_reviewed_facts = input("Fictional research");
         without_reviewed_facts.facts.clear();
         let result = suggest(&mut model, without_reviewed_facts).unwrap();

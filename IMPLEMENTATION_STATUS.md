@@ -1,3 +1,7 @@
+## Template voice review — 2026-11-03
+
+- The template-suggestion voice-change notice now recognizes common English first-person contractions with straight or curly apostrophes, including “I've” and “we’re.” A scripted suggestion and focused tests passed. This is an opening-word heuristic, not a general grammatical or multilingual voice check.
+
 ## Qualification coverage in match estimates — 2026-11-03
 
 - Fictional saved-assessment and batch API tests confirm the “no qualifications used” coverage is recomputed after reading a saved result and reaches the job-list response without exposing the qualification text. Both tests passed.
