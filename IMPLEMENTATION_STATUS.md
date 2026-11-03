@@ -3372,6 +3372,8 @@ incomplete capture, and four narrow/wide capture fixtures passed. The wide
 fixture's last-tile assertion was corrected to match the planner's bottom-aligned
 overlap. Blinking or changing content can still make a capture incomplete;
 these limited runs do not prove universal screenshot reliability.
+If the destination changes during the warm-up, the same bounded recovery
+guidance now appears as for a destination change during tile capture.
 
 ### Document review status consistency (2026-11-03)
 

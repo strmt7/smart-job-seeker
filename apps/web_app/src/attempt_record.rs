@@ -2308,7 +2308,9 @@ pub fn capture_failure_guidance(error: &str) -> Option<&'static str> {
         Some("The page image changed during capture. A blinking cursor, animation or a real page change may be responsible; inspect the page and capture again.")
     } else if error.starts_with("Page dimensions changed during both captures") {
         Some("The page dimensions changed during capture. Inspect the page and capture again.")
-    } else if error.starts_with("Page address changed during capture") {
+    } else if error.starts_with("Page address changed during capture")
+        || error.starts_with("Page address changed before capture")
+    {
         Some("The page address changed during capture. Inspect the current destination and capture again.")
     } else if error == "Page exceeded screenshot capture limits" {
         Some("The page exceeded screenshot capture limits. Some content was not captured and needs manual review.")
@@ -2540,6 +2542,11 @@ mod tests {
         .contains("dimensions"));
         assert!(
             super::capture_failure_guidance("Page address changed during capture; fixture")
+                .unwrap()
+                .contains("destination")
+        );
+        assert!(
+            super::capture_failure_guidance("Page address changed before capture; fixture")
                 .unwrap()
                 .contains("destination")
         );
