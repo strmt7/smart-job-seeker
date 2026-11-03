@@ -1149,6 +1149,10 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
                     "Required field needs review: {}",
                     field_review_label(&preview.schema, field)
                 ),
+                format!(
+                    "Suggested number is outside the observed range: {}",
+                    field_review_label(&preview.schema, field)
+                ),
             ]
         })
         .collect();
@@ -1213,6 +1217,27 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
             .into_iter()
             .map(|label| format!("Required field needs review: {label}")),
     );
+    for field in preview.schema.fields.iter().filter(|field| field.required) {
+        let FormFieldType::Number { min, max, .. } = &field.field_type else {
+            continue;
+        };
+        let mut mappings = preview
+            .suggestions
+            .iter()
+            .filter(|mapping| mapping.field_selector == field.selector);
+        let Some(PacketValue::Text(value)) = mappings.next().map(|mapping| &mapping.value) else {
+            continue;
+        };
+        if mappings.next().is_none()
+            && waypoint_applications::form_mapping::valid_number(value)
+            && !number_within_known_bounds(value, min.as_deref(), max.as_deref())
+        {
+            preview.manual_review.push(format!(
+                "Suggested number is outside the observed range: {}",
+                field_review_label(&preview.schema, field)
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3394,6 +3419,45 @@ mod tests {
                 "Required field needs review: Missing",
             ]
         );
+        preview.schema.fields.push(FormField {
+            selector: "#years".into(),
+            label: "Years".into(),
+            field_type: FormFieldType::Number {
+                min: Some("2".into()),
+                max: Some("10".into()),
+                step: None,
+            },
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        });
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#years".into(),
+            value: PacketValue::Text("1".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Suggested number is outside the observed range: Years"));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Required field needs review: Years"));
+        preview.suggestions.last_mut().unwrap().value = PacketValue::Text("2".into());
+        refresh_required_review(&mut preview);
+        assert!(!preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("Years")));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|reason| reason == "Visual review required"));
     }
 
     #[test]
