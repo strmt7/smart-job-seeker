@@ -166,11 +166,34 @@ fn ensure_inspected_page(
     Ok(())
 }
 
+fn cleared_loading_signals(before: &[String], after: &[String]) -> bool {
+    const OBSCURED: &str = "a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser";
+    const DIALOG: &str = "a custom control needs manual review: A dialog covers a form field; resolve it in the visible browser, then inspect again";
+    const GENERIC: &str = "a custom control needs manual review";
+    let signals = [
+        OBSCURED,
+        DIALOG,
+        waypoint_browser::DYNAMIC_UNSETTLED_REVIEW,
+        waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW,
+    ];
+    let cleared = signals.iter().any(|signal| {
+        before.iter().any(|wall| wall == signal) && !after.iter().any(|wall| wall == signal)
+    });
+    if !cleared {
+        return false;
+    }
+    let mut retained = before.to_vec();
+    retained.retain(|wall| {
+        !((signals.contains(&wall.as_str()) || wall == GENERIC) && !after.contains(wall))
+    });
+    retained == after
+}
+
 fn ensure_inspected_form(
     browser: &mut waypoint_browser::CdpDriver,
     expected_url: &str,
     previous: &waypoint_applications::driver::LiveForm,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     ensure_inspected_page(browser, expected_url)?;
     let current = browser
         .inspect_current()
@@ -180,9 +203,10 @@ fn ensure_inspected_form(
     let mut after_walls = current.walls.clone();
     before_walls.sort_unstable();
     after_walls.sort_unstable();
+    let loading_signals_cleared = cleared_loading_signals(&before_walls, &after_walls);
     if current.origin != previous.origin
         || current.schema.schema_hash_input() != previous.schema.schema_hash_input()
-        || before_walls != after_walls
+        || (before_walls != after_walls && !loading_signals_cleared)
     {
         let mut message = "The application page's fields or review signals changed during the check; inspect it again.".to_owned();
         if previous
@@ -196,7 +220,7 @@ fn ensure_inspected_form(
         }
         return Err(message);
     }
-    Ok(())
+    Ok(loading_signals_cleared)
 }
 
 fn inspected_text_fingerprint(
@@ -875,7 +899,9 @@ pub fn start_bound(
                     }
                 }
             }
-            ensure_inspected_form(&mut browser, &current, &page)?;
+            if ensure_inspected_form(&mut browser, &current, &page)? {
+                message.push_str(" Earlier loading or obstruction signals cleared; the initial warnings remain and manual review is needed.");
+            }
             ensure_inspected_text(&mut browser, &page_text_fingerprint)?;
             ensure_inspected_page(&mut browser, &current)?;
             if page_text_fingerprint.1 {
@@ -1086,6 +1112,32 @@ mod tests {
     }
 
     #[test]
+    fn only_cleared_obstruction_signals_can_be_retained() {
+        let generic = "a custom control needs manual review".to_owned();
+        let obscured = "a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".to_owned();
+        let captcha = "captcha present".to_owned();
+        assert!(super::cleared_loading_signals(
+            &[generic.clone(), obscured.clone()],
+            &[]
+        ));
+        assert!(!super::cleared_loading_signals(
+            std::slice::from_ref(&generic),
+            &[]
+        ));
+        assert!(!super::cleared_loading_signals(
+            &[generic.clone(), obscured.clone(), captcha.clone()],
+            &[]
+        ));
+        assert!(!super::cleared_loading_signals(
+            &[generic.clone(), obscured.clone()],
+            &[captcha]
+        ));
+        assert!(!super::cleared_loading_signals(&[], &[generic, obscured]));
+        let unstable = waypoint_browser::DYNAMIC_UNSETTLED_REVIEW.to_owned();
+        assert!(super::cleared_loading_signals(&[unstable], &[]));
+    }
+
+    #[test]
     #[ignore = "opens a local fictional changing form in a browser"]
     fn final_form_check_detects_changes_at_same_url() {
         use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
@@ -1096,7 +1148,13 @@ mod tests {
         let url = url::Url::from_file_path(fixture).unwrap().to_string();
         let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let original = browser.open(&url).unwrap();
-        super::ensure_inspected_form(&mut browser, &url, &original).unwrap();
+        assert!(!super::ensure_inspected_form(&mut browser, &url, &original).unwrap());
+        let mut earlier_obstruction = original.clone();
+        earlier_obstruction.walls.extend([
+            "a custom control needs manual review".to_owned(),
+            "a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".to_owned(),
+        ]);
+        assert!(super::ensure_inspected_form(&mut browser, &url, &earlier_obstruction).unwrap());
         browser
             .execute(&BrowserCommand::Click {
                 selector: "#change".into(),
