@@ -6,7 +6,9 @@ import os
 import sys
 from pathlib import Path
 import tempfile
+import types
 import zipfile
+from unittest.mock import patch
 
 script = Path(__file__).with_name('package-windows.py')
 spec = importlib.util.spec_from_file_location('waypoint_packager', script)
@@ -82,6 +84,45 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
             raise AssertionError('Provisioning accepted a mismatched installer')
         assert not (stage / 'waypoint-libreoffice.msi').exists()
         assert not (stage / 'office').exists()
+        original_copy = packager.copy_verified_office_msi
+        def copy_fixture(source, destination):
+            return original_copy(source, destination, hashlib.sha256(b'fixture').hexdigest())
+
+        stage = Path(temp) / 'successful-installer-stage'
+        stage.mkdir()
+        calls = []
+        def fake_install(command, **kwargs):
+            calls.append((command, kwargs))
+            office = stage / 'office'
+            (office / 'program').mkdir()
+            (office / 'program' / 'soffice.com').write_bytes(b'fixture')
+            (office / 'LICENSE.html').write_text('fixture', encoding='utf-8')
+            (office / 'waypoint-libreoffice.msi').write_bytes(b'transformed')
+            return types.SimpleNamespace(returncode=0)
+
+        with patch.object(packager, 'copy_verified_office_msi', side_effect=copy_fixture), \
+             patch.object(packager.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=5 * 1024**3)), \
+             patch.object(packager.subprocess, 'run', side_effect=fake_install):
+            assert packager.provision_libreoffice(stage, msi) == stage / 'office'
+        command, kwargs = calls[0]
+        assert command[1:] == ['/a', str(stage / 'waypoint-libreoffice.msi'), '/qn', '/norestart', f'TARGETDIR={stage / "office"}']
+        assert kwargs['timeout'] == 300
+        assert not (stage / 'office' / 'waypoint-libreoffice.msi').exists()
+        assert msi.read_bytes() == b'fixture'
+
+        stage = Path(temp) / 'timed-out-installer-stage'
+        stage.mkdir()
+        with patch.object(packager, 'copy_verified_office_msi', side_effect=copy_fixture), \
+             patch.object(packager.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=5 * 1024**3)), \
+             patch.object(packager.subprocess, 'run', side_effect=packager.subprocess.TimeoutExpired('msiexec', 300)):
+            try:
+                packager.provision_libreoffice(stage, msi)
+            except ValueError as error:
+                assert 'Windows Installer may still be active' in str(error)
+            else:
+                raise AssertionError('Timed-out extraction was accepted')
+        assert (stage / 'waypoint-libreoffice.msi').read_bytes() == b'fixture'
+        assert (stage / 'office').is_dir()
     configured = {'WAYPOINT_SOFFICE': str(root / 'program' / 'soffice.com'), **env}
     assert packager.discover_libreoffice(configured) == root
     path_env = {'PATH': os.pathsep.join([str(program_files / 'LibreOffice' / 'missing'), str(root / 'program')]), **env}
