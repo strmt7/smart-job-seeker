@@ -1303,25 +1303,28 @@ fn screenshot_directory(
     Ok(path)
 }
 
-fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, &'static str) {
+fn screenshot_context(
+    directory: &std::path::Path,
+    names: &[String],
+) -> (Value, &'static str, Option<usize>) {
     use std::io::Read;
     let Some(parent) = directory.parent() else {
-        return (json!({}), "unavailable");
+        return (json!({}), "unavailable", None);
     };
     let path = parent.join("events.jsonl");
     let Ok(meta) = fs::symlink_metadata(&path) else {
-        return (json!({}), "unavailable");
+        return (json!({}), "unavailable", None);
     };
     if !meta.is_file() || meta.file_type().is_symlink() {
-        return (json!({}), "unavailable");
+        return (json!({}), "unavailable", None);
     }
     let Ok(file) = fs::File::open(path) else {
-        return (json!({}), "unavailable");
+        return (json!({}), "unavailable", None);
     };
     const LIMIT: usize = 2 * 1024 * 1024;
     let mut bytes = Vec::new();
     if file.take(LIMIT as u64 + 1).read_to_end(&mut bytes).is_err() {
-        return (json!({}), "unavailable");
+        return (json!({}), "unavailable", None);
     }
     let mut partial = bytes.len() > LIMIT;
     bytes.truncate(LIMIT);
@@ -1329,6 +1332,7 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
         partial = true;
     }
     let mut contexts = serde_json::Map::new();
+    let mut missing = std::collections::HashSet::new();
     for (index, line) in bytes
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
@@ -1366,6 +1370,15 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
         else {
             continue;
         };
+        if screenshot_number(name).is_some()
+            && !fs::symlink_metadata(directory.join(name)).is_ok_and(|meta| {
+                meta.is_file()
+                    && !meta.file_type().is_symlink()
+                    && (8..=6 * 1024 * 1024).contains(&meta.len())
+            })
+        {
+            missing.insert(name.to_owned());
+        }
         if !names.iter().any(|expected| expected == name) {
             continue;
         }
@@ -1500,6 +1513,7 @@ fn screenshot_context(directory: &std::path::Path, names: &[String]) -> (Value, 
     (
         Value::Object(contexts),
         if partial { "partial" } else { "available" },
+        Some(missing.len()),
     )
 }
 
@@ -1560,9 +1574,9 @@ pub fn screenshot_index(
     };
     names.truncate(24);
     let names: Vec<_> = names.into_iter().map(|(_, name)| name).collect();
-    let (contexts, context_status) = screenshot_context(&directory, &names);
+    let (contexts, context_status, missing_references) = screenshot_context(&directory, &names);
     Ok(
-        json!({"items":names,"contexts":contexts,"context_status":context_status,"next_after":next_after,"truncated":truncated,"unreadable":unreadable}),
+        json!({"items":names,"contexts":contexts,"context_status":context_status,"missing_references":missing_references,"next_after":next_after,"truncated":truncated,"unreadable":unreadable}),
     )
 }
 
@@ -2980,6 +2994,12 @@ mod tests {
         record.event(json!({"type":"visual_capture","time":127,"task_id":visual_id,"screenshot":"screenshots/0003.png","coverage_complete":false,"comparisons_truncated":true,"omitted_labels":omitted_labels})).unwrap();
         record.event(json!({"type":"visual_freshness_checked","task_id":visual_id,"status":"same","live_values_verified":1,"live_values_unconfirmed":0,"screenshot":null})).unwrap();
         record
+            .event(json!({"type":"page_inspected","screenshot":"screenshots/9999.png"}))
+            .unwrap();
+        record
+            .event(json!({"type":"page_inspected","screenshot":"screenshots/9999.png"}))
+            .unwrap();
+        record
             .event(json!({"type":"visual_page_changed","task_id":"different-task"}))
             .unwrap();
         write_visual_result(
@@ -2990,6 +3010,7 @@ mod tests {
         )
         .unwrap();
         let first = screenshot_index(&ws, &job, "screens-fixture", 0).unwrap();
+        assert_eq!(first["missing_references"], 1);
         assert_eq!(first["contexts"]["0004.png"]["capture_outcome"], "changed");
         assert_eq!(first["contexts"]["0005.png"]["capture_outcome"], "complete");
         assert_eq!(
