@@ -2650,6 +2650,63 @@ impl CdpDriver {
         Ok((!text.is_empty() && text.len() <= 500).then_some(text))
     }
 
+    /// Detect a visible required marker near one uniquely named placeholder field.
+    fn nearby_required_marker(&mut self, node: u64) -> Result<Option<bool>, DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Field disappeared".into()))?;
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function() {
+            if (!this.isConnected) return null;
+            const name = (this.getAttribute('placeholder') || '').trim().replace(/\s+/g,' ').toLowerCase();
+            if (!name || name.length > 200) return false;
+            let parent = this.parentElement;
+            for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) {
+                const controls = parent.querySelectorAll('input:not([type=hidden]),select,textarea');
+                if (controls.length > 1) {
+                    const labels = parent.querySelectorAll('label');
+                    if (labels.length > 16) return null;
+                    for (const label of labels) {
+                        if (!label.getClientRects().length || label.closest('[hidden], [aria-hidden="true" i]')) continue;
+                        const style = getComputedStyle(label);
+                        if (style.visibility !== 'visible' || Number(style.opacity) === 0) continue;
+                        const text = (label.innerText || '').trim().replace(/\s+/g,' ');
+                        if (text.endsWith('*') && text.slice(0,-1).trim().replace(/[:：]\s*$/,'').trim().toLowerCase() === name) return null;
+                    }
+                    break;
+                }
+                if (controls.length !== 1 || controls[0] !== this) continue;
+                const labels = parent.querySelectorAll('label');
+                if (labels.length > 16) return null;
+                let matches = 0;
+                for (const label of labels) {
+                    const target = label.getAttribute('for');
+                    if (target && target !== this.id) continue;
+                    if (!label.getClientRects().length || label.closest('[hidden], [aria-hidden="true" i]')) continue;
+                    const style = getComputedStyle(label);
+                    if (style.visibility !== 'visible' || Number(style.opacity) === 0) continue;
+                    const text = (label.innerText || '').trim().replace(/\s+/g,' ');
+                    if (!text.endsWith('*')) continue;
+                    const normalized = text.slice(0,-1).trim().replace(/[:：]\s*$/,'').trim().toLowerCase();
+                    if (normalized === name) matches++;
+                }
+                if (matches > 1) return null;
+                if (matches === 1) return true;
+            }
+            return false;
+        }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let result = result.map_err(derr)?;
+        released.map_err(derr)?;
+        Ok(result.pointer("/result/value").and_then(Value::as_bool))
+    }
+
     /// Read rendered label text, excluding controls and hidden descendants.
     fn rendered_form_label(&mut self, node: u64) -> Result<Option<String>, DriverError> {
         if !self.control_visibility_and_path(node)?.0 && !self.boxless_text_root_visible(node)? {
@@ -4155,6 +4212,8 @@ impl CdpDriver {
         let mut checked_labels: HashMap<u64, Option<String>> = HashMap::new();
         let mut unannotated_choice_checks = 0usize;
         let mut unassociated_question_count = 0usize;
+        let mut required_marker_checks = 0usize;
+        let marker_started = Instant::now();
         let mut selector_counts: HashMap<String, usize> = HashMap::new();
         for control in &controls {
             *selector_counts.entry(selector_for(control)).or_default() += 1;
@@ -4454,7 +4513,7 @@ impl CdpDriver {
                 ));
             }
 
-            let required = control.attrs.contains_key("required")
+            let mut required = control.attrs.contains_key("required")
                 || control
                     .attrs
                     .get("aria-required")
@@ -4463,6 +4522,32 @@ impl CdpDriver {
                     .get(&control.node_id)
                     .copied()
                     .unwrap_or(false);
+            if !required
+                && !label_unverified
+                && !labels.contains_key(&id)
+                && !wrapping_labels.contains_key(&control.node_id)
+                && !control.attrs.contains_key("aria-labelledby")
+                && !control.attrs.contains_key("aria-label")
+                && control
+                    .attrs
+                    .get("placeholder")
+                    .is_some_and(|value| !value.trim().is_empty())
+            {
+                if required_marker_checks < 24 && marker_started.elapsed() < Duration::from_secs(4)
+                {
+                    required_marker_checks += 1;
+                    match self.with_review_timeout(|driver| driver.nearby_required_marker(control.node_id)) {
+                        Ok(Some(true)) => {
+                            required = true;
+                            walls.push("a custom control needs manual review: A nearby visible required marker was inferred; verify the field requirement".into());
+                        }
+                        Ok(Some(false)) => {},
+                        _ => walls.push("a custom control needs manual review: A nearby required marker could not be checked".into()),
+                    }
+                } else {
+                    walls.push("a custom control needs manual review: Required marker checks reached their limit".into());
+                }
+            }
             if control.attrs.contains_key("disabled")
                 || control.attrs.contains_key("readonly")
                 || control

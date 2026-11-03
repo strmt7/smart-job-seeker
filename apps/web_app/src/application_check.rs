@@ -1255,6 +1255,15 @@ mod tests {
             "no form fields were detected"
         );
         let again = browser.inspect_current().expect("recheck application");
+        for field in &again.schema.fields {
+            println!(
+                "Field: {:?}; type: {:?}; required: {}; sensitive: {}",
+                field.label,
+                std::mem::discriminant(&field.field_type),
+                field.required,
+                field.sensitive
+            );
+        }
         println!(
             "Repeat inspection: fields {}; schema changed {}; walls changed {}",
             again.schema.fields.len(),

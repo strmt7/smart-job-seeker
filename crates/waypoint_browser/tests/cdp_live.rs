@@ -2329,6 +2329,45 @@ fn application_link_variants_are_detected_without_final_actions() {
 }
 
 #[test]
+#[ignore = "launches a browser against fictional visible required markers"]
+fn nearby_visible_required_markers_are_reviewed_without_guessing_ambiguous_labels() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_required_markers.html"))
+        .unwrap();
+    for label in ["Full Name", "Résumé"] {
+        assert!(
+            live.schema
+                .fields
+                .iter()
+                .any(|field| field.label == label && field.required),
+            "{label}"
+        );
+    }
+    for label in ["Email", "Location", "Other"] {
+        assert!(
+            live.schema
+                .fields
+                .iter()
+                .any(|field| field.label == label && !field.required),
+            "{label}"
+        );
+    }
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("nearby visible required marker was inferred")));
+    assert!(live
+        .walls
+        .iter()
+        .any(|wall| wall.contains("nearby required marker could not be checked")));
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
+}
+
+#[test]
 #[ignore = "starts one local browser against fictional submission controls"]
 fn generic_click_refuses_native_submit_controls_regardless_of_label() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
