@@ -73,7 +73,10 @@ pub(crate) fn docx_text_parts(
         let file = archive
             .by_index_raw(index)
             .map_err(|_| "Invalid DOCX entry")?;
-        let name = file.name();
+        let name = file
+            .name()
+            .map_err(|_| "Invalid DOCX entry name")?
+            .into_owned();
         let auxiliary = ["word/header", "word/footer"].iter().any(|prefix| {
             name.strip_prefix(prefix)
                 .and_then(|rest| rest.strip_suffix(".xml"))

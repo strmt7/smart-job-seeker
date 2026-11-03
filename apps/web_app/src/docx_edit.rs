@@ -280,7 +280,7 @@ pub fn replace(docx: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String
         let file = archive
             .by_index_raw(index)
             .map_err(|_| "Invalid DOCX entry")?;
-        if file.name() == part_name {
+        if file.name().map_err(|_| "Invalid DOCX entry name")? == part_name {
             drop(file);
             writer
                 .start_file(

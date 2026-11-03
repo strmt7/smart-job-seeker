@@ -363,7 +363,7 @@ pub(crate) fn extract(
             archive
                 .by_index_raw(i)
                 .ok()
-                .is_some_and(|entry| entry.name() == rel_name)
+                .is_some_and(|entry| entry.name().is_ok_and(|name| name == rel_name))
         })
         .count();
     let targets = if rel_count == 0 || (refs.footnotes.is_empty() && refs.endnotes.is_empty()) {
@@ -385,10 +385,11 @@ pub(crate) fn extract(
         let wanted: HashSet<_> = ids.iter().flatten().copied().collect();
         let entries = (0..archive.len())
             .filter(|&i| {
-                archive
-                    .by_index_raw(i)
-                    .ok()
-                    .is_some_and(|entry| Some(entry.name()) == target.as_deref())
+                archive.by_index_raw(i).ok().is_some_and(|entry| {
+                    entry
+                        .name()
+                        .is_ok_and(|name| Some(name.as_ref()) == target.as_deref())
+                })
             })
             .count();
         let notes = if entries == 0 {

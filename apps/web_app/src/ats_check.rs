@@ -63,11 +63,12 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     use std::io::Read;
     let mut zip =
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
-    let headers = (0..zip.len()).any(|i| {
-        zip.by_index_raw(i)
-            .ok()
-            .is_some_and(|f| f.name().starts_with("word/header") && f.name().ends_with(".xml"))
-    });
+    let mut headers = false;
+    for i in 0..zip.len() {
+        let entry = zip.by_index_raw(i).map_err(|_| "Invalid DOCX entry")?;
+        let name = entry.name().map_err(|_| "Invalid DOCX entry name")?;
+        headers |= name.starts_with("word/header") && name.ends_with(".xml");
+    }
     let mut body = zip
         .by_name("word/document.xml")
         .map_err(|_| "DOCX body missing")?;

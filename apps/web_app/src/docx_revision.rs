@@ -105,7 +105,7 @@ pub fn accepted_view(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
             .filter(|&i| {
                 archive
                     .by_index_raw(i)
-                    .is_ok_and(|file| file.name() == name)
+                    .is_ok_and(|file| file.name().is_ok_and(|entry_name| entry_name == name))
             })
             .count();
         if count > 1 {
@@ -131,8 +131,11 @@ pub fn accepted_view(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
         let file = archive
             .by_index_raw(index)
             .map_err(|_| "Invalid DOCX entry")?;
-        if let Some(data) = changes.get(file.name()) {
-            let name = file.name().to_owned();
+        let name = file
+            .name()
+            .map_err(|_| "Invalid DOCX entry name")?
+            .into_owned();
+        if let Some(data) = changes.get(&name) {
             drop(file);
             writer
                 .start_file(

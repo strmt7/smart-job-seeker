@@ -153,7 +153,10 @@ fn reject_removed_revisions(bytes: &[u8]) -> Result<(), String> {
         let entry = archive
             .by_index_raw(index)
             .map_err(|_| "Invalid DOCX entry")?;
-        let name = entry.name();
+        let name = entry
+            .name()
+            .map_err(|_| "Invalid DOCX entry name")?
+            .into_owned();
         if name
             .rsplit_once('.')
             .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("xml"))
@@ -174,7 +177,7 @@ fn reject_removed_revisions(bytes: &[u8]) -> Result<(), String> {
         .filter(|&i| {
             archive
                 .by_index_raw(i)
-                .is_ok_and(|entry| entry.name() == rel_name)
+                .is_ok_and(|entry| entry.name().is_ok_and(|name| name == rel_name))
         })
         .count();
     if rel_count > 1 {
@@ -190,7 +193,7 @@ fn reject_removed_revisions(bytes: &[u8]) -> Result<(), String> {
                 .filter(|&i| {
                     archive
                         .by_index_raw(i)
-                        .is_ok_and(|entry| entry.name() == name)
+                        .is_ok_and(|entry| entry.name().is_ok_and(|entry_name| entry_name == name))
                 })
                 .count();
             if count > 1 {
