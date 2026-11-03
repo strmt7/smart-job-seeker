@@ -1541,6 +1541,15 @@ pub fn screenshot_index(
             unreadable += 1;
             continue;
         }
+        let mut signature = [0u8; 8];
+        if fs::File::open(entry.path())
+            .and_then(|mut file| file.read_exact(&mut signature))
+            .is_err()
+            || signature != *b"\x89PNG\r\n\x1a\n"
+        {
+            unreadable += 1;
+            continue;
+        }
         names.push((number, name));
     }
     names.sort_by_key(|(number, _)| *number);
@@ -2927,6 +2936,7 @@ mod tests {
             .unwrap();
         }
         fs::write(record.dir.join("screenshots/not-a-capture.txt"), b"ignored").unwrap();
+        fs::write(record.dir.join("screenshots/9998.png"), b"not a PNG").unwrap();
         fs::File::create(record.dir.join("screenshots/9999.png"))
             .unwrap()
             .set_len(6 * 1024 * 1024 + 1)
@@ -3031,7 +3041,7 @@ mod tests {
         .is_err());
         assert_eq!(first["items"].as_array().unwrap().len(), 24);
         assert_eq!(first["next_after"], 24);
-        assert_eq!(first["unreadable"], 2);
+        assert_eq!(first["unreadable"], 3);
         assert_eq!(first["context_status"], "available");
         assert_eq!(
             first["contexts"]["0001.png"],
