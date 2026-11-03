@@ -153,8 +153,40 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
             added += 1;
         }
     }
+    // The saved pool may be identical while semantic selection changes which
+    // qualifications are actually sent to the model, or their prompt order.
+    let selected = |value: &Value| -> Option<Vec<String>> {
+        let selection = &value["selection"];
+        let facts = selection["selected_facts"]
+            .as_array()
+            .filter(|facts| facts.len() <= 20)?;
+        if selection["selected"].as_u64()? != facts.len() as u64 {
+            return None;
+        }
+        facts
+            .iter()
+            .map(|fact| {
+                fact.as_str()
+                    .filter(|text| !text.trim().is_empty())
+                    .map(str::to_owned)
+            })
+            .collect()
+    };
+    let qualification_inputs = match (selected(before), selected(after)) {
+        (Some(old), Some(new)) if old == new => "same_order",
+        (Some(mut old), Some(mut new)) => {
+            old.sort_unstable();
+            new.sort_unstable();
+            if old == new {
+                "reordered"
+            } else {
+                "changed"
+            }
+        }
+        _ => "unavailable",
+    };
     Some(
-        json!({"previous_score":old_score,"score_change":new_score-old_score,"range_change":range_change,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"changed_weights":changed_weights,"changed_statuses":changed_statuses,"changed_evidence":changed_evidence,"identity_basis":"digest_context_snapshots"}),
+        json!({"previous_score":old_score,"score_change":new_score-old_score,"range_change":range_change,"same_rubric":old_keys==new_keys,"previous_criteria":old_keys.len(),"current_criteria":new_keys.len(),"added_criteria":added,"removed_criteria":removed,"changed_judgments":changed,"changed_weights":changed_weights,"changed_statuses":changed_statuses,"changed_evidence":changed_evidence,"qualification_inputs":qualification_inputs,"identity_basis":"digest_context_snapshots"}),
     )
 }
 
@@ -5011,6 +5043,34 @@ mod tests {
         assert_eq!(comparison["changed_weights"], 0);
         assert_eq!(comparison["changed_statuses"], 1);
         assert_eq!(comparison["changed_evidence"], 1);
+        assert_eq!(comparison["qualification_inputs"], "unavailable");
+        let mut selected_before = prior.clone();
+        selected_before["assessment"]["selection"] =
+            json!({"selected":2,"selected_facts":["one","two"]});
+        let mut selected_after = selected_before.clone();
+        assert_eq!(
+            repeatability_comparison(&selected_before, &selected_after).unwrap()
+                ["qualification_inputs"],
+            "same_order"
+        );
+        selected_after["assessment"]["selection"]["selected_facts"] = json!(["two", "one"]);
+        assert_eq!(
+            repeatability_comparison(&selected_before, &selected_after).unwrap()
+                ["qualification_inputs"],
+            "reordered"
+        );
+        selected_after["assessment"]["selection"]["selected_facts"] = json!(["two", "three"]);
+        assert_eq!(
+            repeatability_comparison(&selected_before, &selected_after).unwrap()
+                ["qualification_inputs"],
+            "changed"
+        );
+        selected_after["assessment"]["selection"]["selected"] = json!(1);
+        assert_eq!(
+            repeatability_comparison(&selected_before, &selected_after).unwrap()
+                ["qualification_inputs"],
+            "unavailable"
+        );
         assert_eq!(comparison["added_criteria"], 0);
         assert_eq!(comparison["removed_criteria"], 0);
         assert!(comparison["range_change"].is_null());

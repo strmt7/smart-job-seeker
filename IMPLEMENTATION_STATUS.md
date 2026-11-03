@@ -40,6 +40,8 @@
 
 ## Qualification coverage in match estimates — 2026-11-03
 
+- Repeatability comparisons now distinguish identical selected qualifications in the same order, the same selections in a different order, changed selections and unavailable selection records. They compare exact recorded text without exposing it in the comparison. The fit suite passed (77 passed, 48 ignored), the focused UI check and Windows web Clippy passed. This does not establish identical later model calls or model accuracy; no model was loaded for the change.
+
 - Qualification coverage now requires the recorded selected-fact list to agree with its reported count before claiming complete, selected or no-input coverage. Missing, malformed or inconsistent records report coverage unavailable. The fit suite (77 passed, 48 ignored), saved-assessment and batch API checks, and Windows web Clippy passed. This checks recorded input consistency, not whether the model understood the facts.
 
 - Comparisons of repeated assessments now separately count changes in weight, judgment and cited qualification for exactly matched source excerpts. Counts can overlap and do not validate the model's decisions or match score. Focused comparison and UI logic tests and Windows web Clippy passed; no live-model repeatability measurement was made in this change.
