@@ -1191,6 +1191,26 @@ mod tests {
                 println!("Initial inspection changed URL path: {changed_path}");
                 println!("Observed review reasons: {}", page.walls.len());
                 println!("Observed fields: {}", page.schema.fields.len());
+                let radios = browser
+                    .page_custom_radio_groups()
+                    .expect("read-only radio inventory");
+                println!(
+                    "Observed custom radio groups: {}; incomplete: {}",
+                    radios.groups.len(),
+                    radios.incomplete
+                );
+                for group in radios.groups.iter().take(8) {
+                    println!(
+                        "Radio question: {:?}; options: {:?}; incomplete: {}",
+                        group.label,
+                        group
+                            .options
+                            .iter()
+                            .map(|option| &option.label)
+                            .collect::<Vec<_>>(),
+                        group.incomplete
+                    );
+                }
                 let choices = browser
                     .page_custom_choices()
                     .expect("read-only choice inventory");

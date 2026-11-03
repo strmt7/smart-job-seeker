@@ -5121,6 +5121,42 @@ fn custom_radio_inventory_reports_page_state_without_changing_it() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn custom_radio_shared_question_labels_keep_only_option_text() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    driver
+        .open(&file_url("form_custom_radio_shared_label.html"))
+        .unwrap();
+    let inventory = driver.page_custom_radio_groups().unwrap();
+    let group = &inventory.groups[0];
+    assert_eq!(group.label, "Are you available for travel?");
+    assert_eq!(
+        group
+            .options
+            .iter()
+            .map(|option| option.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Yes", "No"]
+    );
+    assert!(!group.incomplete);
+    let duplicate = &inventory.groups[1];
+    assert!(duplicate.incomplete);
+    assert!(driver
+        .select_custom_radio_option(&duplicate.selector, "Yes")
+        .is_err());
+    driver
+        .select_custom_radio_option(&group.selector, "Yes")
+        .unwrap();
+    driver
+        .verify_custom_radio_value(&group.selector, "Yes")
+        .unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn custom_radio_inventory_marks_ambiguous_states_incomplete() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver

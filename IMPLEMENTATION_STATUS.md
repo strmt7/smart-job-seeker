@@ -38,6 +38,8 @@
 
 ## Public application control observation — 2026-11-03
 
+- Custom ARIA radio options that reference their group's question before their own label now expose the option text separately in inventory, selection lookup and the final click guard. A fictional browser fixture verified selection and refusal of duplicate options; five custom-radio browser regressions passed, and browser Clippy passed. A read-only inspection of the ENFOS Workable form reported four groups with `YES`/`NO` options, but the overall inventory was incomplete and the page was obstructed, so manual review remained required. No public control was clicked or application submitted. An initial fixture run exposed the unchanged click-guard label handling and failed; it passed after that path was updated.
+
 - The read-only application-check worker was also run against the ENFOS Workable form. Its initial inspection saw five fields, 13 review reasons and an incomplete custom-choice inventory; the worker reported an obscuring dialog and manual review. The test passed, but this is not confirmation that the application can be completed. No candidate data was entered and no application was submitted.
 
 - The focused visual-review message now suggests checking overlays and scrolling when the selected field is not identified, then inspecting again while retaining the manual-review caveat. The targeted UI fixture passed. This guidance does not automatically dismiss overlays or establish why an observation failed.

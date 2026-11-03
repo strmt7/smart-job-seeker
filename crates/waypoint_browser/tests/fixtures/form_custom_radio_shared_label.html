@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><body><form>
+<span id="question">Are you available</span> <span id="qualifier">for travel?</span>
+<fieldset role="radiogroup" aria-labelledby="question qualifier">
+  <div role="radio" aria-checked="false" aria-labelledby="question qualifier yes" tabindex="0" onclick="this.setAttribute('aria-checked','true')"><span id="yes">Yes</span></div>
+  <div role="radio" aria-checked="false" aria-labelledby="question qualifier no" tabindex="0" onclick="this.setAttribute('aria-checked','true')"><span id="no">No</span></div>
+</fieldset>
+<span id="duplicate-question">Duplicate options?</span>
+<fieldset role="radiogroup" aria-labelledby="duplicate-question">
+  <div role="radio" aria-checked="false" aria-labelledby="duplicate-question duplicate-one"><span id="duplicate-one">Yes</span></div>
+  <div role="radio" aria-checked="false" aria-labelledby="duplicate-question duplicate-two"><span id="duplicate-two">Yes</span></div>
+</fieldset>
+<button type="submit">Submit</button></form></body></html>

@@ -719,11 +719,16 @@ impl CdpDriver {
                     }
                     return (element.hasAttribute('aria-label') ? element.getAttribute('aria-label') : (element.innerText || '')).trim().replace(/\s+/g,' ');
                 };
+                const optionName = item => {
+                    const full=name(item), groupRefs=(this.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean), refs=(item.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
+                    if (groupRefs.length && refs.length>groupRefs.length && groupRefs.every((id,index)=>refs[index]===id)) { const prefix=name(this); if(prefix && full.startsWith(prefix+' ')) return full.slice(prefix.length).trim(); }
+                    return full;
+                };
                 const all=this.querySelectorAll('[role="radio"]'); if (!all.length) return null;
                 let incomplete=all.length>30; const options=[];
                 for (const item of Array.from(all).slice(0,30)) {
                     if (item.closest('[role="radiogroup"]') !== this || item.tagName === 'INPUT') { incomplete=true; continue; }
-                    const label=name(item), state=(item.getAttribute('aria-checked') || '').toLowerCase();
+                    const label=optionName(item), state=(item.getAttribute('aria-checked') || '').toLowerCase();
                     const visible=item.getClientRects().length>0 && getComputedStyle(item).visibility==='visible' && !item.closest('[hidden], [aria-hidden="true" i]');
                     if (!visible || !label || label.length>200) { incomplete=true; continue; }
                     if (state!=='true' && state!=='false') incomplete=true;
@@ -897,7 +902,8 @@ impl CdpDriver {
             if (!this.isConnected || (this.getAttribute('role') || '').toLowerCase() !== 'radiogroup') return null;
             const root=this.getRootNode(), options=this.querySelectorAll('[role="radio"]'); if(!options.length || options.length>30)return null;
             const name=item=>{const refs=item.getAttribute('aria-labelledby');if(refs!==null){const ids=refs.trim().split(/\s+/).filter(Boolean);if(!ids.length || ids.length>16 || refs.length>512)return '';const parts=[];for(const id of ids){const found=root.querySelectorAll('#'+CSS.escape(id));if(found.length!==1)return '';parts.push(found[0].textContent || '');}return parts.join(' ').trim().replace(/\s+/g,' ');}return (item.hasAttribute('aria-label')?item.getAttribute('aria-label'):(item.innerText || '')).trim().replace(/\s+/g,' ');};
-            const matches=Array.from(options).filter(item=>item.closest('[role="radiogroup"]')===this && name(item)===label);
+            const optionName=item=>{const full=name(item),groupRefs=(this.getAttribute('aria-labelledby')||'').trim().split(/\s+/).filter(Boolean),refs=(item.getAttribute('aria-labelledby')||'').trim().split(/\s+/).filter(Boolean);if(groupRefs.length && refs.length>groupRefs.length && groupRefs.every((id,index)=>refs[index]===id)){const prefix=name(this);if(prefix && full.startsWith(prefix+' '))return full.slice(prefix.length).trim();}return full;};
+            const matches=Array.from(options).filter(item=>item.closest('[role="radiogroup"]')===this && optionName(item)===label);
             return matches.length===1 ? matches[0] : null;
         }"#,"arguments":[{"value":label}],"returnByValue":false}));
         let released = self
@@ -5462,9 +5468,10 @@ impl CdpDriver {
                     if (refs!==null) {const ids=refs.trim().split(/\s+/).filter(Boolean); if(!ids.length || ids.length>16 || refs.length>512) return ''; const parts=[]; for(const id of ids){const found=root.querySelectorAll('#'+CSS.escape(id));if(found.length!==1)return '';parts.push(found[0].textContent || '');}return parts.join(' ').trim().replace(/\s+/g,' ');}
                     return (item.hasAttribute('aria-label') ? item.getAttribute('aria-label') : (item.innerText || '')).trim().replace(/\s+/g,' ');
                 };
+                const optionName=item=>{const full=name(item),groupRefs=(group.getAttribute('aria-labelledby')||'').trim().split(/\s+/).filter(Boolean),refs=(item.getAttribute('aria-labelledby')||'').trim().split(/\s+/).filter(Boolean);if(groupRefs.length && refs.length>groupRefs.length && groupRefs.every((id,index)=>refs[index]===id)){const prefix=name(group);if(prefix && full.startsWith(prefix+' '))return full.slice(prefix.length).trim();}return full;};
                 const options=group.querySelectorAll('[role="radio"]'); if(!options.length || options.length>30) return false;
-                const labels=[]; for(const option of options) {const label=name(option); if(option.closest('[role="radiogroup"]')!==group || option.tagName==='INPUT' || (option.getAttribute('aria-checked') || '').toLowerCase()!=='false' || !label || label.length>200) return false; labels.push(label.toLowerCase());}
-                if(new Set(labels).size!==labels.length || name(this)!==guard.label) return false;
+                const labels=[]; for(const option of options) {const label=optionName(option); if(option.closest('[role="radiogroup"]')!==group || option.tagName==='INPUT' || (option.getAttribute('aria-checked') || '').toLowerCase()!=='false' || !label || label.length>200) return false; labels.push(label.toLowerCase());}
+                if(new Set(labels).size!==labels.length || optionName(this)!==guard.label) return false;
             }
             if (guard.kind === 'option') {
                 /*CHOICE_LIST_RESOLVER*/
