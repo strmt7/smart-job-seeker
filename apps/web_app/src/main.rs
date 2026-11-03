@@ -13946,6 +13946,128 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "starts a local browser against a fictional phone-country form"]
+    fn phone_country_hold_preserves_other_fields_for_retry() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{PacketValue, ProposedMapping};
+        use waypoint_store::StoredJob;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let root = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(root.path()).unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-phone-country.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap().to_string();
+        let job = JobIdentityId::new("phone-hold-fixture").unwrap();
+        ws.import_job(StoredJob {
+            id: job.clone(),
+            title: "Fictional role".into(),
+            employer: "Example".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: Some(url.clone()),
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        ws.index_next_duplicate_job("").unwrap();
+        let profile = json!({});
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let preview = form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![
+                ProposedMapping {
+                    field_selector: "#name".into(),
+                    value: PacketValue::Text("Avery".into()),
+                },
+                ProposedMapping {
+                    field_selector: "#phone".into(),
+                    value: PacketValue::Text("+12025550123".into()),
+                },
+            ],
+            manual_review: vec![],
+            model_review_selectors: Default::default(),
+        };
+        let mut session = Some(ReviewSession {
+            id: "phone-session".into(),
+            job_id: job,
+            inspection_task_id: "inspection".into(),
+            inspection_pending_revision: 0,
+            experience_revisions: vec![],
+            url,
+            route_binding: None,
+            profile_digest: Sha256Digest::of(&profile.to_string()),
+            preview,
+            driver,
+            created: Instant::now(),
+            ttl: SESSION_TTL,
+            filled: false,
+            fill_attempted: false,
+            completed_selectors: vec![],
+            prior_sections: vec![],
+            prior_sections_omitted: false,
+            selected_choices: vec![],
+            answer_drafts: Default::default(),
+            visible: false,
+            staged_files: vec![],
+            attachments: vec![],
+            pending_choice_visual: None,
+            last_visual_freshness_key: None,
+            record: None,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let request = |ws: &mut Workspace,
+                       session: &mut Option<ReviewSession>,
+                       selectors: Value|
+         -> Result<Value, String> {
+            let body=json!({"session_id":"phone-session","reviewed":true,"selectors":selectors,"answers":[]}).to_string();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client,"POST /api/form/fill HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            serve(&mut server, ws, session, "test-token", port)?;
+            drop(server);
+            let mut raw = String::new();
+            client.read_to_string(&mut raw).unwrap();
+            serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).map_err(|e| e.to_string())
+        };
+        let error = request(&mut ws, &mut session, json!(["#name", "#phone"])).unwrap_err();
+        assert!(
+            error.starts_with("No fields were filled: the phone-country control"),
+            "{error}"
+        );
+        let current = session.as_mut().unwrap();
+        assert!(!current.fill_attempted);
+        assert_eq!(
+            current.driver.text_value_snapshot("#name").unwrap().value,
+            ""
+        );
+        assert_eq!(
+            current.driver.text_value_snapshot("#phone").unwrap().value,
+            ""
+        );
+        let result = request(&mut ws, &mut session, json!(["#name"])).unwrap();
+        assert_eq!(result["filled_fields"][0], "Name");
+        let current = session.as_mut().unwrap();
+        assert_eq!(
+            current.driver.text_value_snapshot("#name").unwrap().value,
+            "Avery"
+        );
+        assert_eq!(
+            current.driver.text_value_snapshot("#phone").unwrap().value,
+            ""
+        );
+    }
+
+    #[test]
     #[ignore = "starts a local browser against a fictional prefilled form"]
     fn existing_value_preflight_preserves_session_for_reviewed_retry() {
         use waypoint_applications::driver::BrowserDriver;
