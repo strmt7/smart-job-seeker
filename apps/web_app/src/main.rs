@@ -3102,6 +3102,10 @@ fn serve(
         "/api/web-search/batch-start" => {
             check_search_plan_binding(ws, &body)?;
             let provider = body["provider"].as_str().ok_or("missing provider")?;
+            let prefer_fresh = match body.get("prefer_fresh") {
+                None => false,
+                Some(value) => value.as_bool().ok_or("Invalid freshness preference")?,
+            };
             let queries = body["queries"]
                 .as_array()
                 .ok_or("missing search phrases")?
@@ -3135,14 +3139,21 @@ fn serve(
                     )?,
                     None => Vec::new(),
                 };
-                web_search_batch::start_selected_with_history(
+                web_search_batch::start_selected_with_freshness(
                     id.clone(),
                     provider.to_owned(),
                     pairs,
                     prior,
+                    prefer_fresh,
                 )?;
             } else {
-                web_search_batch::start(id.clone(), provider.to_owned(), queries, pages as u8)?;
+                web_search_batch::start_with_freshness(
+                    id.clone(),
+                    provider.to_owned(),
+                    queries,
+                    pages as u8,
+                    prefer_fresh,
+                )?;
             }
             // Make the plan recoverable before acknowledging the start. Search
             // can continue in memory if secure persistence is unavailable, but
@@ -3193,9 +3204,18 @@ fn serve(
         "/api/web-search/start" => {
             check_search_plan_binding(ws, &body)?;
             let provider = body["provider"].as_str().ok_or("missing provider")?;
+            let prefer_fresh = match body.get("prefer_fresh") {
+                None => false,
+                Some(value) => value.as_bool().ok_or("Invalid freshness preference")?,
+            };
             let query = body["query"].as_str().ok_or("missing query")?;
             let id = random_id()?;
-            web_search::start(id.clone(), provider.to_owned(), query.to_owned())?;
+            web_search::start_with_freshness(
+                id.clone(),
+                provider.to_owned(),
+                query.to_owned(),
+                prefer_fresh,
+            )?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
         }
         "/api/web-search/pending" => {

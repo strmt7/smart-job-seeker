@@ -58,6 +58,21 @@ pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
     Ok(search)
 }
 
+pub(crate) fn request_url_with_freshness(
+    instance: &str,
+    query: &str,
+    prefer_fresh: bool,
+) -> Result<Url, String> {
+    let mut url = request_url(instance, query)?;
+    if prefer_fresh {
+        if !is_freeserp_request(&url) {
+            return Err("Freshness ranking is available only for FreeSerp".into());
+        }
+        url.query_pairs_mut().append_pair("fresh", "1");
+    }
+    Ok(url)
+}
+
 fn openserp_request(
     base: &Url,
     query: &str,
@@ -223,6 +238,9 @@ pub(crate) fn parse_provider(
         let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("url"),"title":item.get("title"),"content":item.get("snippet"),"publishedDate":item.get("published_at"),"indexedDate":item.get("crawled_at"),"type":item.get("type"),"is_ad":item.get("is_ad"),"sponsored":item.get("sponsored"),"engine":"FreeSerp Global"})).collect();
         let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
         parsed["provider"] = json!("freeserp");
+        parsed["freshness_preferred"] = json!(url
+            .query_pairs()
+            .any(|(key, value)| key == "fresh" && value == "1"));
         return Ok(parsed);
     }
     if !is_wiby_request(url) {
@@ -594,11 +612,21 @@ pub(crate) fn parse_excluding(
     )
 }
 
+#[cfg(test)]
 pub fn start(id: String, instance: String, query: String) -> Result<(), String> {
+    start_with_freshness(id, instance, query, false)
+}
+
+pub fn start_with_freshness(
+    id: String,
+    instance: String,
+    query: String,
+    prefer_fresh: bool,
+) -> Result<(), String> {
     if crate::web_search_batch::busy() {
         return Err("A batch web search is active".into());
     }
-    let url = request_url(&instance, &query)?;
+    let url = request_url_with_freshness(&instance, &query, prefer_fresh)?;
     let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     if tasks.is_some() {
         return Err("A web search is running or awaiting its result".into());
@@ -846,6 +874,42 @@ mod tests {
         assert_eq!(
             page_parameter(&request_url("https://example.org/", "role").unwrap()),
             "pageno"
+        );
+    }
+
+    #[test]
+    fn freshness_preference_is_free_serp_only_and_retained_in_page_result() {
+        let url = request_url_with_freshness("https://freeserp.ai/", "engineer", true).unwrap();
+        assert!(url
+            .query_pairs()
+            .any(|(name, value)| name == "fresh" && value == "1"));
+        let result = parse_provider(
+            &json!({"ok":true,"index":"web","results":[]}).to_string(),
+            &url,
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(result["freshness_preferred"], true);
+        let page = page_url(&url, 2);
+        assert!(page
+            .query_pairs()
+            .any(|(key, value)| key == "fresh" && value == "1"));
+        let default_url =
+            request_url_with_freshness("https://freeserp.ai/", "engineer", false).unwrap();
+        let default_result = parse_provider(
+            &json!({"ok":true,"index":"web","results":[]}).to_string(),
+            &default_url,
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(default_result["freshness_preferred"], false);
+        assert!(request_url_with_freshness("https://wiby.me/", "engineer", true).is_err());
+        assert!(request_url_with_freshness("https://example.org/", "engineer", true).is_err());
+        assert!(
+            !request_url_with_freshness("https://freeserp.ai/", "engineer", false)
+                .unwrap()
+                .query_pairs()
+                .any(|(name, _)| name == "fresh")
         );
     }
 

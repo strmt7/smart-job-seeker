@@ -53,3 +53,8 @@ assert.match(sponsoredMessage(true), /advertising or job sponsorship/);
 assert.equal(sponsoredMessage(false), '');
 assert.equal(sponsoredMessage(undefined), '');
 assert.ok(source.includes('if(report.provider_sponsored_marker===true)merged.provider_sponsored_marker=true'));
+
+assert.match(render({provider:"freeserp",results_examined:1,unresponsive_engines:null,freshness_preferred:true}),/ranked for recency.*status is unverified/);
+
+assert.match(render({provider:"freeserp",results_examined:1,freshness_preferred:false}),/default ranking/);
+assert.match(render({provider:"freeserp",results_examined:1}),/Ranking preference not recorded/);

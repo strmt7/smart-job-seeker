@@ -290,7 +290,18 @@ fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
     seen.originals.len() >= 600
 }
 
+#[cfg(test)]
 pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> Result<(), String> {
+    start_with_freshness(id, provider, queries, pages, false)
+}
+
+pub fn start_with_freshness(
+    id: String,
+    provider: String,
+    queries: Vec<String>,
+    pages: u8,
+    prefer_fresh: bool,
+) -> Result<(), String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
     }
@@ -304,7 +315,7 @@ pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> R
         if !seen.insert(query.to_lowercase()) {
             return Err("Search phrases must be distinct".into());
         }
-        let url = crate::web_search::request_url(&provider, &query)?;
+        let url = crate::web_search::request_url_with_freshness(&provider, &query, prefer_fresh)?;
         phrases.push((query, url));
     }
     // Cover every phrase's first page before spending the shared candidate
@@ -329,11 +340,22 @@ pub fn start_selected(
     start_selected_with_history(id, provider, pairs, Vec::new())
 }
 
+#[cfg(test)]
 pub fn start_selected_with_history(
     id: String,
     provider: String,
     pairs: Vec<(String, u8)>,
     prior_history: Vec<Value>,
+) -> Result<(), String> {
+    start_selected_with_freshness(id, provider, pairs, prior_history, false)
+}
+
+pub fn start_selected_with_freshness(
+    id: String,
+    provider: String,
+    pairs: Vec<(String, u8)>,
+    prior_history: Vec<Value>,
+    prefer_fresh: bool,
 ) -> Result<(), String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
@@ -356,7 +378,7 @@ pub fn start_selected_with_history(
         if phrases.len() > 10 {
             return Err("Choose at most 10 distinct search phrases".into());
         }
-        let url = crate::web_search::request_url(&provider, &query)?;
+        let url = crate::web_search::request_url_with_freshness(&provider, &query, prefer_fresh)?;
         requests.push((query, page, crate::web_search::page_url(&url, page)));
     }
     start_requests(id, provider, requests, prior_history)
@@ -1704,6 +1726,47 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert_eq!(pages, 4);
+        assert!(retained > 0, "no candidates were returned");
+    }
+
+    #[test]
+    #[ignore = "sends two non-personal search phrases to the public FreeSerp API"]
+    fn live_freeserp_recency_search_multiple_languages() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        start_with_freshness(
+            "recency-evaluation".into(),
+            "https://freeserp.ai/".into(),
+            vec![
+                "bioinformatics jobs Berlin".into(),
+                "analista financiero empleo Bogota".into(),
+            ],
+            1,
+            true,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut pages = 0;
+        let mut retained = 0;
+        loop {
+            let result = poll("recency-evaluation", pages).unwrap();
+            if result["status"] == "complete" {
+                println!("coverage: {}; retained: {retained}", result["coverage"]);
+                assert_eq!(result["coverage"]["succeeded_pages"], 2);
+                assert_eq!(result["coverage"]["failed_pages"], 0);
+                break;
+            }
+            assert_ne!(result["status"], "failed", "{result}");
+            if result.get("query").is_some() {
+                assert!(result.get("error").is_none(), "{result}");
+                assert_eq!(result["data"]["provider"], "freeserp");
+                assert_eq!(result["data"]["freshness_preferred"], true);
+                retained += result["data"]["results"].as_array().unwrap().len();
+                pages += 1;
+            }
+            assert!(Instant::now() < deadline, "public search did not finish");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(pages, 2);
         assert!(retained > 0, "no candidates were returned");
     }
 
