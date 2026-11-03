@@ -1,5 +1,7 @@
 ## Template voice review — 2026-11-03
 
+- Template review now calls out suggestions that differ from the original only in whitespace or straight-versus-curly apostrophe style. The UI fixture also checks that changed words and programming-language punctuation are not treated as cosmetic. This does not measure whether other edits improve the document.
+
 - In one resource-gated fictional template test, `qwen3.5:9b` retained first-person voice and the voice-change notice correctly remained off. Its output differed only in apostrophe style, so the test does not demonstrate useful tailoring. The model's evidence-check workflow completed; the model was unloaded afterward. No document was saved or application submitted.
 
 - The template-suggestion voice-change notice now recognizes common English first-person contractions with straight or curly apostrophes, including “I've” and “we’re.” A scripted suggestion and focused tests passed. This is an opening-word heuristic, not a general grammatical or multilingual voice check.

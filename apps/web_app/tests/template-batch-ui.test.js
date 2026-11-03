@@ -2,6 +2,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
+const review = vm.runInNewContext(`(${source.split('\n').find(line=>line.startsWith('function showTemplateSuggestionReview('))})`,{element:(tag,text)=>node(tag,text),showAnswerEvidence:()=>{}});
+for (const [original, replacement, expected] of [
+  ['I’ve built tools.', "I've built tools.", true],
+  ['Built  tools.', 'Built tools.', true],
+  ['Built C++ tools.', 'Built C tools.', false],
+  ['I built tools.', 'I did not build tools.', false],
+]) {
+  const box=node('div'); review(box,{text:replacement},original);
+  assert.equal(box.children.some(item=>item.textContent.includes('Only spacing or apostrophe style changed')),expected);
+}
 const start = source.indexOf('function batchTemplateSuggestions(');
 const end = source.indexOf('\nfunction ', start);
 assert.ok(start >= 0 && end > start);
