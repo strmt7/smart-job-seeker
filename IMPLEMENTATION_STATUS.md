@@ -3395,3 +3395,11 @@ the model returned no rewrite for the unsupported request, and a separate
 ordinary fictional rewrite passed. This is not a general hallucination or
 evidence-accuracy benchmark; candidate review remains necessary. The model was
 unloaded.
+
+The evidence-review prompt now explicitly states that a draft cannot prove its
+own claims. In a focused fictional check reproducing the template-source label,
+Qwen3.5:9b previously marked an uncited dashboard claim supported; after the
+change it marked that claim unsupported while recognizing the cited Python
+claim. A normal fictional rewrite check also passed. These observations do not
+establish general evidence accuracy; the existing unverified-template guard and
+candidate review remain necessary.
