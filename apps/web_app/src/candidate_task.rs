@@ -437,6 +437,7 @@ fn attach_page_closure_hint(job: &mut Value, capture: &Value) {
         "applications closed",
         "no longer accepting applications",
         "position is closed",
+        "position is currently not published",
         "position has been filled",
     ];
     let excerpt = text.lines().find_map(|line| {
@@ -1993,13 +1994,24 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
             let mut browser =
                 waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
             let page = open_listing(&mut browser, &url)?;
-            let frame_warnings = listing_embedded_warnings(&page.walls)?;
             let current = browser.current_url().map_err(|e| e.to_string())?;
             let original = url::Url::parse(&url).map_err(|_| "Invalid URL")?;
             let reached = url::Url::parse(&current).map_err(|_| "Invalid destination")?;
             if original.origin() != reached.origin() {
                 return Err("The listing redirected to another site; review it manually".into());
             }
+            let frame_warnings = match listing_embedded_warnings(&page.walls) {
+                Ok(warnings) => warnings,
+                Err(error) => {
+                    if let Ok((text, _)) = browser.page_text_bounded(16_000) {
+                        ensure_listing_address(&mut browser, &current)?;
+                        if require_readable_listing(&page.walls, &text).is_ok() {
+                            return Err(inspection_error_with_page_hint(error, &text));
+                        }
+                    }
+                    return Err(error);
+                }
+            };
             let section_hint = if reached.fragment().is_some_and(|fragment| !fragment.is_empty() && !fragment.starts_with('/')) {
                 let links = browser.with_review_timeout(|browser| browser.page_links()).map_err(|_| "Could not inspect the selected page section; review manually")?;
                 ensure_listing_address(&mut browser, &current)?;
@@ -2142,6 +2154,12 @@ mod tests {
         assert!(reason.contains("may be stale"));
         assert!(reason.contains("Deadline: Closed Positions"));
         assert!(reason.contains("another role"));
+        let unpublished = super::inspection_error_with_page_hint(
+            "No local model; review manually".into(),
+            "This position is currently not published.",
+        );
+        assert!(unpublished.contains("position is currently not published"));
+        assert!(unpublished.contains("verify the current status"));
         assert!(!reason.contains("fictional"));
         let same_path = url::Url::parse("https://example.org/jobs/123?secret=fictional").unwrap();
         let reason = super::inspection_error_with_page_hint(
@@ -5552,11 +5570,13 @@ mod tests {
         };
         assert_eq!(result["status"], "failed", "{result}");
         let message = result["error"].as_str().unwrap();
-        assert!(message.contains("no eligible local model"), "{message}");
-        assert!(
-            message.to_lowercase().contains("closed positions"),
-            "{message}"
-        );
+        let expected_reason = std::env::var("WAYPOINT_LISTING_EXPECTED_REASON")
+            .unwrap_or_else(|_| "no eligible local model".into());
+        assert!(message.contains(&expected_reason), "{message}");
+        let expected = std::env::var("WAYPOINT_CLOSURE_EXPECTED_TERM")
+            .unwrap_or_else(|_| "closed positions".into())
+            .to_lowercase();
+        assert!(message.to_lowercase().contains(&expected), "{message}");
         assert!(message.contains("verify the current status"), "{message}");
         assert_eq!(workspace.job_count().unwrap(), 0);
     }
