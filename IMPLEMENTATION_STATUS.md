@@ -3410,3 +3410,5 @@ document visual follow-up now requires the page report's PDF hash to match the
 outer saved-review hash; missing or conflicting hashes require review. Focused
 tests and a fictional PDF geometry check passed. These checks do not prove
 model accuracy or visual quality.
+
+2026-11-03: On source `667c1898052c52fef1cb7dda705ba22fd6a58448`, the resource-gated `qwen3.5:9b` model (Ollama ID prefix `c97eb11d70b1`) passed one fictional two-section wizard test and one fictional multilingual emergency-contact test on an AMD Radeon RX 9070 XT. The wizard used an explicitly simulated user navigation gesture; the model transcribed the filled given name and email and left the sensitive work-authorization field untouched. In the contact fixture, the model mapped the applicant field and flagged both emergency-contact emails for review. These are single runs on two fixtures, not measurements of real-site completion, visual accuracy, autonomous navigation, or peak memory. The test-owned model was unloaded; `ollama ps` was empty afterwards. No application was submitted.
