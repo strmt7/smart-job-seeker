@@ -249,14 +249,14 @@ fn record_generated(
                 .and_then(|bytes| record.material("generated-draft-evidence.json", &bytes))
         })
         .transpose()?;
-    if draft_provenance.is_some() || template.is_some() {
+    {
         let evidence_sha = draft_provenance
             .map(|value| {
                 serde_json::to_vec_pretty(value).map(|bytes| waypoint_domain::sha256_hex(&bytes))
             })
             .transpose()
             .map_err(|e| e.to_string())?;
-        record.document_export_receipt(&json!({"document_id":document_id,"kind":kind,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"evidence":provenance_name,"evidence_sha256":evidence_sha,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"template_original_name":template.as_ref().map(|(name, _)| name)}))?;
+        record.document_export_receipt(&json!({"document_id":document_id,"kind":kind,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"reviewed_text":text_name,"reviewed_text_sha256":waypoint_domain::sha256_hex(text.as_bytes()),"evidence":provenance_name,"evidence_sha256":evidence_sha,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"template_original_name":template.as_ref().map(|(name, _)| name)}))?;
     }
     record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"draft_provenance":provenance_name,"draft_edited":draft_provenance.map(|value| value["edited"].clone()),"text_check":text_check,"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
     record.status("manual_review", crate::now())?;
@@ -515,6 +515,10 @@ mod tests {
         assert!(!matched.incomplete);
         assert_eq!(linked.kind, "cv");
         assert_eq!(linked.context_sha256, context.as_str());
+        assert_eq!(
+            linked.reviewed_text.as_deref(),
+            Some(&b"Reviewed fictional text"[..])
+        );
         assert_eq!(linked.template.unwrap().1, b"fictional-template");
         assert!(crate::attempt_record::matching_generated_evidence(
             &ws,
@@ -546,6 +550,19 @@ mod tests {
         .unwrap();
         assert!(changed_pdf.found.is_none() && changed_pdf.incomplete);
         std::fs::write(&saved_pdf, b"%PDF-fictional").unwrap();
+        let saved_text = dir
+            .join("materials")
+            .join(event["reviewed_text"].as_str().unwrap());
+        std::fs::write(&saved_text, b"modified reviewed text").unwrap();
+        let changed_text = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"%PDF-fictional",
+        )
+        .unwrap();
+        assert!(changed_text.found.is_none() && changed_text.incomplete);
+        std::fs::write(&saved_text, b"Reviewed fictional text").unwrap();
         let saved_template = dir
             .join("materials")
             .join(event["template"].as_str().unwrap());
@@ -621,6 +638,57 @@ mod tests {
         .unwrap();
         assert!(template_only.evidence.is_none());
         assert_eq!(template_only.template.unwrap().1, b"fictional-template");
+        ws.save_candidate_profile("{}").unwrap();
+        super::record_generated(
+            &ws,
+            &id,
+            super::ExportRecord {
+                document_id: "reviewed-only",
+                kind: "cv",
+                text: "Reviewed only",
+                pdf: b"%PDF-reviewed-only",
+                context_digest: context.as_str(),
+                draft_provenance: None,
+                text_check: &json!({"status":"unavailable"}),
+            },
+        )
+        .unwrap();
+        let reviewed_only = crate::attempt_record::matching_generated_evidence(
+            &ws,
+            &id,
+            "reviewed-only",
+            b"%PDF-reviewed-only",
+        )
+        .unwrap()
+        .found
+        .unwrap();
+        assert!(reviewed_only.evidence.is_none() && reviewed_only.template.is_none());
+        assert_eq!(
+            reviewed_only.reviewed_text.as_deref(),
+            Some(&b"Reviewed only"[..])
+        );
+        let mut attachment_record = crate::attempt_record::AttemptRecord::start(
+            &ws,
+            &id,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            2,
+        )
+        .unwrap()
+        .unwrap();
+        let status = crate::record_generated_evidence(
+            &mut attachment_record,
+            &reviewed_only,
+            crate::GeneratedEvidenceLink {
+                document_id: "reviewed-only",
+                document_name: "cv.pdf",
+                selector: None,
+                pdf: b"%PDF-reviewed-only",
+                context_current: true,
+                lookup_incomplete: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(status, "reviewed_text_only");
     }
 
     #[test]

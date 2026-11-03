@@ -1368,12 +1368,19 @@ fn record_generated_evidence(
         .map(|(name, bytes)| record.material(&format!("original-{name}"), bytes))
         .transpose()?;
     record.event(json!({"type":"document_draft_evidence_linked","time":now(),"source_attempt":evidence.attempt_id,"selector":link.selector,"document":link.document_name,"document_id":link.document_id,"pdf_sha256":waypoint_domain::sha256_hex(link.pdf),"evidence":evidence_name,"template":template_name,"context_current":link.context_current,"lookup_incomplete":link.lookup_incomplete,"note":"Any draft evidence describes the generated draft; it may not cover later edits and does not prove the file was attached or submitted."}))?;
-    Ok(match (evidence.evidence.is_some(), link.context_current) {
-        (true, true) => "linked_current",
-        (true, false) => "linked_historical",
-        (false, true) => "template_only_current",
-        (false, false) => "template_only_historical",
-    })
+    Ok(
+        match (
+            evidence.evidence.is_some(),
+            evidence.template.is_some(),
+            link.context_current,
+        ) {
+            (true, _, true) => "linked_current",
+            (true, _, false) => "linked_historical",
+            (false, true, true) => "template_only_current",
+            (false, true, false) => "template_only_historical",
+            (false, false, _) => "reviewed_text_only",
+        },
+    )
 }
 
 fn require_duplicate_index_ready(ws: &Workspace) -> Result<(), String> {

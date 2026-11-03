@@ -420,6 +420,7 @@ pub struct GeneratedEvidence {
     pub context_sha256: String,
     pub evidence: Option<Vec<u8>>,
     pub template: Option<(String, Vec<u8>)>,
+    pub reviewed_text: Option<Vec<u8>>,
 }
 
 pub struct GeneratedEvidenceLookup {
@@ -574,7 +575,25 @@ pub fn matching_generated_evidence_in_listing(
                 }
                 Some((original.to_owned(), bytes))
             };
-            if evidence.is_none() && template.is_none() {
+            let reviewed_text = if receipt["reviewed_text"].is_null() {
+                if !receipt["reviewed_text_sha256"].is_null() {
+                    return Err("Invalid reviewed text receipt".into());
+                }
+                None
+            } else {
+                let bytes = read(
+                    &materials.join(component(&receipt["reviewed_text"])?),
+                    16_000,
+                )?;
+                if receipt["reviewed_text_sha256"].as_str()
+                    != Some(waypoint_domain::sha256_hex(&bytes).as_str())
+                    || std::str::from_utf8(&bytes).is_err()
+                {
+                    return Err("Saved reviewed text changed".into());
+                }
+                Some(bytes)
+            };
+            if evidence.is_none() && template.is_none() && reviewed_text.is_none() {
                 return Err("Export receipt has no retained evidence or template".into());
             }
             Ok(Some(GeneratedEvidence {
@@ -583,6 +602,7 @@ pub fn matching_generated_evidence_in_listing(
                 context_sha256: context.to_owned(),
                 evidence,
                 template,
+                reviewed_text,
             }))
         })();
         match candidate {
