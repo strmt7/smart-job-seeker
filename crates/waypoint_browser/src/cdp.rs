@@ -735,6 +735,31 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
             return;
         }
         json!({"params":{"frameId":value.pointer("/params/frameId"),"loaderId":value.pointer("/params/loaderId"),"status":value.pointer("/params/response/status")}})
+    } else if name == "Fetch.requestPaused" {
+        // A paused request can contain credentials, URLs and form data. Keep
+        // only bounded protocol identifiers and classification, never payload.
+        let Some(id) = value
+            .pointer("/params/requestId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control))
+        else {
+            return;
+        };
+        let method = value
+            .pointer("/params/request/method")
+            .and_then(Value::as_str)
+            .filter(|s| {
+                !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_alphabetic())
+            });
+        let session = value
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control));
+        let response_status = value
+            .pointer("/params/responseStatusCode")
+            .and_then(Value::as_u64)
+            .filter(|s| (100..=599).contains(s));
+        json!({"sessionId":session,"params":{"requestId":id,"request":{"method":method},"responseStatusCode":response_status}})
     } else {
         if raw_len > MAX_EVENT_BYTES {
             return;
@@ -974,6 +999,29 @@ mod tests {
         assert!(!is_non_read_request(
             &json!({"method":"Network.webSocketFrameReceived"})
         ));
+    }
+
+    #[test]
+    fn paused_request_retains_only_bounded_routing_metadata() {
+        let mut events = Vec::new();
+        let event = json!({"method":"Fetch.requestPaused","sessionId":"session-1","params":{"requestId":"req-1","request":{"method":"POST","url":"https://example.invalid/private","headers":{"Authorization":"fictional-secret"},"postData":"fictional-body"}}});
+        retain_event(&mut events, event, 100);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1["params"]["requestId"], "req-1");
+        assert_eq!(events[0].1["params"]["request"]["method"], "POST");
+        assert_eq!(events[0].1["sessionId"], "session-1");
+        let stored = events[0].1.to_string();
+        assert!(
+            !stored.contains("fictional-secret")
+                && !stored.contains("fictional-body")
+                && !stored.contains("example.invalid")
+        );
+        retain_event(
+            &mut events,
+            json!({"method":"Fetch.requestPaused","params":{"requestId":"x".repeat(513)}}),
+            600,
+        );
+        assert_eq!(events.len(), 1);
     }
 
     #[test]
