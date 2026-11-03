@@ -16,6 +16,24 @@ impl Store {
         Ok(())
     }
 
+    /// Atomically replace the profile only if the caller's snapshot still matches.
+    pub fn save_candidate_profile_if_current(
+        &self,
+        expected_digest: &str,
+        content: &str,
+    ) -> Result<bool, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let current = self.candidate_profile()?;
+        let digest = waypoint_domain::sha256_hex(current.as_deref().unwrap_or("").as_bytes());
+        if digest != expected_digest {
+            tx.rollback()?;
+            return Ok(false);
+        }
+        self.save_candidate_profile(content)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn candidate_profile(&self) -> Result<Option<String>, StoreError> {
         let row: Option<(Vec<u8>, bool)> = self
             .conn
@@ -57,6 +75,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn profile_compare_and_save_refuses_stale_snapshots() {
+        let store = Store::in_memory().unwrap();
+        let empty = waypoint_domain::sha256_hex(b"");
+        assert!(store
+            .save_candidate_profile_if_current(&empty, "first")
+            .unwrap());
+        assert!(!store
+            .save_candidate_profile_if_current(&empty, "stale")
+            .unwrap());
+        assert_eq!(store.candidate_profile().unwrap().as_deref(), Some("first"));
+        let first = waypoint_domain::sha256_hex(b"first");
+        assert!(store
+            .save_candidate_profile_if_current(&first, "second")
+            .unwrap());
+        assert!(!store
+            .save_candidate_profile_if_current(&first, "stale")
+            .unwrap());
+        assert_eq!(
+            store.candidate_profile().unwrap().as_deref(),
+            Some("second")
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn profile_migrates_to_dpapi() {
@@ -76,6 +118,17 @@ mod tests {
         assert_eq!(
             store.candidate_profile().unwrap().as_deref(),
             Some("private")
+        );
+        let expected = waypoint_domain::sha256_hex(b"private");
+        assert!(store
+            .save_candidate_profile_if_current(&expected, "revised private")
+            .unwrap());
+        assert!(!store
+            .save_candidate_profile_if_current(&expected, "stale private")
+            .unwrap());
+        assert_eq!(
+            store.candidate_profile().unwrap().as_deref(),
+            Some("revised private")
         );
     }
 }

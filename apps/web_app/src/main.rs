@@ -2354,7 +2354,10 @@ fn serve(
             .filter(|fact| !fact.requires_review && !fact.text.trim().is_empty())
             .map(|fact| fact.text.clone())
             .collect();
-        let profile = match ws.candidate_profile().map_err(|e| e.to_string())? {
+        let stored_profile = ws.candidate_profile().map_err(|e| e.to_string())?;
+        let profile_revision =
+            waypoint_domain::sha256_hex(stored_profile.as_deref().unwrap_or("").as_bytes());
+        let profile = match stored_profile {
             Some(content) => {
                 serde_json::from_str::<Value>(&content).map_err(|_| "stored profile is invalid")?
             }
@@ -2395,7 +2398,7 @@ fn serve(
         json_reply(
             stream,
             "200 OK",
-            json!({"jobs": jobs, "facts": facts, "documents":documents, "reviews":reviews, "duplicates":ws.possible_duplicates().map_err(|e| e.to_string())?, "duplicate_index_pending":ws.duplicate_index_pending().map_err(|e|e.to_string())?, "duplicate_coverage":{"total":duplicate_total,"pending":duplicate_pending,"bounded":duplicate_bounded,"missing_employer":duplicate_missing}, "profile":profile, "sealing": ws.sealing_status()}),
+            json!({"jobs": jobs, "facts": facts, "documents":documents, "reviews":reviews, "duplicates":ws.possible_duplicates().map_err(|e| e.to_string())?, "duplicate_index_pending":ws.duplicate_index_pending().map_err(|e|e.to_string())?, "duplicate_coverage":{"total":duplicate_total,"pending":duplicate_pending,"bounded":duplicate_bounded,"missing_employer":duplicate_missing}, "profile":profile, "profile_revision":profile_revision, "sealing": ws.sealing_status()}),
         );
         return Ok(());
     }
@@ -3930,10 +3933,9 @@ fn serve(
         }
         "/api/profile" => {
             let input = body.as_object().ok_or("profile must be an object")?;
-            if input
-                .keys()
-                .any(|key| !PROFILE_FIELDS.contains(&key.as_str()))
-            {
+            if input.keys().any(|key| {
+                key != "_expected_profile_revision" && !PROFILE_FIELDS.contains(&key.as_str())
+            }) {
                 return Err("unknown profile field".into());
             }
             let mut profile = serde_json::Map::new();
@@ -3973,10 +3975,29 @@ fn serve(
             if !["", "on", "off"].contains(&profile["auto_assess_ai"].as_str().unwrap_or("")) {
                 return Err("Invalid automatic assessment setting".into());
             }
-            ws.save_candidate_profile(&Value::Object(profile).to_string())
-                .map_err(|e| e.to_string())?;
+            let content = Value::Object(profile).to_string();
+            let expected = input
+                .get("_expected_profile_revision")
+                .and_then(Value::as_str)
+                .filter(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+                .ok_or("Profile revision is missing or invalid; reload the page before saving")?;
+            if !ws
+                .save_candidate_profile_if_current(expected, &content)
+                .map_err(|e| e.to_string())?
+            {
+                return Err("Personal details changed in another session. Copy your edits, reload the page, and review the current details before saving.".into());
+            }
             interrupt_session(ws, session, "Profile changed")?;
-            json_reply(stream, "200 OK", json!({"ok":true}));
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"ok":true,"profile_revision":waypoint_domain::sha256_hex(content.as_bytes())}),
+            );
         }
         "/api/documents/download" => {
             let id = body["id"].as_str().ok_or("missing document id")?;
@@ -13030,13 +13051,89 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_profile_saves_do_not_overwrite_the_winner() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fictional-profile.sqlite");
+        let first = waypoint_store::Store::open(&path).unwrap();
+        first.save_candidate_profile("original").unwrap();
+        let second = waypoint_store::Store::open(&path).unwrap();
+        let expected = waypoint_domain::sha256_hex(b"original");
+        let thread_expected = expected.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let thread_barrier = barrier.clone();
+        let worker = std::thread::spawn(move || {
+            thread_barrier.wait();
+            first.save_candidate_profile_if_current(&thread_expected, "first")
+        });
+        barrier.wait();
+        let second_result = second.save_candidate_profile_if_current(&expected, "second");
+        let first_result = worker.join().unwrap();
+        let winners = [
+            matches!(first_result, Ok(true)),
+            matches!(second_result, Ok(true)),
+        ];
+        assert_eq!(winners.iter().filter(|won| **won).count(), 1);
+        let winner = if winners[0] { "first" } else { "second" };
+        assert_eq!(second.candidate_profile().unwrap().as_deref(), Some(winner));
+    }
+
+    #[test]
+    fn profile_revision_prevents_stale_editor_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut session = None;
+        let mut call = |method: &str, path: &str, body: Value| -> Result<Value, String> {
+            let payload = if method == "GET" {
+                String::new()
+            } else {
+                body.to_string()
+            };
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(client, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{payload}", payload.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            serve(&mut server, &mut ws, &mut session, "test-token", port)?;
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1)
+                .map_err(|e| e.to_string())
+        };
+        let original = call("GET", "/api/state", Value::Null).unwrap();
+        let revision = original["profile_revision"].as_str().unwrap();
+        let saved = call(
+            "POST",
+            "/api/profile",
+            json!({"first_name":"Avery","_expected_profile_revision":revision}),
+        )
+        .unwrap();
+        assert_ne!(saved["profile_revision"], revision);
+        let stale = call(
+            "POST",
+            "/api/profile",
+            json!({"first_name":"Other","_expected_profile_revision":revision}),
+        )
+        .unwrap_err();
+        assert!(stale.contains("changed in another session"));
+        let current = call("GET", "/api/state", Value::Null).unwrap();
+        assert_eq!(current["profile"]["first_name"], "Avery");
+        assert_eq!(current["profile_revision"], saved["profile_revision"]);
+    }
+
+    #[test]
     fn profile_rejects_unknown_fields_and_wrong_types() {
         assert!(request(
             "/api/profile",
             "test-token",
-            r#"{"full_name":"Example, Avery","preferred_name":"Ace","first_name":"Avery","instructions":"Remote work"}"#
+            r#"{"_expected_profile_revision":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","full_name":"Example, Avery","preferred_name":"Ace","first_name":"Avery","instructions":"Remote work"}"#
         )
         .contains("200 OK"));
+        assert!(
+            request("/api/profile", "test-token", r#"{"first_name":"Avery"}"#)
+                .contains("Profile revision is missing or invalid")
+        );
         assert!(request("/api/profile", "test-token", r#"{"unknown":"x"}"#)
             .contains("unknown profile field"));
         assert!(request("/api/profile", "test-token", r#"{"email":42}"#)
@@ -13056,7 +13153,7 @@ mod tests {
         assert!(request(
             "/api/profile",
             "test-token",
-            r#"{"search_remote_only":"on","search_locations":"Berlin\nParis"}"#
+            r#"{"_expected_profile_revision":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","search_remote_only":"on","search_locations":"Berlin\nParis"}"#
         )
         .contains("200 OK"));
     }
@@ -13077,7 +13174,7 @@ mod tests {
             serde_json::from_str::<Value>(&reopened.candidate_profile().unwrap().unwrap()).unwrap()
         });
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let body = r#"{"full_name":"Avery Example","preferred_name":"Ace","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42","address":"10 Fictional Street, Apartment 6","address_line1":"10 Fictional Street","address_line2":"Apartment 6","address_line3":"Building B"}"#;
+        let body = r#"{"_expected_profile_revision":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","full_name":"Avery Example","preferred_name":"Ace","phone_national":"2025550123","phone_country_code":"+1","phone_extension":"42","address":"10 Fictional Street, Apartment 6","address_line1":"10 Fictional Street","address_line2":"Apartment 6","address_line3":"Building B"}"#;
         write!(stream, "POST /api/profile HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: test-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();

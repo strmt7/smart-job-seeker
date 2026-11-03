@@ -505,6 +505,16 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn save_candidate_profile_if_current(
+        &self,
+        expected_digest: &str,
+        content: &str,
+    ) -> Result<bool, WorkspaceError> {
+        Ok(self
+            .store
+            .save_candidate_profile_if_current(expected_digest, content)?)
+    }
+
     pub fn save_latest_web_search(&self, id: &str, content: &[u8]) -> Result<(), WorkspaceError> {
         Ok(self.store.save_latest_web_search(id, content)?)
     }
