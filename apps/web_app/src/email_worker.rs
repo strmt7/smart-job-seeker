@@ -7,11 +7,16 @@ use waypoint_workspace::Workspace;
 
 struct Task {
     id: String,
+    workspace: Option<std::path::PathBuf>,
     receiver: mpsc::Receiver<EmailHandoffOutcome>,
     result: Option<EmailHandoffOutcome>,
     record: Option<(JobIdentityId, String)>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+// Retain one completed result briefly so a lost UI response can be retried.
+// The database journal remains authoritative across process restarts.
+type Completed = (String, std::path::PathBuf, WorkerStatus, std::time::Instant);
+static COMPLETED: Mutex<Option<Completed>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -20,7 +25,7 @@ pub fn busy() -> bool {
     TASK.lock().map(|task| task.is_some()).unwrap_or(true)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerStatus {
     Running,
     Finished {
@@ -87,6 +92,7 @@ where
     }
     *task = Some(Task {
         id: handoff_id,
+        workspace: ws.db_path.clone(),
         receiver,
         result: None,
         record,
@@ -98,10 +104,23 @@ where
 /// result for another database write attempt, never another SMTP handoff.
 pub fn poll(ws: &mut Workspace, id: &str) -> Result<WorkerStatus, String> {
     let mut tasks = TASK.lock().map_err(|_| "Email worker unavailable")?;
-    let task = tasks
-        .as_mut()
-        .filter(|task| task.id == id)
-        .ok_or("Email worker not found; check the saved handoff before any retry")?;
+    let Some(task) = tasks.as_mut().filter(|task| task.id == id) else {
+        let completed = COMPLETED.lock().map_err(|_| "Email worker unavailable")?;
+        return completed
+            .as_ref()
+            .filter(|(completed_id, path, _, at)| {
+                completed_id == id
+                    && ws.db_path.as_ref() == Some(path)
+                    && at.elapsed() <= std::time::Duration::from_secs(600)
+            })
+            .map(|(_, _, status, _)| status.clone())
+            .ok_or_else(|| {
+                "Email worker not found; check the saved handoff before any retry".into()
+            });
+    };
+    if task.workspace != ws.db_path {
+        return Err("Email worker belongs to a different workspace".into());
+    }
     if task.result.is_none() {
         match task.receiver.try_recv() {
             Ok(outcome) => task.result = Some(outcome),
@@ -114,15 +133,25 @@ pub fn poll(ws: &mut Workspace, id: &str) -> Result<WorkerStatus, String> {
     let Some(outcome) = task.result else {
         return Err("Email worker result unavailable; check the saved handoff".into());
     };
+    let mut completed = COMPLETED.lock().map_err(|_| "Email worker unavailable")?;
     ws.finish_reviewed_email(id, outcome)?;
     let record_saved = task.record.as_ref().map(|(job, attempt)| {
         crate::attempt_record::record_email_outcome(ws, job, attempt, outcome, crate::now()).is_ok()
     });
-    *tasks = None;
-    Ok(WorkerStatus::Finished {
+    let status = WorkerStatus::Finished {
         outcome,
         record_saved,
-    })
+    };
+    *completed = ws.db_path.clone().map(|path| {
+        (
+            id.to_owned(),
+            path,
+            status.clone(),
+            std::time::Instant::now(),
+        )
+    });
+    *tasks = None;
+    Ok(status)
 }
 
 /// Collect a completed worker independently of an open browser page. This
@@ -197,6 +226,10 @@ mod tests {
         )
         .unwrap();
         assert!(busy());
+        let other_directory = tempfile::tempdir().unwrap();
+        let mut other = Workspace::open(other_directory.path()).unwrap();
+        assert!(poll(&mut other, attempt).is_err());
+        assert!(busy());
         assert_eq!(
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "reserved"
@@ -227,7 +260,22 @@ mod tests {
             ws.email_handoff_history(&job).unwrap().0[0].state,
             "accepted"
         );
-        assert!(poll(&mut ws, attempt).is_err());
+        assert_eq!(
+            poll(&mut ws, attempt).unwrap(),
+            WorkerStatus::Finished {
+                outcome: EmailHandoffOutcome::Accepted,
+                record_saved: Some(true)
+            }
+        );
+        assert_eq!(
+            poll(&mut ws, attempt).unwrap(),
+            WorkerStatus::Finished {
+                outcome: EmailHandoffOutcome::Accepted,
+                record_saved: Some(true)
+            }
+        );
+        assert!(poll(&mut ws, "different-attempt").is_err());
+        assert!(poll(&mut other, attempt).is_err());
         assert!(!busy());
         let folder = std::fs::read_dir(directory.path().join("application-records"))
             .unwrap()

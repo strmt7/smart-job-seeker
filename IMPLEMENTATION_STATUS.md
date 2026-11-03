@@ -54,6 +54,10 @@
 
 - When reviewed qualifications exist but the selection report says none were supplied to an assessment, the job badge now says “no qualifications used” instead of implying a subset was selected or showing only a generic limit. The distinction is derived from recorded input counts and does not change the score or prove the model used any supplied text. Focused Rust and UI checks passed.
 
+## Application email worker recovery — 2026-11-03
+
+- The background worker retains its latest completed result for ten minutes for repeat polling after automatic collection, scoped to the same disk workspace and attempt ID. Active worker polling also checks the workspace path. The database journal remains authoritative after restart or reconciliation; the replay is not a fresh mailbox check. A disk-backed fixture exercised a simulated transport, server collection, repeat polling and rejection from another workspace. The worker test, a separate local email-contact browser check and Windows web Clippy passed. Application-email sending remains unexposed, and no email was sent.
+
 ## Public application control observation — 2026-11-03
 
 - Application-check summaries now identify a required disabled or read-only field and unavailable fields, and explicitly report when the form did not settle during its bounded loading check. The text uses fixed messages rather than echoing page content. Application-check tests passed (20 passed, 22 ignored) and Windows web Clippy passed; no employer site or model was used.
