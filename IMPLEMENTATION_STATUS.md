@@ -3711,3 +3711,5 @@ model accuracy or visual quality.
 2026-11-03: Screenshot references now also require an accessible file with a PNG signature, using the same bounded check as the screenshot list. A fictional test covered a missing file, an oversized file, a bad signature and duplicate references. A PNG signature is not a full decode or integrity check; later corruption may remain undetected.
 
 2026-11-03: Hosted coverage run `41597789874` for commit `352cebc4` completed successfully. It does not cover later local commits. The audit notices trace through the legacy desktop shell's accessibility dependencies; disabling accessibility solely to make the audit pass would remove functionality and was not done.
+
+2026-11-03: Added an ignored, resource-gated local-model fixture for the lower-bound experience retrieval and independent comparison. It compiles, but was not run: available system memory was approximately 15.91 GiB, only slightly above the existing startup estimate for the model. The fixture supplies the retrieved candidate directly to the separate model check; it is not a full end-to-end fit assessment or an accuracy benchmark.

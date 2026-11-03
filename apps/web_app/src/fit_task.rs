@@ -6291,6 +6291,50 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads a local model after the application resource gate for a fictional lower-bound comparison"]
+    fn resource_gated_lower_bound_evidence_comparison() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let model_name = crate::resident_model()
+                .unwrap()
+                .expect("eligible resident model");
+            let model = OllamaInference::new("http://127.0.0.1:11434", &model_name)
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                model,
+                model_name,
+                crate::resident_model_identity,
+            );
+            let listing = "Required: five years of Python.";
+            let facts = vec!["Used Python for at least six years".to_owned()];
+            assert_eq!(
+                unique_duration_candidate("five years of Python", listing, &facts),
+                Some(1)
+            );
+            assert_eq!(
+                unique_duration_candidate(
+                    "five years of Python",
+                    listing,
+                    &["Used Python for at least one year".into()]
+                ),
+                None
+            );
+            let source = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of Python","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
+            let initial = validate(source.clone(), &facts, "", listing).unwrap();
+            let mut proposed = source;
+            proposed["criteria"][0]["status"] = json!("supported");
+            proposed["criteria"][0]["fact_index"] = json!(1);
+            let (_, result) =
+                check_qualification_judgments(&mut model, proposed, initial, &facts, "", listing);
+            assert_eq!(
+                result["rubric"][0]["status"], "supported",
+                "fictional lower-bound comparison: {result}"
+            );
+        });
+    }
+
     #[test]
     #[ignore = "requires a preloaded local qwen3.5:9b model and resource preflight"]
     fn live_full_fit_does_not_treat_partial_experience_as_disproof() {
