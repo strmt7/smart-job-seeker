@@ -48,6 +48,10 @@ pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
         None => false,
         Some(flag) => flag.as_bool().ok_or("Invalid search context flag")?,
     };
+    let sponsored_marker = match value.get("provider_sponsored_marker") {
+        None => false,
+        Some(flag) => flag.as_bool().ok_or("Invalid search context flag")?,
+    };
     if engines.is_empty()
         && date.is_empty()
         && indexed_date.is_empty()
@@ -56,10 +60,14 @@ pub(crate) fn search_context(value: &Value) -> Result<Option<Value>, String> {
         && !engines_limited
         && !dates_limited
         && !coverage_limited
+        && !sponsored_marker
     {
         return Ok(None);
     }
     let mut context = json!({"engines":engines,"published_date":date,"alternative_published_dates":dates,"engines_limited":engines_limited,"dates_limited":dates_limited,"coverage_limited":coverage_limited});
+    if sponsored_marker {
+        context["provider_sponsored_marker"] = json!(true);
+    }
     if !indexed_date.is_empty() {
         context["indexed_date"] = json!(indexed_date);
     }
@@ -159,6 +167,20 @@ mod tests {
         assert_eq!(saved[0]["search_context"]["engines"], json!(["one", "two"]));
         assert!(saved[0]["search_context"].get("untrusted_extra").is_none());
         assert_eq!(saved[0]["search_context"]["coverage_limited"], false);
+        let marker_only = json!({"engines":[],"published_date":"","alternative_published_dates":[],"engines_limited":false,"dates_limited":false,"provider_sponsored_marker":true});
+        assert_eq!(
+            search_context(&marker_only).unwrap().unwrap()["provider_sponsored_marker"],
+            true
+        );
+        let mut sponsored = saved[0].clone();
+        sponsored["search_context"]["provider_sponsored_marker"] = json!(true);
+        assert_eq!(
+            validate(&json!([sponsored.clone()])).unwrap()[0]["search_context"]
+                ["provider_sponsored_marker"],
+            true
+        );
+        sponsored["search_context"]["provider_sponsored_marker"] = json!("yes");
+        assert!(validate(&json!([sponsored])).is_err());
         let mut indexed = saved[0].clone();
         indexed["search_context"]["indexed_date"] = json!("2026-10-03");
         assert_eq!(

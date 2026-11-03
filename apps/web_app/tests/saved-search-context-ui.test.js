@@ -16,6 +16,9 @@ assert.match(indexed.items[1].text,/index captures: 2026-10-03, 2026-10-04.*do n
 const limited={items:[],append(item){this.items.push(item)}};
 show(limited,{search_context_matches_url:true,search_context:{engines:[],published_date:'',alternative_published_dates:[],engines_limited:false,dates_limited:false,coverage_limited:true}});
 assert.match(limited.items[1].text,/additional reports may be missing/);
+const sponsored={items:[],append(item){this.items.push(item)}};
+show(sponsored,{search_context_matches_url:true,search_context:{engines:[],published_date:'',alternative_published_dates:[],engines_limited:false,dates_limited:false,provider_sponsored_marker:true}});
+assert.ok(sponsored.items.some(item=>/advertising or job sponsorship/.test(item.text)));
 const missing={items:[],append(item){this.items.push(item)}};
 show(missing,{search_context_status:'omitted_size_limit'});
 assert.match(missing.items[0].text,/could not be retained/);

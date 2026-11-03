@@ -3371,7 +3371,7 @@ mod tests {
             attach_provenance(&mut listing.capture, &listing.job);
             attach_search_context(
                 &mut listing.capture,
-                json!({"engines":["fixture"],"published_date":"2026-10-01","alternative_published_dates":["2026-10-02"],"engines_limited":false,"dates_limited":false}),
+                json!({"engines":["fixture"],"published_date":"2026-10-01","alternative_published_dates":["2026-10-02"],"engines_limited":false,"dates_limited":false,"provider_sponsored_marker":true}),
             );
         }
         let (_, response) = call(status, request());
@@ -3398,6 +3398,7 @@ mod tests {
             assert_eq!(salary["salary_evidence"]["value"]["minValue"], 60000);
             assert_eq!(salary["captured_at"], 1750000000);
             assert_eq!(salary["search_context"]["engines"], json!(["fixture"]));
+            assert_eq!(salary["search_context"]["provider_sponsored_marker"], true);
             assert_eq!(salary["search_context_matches_url"], true);
             assert_eq!(
                 salary["search_context"]["alternative_published_dates"],

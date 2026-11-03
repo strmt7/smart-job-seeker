@@ -9,6 +9,8 @@ assert.equal(compare([{...items[0],search_context:attribution}],[{...items[0],se
 assert.equal(compare([{...items[0],search_context:attribution}],[{...items[0],search_context:{...attribution,alternative_published_dates:['2026-10-02']}}]),false);
 assert.equal(compare([{...items[0],search_context:attribution}],[{...items[0],search_context:{...attribution,coverage_limited:false}}]),true);
 assert.equal(compare([{...items[0],search_context:attribution}],[{...items[0],search_context:{...attribution,coverage_limited:true}}]),false);
+assert.equal(compare([{...items[0],search_context:attribution}],[{...items[0],search_context:{...attribution,provider_sponsored_marker:true}}]),false);
+assert.equal(compare([{...items[0],search_context:attribution}],[{...items[0],search_context:{...attribution,provider_sponsored_marker:false}}]),true);
 assert.equal(compare([{...items[0],search_context:{engines:[],published_date:'',alternative_published_dates:[],engines_limited:false,dates_limited:false}}],items),true);
 assert.equal(compare([{...items[0],search_context:{engines:[]}}],items),false);
 async function run(mode){let calls=[];const context={api:async(_path,body)=>{calls.push(body.action);if(body.action==='load'){if(mode==='committed')return {revision:5,items:[{title:'Fictional',url:'https://example.org/job'}]};if(mode==='conflict')return {revision:5,items:[]};return {revision:4,items:[]};}if(mode==='retry' && calls.filter(x=>x==='save').length===2)return {revision:5};throw Error('Lost response');}};const save=vm.runInNewContext(`${source.slice(start,end)}; persistCandidateSnapshot`,context);return {save,calls};}
