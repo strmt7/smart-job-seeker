@@ -430,14 +430,28 @@ pub(crate) fn relevant_experiences(
         } else {
             observed_platform(&schema.origin)
         };
+        // Prefer observations made while entering information. A review-stage
+        // observation can still provide advisory context if none exist there.
+        let eligible = |item: &&ExperienceMatch| {
+            item.experience.enabled
+                && item.experience.reviewed
+                && item.experience.version == 1
+                && item.experience.observed_at > 0
+                && item.experience.control == control
+        };
+        let stage = if experiences
+            .iter()
+            .filter(eligible)
+            .any(|item| item.experience.stage == Stage::EnterInformation)
+        {
+            Stage::EnterInformation
+        } else {
+            Stage::Review
+        };
         let mut candidates: Vec<_> = experiences
             .iter()
-            .filter(|item| {
-                item.experience.enabled
-                    && item.experience.reviewed
-                    && item.experience.stage == Stage::EnterInformation
-                    && item.experience.control == control
-            })
+            .filter(eligible)
+            .filter(|item| item.experience.stage == stage)
             .cloned()
             .collect();
         for item in &mut candidates {
@@ -1267,6 +1281,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Control::Text]
         );
+        let mut review = make(Control::Text);
+        review.id = "review".into();
+        review.experience.stage = Stage::Review;
+        let with_review = vec![experiences[0].clone(), review.clone()];
+        assert_eq!(
+            relevant_experiences(&schema, &with_review)[0]
+                .experience
+                .stage,
+            Stage::EnterInformation
+        );
+        let fallback = relevant_experiences(&schema, std::slice::from_ref(&review));
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].experience.stage, Stage::Review);
+        review.experience.reviewed = false;
+        assert!(relevant_experiences(&schema, &[review]).is_empty());
         schema.fields[1].sensitive = false;
         assert_eq!(relevant_experiences(&schema, &experiences).len(), 2);
         schema.fields.clear();
