@@ -5495,29 +5495,35 @@ mod tests {
         assert_eq!(checked["rubric"][0]["status"], "unknown");
         assert_eq!(checked["rubric"][1]["status"], "contradicted");
 
-        let facts = vec!["Used Python for six years".to_owned()];
         let listing = "Required: five years of Python.";
         let source = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of Python","importance":"required","status":"unknown","fact_index":null,"explanation":"Review"}]});
-        let initial = validate(source.clone(), &facts, "", listing).unwrap();
-        let (proposed, report) = find_unknown_qualification_evidence(
-            &mut Fixture(json!({"items":[{"id":1,"status":"unknown","fact_index":null}]})),
-            source,
-            &facts,
-            listing,
-        );
-        assert_eq!(report.unwrap()["lexical_candidates"], 1);
-        assert_eq!(proposed["criteria"][0]["fact_index"], 1);
-        for (status, expected) in [("unknown", "unknown"), ("supported", "supported")] {
-            let (_, checked) = check_qualification_judgments(
-                &mut Fixture(json!({"items":[{"id":1,"status":status}]})),
-                proposed.clone(),
-                initial.clone(),
+        for fact in [
+            "Used Python for six years",
+            "Used Python for at least six years",
+        ] {
+            let facts = vec![fact.to_owned()];
+            let initial = validate(source.clone(), &facts, "", listing).unwrap();
+            let (proposed, report) = find_unknown_qualification_evidence(
+                &mut Fixture(json!({"items":[{"id":1,"status":"unknown","fact_index":null}]})),
+                source.clone(),
                 &facts,
-                "",
                 listing,
             );
-            assert_eq!(checked["rubric"][0]["status"], expected);
+            assert_eq!(report.unwrap()["lexical_candidates"], 1);
+            assert_eq!(proposed["criteria"][0]["fact_index"], 1);
+            for (status, expected) in [("unknown", "unknown"), ("supported", "supported")] {
+                let (_, checked) = check_qualification_judgments(
+                    &mut Fixture(json!({"items":[{"id":1,"status":status}]})),
+                    proposed.clone(),
+                    initial.clone(),
+                    &facts,
+                    "",
+                    listing,
+                );
+                assert_eq!(checked["rubric"][0]["status"], expected);
+            }
         }
+        let facts = vec!["Used Python for six years".to_owned()];
         assert_eq!(
             unique_duration_candidate(
                 "five years of Python",
