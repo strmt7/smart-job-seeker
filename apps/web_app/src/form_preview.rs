@@ -254,10 +254,16 @@ fn has_valid_reviewed_mapping(
         .suggestions
         .iter()
         .filter(|mapping| mapping.field_selector == field.selector);
-    matches
-        .next()
-        .is_some_and(|mapping| required_value_valid(field, &mapping.value))
-        && matches.next().is_none()
+    matches.next().is_some_and(|mapping| {
+        // An unchecked optional checkbox is a valid reviewed answer;
+        // a required checkbox still needs to be checked.
+        (!field.required
+            && matches!(
+                (&field.field_type, &mapping.value),
+                (FormFieldType::Checkbox, PacketValue::Bool(_))
+            ))
+            || required_value_valid(field, &mapping.value)
+    }) && matches.next().is_none()
 }
 
 // A proposed answer is not evidence of a filled page, but an invalid answer
@@ -5541,6 +5547,48 @@ mod tests {
             .manual_review
             .iter()
             .any(|item| item.contains("First name")));
+    }
+
+    #[test]
+    fn optional_unchecked_checkbox_clears_conflict_without_clearing_required_review() {
+        let mut field = waypoint_applications::form_mapping::FormField {
+            selector: "#preference".into(),
+            label: "Contact preference".into(),
+            field_type: FormFieldType::Checkbox,
+            required: false,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: None,
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: None,
+        };
+        let warning = "Conflicting suggestions need review: Contact preference".to_string();
+        let mut preview = FormPreview {
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![field.clone()],
+                multi_step: false,
+                steps: 1,
+            },
+            suggestions: vec![ProposedMapping {
+                field_selector: "#preference".into(),
+                value: PacketValue::Bool(false),
+            }],
+            manual_review: vec![warning.clone()],
+            model_review_selectors: Default::default(),
+        };
+        refresh_required_review(&mut preview);
+        assert!(!preview.manual_review.contains(&warning));
+        field.required = true;
+        preview.schema.fields[0] = field;
+        preview.manual_review.push(warning.clone());
+        refresh_required_review(&mut preview);
+        assert!(preview.manual_review.contains(&warning));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|text| text == "Required field needs review: Contact preference"));
     }
 
     #[test]
