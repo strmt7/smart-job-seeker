@@ -1,3 +1,7 @@
+## Captured-page closure hint — 2026-11-03
+
+- Listing inspection now reports certain literal English closure phrases found in bounded captured page text as an advisory, including for structured postings. It does not mark a job closed: the wording could concern another role, be negated, or be stale. The warning is kept with extraction provenance. A fictional test covered the warning and absent capture, and a separate test on the retained public-page receipt found the observed “Closed Positions” wording without a model. This is a narrow phrase check, not multilingual or exhaustive closure detection; the real app's end-to-end inspection of that page was not exercised. Focused tests and Windows web Clippy passed.
+
 ## Bounded closure-check excerpts — 2026-11-03
 
 - Closure advice now scans up to 16,000 bytes in overlapping 4,000-byte excerpts instead of sending the entire capture in one model request. A positive result must quote the excerpt exactly; a failed request or an all-negative multi-excerpt check remains explicitly unavailable because page-wide context may be missing. This can require up to five model calls and may be slower. Fictional boundary, Unicode and failure tests passed, along with Windows web Clippy. A live retry on the previously captured closed listing was stopped by the RAM guard at 10,187 MiB available; the model unloaded. Therefore improved live closure detection is not established.

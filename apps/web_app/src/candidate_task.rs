@@ -416,6 +416,50 @@ fn saved_deadline_excerpt(value: &Value) -> Option<&str> {
     })
 }
 
+/// A literal page signal is not a closure verdict: it may describe another
+/// role, a historical notice, or wording that negates the phrase.
+fn attach_page_closure_hint(job: &mut Value, capture: &Value) {
+    if !matches!(
+        capture["page_text_status"].as_str(),
+        Some("captured" | "truncated")
+    ) {
+        return;
+    }
+    let Some(text) = capture["page_text"]
+        .as_str()
+        .filter(|text| text.len() <= 32_000)
+    else {
+        return;
+    };
+    let phrases = [
+        "closed positions",
+        "applications are closed",
+        "applications closed",
+        "no longer accepting applications",
+        "position is closed",
+        "position has been filled",
+    ];
+    let excerpt = text.lines().find_map(|line| {
+        let lower = line.to_ascii_lowercase();
+        let (offset, phrase) = phrases
+            .iter()
+            .filter_map(|phrase| lower.find(phrase).map(|offset| (offset, *phrase)))
+            .min_by_key(|(offset, _)| *offset)?;
+        let start = line.floor_char_boundary(offset.saturating_sub(50));
+        let end = line.floor_char_boundary((offset + phrase.len() + 50).min(line.len()));
+        Some(line[start..end].trim())
+    });
+    let Some(excerpt) =
+        excerpt.filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+    else {
+        return;
+    };
+    if job["extraction_warnings"].as_array().is_none() {
+        job["extraction_warnings"] = json!([]);
+    }
+    job["extraction_warnings"].as_array_mut().expect("warnings array").insert(0, json!(format!("The captured page contains possible closure wording: {excerpt}. It may concern another role or an old notice; verify the current status.")));
+}
+
 fn attach_provenance(capture: &mut ListingCapture, job: &Value) {
     let kind = job["extraction"]
         .as_str()
@@ -1998,6 +2042,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
             }
             let mut capture=capture_listing(&mut browser,&url,&current,&scripts);
             ensure_listing_address(&mut browser, &current)?;
+            attach_page_closure_hint(&mut job, &capture.metadata);
             let mut email_links = match browser.with_review_timeout(|browser| browser.page_links()) {
                 Ok(links) if browser.current_url().ok().as_deref() == Some(current.as_str()) => {
                     attach_role_targets(&mut job, &current, &links);
@@ -5128,6 +5173,39 @@ mod tests {
     }
 
     #[test]
+    fn captured_closure_wording_is_advisory_and_requires_captured_text() {
+        let mut job = json!({"extraction":"structured"});
+        attach_page_closure_hint(
+            &mut job,
+            &json!({"page_text_status":"captured","page_text":"Role A\nDeadline: Closed Positions\nOther role remains open"}),
+        );
+        let warning = job["extraction_warnings"][0].as_str().unwrap();
+        assert!(warning.contains("Deadline: Closed Positions"));
+        assert!(warning.contains("another role") && warning.contains("verify"));
+        assert!(job["possible_closure_evidence"].is_null());
+        let mut capture = ListingCapture {
+            metadata: json!({"page_text_status":"captured","page_text":"Deadline: Closed Positions"}),
+            segments: vec![],
+        };
+        attach_provenance(&mut capture, &job);
+        assert!(capture.metadata["extraction_provenance"]["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("Closed Positions"));
+        let mut job = json!({});
+        attach_page_closure_hint(
+            &mut job,
+            &json!({"page_text_status":"unavailable","page_text":"applications are closed"}),
+        );
+        assert!(job["extraction_warnings"].is_null());
+        attach_page_closure_hint(
+            &mut job,
+            &json!({"page_text_status":"captured","page_text":"Applications are open."}),
+        );
+        assert!(job["extraction_warnings"].is_null());
+    }
+
+    #[test]
     fn closure_segments_cover_boundaries_and_failure_is_not_a_negative_result() {
         struct Model {
             calls: usize,
@@ -5362,6 +5440,33 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("could not complete the closure check"))));
         assert!(inconsistent["possible_closure_evidence"].is_null());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "reads an explicitly supplied captured public listing without loading a model"]
+    fn captured_public_listing_closure_hint_is_advisory() {
+        let path = std::env::var_os("WAYPOINT_CLOSURE_RESEARCH_RECEIPT")
+            .expect("provide a public listing receipt");
+        let receipt: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let text = receipt["native_result"]["markdown"]["raw_markdown"]
+            .as_str()
+            .unwrap();
+        let text = &text[..text.floor_char_boundary(text.len().min(32_000))];
+        let mut job = json!({});
+        attach_page_closure_hint(
+            &mut job,
+            &json!({"page_text_status":"captured","page_text":text}),
+        );
+        let warning = job["extraction_warnings"][0]
+            .as_str()
+            .expect("expected advisory");
+        let expected = std::env::var("WAYPOINT_CLOSURE_EXPECTED_TERM").unwrap();
+        assert!(warning
+            .to_ascii_lowercase()
+            .contains(&expected.to_ascii_lowercase()));
+        assert!(warning.contains("verify the current status"));
+        assert!(job["possible_closure_evidence"].is_null());
     }
 
     #[cfg(windows)]
