@@ -3338,3 +3338,10 @@ the candidate limit stopped the run. The card points to the search summary;
 the existing selection notice still asks the user to reselect for later reports.
 Four focused search and selection UI tests passed. This does not establish
 provider completeness or verify any listing.
+
+Retries now seed their deduplication and candidate budget from retained search
+pages. Repeated URLs can still contribute provider reports, while earlier and
+new candidates share the 600-link limit. A retry that would exceed the stored
+50-page history limit is refused with a recovery explanation. Fictional local
+tests cover carryover, repeated references and both limits; no external search
+or employer application was performed in this check.

@@ -210,6 +210,38 @@ struct BatchSeen {
     comparison_keys: HashMap<String, String>,
 }
 
+fn seen_from_prior(history: &[Value]) -> Result<BatchSeen, String> {
+    let mut seen = BatchSeen::default();
+    for group in history {
+        let results = group["data"]["results"]
+            .as_array()
+            .ok_or("Earlier search page is invalid")?;
+        for result in results {
+            let url = result["url"]
+                .as_str()
+                .filter(|url| {
+                    url.len() <= 2048
+                        && waypoint_connectors::is_public_host_url(url)
+                        && url::Url::parse(url).is_ok_and(|parsed| {
+                            parsed.scheme() == "https"
+                                && parsed.username().is_empty()
+                                && parsed.password().is_none()
+                        })
+                })
+                .ok_or("Earlier search result URL is invalid")?;
+            if seen.originals.insert(url.to_owned()) {
+                seen.comparison_keys
+                    .entry(tracking_comparison_key(url))
+                    .or_insert_with(|| url.to_owned());
+            }
+            if seen.originals.len() > 600 {
+                return Err("Earlier search results exceed the 600-candidate limit".into());
+            }
+        }
+    }
+    Ok(seen)
+}
+
 fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
     let mut omitted = 0usize;
     let mut repeated = 0usize;
@@ -302,6 +334,9 @@ pub fn start_selected_with_history(
     if pairs.is_empty() || pairs.len() > 50 {
         return Err("Choose 1 to 50 search pages".into());
     }
+    if prior_history.len().saturating_add(pairs.len()) > 50 {
+        return Err("The earlier results and requested retry exceed the 50-page history limit; save or review the earlier results and start a new search".into());
+    }
     let mut seen = HashSet::new();
     let mut phrases = HashSet::new();
     let mut requests = Vec::new();
@@ -326,6 +361,10 @@ fn start_requests(
     requests: Vec<(String, u8, url::Url)>,
     prior_history: Vec<Value>,
 ) -> Result<(), String> {
+    let initial_seen = seen_from_prior(&prior_history)?;
+    if initial_seen.originals.len() >= 600 {
+        return Err("Earlier results already fill the 600-candidate search limit; start a new search after saving or reviewing them".into());
+    }
     let mut task = TASK.lock().map_err(|_| "Web search unavailable")?;
     if task.is_some() {
         return Err("A batch search is running or awaiting its result".into());
@@ -360,7 +399,7 @@ fn start_requests(
     });
     drop(task);
     std::thread::spawn(move || {
-        let mut seen = BatchSeen::default();
+        let mut seen = initial_seen;
         let mut limit_reached = false;
         for (index, (query, page, url)) in requests.into_iter().enumerate() {
             if stop.load(Ordering::Acquire) {
@@ -625,6 +664,65 @@ pub fn cancel(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_carries_forward_unique_urls_and_shared_candidate_budget() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let prior_results: Vec<_> = (0..599)
+            .map(|i| json!({"url":format!("https://example.org/job/{i}")}))
+            .collect();
+        let prior = vec![json!({"data":{"results":prior_results}})];
+        let mut seen = seen_from_prior(&prior).unwrap();
+        assert_eq!(seen.originals.len(), 599);
+        let mut data = json!({"results":[
+            {"url":"https://example.org/job/0"},
+            {"url":"https://example.org/new"},
+            {"url":"https://example.org/over-limit"}
+        ]});
+        assert!(retain_batch_budget(&mut data, &mut seen));
+        assert_eq!(data["results"].as_array().unwrap().len(), 1);
+        assert_eq!(data["results"][0]["url"], "https://example.org/new");
+        assert_eq!(data["exact_repeated_omitted"], 1);
+        assert_eq!(data["batch_limit_omitted"], 1);
+        assert_eq!(seen.originals.len(), 600);
+        let full = vec![
+            json!({"data":{"results":(0..600).map(|i| json!({"url":format!("https://example.org/job/{i}")})).collect::<Vec<_>>()}}),
+        ];
+        let request = vec![(
+            "role".into(),
+            1,
+            url::Url::parse("https://example.org/search").unwrap(),
+        )];
+        assert!(
+            start_requests("full".into(), "https://example.org".into(), request, full)
+                .unwrap_err()
+                .contains("600-candidate")
+        );
+        let pages = vec![json!({"data":{"results":[]}}); 50];
+        assert!(start_selected_with_history(
+            "too-many".into(),
+            "https://example.org".into(),
+            vec![("role".into(), 1)],
+            pages
+        )
+        .unwrap_err()
+        .contains("50-page"));
+        let prior = vec![json!({"data":{"results":[{"url":"https://example.org/job/0"}]}})];
+        let mut seen = seen_from_prior(&prior).unwrap();
+        let mut page = crate::web_search::parse_excluding(
+            r#"{"results":[{"url":"https://example.org/job/0","title":"Repeated"},{"url":"https://example.org/new","title":"New"}]}"#,
+            &seen.originals,
+        ).unwrap();
+        assert!(!retain_batch_budget(&mut page, &mut seen));
+        assert_eq!(page["results"][0]["url"], "https://example.org/new");
+        assert_eq!(
+            page["repeated_references"][0]["url"],
+            "https://example.org/job/0"
+        );
+        assert!(
+            seen_from_prior(&[json!({"data":{"results":[{"url":"http://127.0.0.1/"}]}})]).is_err()
+        );
+    }
     use std::io::{Read, Write};
     use std::time::Instant;
     #[cfg(windows)]
