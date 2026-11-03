@@ -690,7 +690,7 @@ fn parse_structured(
     };
     let mut location_incomplete = job["jobLocation"]
         .as_array()
-        .is_some_and(|list| list.len() > 20);
+        .is_some_and(|list| list.len() > 20 || list.iter().any(Value::is_null));
     let locations = match job["jobLocation"].as_array() {
         Some(list) => list.iter().take(20).collect::<Vec<_>>(),
         None => vec![&job["jobLocation"]],
@@ -703,10 +703,9 @@ fn parse_structured(
         } else {
             let mut parts = Vec::new();
             for key in ["addressLocality", "addressRegion", "addressCountry"] {
-                let value = &address[key];
-                if value.is_null() {
+                let Some(value) = address.get(key) else {
                     continue;
-                }
+                };
                 let text = value.as_str().or_else(|| value["name"].as_str());
                 if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
                     parts.push(text);
@@ -737,7 +736,7 @@ fn parse_structured(
         let requirements = &job["applicantLocationRequirements"];
         if requirements
             .as_array()
-            .is_some_and(|items| items.len() > 20)
+            .is_some_and(|items| items.len() > 20 || items.iter().any(Value::is_null))
         {
             location_incomplete = true;
         }
@@ -3808,6 +3807,8 @@ mod tests {
             json!([{"address":{"addressLocality":"Berlin","addressCountry":{"@id":"https://example.org/country"}}}]),
             json!([{"address":{"addressLocality":"Berlin","addressRegion":42}}]),
             json!([{"address":{"addressLocality":"Berlin","addressCountry":"   "}}]),
+            json!([{"address":{"addressLocality":"Berlin","addressCountry":null}}]),
+            json!([{"address":"Berlin"}, null]),
         ] {
             let posting = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"jobLocation":places}).to_string();
             let job = parse(&[posting], "https://example.org/job")
@@ -3886,6 +3887,15 @@ mod tests {
             .unwrap();
         assert_eq!(job["remote"], true);
         assert_eq!(job["location"], "Applicant location: Germany, France");
+        let incomplete = json!({"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"jobLocationType":"TELECOMMUTE","applicantLocationRequirements":[{"name":"Germany"},null]}).to_string();
+        let job = parse(&[incomplete], "https://example.org/job")
+            .unwrap()
+            .unwrap();
+        assert_eq!(job["location"], "");
+        assert!(job["extraction_warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("Location was left unknown"));
     }
 
     #[test]
