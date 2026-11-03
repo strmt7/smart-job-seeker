@@ -143,6 +143,19 @@ fn existing_model(ps: &Value, requested: &str) -> Result<Option<Value>, String> 
 }
 
 #[cfg(any(windows, test))]
+fn existing_model_with_memory_guard(
+    ps: &Value,
+    requested: &str,
+    guard: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<Value>, String> {
+    let existing = existing_model(ps, requested)?;
+    if existing.is_some() {
+        guard()?;
+    }
+    Ok(existing)
+}
+
+#[cfg(any(windows, test))]
 fn verify_started_model(ps: &Value, requested: &str) -> Result<Value, String> {
     let state = crate::model_diagnostics(ps).map_err(|_| {
         "Model startup could not be verified; a model may remain loaded. Check local model status before retrying".to_owned()
@@ -188,13 +201,17 @@ fn run(model: &str) -> Result<Value, String> {
     };
     let ps = get("/api/ps")?;
     let tags = get("/api/tags")?;
-    if let Some(existing) = existing_model(&ps, model)? {
+    if let Some(existing) =
+        existing_model_with_memory_guard(&ps, model, crate::check_inference_memory)?
+    {
         crate::verify_local_model_binding(&ps, &tags, model)?;
         return Ok(existing);
     }
     let binding = startup_binding(&tags, model)?;
     let ps = get("/api/ps")?;
-    if let Some(existing) = existing_model(&ps, model)? {
+    if let Some(existing) =
+        existing_model_with_memory_guard(&ps, model, crate::check_inference_memory)?
+    {
         crate::verify_local_model_binding(&ps, &get("/api/tags")?, model)?;
         return Ok(existing);
     }
@@ -343,6 +360,23 @@ mod tests {
         server.join().unwrap();
     }
 
+    #[test]
+    fn reusing_a_resident_model_requires_current_system_memory_headroom() {
+        let ps = json!({"models":[{"name":"fixture","size":6*GIB,"size_vram":6*GIB,"context_length":4096}]});
+        let denied =
+            existing_model_with_memory_guard(&ps, "fixture", || Err("memory pressure".into()));
+        assert_eq!(denied.unwrap_err(), "memory pressure");
+        assert!(existing_model_with_memory_guard(&ps, "fixture", || Ok(()))
+            .unwrap()
+            .is_some());
+        assert!(
+            existing_model_with_memory_guard(&json!({"models":[]}), "fixture", || Err(
+                "must not be called".into()
+            ))
+            .unwrap()
+            .is_none()
+        );
+    }
     #[test]
     fn existing_model_is_reused_only_when_identity_context_and_memory_match() {
         let valid = json!({"models":[{"name":"fixture","size":6*GIB,"size_vram":6*GIB,"context_length":4096}]});
