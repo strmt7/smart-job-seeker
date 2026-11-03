@@ -1,5 +1,7 @@
 ## Navigation advice coverage — 2026-11-03
 
+- Follow-up control advice now supplies only the remaining controls in its prompt, retaining their original indices instead of repeating the full list alongside them. Four focused scripted tests and the fictional resource-gated `qwen3.5:9b` test passed; the unscripted case again selected six navigation controls and omitted the submission control. This is not real-site qualification.
+
 - In the same fictional seven-control scenario, an unscripted `qwen3.5:9b` run selected all six navigation controls and omitted the submission control. Its first pass reached the limit and the bounded follow-up completed without a reported error. This is one scenario, not evidence of general form-navigation accuracy.
 
 - In one resource-gated fictional control test, `qwen3.5:9b` selected the remaining navigation control and omitted the submission control on the follow-up pass. The test injected the first five selections to force that pass; it did not measure the model's first-pass selection or real-site behavior. The model unloaded afterward. One concurrent system-memory snapshot showed 16,614,596 KiB available, not a measured minimum.

@@ -126,7 +126,11 @@ fn rank(
             .filter(|(index, _)| !indices.contains(index))
             .map(|(_, item)| item)
             .collect();
-        let followup = format!("{prompt}\nThe previous pass reached its limit. Consider only these remaining controls and return their original indices: {}", json!(remaining));
+        let instructions = prompt
+            .split_once(" Controls: ")
+            .map(|(instructions, _)| instructions)
+            .ok_or("Control advice prompt is incomplete")?;
+        let followup = format!("{instructions} The previous pass reached its limit. Consider only these remaining controls and return their original indices. Controls: {}. Current form context: {}", json!(remaining), context);
         match rank_pass(model, controls, &followup) {
             Ok((additional, omitted, _)) if additional.iter().all(|i| !indices.contains(i)) => {
                 omitted_submission_labels |= omitted;
@@ -482,6 +486,58 @@ mod tests {
         );
         assert!(single.0.is_empty());
     }
+    #[test]
+    fn followup_prompt_contains_only_remaining_controls() {
+        struct PromptCheck(usize);
+        impl Inference for PromptCheck {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                self.0 += 1;
+                let value = if self.0 == 1 {
+                    json!({"indices":[0,1,2,3,4]})
+                } else {
+                    assert!(!prompt.contains("Control 0"));
+                    assert!(prompt.contains("Control 5"));
+                    assert!(prompt.contains("\"index\":5"));
+                    json!({"indices":[5]})
+                };
+                Ok((
+                    value,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let controls = waypoint_browser::PageControls {
+            controls: (0..6)
+                .map(|index| waypoint_browser::PageControl {
+                    label: format!("Control {index}"),
+                    disabled: false,
+                    selector: format!("#{index}"),
+                })
+                .collect(),
+            incomplete: false,
+        };
+        let mut model = PromptCheck(0);
+        assert_eq!(
+            rank(&mut model, &controls, &json!({"walls":[]}))
+                .unwrap()
+                .indices,
+            vec![0, 1, 2, 3, 4, 5]
+        );
+        assert_eq!(model.0, 2);
+    }
+
     #[test]
     fn validates_control_indices_and_never_accepts_disabled_or_duplicates() {
         let controls = waypoint_browser::PageControls {
