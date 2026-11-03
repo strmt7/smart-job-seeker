@@ -4,20 +4,28 @@ const vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
 const line=source.split('\n').find(item=>item.startsWith('function listingObservationText('));
 assert.ok(line);
-const text=vm.runInNewContext(`(${line})`);
+const find=name=>source.split('\n').find(item=>item.startsWith(`function ${name}(`));
+const text=vm.runInNewContext(`${find('currentListingObservation')}\n(${line})`);
 assert.match(text({status:'recent',age_seconds:10}),/less than an hour ago.*availability unverified/);
 assert.match(text({status:'old',age_seconds:259201}),/3 days ago.*refresh recommended.*availability unverified/);
 for(const value of [null,{}, {status:'recent',age_seconds:-1}, {status:'old',age_seconds:NaN}])assert.match(text(value),/time unknown/);
-const find=name=>source.split('\n').find(item=>item.startsWith(`function ${name}(`));
 const filter={checked:true},query={value:''},review={checked:false};
-const context={document:{querySelector:s=>({'#filter':query,'#review-only':review,'#observation-filter':filter})[s]},state:{reviews:[],jobs:[
+const context={jobObservationSnapshotAt:1000000,Date:{now:()=>1000000},document:{querySelector:s=>({'#filter':query,'#review-only':review,'#observation-filter':filter})[s]},state:{reviews:[],jobs:[
  {job:{id:'recent',title:'Engineer',employer:'Example',location:''},observation:{status:'recent',age_seconds:1}},
  {job:{id:'old',title:'Engineer',employer:'Example',location:''},observation:{status:'old',age_seconds:300000}},
  {job:{id:'unknown',title:'Engineer',employer:'Example',location:''},observation:{status:'unknown'}},
  {job:{id:'bad',title:'Engineer',employer:'Example',location:''},observation:{status:'recent',age_seconds:-1}}
 ]}};
-vm.runInNewContext(`${find('jobObservationNeedsReview')}\n${find('filteredJobRows')}\nthis.filtered=filteredJobRows`,context);
+vm.runInNewContext(`${find('observationElapsedSeconds')}\n${find('currentListingObservation')}\n${find('jobObservationNeedsReview')}\n${find('filteredJobRows')}\nthis.filtered=filteredJobRows`,context);
 assert.equal(context.filtered().map(row=>row.job.id).join(','),'old,unknown,bad');
+context.state.jobs[0].observation.age_seconds=259200;
+assert.equal(context.filtered().map(row=>row.job.id).join(','),'old,unknown,bad');
+context.Date.now=()=>1001000;
+assert.equal(context.filtered().map(row=>row.job.id).join(','),'recent,old,unknown,bad');
+assert.match(text({status:'recent',age_seconds:259200},1),/refresh recommended/);
+assert.match(text({status:'recent',age_seconds:1},null),/time unknown/);
+context.Date.now=()=>999000;
+assert.equal(context.filtered().length,4);
 filter.checked=false;assert.equal(context.filtered().length,4);
 const sourceBoard=vm.runInNewContext(`(${find('sourceBoardForRefresh')})`,{URL});
 for(const [source,url,board] of [
