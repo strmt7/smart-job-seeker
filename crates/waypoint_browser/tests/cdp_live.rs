@@ -3051,6 +3051,81 @@ fn fetch_request_stage_can_block_a_loopback_post() {
 }
 
 #[test]
+#[ignore = "headless protocol experiment with a fictional loopback request and disconnect"]
+fn paused_request_disconnect_qualification() {
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+    use waypoint_browser::cdp::{BrowserProcess, Cdp};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let received = Arc::new(AtomicBool::new(false));
+    let (worker_stop, worker_received) = (stopped.clone(), received.clone());
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !worker_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                    let mut data = [0u8; 2048];
+                    let size = stream.read(&mut data).unwrap_or(0);
+                    if data[..size].starts_with(b"POST /fictional-submit ") {
+                        worker_received.store(true, Ordering::Relaxed);
+                    }
+                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
+    cdp.call("Page.enable", json!({})).unwrap();
+    cdp.call(
+        "Page.navigate",
+        json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cdp.saw_event("Page.loadEventFired") && Instant::now() < deadline {
+        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    }
+    assert!(cdp.saw_event("Page.loadEventFired"));
+    cdp.call(
+        "Fetch.enable",
+        json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
+    )
+    .unwrap();
+    cdp.call("Runtime.evaluate", json!({"expression":"void fetch('/fictional-submit',{method:'POST',body:'fixture'}).catch(()=>{}); 'queued'","returnByValue":true})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cdp.saw_event("Fetch.requestPaused") && Instant::now() < deadline {
+        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    }
+    assert!(cdp.saw_event("Fetch.requestPaused"));
+    assert!(!received.load(Ordering::Relaxed));
+    drop(cdp);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !received.load(Ordering::Relaxed) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stopped.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+    assert!(
+        received.load(Ordering::Relaxed),
+        "disconnect behavior changed; reassess the isolation design"
+    );
+}
+
+#[test]
 #[ignore = "headless protocol experiment with a paused fictional worker and loopback server"]
 fn auto_attached_worker_fetch_domain_qualification() {
     use serde_json::json;

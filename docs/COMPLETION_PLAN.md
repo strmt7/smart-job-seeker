@@ -94,7 +94,10 @@ build and configuration.
    click returns success; GET is not necessarily read-only. Do not assume Fetch
    covers existing WebSocket connections, browser-level
    traffic, service workers or every external side effect. Those channels and
-   interception failure, asynchronous actions and teardown need separate tests.
+   A fictional loopback POST paused by Fetch was delivered after its CDP
+   connection was dropped while the browser remained running. Interception
+   alone therefore does not fail closed on disconnect on this host.
+   Interception failure, asynchronous actions and teardown need separate tests.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,
    PDF conversion and page-by-page review. Compare ATS-readable text and visual
