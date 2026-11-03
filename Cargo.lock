@@ -4717,8 +4717,10 @@ dependencies = [
 name = "waypoint_browser"
 version = "0.1.0"
 dependencies = [
+ "processkit",
  "serde",
  "serde_json",
+ "tokio",
  "tungstenite",
  "waypoint_applications",
  "waypoint_domain",

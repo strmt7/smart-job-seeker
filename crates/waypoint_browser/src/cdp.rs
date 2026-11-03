@@ -14,7 +14,9 @@
 
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(not(windows))]
+use std::process::Child;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -272,10 +274,134 @@ fn registered_browsers() -> Vec<PathBuf> {
 
 /// A browser process owned by us, with a private profile.
 pub struct BrowserProcess {
-    child: Child,
+    child: OwnedBrowserChild,
     pub port: u16,
     pub ws_url: String,
     pub user_data_dir: PathBuf,
+}
+
+#[cfg(not(windows))]
+struct OwnedBrowserChild(Child);
+
+#[cfg(not(windows))]
+impl OwnedBrowserChild {
+    fn spawn(command: &mut Command, _timeout: Duration) -> Result<Self, String> {
+        command.spawn().map(Self).map_err(|e| e.to_string())
+    }
+    fn exited(&mut self) -> Result<bool, String> {
+        self.0
+            .try_wait()
+            .map(|status| status.is_some())
+            .map_err(|e| e.to_string())
+    }
+    fn stop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[cfg(windows)]
+enum BrowserWorkerCommand {
+    Check(std::sync::mpsc::Sender<Result<bool, String>>),
+    Stop(std::sync::mpsc::Sender<()>),
+}
+
+#[cfg(windows)]
+struct OwnedBrowserChild {
+    commands: std::sync::mpsc::Sender<BrowserWorkerCommand>,
+}
+
+#[cfg(windows)]
+impl OwnedBrowserChild {
+    fn spawn(command: &mut Command, timeout: Duration) -> Result<Self, String> {
+        use processkit::{Command as GroupCommand, ProcessGroup, Stdin, StdioMode};
+        let program = command.get_program().to_owned();
+        let args: Vec<_> = command.get_args().map(std::ffi::OsStr::to_owned).collect();
+        let (commands, receiver) = std::sync::mpsc::channel();
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("waypoint-browser-owner".into())
+            .spawn(move || {
+                let setup = || -> Result<_, String> {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| e.to_string())?;
+                    let group = ProcessGroup::new().map_err(|e| e.to_string())?;
+                    let command = GroupCommand::new(program)
+                        .args(args)
+                        .stdin(Stdin::empty())
+                        .stdout(StdioMode::Null)
+                        .stderr(StdioMode::Null)
+                        .create_no_window();
+                    let process = runtime
+                        .block_on(group.start(&command))
+                        .map_err(|e| e.to_string())?;
+                    let pid = process
+                        .pid()
+                        .ok_or("Browser process identity unavailable")?;
+                    Ok((runtime, group, process, pid))
+                };
+                let (runtime, group, process, pid) = match setup() {
+                    Ok(owned) => owned,
+                    Err(error) => {
+                        let _ = ready.send(Err(error));
+                        return;
+                    }
+                };
+                if ready.send(Ok(())).is_err() {
+                    return;
+                }
+                while let Ok(command) = receiver.recv() {
+                    match command {
+                        BrowserWorkerCommand::Check(reply) => {
+                            let state = group
+                                .members()
+                                .map(|members| !members.contains(&pid))
+                                .map_err(|e| e.to_string());
+                            let _ = reply.send(state);
+                        }
+                        BrowserWorkerCommand::Stop(reply) => {
+                            let _ = group.kill_all();
+                            let _ = runtime.block_on(async {
+                                tokio::time::timeout(Duration::from_secs(1), process.wait()).await
+                            });
+                            drop(group);
+                            drop(runtime);
+                            let _ = reply.send(());
+                            return;
+                        }
+                    }
+                }
+                drop(process);
+                drop(group);
+                drop(runtime);
+            })
+            .map_err(|e| format!("Cannot start browser ownership worker: {e}"))?;
+        started
+            .recv_timeout(timeout.min(Duration::from_secs(5)))
+            .map_err(|_| "Browser ownership setup timed out".to_string())??;
+        Ok(Self { commands })
+    }
+    fn exited(&mut self) -> Result<bool, String> {
+        let (reply, response) = std::sync::mpsc::channel();
+        self.commands
+            .send(BrowserWorkerCommand::Check(reply))
+            .map_err(|_| "Browser ownership worker stopped")?;
+        response
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| "Browser ownership check timed out".to_string())?
+    }
+    fn stop(&mut self) {
+        let (reply, response) = std::sync::mpsc::channel();
+        if self
+            .commands
+            .send(BrowserWorkerCommand::Stop(reply))
+            .is_ok()
+        {
+            let _ = response.recv_timeout(Duration::from_secs(2));
+        }
+    }
 }
 
 impl BrowserProcess {
@@ -409,12 +535,10 @@ impl BrowserProcess {
         if std::env::var("WAYPOINT_BROWSER_NO_SANDBOX").is_ok_and(|v| v == "1") {
             cmd.arg("--no-sandbox");
         }
-        let child = match cmd
-            .arg("about:blank")
+        cmd.arg("about:blank")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
+            .stderr(Stdio::null());
+        let child = match OwnedBrowserChild::spawn(&mut cmd, timeout) {
             Ok(child) => child,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&user_data_dir);
@@ -433,13 +557,9 @@ impl BrowserProcess {
         let deadline = Instant::now() + timeout;
         let mut port = 0u16;
         while Instant::now() < deadline {
-            match browser.child.try_wait() {
-                Ok(Some(status)) => {
-                    return err(format!(
-                        "browser exited before its debugging endpoint was ready: {status}"
-                    ));
-                }
-                Ok(None) => {}
+            match browser.child.exited() {
+                Ok(true) => return err("browser exited before its debugging endpoint was ready"),
+                Ok(false) => {}
                 Err(error) => {
                     return err(format!("could not inspect browser startup: {error}"));
                 }
@@ -517,7 +637,7 @@ impl BrowserProcess {
         // Ask the owned browser to close its own process tree before falling
         // back to a forced kill. Bound the handshake and wait: an unhealthy
         // browser must never hold the app open indefinitely.
-        if self.port != 0 && !self.ws_url.is_empty() && matches!(self.child.try_wait(), Ok(None)) {
+        if self.port != 0 && !self.ws_url.is_empty() && matches!(self.child.exited(), Ok(false)) {
             let prefix = format!("ws://127.0.0.1:{}/", self.port);
             if self.ws_url.starts_with(&prefix) {
                 let address = std::net::SocketAddr::from(([127, 0, 0, 1], self.port));
@@ -535,14 +655,13 @@ impl BrowserProcess {
             self.ws_url.clear();
             let deadline = Instant::now() + Duration::from_millis(1500);
             while Instant::now() < deadline {
-                match self.child.try_wait() {
-                    Ok(Some(_)) | Err(_) => break,
-                    Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                match self.child.exited() {
+                    Ok(true) | Err(_) => break,
+                    Ok(false) => std::thread::sleep(Duration::from_millis(25)),
                 }
             }
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.child.stop();
         let _ = std::fs::remove_dir_all(&self.user_data_dir);
     }
 }

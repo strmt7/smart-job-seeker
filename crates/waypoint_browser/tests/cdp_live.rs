@@ -1404,6 +1404,137 @@ fn accessible_current_step_indicates_a_multistep_form() {
 }
 
 #[test]
+#[cfg(windows)]
+#[ignore = "helper process for the forced parent termination test"]
+fn forced_parent_browser_helper() {
+    let Some(path) = std::env::var_os("WAYPOINT_PARENT_TEST_READY") else {
+        return;
+    };
+    let browser =
+        waypoint_browser::cdp::BrowserProcess::launch(std::time::Duration::from_secs(20)).unwrap();
+    std::fs::write(path, browser.user_data_dir.to_string_lossy().as_bytes()).unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[test]
+#[cfg(windows)]
+#[ignore = "launches a local browser and forcibly stops only its fictional test parent"]
+fn forced_parent_termination_closes_owned_browser_tree() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    let temp = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let ready = temp.join(format!(
+        "waypoint-parent-test-{}-{nonce}.txt",
+        std::process::id()
+    ));
+    struct Helper(std::process::Child);
+    impl Drop for Helper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut helper = Helper(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "forced_parent_browser_helper"])
+            .env("WAYPOINT_PARENT_TEST_READY", &ready)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let helper_pid = helper.0.id();
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while !ready.is_file() && Instant::now() < deadline {
+        if helper.0.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let profile = std::fs::read_to_string(&ready).ok();
+    let profile = profile.expect("helper did not establish its browser");
+    let expected_prefix = format!("waypoint-profile-{helper_pid}-");
+    let profile_path = std::path::PathBuf::from(&profile);
+    assert_eq!(profile_path.parent(), Some(temp.as_path()));
+    assert!(profile_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with(&expected_prefix));
+    let query = || {
+        let output = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "@(Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe' OR Name = 'msedge.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE) }).Count"])
+            .env("WAYPOINT_TEST_PROFILE", &profile)
+            .stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap()
+    };
+    let initially_running = query();
+    let tree = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "$all=@(Get-CimInstance Win32_Process); $ids=[System.Collections.Generic.HashSet[int]]::new(); foreach($p in $all){if($p.Name -in @('chrome.exe','msedge.exe') -and $p.CommandLine -and $p.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE)){[void]$ids.Add([int]$p.ProcessId)}}; do{$before=$ids.Count; foreach($p in $all){if($ids.Contains([int]$p.ParentProcessId)){[void]$ids.Add([int]$p.ProcessId)}}}while($ids.Count -gt $before); $ids | Sort-Object"])
+        .env("WAYPOINT_TEST_PROFILE", &profile)
+        .stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
+    assert!(tree.status.success());
+    let observed_pids: Vec<u32> = String::from_utf8(tree.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| line.trim().parse().unwrap())
+        .collect();
+    let check_tree = || {
+        let ids = observed_pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let output = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ids=@($env:WAYPOINT_TEST_PIDS -split ',' | Where-Object { $_ } | ForEach-Object { [int]$_ }); @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count"])
+            .env("WAYPOINT_TEST_PIDS", ids).stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap()
+    };
+    let _ = helper.0.kill();
+    let _ = helper.0.wait();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut remaining = check_tree();
+    while remaining > 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(250));
+        remaining = check_tree();
+    }
+    if remaining > 0 {
+        let _ = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe' OR Name = 'msedge.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"]).env("WAYPOINT_TEST_PROFILE", &profile).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+    let resolved_temp = std::fs::canonicalize(&temp).unwrap();
+    if let Ok(resolved) = std::fs::canonicalize(&profile_path) {
+        assert!(resolved.starts_with(&resolved_temp));
+        std::fs::remove_dir_all(resolved).unwrap();
+    }
+    let _ = std::fs::remove_file(ready);
+    assert!(
+        initially_running > 0,
+        "test did not observe the owned browser before termination"
+    );
+    assert_eq!(
+        remaining, 0,
+        "owned browser processes survived forced parent termination"
+    );
+}
+
+#[test]
 #[ignore = "launches one local browser to check normal shutdown"]
 fn normal_browser_shutdown_closes_its_private_profile() {
     let mut browser =
