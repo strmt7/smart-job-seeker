@@ -1,5 +1,7 @@
 ## Template voice review — 2026-11-03
 
+- A scripted full template-suggestion test now exercises a cosmetic first result followed by either a revised or unsupported retry. It checks that the revised result retains the unverified-template provenance warning and that the unsupported retry falls back to the initial suggestion. The focused test passed; it is not a live-model factuality evaluation.
+
 - When a template suggestion differs only in whitespace or apostrophe style, drafting now makes at most one additional attempt, asking for a clearer factual rephrasing only if justified. A retry is used only when it changes more than those details and has a completed evidence check without unsupported claims; otherwise the original suggestion is retained and the interface reports the outcome. Uncertain claims and model evidence judgments still need review. Scripted retry and UI checks and Windows Clippy passed. In one resource-gated fictional `qwen3.5:9b` run the retry was still cosmetic and the first suggestion was retained, so this does not establish improved tailoring. The extra attempt can add several model calls; the model unloaded afterward.
 
 - Template review now calls out suggestions that differ from the original only in whitespace or straight-versus-curly apostrophe style. The UI fixture also checks that changed words and programming-language punctuation are not treated as cosmetic. This does not measure whether other edits improve the document.

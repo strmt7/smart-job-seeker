@@ -357,6 +357,84 @@ mod tests {
         input_with_passage(before, "Fictional research")
     }
     #[test]
+    fn full_template_flow_retries_and_preserves_evidence_review() {
+        struct Model {
+            drafts: usize,
+            text: String,
+            unsupported_retry: bool,
+        }
+        impl Inference for Model {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let output = match task {
+                    "application_answer" => {
+                        self.drafts += 1;
+                        if self.drafts == 2 {
+                            assert!(prompt.contains("previous suggestion changed only spacing"));
+                        }
+                        self.text = if self.drafts == 1 {
+                            "I’ve built tools."
+                        } else {
+                            "I built tools."
+                        }
+                        .into();
+                        json!({"text":self.text,"facts":[1]})
+                    }
+                    "application_answer_style" => json!({"text":self.text,"facts":[1]}),
+                    "application_answer_evidence_check" => {
+                        json!({"claims":[{"excerpt":self.text,"status":if self.drafts == 2 && self.unsupported_retry {"unsupported"} else {"supported"},"explanation":"Fixture evidence"}]})
+                    }
+                    _ => panic!("unexpected task {task}"),
+                };
+                Ok((
+                    output,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        for unsupported in [false, true] {
+            let mut model = Model {
+                drafts: 0,
+                text: String::new(),
+                unsupported_retry: unsupported,
+            };
+            let result = suggest(
+                &mut model,
+                input_with_passage("I’ve built tools.", "I’ve built tools."),
+            )
+            .unwrap();
+            assert_eq!(model.drafts, 2);
+            assert_eq!(
+                result["cosmetic_retry"],
+                if unsupported {
+                    "needs_review"
+                } else {
+                    "revised"
+                }
+            );
+            assert_eq!(
+                result["text"],
+                if unsupported {
+                    "I’ve built tools."
+                } else {
+                    "I built tools."
+                }
+            );
+            assert_eq!(result["evidence_check"]["claims"][0]["status"], "uncertain");
+        }
+    }
+    #[test]
     fn suggestion_uses_existing_passage_and_checks_evidence() {
         let mut model = Fake { calls: 0 };
         let result = suggest(&mut model, input("Fictional research")).unwrap();
