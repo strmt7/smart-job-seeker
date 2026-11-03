@@ -28,8 +28,9 @@ const expired={items:[],append(item){this.items.push(item);}};show(expired,{vali
 const stale={items:[],append(item){this.items.push(item);}};show(stale,{valid_through_evidence:'2020-01-01',matches_current_url:false});assert.ok(!stale.items.some(item=>item.textContent.includes('deadline may have passed')));
 const expiredJob={saved:{existing:false},job:{extraction:'structured',valid_through_evidence:'2020-01-01'}};
 assert.match(inspected(expiredJob),/deadline that may have passed/);
-assert.equal(inspected({...expiredJob,saved:{existing:true}}),'');
+assert.match(inspected({...expiredJob,saved:{existing:true}}),/deadline that may have passed.*saved listing was not updated/);
 assert.equal(inspected({...expiredJob,job:{...expiredJob.job,extraction:'local_model'}}),'');
 assert.match(inspected({saved:{existing:false},job:{extraction:'local_model',deadline_excerpt:'21 June 2026'}}),/possible application deadline: 21 June 2026.*Verify/);
-assert.equal(inspected({saved:{existing:true},job:{extraction:'local_model',deadline_excerpt:'21 June 2026'}}),'');
+assert.match(inspected({saved:{existing:true},job:{extraction:'local_model',deadline_excerpt:'21 June 2026'}}),/possible application deadline.*saved listing was not updated/);
+assert.equal(inspected({job:expiredJob.job}),'');
 console.log('Listing date evidence UI checks passed.');
