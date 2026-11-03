@@ -49,6 +49,13 @@ async function exercise(message, visionFails=false, status={active:true,session_
   assert.ok(existingValue.events.some(event=>event[0]==='message' && event[1].includes('Unselect that field')));
   assert.equal(existingValue.fill.disabled,false);
   assert.equal(existingValue.context.fillCompleted,false);
+  for (const message of ['The lessons used for these suggestions changed; inspect the current page again','Form lessons could not be checked; inspect the current page again; manual-review status could not be saved: fixture']) {
+    const stale = await exercise(message);
+    assert.ok(stale.events.some(event=>event[0]==='message' && event[1].includes('No fields were filled in this attempt')));
+    assert.ok(stale.events.every(event=>event[0]!=='inspect' && event[0]!=='warning'));
+    assert.equal(stale.fill.disabled,true);
+    assert.equal(stale.context.fillCompleted,false);
+  }
   const observed = await exercise('Autofill stopped. A non-GET/HEAD request was observed during filling.');
   assert.ok(observed.events.every(event=>event[0]!=='inspect'));
   assert.ok(observed.events.some(event=>event[0]==='visual-error' && event[1].includes('Automatic visual review paused')));
