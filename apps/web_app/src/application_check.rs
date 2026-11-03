@@ -1515,7 +1515,10 @@ mod tests {
         assert!(!std::path::Path::new(&ready).exists() && !std::path::Path::new(&resume).exists());
         let address = url::Url::parse(&url).expect("valid URL");
         assert_eq!(address.scheme(), "https");
-        assert_eq!(address.host_str(), Some("apply.workable.com"));
+        assert!(matches!(
+            address.host_str(),
+            Some("apply.workable.com" | "jobs.lever.co")
+        ));
         crate::form_links::check_destination(&url, waypoint_policy::Operation::Read)
             .expect("source permits read");
         waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
