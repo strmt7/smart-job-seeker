@@ -7650,13 +7650,14 @@ fn serve(
                         if let Err(problem) = record.incomplete_fill(outcome, now()) {
                             outcome_error = Some(problem);
                         }
-                        let viewport = current.driver.screenshot_base64().map_err(|error| error.to_string()).and_then(|image| {
-                            record.screenshot_with_name(&image)
-                                .and_then(|name| record.event(json!({"type":"fill_failure_viewport","time":now(),"screenshot":format!("screenshots/{name}")})))
-                        });
-                        if viewport.is_err() {
-                            capture_incomplete = true;
-                            if let Err(problem) = record.event(json!({"type":"capture_incomplete","time":now(),"note":"The failure viewport could not be captured or saved."})) {
+                        let viewport = current
+                            .driver
+                            .screenshot_base64()
+                            .map_err(|error| error.to_string());
+                        match record.failure_viewport(viewport, now()) {
+                            Ok(incomplete) => capture_incomplete = incomplete,
+                            Err(problem) => {
+                                capture_incomplete = true;
                                 outcome_error.get_or_insert(problem);
                             }
                         }

@@ -1917,6 +1917,25 @@ impl AttemptRecord {
             )),
         }
     }
+
+    /// Record a failure viewport or an explicit gap in the evidence. The
+    /// boolean indicates an incomplete capture; an error means even that gap
+    /// could not be recorded.
+    pub fn failure_viewport(
+        &mut self,
+        image: Result<String, String>,
+        timestamp: i64,
+    ) -> Result<bool, String> {
+        let saved = image.and_then(|image| self.screenshot_with_name(&image)).and_then(|name| {
+            self.event(json!({"type":"fill_failure_viewport","time":timestamp,"screenshot":format!("screenshots/{name}")}))
+        });
+        if saved.is_err() {
+            self.event(json!({"type":"capture_incomplete","time":timestamp,"note":"The failure viewport could not be captured or saved."}))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
     pub fn status(&mut self, status: &str, timestamp: i64) -> Result<(), String> {
         self.update_status(status, timestamp, false)
     }
@@ -2621,6 +2640,29 @@ mod tests {
         assert!(fs::read_to_string(record.dir.join("events.jsonl"))
             .unwrap()
             .contains("fill_incomplete"));
+    }
+
+    #[test]
+    fn failure_viewport_reports_missing_screenshot_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut record = AttemptRecord {
+            dir: directory.path().to_owned(),
+            sequence: 0,
+        };
+        assert!(record.failure_viewport(Ok("aGVsbG8=".into()), 3).unwrap());
+        let events = fs::read_to_string(directory.path().join("events.jsonl")).unwrap();
+        assert!(events.contains("capture_incomplete"));
+        assert!(!events.contains("fill_failure_viewport"));
+        fs::create_dir(directory.path().join("screenshots")).unwrap();
+        assert!(!record.failure_viewport(Ok("aGVsbG8=".into()), 4).unwrap());
+        let events = fs::read_to_string(directory.path().join("events.jsonl")).unwrap();
+        assert!(events.contains("fill_failure_viewport"));
+        // If even the gap cannot be logged, the caller must surface that error.
+        fs::remove_file(directory.path().join("events.jsonl")).unwrap();
+        fs::create_dir(directory.path().join("events.jsonl")).unwrap();
+        assert!(record
+            .failure_viewport(Err("fixture failure".into()), 5)
+            .is_err());
     }
 
     #[test]
