@@ -13,7 +13,7 @@ struct Task {
     digest: String,
     reviewed_text: String,
     draft_provenance: Option<Value>,
-    result: Option<Result<Vec<u8>, String>>,
+    result: Option<Result<(Vec<u8>, Value), String>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -61,7 +61,9 @@ pub fn start(
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(|| {
             let docx = build_docx(&text)?;
-            crate::document_convert::docx_to_pdf(&docx)
+            let pdf = crate::document_convert::docx_to_pdf(&docx)?;
+            let check = crate::convert_task::compare_docx_to_pdf(&docx, &pdf);
+            Ok((pdf, check))
         })
         .unwrap_or_else(|_| Err("Letter export stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
@@ -97,7 +99,7 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
             *tasks = None;
             Ok(output)
         }
-        Ok(pdf) => {
+        Ok((pdf, text_check)) => {
             if crate::draft_context_digest(ws, &job_id, &task.kind)
                 .ok()
                 .as_deref()
@@ -156,20 +158,21 @@ pub fn poll(id: &str, ws: &Workspace) -> Result<Value, String> {
                             pdf: &pdf,
                             context_digest: &task.digest,
                             draft_provenance: task.draft_provenance.as_ref(),
+                            text_check: &text_check,
                         },
                     );
                     let record_saved = record.is_ok();
                     let record_error = record.err();
                     let job = task.job_id.clone();
                     let kind = task.kind.clone();
-                    let output = json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error,"draft_provenance_saved":record_saved && task.draft_provenance.is_some()});
+                    let output = json!({"status":"complete","id":doc_id,"name":name,"job_id":job,"kind":kind,"record_saved":record_saved,"record_error":record_error,"draft_provenance_saved":record_saved && task.draft_provenance.is_some(),"text_check":text_check});
                     *COMPLETED.lock().map_err(|_| "Export state unavailable")? =
                         Some((id.to_owned(), output.clone()));
                     *tasks = None;
                     Ok(output)
                 }
                 Err(error) => {
-                    task.result = Some(Ok(pdf));
+                    task.result = Some(Ok((pdf, text_check)));
                     Err(format!(
                         "PDF was created but could not be saved; retry the export status: {error}"
                     ))
@@ -185,6 +188,7 @@ struct ExportRecord<'a> {
     pdf: &'a [u8],
     context_digest: &'a str,
     draft_provenance: Option<&'a Value>,
+    text_check: &'a Value,
 }
 
 fn record_generated(
@@ -199,6 +203,7 @@ fn record_generated(
         pdf,
         context_digest,
         draft_provenance,
+        text_check,
     } = export;
     let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
         Some(profile) => serde_json::from_str(&profile).map_err(|_| "Stored profile is invalid")?,
@@ -253,7 +258,7 @@ fn record_generated(
             .map_err(|e| e.to_string())?;
         record.document_export_receipt(&json!({"document_id":document_id,"kind":kind,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"evidence":provenance_name,"evidence_sha256":evidence_sha,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"template_original_name":template.as_ref().map(|(name, _)| name)}))?;
     }
-    record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"draft_provenance":provenance_name,"draft_edited":draft_provenance.map(|value| value["edited"].clone()),"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
+    record.event(json!({"type":"draft_exported","time":crate::now(),"kind":kind,"template":template_name,"template_sha256":template.as_ref().map(|(_, bytes)| waypoint_domain::sha256_hex(bytes)),"reviewed_text":text_name,"pdf":pdf_name,"pdf_sha256":waypoint_domain::sha256_hex(pdf),"context_sha256":context_digest,"draft_provenance":provenance_name,"draft_edited":draft_provenance.map(|value| value["edited"].clone()),"text_check":text_check,"note":"Reviewed text exported in a simple layout. Template formatting is not preserved; no application was submitted."}))?;
     record.status("manual_review", crate::now())?;
     Ok(())
 }
@@ -277,6 +282,7 @@ pub(crate) fn record_generated_fixture(
             pdf,
             context_digest: context,
             draft_provenance: Some(&evidence),
+            text_check: &json!({"status":"unavailable"}),
         },
     )
 }
@@ -308,6 +314,7 @@ fn build_docx(text: &str) -> Result<Vec<u8>, String> {
 }
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -374,7 +381,10 @@ mod tests {
             digest,
             reviewed_text: "Fictional text".into(),
             draft_provenance: None,
-            result: Some(Ok(b"%PDF-fictional".to_vec())),
+            result: Some(Ok((
+                b"%PDF-fictional".to_vec(),
+                json!({"status":"unavailable"}),
+            ))),
         });
         ws.add_fact(
             "New qualification",
@@ -416,10 +426,14 @@ mod tests {
             digest,
             reviewed_text: "Fictional text".into(),
             draft_provenance: None,
-            result: Some(Ok(b"%PDF-fictional".to_vec())),
+            result: Some(Ok((
+                b"%PDF-fictional".to_vec(),
+                json!({"status":"unavailable"}),
+            ))),
         });
         let first = super::poll("replay", &ws).unwrap();
         assert_eq!(first["status"], "complete");
+        assert_eq!(first["text_check"]["status"], "unavailable");
         assert_eq!(super::poll("replay", &ws).unwrap(), first);
         assert_eq!(ws.documents().unwrap().len(), 1);
         assert!(super::poll("other", &ws).is_err());
@@ -466,6 +480,7 @@ mod tests {
                 pdf: b"%PDF-fictional",
                 context_digest: context.as_str(),
                 draft_provenance: Some(&provenance),
+                text_check: &json!({"status":"matches"}),
             },
         )
         .unwrap();
@@ -479,6 +494,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.join("events.jsonl")).unwrap()).unwrap();
         assert_eq!(event["type"], "draft_exported");
         assert_eq!(event["draft_edited"], true);
+        assert_eq!(event["text_check"]["status"], "matches");
         let evidence: serde_json::Value = serde_json::from_slice(
             &std::fs::read(
                 dir.join("materials")
@@ -590,6 +606,7 @@ mod tests {
                 pdf: b"%PDF-template-only",
                 context_digest: context.as_str(),
                 draft_provenance: None,
+                text_check: &json!({"status":"unavailable"}),
             },
         )
         .unwrap();
@@ -707,7 +724,7 @@ mod tests {
         assert_eq!(text, "Résumé & systems\nSecond paragraph");
     }
     #[test]
-    #[ignore = "runs a local LibreOffice conversion of fictional text"]
+    #[ignore = "requires LibreOffice, PDF extraction tools and a fictional output path"]
     fn exports_fixture() {
         let _guard = TASK_TEST_LOCK.lock().unwrap();
         use waypoint_domain::{ApplicationState, JobIdentityId};
@@ -744,6 +761,11 @@ mod tests {
         assert_eq!(result["status"], "complete");
         assert_eq!(result["job_id"], "fixture-letter");
         assert_eq!(result["kind"], "cv");
+        println!(
+            "Fictional draft PDF text comparison: {}",
+            result["text_check"]
+        );
+        assert_eq!(result["text_check"]["status"], "matches");
         assert!(result["name"].as_str().unwrap().starts_with("cv-"));
         let pdf = ws
             .document_content(result["id"].as_str().unwrap())
