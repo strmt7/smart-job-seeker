@@ -11543,7 +11543,7 @@ mod tests {
             .unwrap();
         let save = |ws: &Workspace, selected: usize| {
             let (_, available, _, _, digest) = fit_assessment_inputs(ws, &id).unwrap();
-            let assessment = json!({"score":75,"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":available,"selected":selected,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0}});
+            let assessment = json!({"score":75,"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":available,"selected":selected,"selected_facts":vec!["Fictional first qualification"; selected],"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0}});
             ws.save_fit_assessment(
                 &id,
                 json!({"input_digest":digest,"assessment":assessment,"model":"fixture"})
@@ -11587,7 +11587,7 @@ mod tests {
         )
         .unwrap();
         let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
-        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":1,"pool":1,"selected":0,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","importance":"required","status":"contradicted","excerpt":"Fictional remote-only preference"},{"source":"listing","importance":"required","status":"unknown","excerpt":"Fictional requirement"}]});
+        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":1,"pool":1,"selected":0,"selected_facts":[],"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","importance":"required","status":"contradicted","excerpt":"Fictional remote-only preference"},{"source":"listing","importance":"required","status":"unknown","excerpt":"Fictional requirement"}]});
         ws.save_fit_assessment(
             &id,
             json!({"input_digest":digest,"assessment":assessment,"model":"fixture","user_review":{"score":75,"score_range":{"lower":50,"upper":100},"decisions":[{"private":"Fictional private review"}]}})

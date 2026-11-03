@@ -36,6 +36,8 @@
 
 ## Qualification coverage in match estimates — 2026-11-03
 
+- Qualification coverage now requires the recorded selected-fact list to agree with its reported count before claiming complete, selected or no-input coverage. Missing, malformed or inconsistent records report coverage unavailable. The fit suite (77 passed, 48 ignored), saved-assessment and batch API checks, and Windows web Clippy passed. This checks recorded input consistency, not whether the model understood the facts.
+
 - Comparisons of repeated assessments now separately count changes in weight, judgment and cited qualification for exactly matched source excerpts. Counts can overlap and do not validate the model's decisions or match score. Focused comparison and UI logic tests and Windows web Clippy passed; no live-model repeatability measurement was made in this change.
 
 - Fictional saved-assessment and batch API tests confirm the “no qualifications used” coverage is recomputed after reading a saved result and reaches the job-list response without exposing the qualification text. Both tests passed.
