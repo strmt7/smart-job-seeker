@@ -3316,3 +3316,8 @@ example in the instructions, a subsequent run kept “German or French” as one
 supported criterion and separated “German and French” into supported French
 and unknown German. The earlier Python/SQL check also passed. This records
 observed model sensitivity to prompt wording, not a repeatability guarantee.
+
+The match badge also reports missing or unrecognized preference, requirement,
+audit and qualification coverage rather than silently displaying a score with
+no coverage warning. Focused badge, batch-failure and source-coverage UI tests
+passed; this does not validate the underlying match model.

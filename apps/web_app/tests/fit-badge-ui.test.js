@@ -18,12 +18,12 @@ assert.ok(source.includes('repeatabilityRangeMessage(r.range_change)'), 'repeata
 const line = source.split('\n').find(value => value.startsWith('function fitBadgeLabel('));
 assert.ok(line, 'fit badge formatter must exist');
 const label = vm.runInNewContext(`(${line})`);
-assert.equal(label(55, {lower: 10, upper: 100}), '55% AI estimate · 10–100% range');
-assert.equal(label(75, {lower: 75, upper: 75}), '75% AI estimate · 75–75% range');
-assert.equal(label(50, {lower: 0, upper: 100}), 'Insufficient evidence · 0–100% range');
+assert.equal(label(55, {lower: 10, upper: 100},'included','supported',false,'complete'), '55% AI estimate · 10–100% range');
+assert.equal(label(75, {lower: 75, upper: 75},'included','supported',false,'complete'), '75% AI estimate · 75–75% range');
+assert.equal(label(50, {lower: 0, upper: 100},'included','supported',false,'complete'), 'Insufficient evidence · 0–100% range');
 assert.match(label(50, {lower: 0, upper: 100}, null, null, false, 'none_used'), /no qualifications used/);
-assert.equal(label(55, null), 'AI estimate unavailable · range unavailable');
-assert.equal(label(55, {lower: 60, upper: 100}), 'AI estimate unavailable · range unavailable');
+assert.equal(label(55, null,'included','supported',false,'complete'), 'AI estimate unavailable · range unavailable');
+assert.equal(label(55, {lower: 60, upper: 100},'included','supported',false,'complete'), 'AI estimate unavailable · range unavailable');
 assert.equal(label(-1, {lower: 0, upper: 100}), 'Estimate unavailable');
 assert.match(label(75,{lower:50,upper:100},'needs_review'), /check preferences/);
 assert.match(label(75,{lower:50,upper:100},'possible_conflict'), /possible preference conflict/);
@@ -39,6 +39,9 @@ assert.equal((label(80,{lower:60,upper:100},'included','incomplete',true).match(
 assert.match(label(80,{lower:60,upper:100},'included','supported',false,'limited'), /qualification input limited/);
 assert.match(label(80,{lower:60,upper:100},'included','supported',false,'selected'), /selected qualifications/);
 assert.match(label(80,{lower:60,upper:100},'included','supported',false,'unavailable'), /qualification coverage unavailable/);
+assert.match(label(80,{lower:60,upper:100}), /preference coverage unavailable.*required criteria unavailable.*requirement audit unavailable.*qualification coverage unavailable/);
+assert.match(label(80,{lower:60,upper:100},'unexpected','invented',null,'unexpected'), /preference coverage unavailable.*required criteria unavailable.*requirement audit unavailable.*qualification coverage unavailable/);
+assert.match(label(80,{lower:60,upper:100},'constructor','toString',null,'constructor'), /preference coverage unavailable.*required criteria unavailable.*requirement audit unavailable.*qualification coverage unavailable/);
 assert.match(label(80,{lower:60,upper:100},'included','supported',false,'none'), /no reviewed qualifications/);
 assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(item.score,item.score_range,item.preference_coverage,item.requirement_coverage,item.requirement_audit_incomplete,item.qualification_coverage)'), 'batch badges must use their stored range and coverage');
 assert.ok(source.includes('fitBadgeWithReview(fitBadgeLabel(score,result.assessment?.score_range,result.assessment?.preference_coverage,result.assessment?.requirement_coverage,result.assessment?.requirement_audit_incomplete,result.assessment?.qualification_coverage)'), 'new assessments must use their range and coverage');
