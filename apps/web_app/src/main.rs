@@ -11207,9 +11207,9 @@ mod tests {
             .unwrap();
         ws.add_fact("Fictional second qualification", FactOrigin::UserAttested)
             .unwrap();
-        let save = |ws: &Workspace| {
+        let save = |ws: &Workspace, selected: usize| {
             let (_, available, _, _, digest) = fit_assessment_inputs(ws, &id).unwrap();
-            let assessment = json!({"score":75,"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":available,"selected":1,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0}});
+            let assessment = json!({"score":75,"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":available,"pool":available,"selected":selected,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0}});
             ws.save_fit_assessment(
                 &id,
                 json!({"input_digest":digest,"assessment":assessment,"model":"fixture"})
@@ -11218,7 +11218,12 @@ mod tests {
             )
             .unwrap();
         };
-        save(&ws);
+        save(&ws, 0);
+        assert_eq!(
+            read_fit(&ws, &id).unwrap()["assessment"]["qualification_coverage"],
+            "none_used"
+        );
+        save(&ws, 1);
         assert_eq!(
             read_fit(&ws, &id).unwrap()["assessment"]["qualification_coverage"],
             "selected"
@@ -11226,7 +11231,7 @@ mod tests {
         ws.add_fact(&"x".repeat(1001), FactOrigin::UserAttested)
             .unwrap();
         assert_eq!(read_fit(&ws, &id).unwrap()["status"], "stale");
-        save(&ws);
+        save(&ws, 1);
         assert_eq!(
             read_fit(&ws, &id).unwrap()["assessment"]["qualification_coverage"],
             "limited"
@@ -11241,12 +11246,14 @@ mod tests {
         let mut ws = Workspace::open(dir.path()).unwrap();
         let added = manual_job::add(&mut ws, &json!({"url":"https://example.org/fictional-role","title":"Engineer","employer":"Example","description":"Fictional role"}), 1).unwrap();
         let id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        ws.add_fact("Fictional private qualification", FactOrigin::UserAttested)
+            .unwrap();
         ws.save_candidate_profile(
             &json!({"instructions":"Fictional remote-only preference"}).to_string(),
         )
         .unwrap();
         let (_, _, _, _, digest) = fit_assessment_inputs(&ws, &id).unwrap();
-        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","importance":"required","status":"contradicted","excerpt":"Fictional remote-only preference"},{"source":"listing","importance":"required","status":"unknown","excerpt":"Fictional requirement"}]});
+        let assessment = json!({"score":50,"score_range":{"lower":0,"upper":100},"selection":{"method":"bounded_semantic_with_lexical_fallback","available_bounded":1,"pool":1,"selected":0,"failed_batches":0,"budget_truncated":false,"selection_capped":false,"oversized_facts":0},"preference_coverage":"included","preference_audit":{"status":"completed"},"rubric":[{"source":"preference","importance":"required","status":"contradicted","excerpt":"Fictional remote-only preference"},{"source":"listing","importance":"required","status":"unknown","excerpt":"Fictional requirement"}]});
         ws.save_fit_assessment(
             &id,
             json!({"input_digest":digest,"assessment":assessment,"model":"fixture","user_review":{"score":75,"score_range":{"lower":50,"upper":100},"decisions":[{"private":"Fictional private review"}]}})
@@ -11271,13 +11278,14 @@ mod tests {
         );
         assert_eq!(json["results"][0]["requirement_coverage"], "needs_review");
         assert_eq!(json["results"][0]["requirement_audit_incomplete"], true);
-        assert_eq!(json["results"][0]["qualification_coverage"], "none");
+        assert_eq!(json["results"][0]["qualification_coverage"], "none_used");
         assert_eq!(json["results"][0]["review_score"], 75);
         assert_eq!(
             json["results"][0]["review_range"],
             json!({"lower":50,"upper":100})
         );
         assert!(!response.contains("Fictional private review"));
+        assert!(!response.contains("Fictional private qualification"));
         assert!(!response.contains("Fictional remote-only preference"));
     }
 
