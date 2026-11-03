@@ -980,7 +980,11 @@ impl Cdp {
     }
 
     pub fn take_events(&mut self) -> Vec<(String, Value)> {
-        std::mem::take(&mut self.events)
+        let (paused, other): (Vec<_>, Vec<_>) = std::mem::take(&mut self.events)
+            .into_iter()
+            .partition(|(name, _)| name == "Fetch.requestPaused");
+        self.events = paused;
+        other
     }
 
     /// Fail one already-buffered Fetch pause in its originating session.

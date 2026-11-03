@@ -2930,7 +2930,9 @@ fn fetch_request_stage_can_block_a_loopback_post() {
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
                     let mut data = [0u8; 2048];
                     let size = stream.read(&mut data).unwrap_or(0);
-                    if data[..size].starts_with(b"POST ") {
+                    if data[..size].starts_with(b"POST /fictional-submit ")
+                        || data[..size].starts_with(b"GET /fictional-submit ")
+                    {
                         worker_received.store(true, Ordering::Relaxed);
                     }
                     let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -2961,29 +2963,23 @@ fn fetch_request_stage_can_block_a_loopback_post() {
         json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
     )
     .unwrap();
-    cdp.call("Runtime.evaluate", json!({"expression":"void fetch('/fictional-submit',{method:'POST',body:'fixture'}).catch(()=>{}); 'queued'","returnByValue":true})).unwrap();
+    cdp.call("Runtime.evaluate", json!({"expression":"void fetch('/fictional-submit',{method:'POST',body:'fixture'}).catch(()=>{}); void fetch('/fictional-submit').catch(()=>{}); 'queued'","returnByValue":true})).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !cdp.saw_event("Fetch.requestPaused") && Instant::now() < deadline {
         cdp.pump(Duration::from_millis(100));
     }
-    let paused = cdp
-        .events
-        .iter()
-        .find(|(name, value)| {
-            name == "Fetch.requestPaused"
-                && value
-                    .pointer("/params/request/method")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("POST")
-        })
-        .expect("fictional POST was not paused");
-    assert!(paused
-        .1
-        .pointer("/params/requestId")
-        .and_then(serde_json::Value::as_str)
-        .is_some());
-    assert!(cdp.fail_next_paused_request().unwrap());
-    assert!(!cdp.fail_next_paused_request().unwrap());
+    // Draining ordinary events must not lose requests awaiting a decision.
+    cdp.take_events();
+    assert!(cdp.saw_event("Fetch.requestPaused"));
+    let mut failed = 0;
+    while failed < 2 && Instant::now() < deadline {
+        if cdp.fail_next_paused_request().unwrap() {
+            failed += 1;
+        } else {
+            cdp.pump_checked(Duration::from_millis(100)).unwrap();
+        }
+    }
+    assert_eq!(failed, 2, "both fictional requests must be paused");
     cdp.events.push((
         "Fetch.requestPaused".into(),
         json!({"sessionId":cdp.session,"params":{"requestId":"fictional-invalid"}}),
