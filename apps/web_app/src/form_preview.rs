@@ -755,7 +755,7 @@ fn execute_and_verify_field(
     // already visible and valid. Verification remains required and the field
     // stays in the completed set for subsequent checks.
     if verify_filled_field(driver, preview, &field.selector).is_ok() {
-        completed.push(serde_json::json!({"selector":field.selector,"label":field.label,"already_matching":true}));
+        completed.push(serde_json::json!({"selector":field.selector,"label":field.label,"already_matching":true,"verified":true}));
         return Ok(());
     }
     driver.execute(command).map_err(|e| {
@@ -764,9 +764,14 @@ fn execute_and_verify_field(
             field_review_label(&preview.schema, field)
         )
     })?;
-    completed.push(serde_json::json!({"selector":field.selector,"label":field.label}));
+    completed
+        .push(serde_json::json!({"selector":field.selector,"label":field.label,"verified":false}));
     verify_filled_field(driver, preview, &field.selector)
-        .map_err(|error| format!("After filling, {error}"))
+        .map_err(|error| format!("After filling, {error}"))?;
+    if let Some(last) = completed.last_mut() {
+        last["verified"] = serde_json::json!(true);
+    }
+    Ok(())
 }
 
 /// Bounded live-value check after navigation. A failure or budget cutoff is
@@ -2299,6 +2304,7 @@ mod tests {
         assert!(outcome.unwrap_err().contains("Name (field 1 of 2)"));
         assert_eq!(driver.written, vec!["#first"]);
         assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0]["verified"], false);
     }
 
     #[test]

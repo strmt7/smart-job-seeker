@@ -1841,9 +1841,9 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// Keep all fields verified in this inspection, including earlier attempts
-/// when a later attempt stops partway through. They must be checked again
-/// against the live page; retaining a selector is not proof its value survived.
+/// Keep fields touched or checked in this inspection, including earlier
+/// attempts when a later attempt stops partway through. They must be checked
+/// against the live page; a retained selector is not proof of a correct value.
 fn merge_completed_selectors(existing: &mut Vec<String>, completed: &[Value]) {
     for selector in completed
         .iter()
@@ -7646,7 +7646,7 @@ fn serve(
                     let mut outcome_error = None;
                     let mut capture_incomplete = false;
                     if let Some(record) = &mut current.record {
-                        let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These fields were entered or already matched before the failure; they are not proof that values remain correct or that an application was submitted."});
+                        let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These are attempted field actions or values that already matched. The verified flag records immediate readback only; values may have changed later. This does not prove submission."});
                         if let Err(problem) = record.incomplete_fill(outcome, now()) {
                             outcome_error = Some(problem);
                         }
@@ -7711,7 +7711,7 @@ fn serve(
                         ""
                     };
                     return Err(format!(
-                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{network_note}{network_record_note}{flag_note}{outcome_note}{capture_note}", completed.len()
+                        "Autofill stopped after {} field actions or matching-value checks; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{network_note}{network_record_note}{flag_note}{outcome_note}{capture_note}", completed.len()
                     ));
                 }
             };
@@ -14917,7 +14917,10 @@ mod tests {
             std::fs::write(&screenshots, b"fixture blocker").unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             let error = serve(&mut stream, &mut ws, &mut session, "test-token", port).unwrap_err();
-            assert!(error.contains("2 successful field commands"), "{error}");
+            assert!(
+                error.contains("2 field actions or matching-value checks"),
+                "{error}"
+            );
             assert!(
                 error.contains("Screenshots could not all be captured or saved"),
                 "{error}"
