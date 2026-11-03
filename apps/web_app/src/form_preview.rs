@@ -5293,7 +5293,11 @@ mod tests {
                 mapping_responses: 0,
             };
             let preview = suggest_for_live_form(live, &mut counted, &json!({"full_name":"Avery Example", "first_name":"Avery", "last_name":"Example", "email":"avery@example.invalid", "phone":"+12025550123"})).unwrap();
-            assert!(counted.calls > 0, "no local model generation was attempted");
+            assert!(
+                counted.calls > 0,
+                "no local model generation was attempted; review: {:?}",
+                preview.manual_review
+            );
             assert!(
                 counted.mapping_responses > 0,
                 "the model returned no nonempty mapping response"
