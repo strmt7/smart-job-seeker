@@ -5491,6 +5491,66 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "read-only end-to-end inspection of a reviewed public listing"]
+    fn public_closed_listing_inspection_without_model() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let url = std::env::var("WAYPOINT_CLOSURE_DIAGNOSTIC_URL").unwrap();
+        let parsed = url::Url::parse(&url).unwrap();
+        let source = crate::manual_job::source(parsed.host_str().unwrap());
+        waypoint_workspace::default_registry()
+            .check_public_route(source, waypoint_policy::Operation::Read)
+            .unwrap();
+        assert!(
+            crate::resident_model().unwrap().is_none(),
+            "requires no resident model"
+        );
+        let mut workspace = waypoint_workspace::Workspace::in_memory().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut session = None;
+        let mut request = |path: &str, body: Value| -> Value {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = body.to_string();
+            write!(client, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            crate::serve(
+                &mut server,
+                &mut workspace,
+                &mut session,
+                "fixture-token",
+                port,
+            )
+            .unwrap();
+            drop(server);
+            let mut raw = String::new();
+            client.read_to_string(&mut raw).unwrap();
+            serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap()
+        };
+        let started = request("/api/listing-inspect/start", json!({"url":url}));
+        let id = started["task_id"].as_str().expect("inspection started");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        let result = loop {
+            let response = request("/api/listing-inspect/status", json!({"task_id":id}));
+            if response["status"] != "running" {
+                break response;
+            }
+            assert!(std::time::Instant::now() < deadline, "inspection timed out");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
+        assert_eq!(result["status"], "failed", "{result}");
+        let message = result["error"].as_str().unwrap();
+        assert!(message.contains("no eligible local model"), "{message}");
+        assert!(
+            message.to_lowercase().contains("closed positions"),
+            "{message}"
+        );
+        assert!(message.contains("verify the current status"), "{message}");
+        assert_eq!(workspace.job_count().unwrap(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "opens an explicitly supplied public listing read-only for capture diagnostics"]
     fn public_listing_closure_capture_diagnostics() {
         let url = std::env::var("WAYPOINT_CLOSURE_DIAGNOSTIC_URL").unwrap();
