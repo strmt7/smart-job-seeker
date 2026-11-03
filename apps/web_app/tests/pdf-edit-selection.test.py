@@ -50,6 +50,13 @@ result = subprocess.run([sys.executable, "-c", program], input=payload,
                         capture_output=True, timeout=30, check=False)
 assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
 assert PdfReader(io.BytesIO(result.stdout)).pages[0].extract_text() == "AlphaBet"
+# Rewriting a phrase with the same number of spaces must still check spacing.
+payload = json.dumps({"pdf": fixture(b"(Alpha Beta) Tj"), "before": "Alpha Beta", "after": "Bravo Beta"})
+reject_gap_program = program.replace("def visible_word_gap(previous, following):", "def original_visible_word_gap(previous, following):", 1)
+reject_gap_program = reject_gap_program.replace("# Bounded PDF text-object edit.", "def visible_word_gap(previous, following): return False\n# Bounded PDF text-object edit.", 1)
+result = subprocess.run([sys.executable, "-c", reject_gap_program], input=payload, text=True,
+                        capture_output=True, timeout=30, check=False)
+assert result.returncode != 0 and "Word spacing could not be verified" in result.stdout
 styled_source = fixture(b"(PrefixAlpha) Tj 0 0 1 rg (BetaSuffix) Tj")
 payload = json.dumps({"pdf": styled_source,
                       "before": "AlphaBeta", "after": "AlphaBet"}).encode()

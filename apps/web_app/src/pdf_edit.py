@@ -307,9 +307,9 @@ try:
                     raise ValueError('Edited glyphs could not be matched to the text object; review manually')
                 # Some subset fonts map a space to a zero-advance glyph. Text
                 # extraction still reports a space although words visually join.
-                # Check internal word gaps when an edit adds spaces; uncertain
-                # geometry is a manual-review case, not a verified export.
-                if after.count(' ') > before.count(' '):
+                # Check internal word gaps whenever the replacement contains
+                # spaces, even when it has the same count as the source.
+                if ' ' in after:
                     for i in range(1, len(observed)-1):
                         if observed[i] != ' ' or observed[i-1].isspace() or observed[i+1].isspace():
                             continue
