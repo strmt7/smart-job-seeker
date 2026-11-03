@@ -1,3 +1,7 @@
+## DOCX relationship-based text extraction — 2026-11-03
+
+- Document text extraction now reads internal header and footer parts named by document relationships, including nonstandard part names, within existing part and size limits. The CV review flags those linked parts as well. Missing, duplicated or unsupported linked parts stop extraction with an error. Extraction still reads conventional parts and can include unused headers or footers; it does not establish visual reading order or edit support for arbitrary part names. Fictional extraction tests passed (13); CV checks passed (11, one PDF test ignored); Windows web Clippy passed. No real CV or employer site was used.
+
 ## Indirect preference retest — 2026-11-03
 
 - After the numeric minimum-evidence check, one resource-gated `qwen3.5:9b` run completed all four fictional indirect preference cases as expected: unspecified working hours left an hourly-to-annual salary comparison unknown; UK-only remote work conflicted with a Germany requirement; an incident rota conflicted with a no-on-call preference; and discretionary unlimited leave left a 30-day minimum unknown. An earlier run had failed the leave case before the numeric check. These four cases are not a broad accuracy or repeatability benchmark.

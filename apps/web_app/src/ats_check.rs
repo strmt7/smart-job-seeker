@@ -66,11 +66,25 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
     let mut headers = false;
     let mut footers = false;
+    let mut has_relationships = false;
     for i in 0..zip.len() {
         let entry = zip.by_index_raw(i).map_err(|_| "Invalid DOCX entry")?;
         let name = entry.name().map_err(|_| "Invalid DOCX entry name")?;
         headers |= name.starts_with("word/header") && name.ends_with(".xml");
         footers |= name.starts_with("word/footer") && name.ends_with(".xml");
+        has_relationships |= name == "word/_rels/document.xml.rels";
+    }
+    if has_relationships {
+        let mut total = 0;
+        let relationships = crate::document_extract::read_docx_text_part(
+            &mut zip,
+            "word/_rels/document.xml.rels",
+            &mut total,
+        )?;
+        for (header, _) in crate::document_extract::related_header_footer_parts(&relationships)? {
+            headers |= header;
+            footers |= !header;
+        }
     }
     let mut body = zip
         .by_name("word/document.xml")
@@ -526,6 +540,24 @@ mod tests {
         zip.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#).unwrap();
         let notes = structure_notes("cv.docx", &zip.finish().unwrap().into_inner()).unwrap();
         assert!(!notes.iter().any(|note| note.contains("footer files")));
+    }
+    #[test]
+    fn reports_relationship_named_footer() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#).unwrap();
+        zip.start_file("word/custom/contact.xml", options).unwrap();
+        zip.write_all(
+            br#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#,
+        )
+        .unwrap();
+        zip.start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        zip.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="custom/contact.xml"/></Relationships>"#).unwrap();
+        let notes = structure_notes("cv.docx", &zip.finish().unwrap().into_inner()).unwrap();
+        assert!(notes.iter().any(|note| note.contains("footer files")));
     }
     #[test]
     fn warns_when_document_body_contains_tracked_revisions() {

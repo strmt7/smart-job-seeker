@@ -64,6 +64,91 @@ fn validate_text(text: String) -> Result<String, String> {
     Ok(text.to_owned())
 }
 
+// Header and footer part names are determined by package relationships; they
+// need not follow Word's usual header1.xml/footer1.xml naming convention.
+pub(crate) fn related_header_footer_parts(xml: &[u8]) -> Result<Vec<(bool, String)>, String> {
+    const REL_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
+    let mut reader = NsReader::from_reader(xml);
+    let mut depth = 0usize;
+    let mut root = false;
+    let mut parts = Vec::new();
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|_| "Malformed DOCX relationships")?;
+        let in_ns = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == REL_NS);
+        if let Event::Start(e) | Event::Empty(e) = &event {
+            if depth == 0 {
+                if root || !in_ns || e.local_name().as_ref() != b"Relationships" {
+                    return Err("Invalid DOCX relationships root".into());
+                }
+                root = true;
+            } else if depth == 1 && in_ns && e.local_name().as_ref() == b"Relationship" {
+                let (mut ty, mut target, mut mode) = (None, None, None);
+                for attr in e.attributes() {
+                    let attr = attr.map_err(|_| "Invalid DOCX relationship attribute")?;
+                    let value = attr
+                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                        .map_err(|_| "Invalid DOCX relationship value")?
+                        .into_owned();
+                    match attr.key.as_ref() {
+                        b"Type" => ty = Some(value),
+                        b"Target" => target = Some(value),
+                        b"TargetMode" => mode = Some(value),
+                        _ => {}
+                    }
+                }
+                let header = match ty.as_deref() {
+                    Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" | "http://purl.oclc.org/ooxml/officeDocument/relationships/header") => Some(true),
+                    Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" | "http://purl.oclc.org/ooxml/officeDocument/relationships/footer") => Some(false),
+                    _ => None,
+                };
+                if let Some(header) = header {
+                    let base = url::Url::parse("https://waypoint.invalid/word/document.xml")
+                        .expect("constant URL");
+                    let part = target
+                        .filter(|value| {
+                            !value.contains(['\\', '%', ':']) && !value.starts_with("//")
+                        })
+                        .and_then(|value| base.join(&value).ok())
+                        .filter(|value| {
+                            value.scheme() == "https"
+                                && value.host_str() == Some("waypoint.invalid")
+                                && value.query().is_none()
+                                && value.fragment().is_none()
+                                && value.username().is_empty()
+                                && value.password().is_none()
+                                && value.port().is_none()
+                        })
+                        .filter(|_| mode.as_deref().is_none_or(|value| value == "Internal"))
+                        .and_then(|value| value.path().strip_prefix('/').map(str::to_owned))
+                        .filter(|value| value.ends_with(".xml"))
+                        .ok_or("Unsupported DOCX header or footer relationship")?;
+                    if !parts.iter().any(|(_, existing)| existing == &part) {
+                        parts.push((header, part));
+                    }
+                    if parts.len() > 31 {
+                        return Err("DOCX has too many text parts".into());
+                    }
+                }
+            }
+        }
+        match event {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth = depth.checked_sub(1).ok_or("Malformed DOCX relationships")?,
+            Event::DocType(_) => {
+                return Err("DOCX relationship declarations are not supported".into())
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !root || depth != 0 {
+        return Err("Unclosed DOCX relationships".into());
+    }
+    Ok(parts)
+}
+
 pub(crate) fn docx_text_parts(
     archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
 ) -> Result<Vec<String>, String> {
@@ -135,9 +220,46 @@ pub(crate) fn read_docx_text_part(
 fn extract_docx(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| "Invalid DOCX archive")?;
-    let names = docx_text_parts(&mut archive)?;
+    let mut names = docx_text_parts(&mut archive)?;
     let mut output = String::new();
     let mut total = 0;
+    let rel_name = "word/_rels/document.xml.rels";
+    let rel_count = (0..archive.len())
+        .filter(|&index| {
+            archive
+                .by_index_raw(index)
+                .ok()
+                .and_then(|entry| entry.name().ok().map(|name| name == rel_name))
+                .unwrap_or(false)
+        })
+        .count();
+    if rel_count > 1 {
+        return Err("Duplicate DOCX relationships part".into());
+    }
+    if rel_count == 1 {
+        let relationships = read_docx_text_part(&mut archive, rel_name, &mut total)?;
+        for (header, part) in related_header_footer_parts(&relationships)? {
+            let count = (0..archive.len())
+                .filter(|&index| {
+                    archive
+                        .by_index_raw(index)
+                        .ok()
+                        .and_then(|entry| entry.name().ok().map(|name| name == part))
+                        .unwrap_or(false)
+                })
+                .count();
+            if count != 1 {
+                return Err("DOCX header or footer part is missing or duplicated".into());
+            }
+            if !names.contains(&part) {
+                if names.len() >= 32 {
+                    return Err("DOCX has too many text parts".into());
+                }
+                let index = if header { 0 } else { names.len() };
+                names.insert(index, part);
+            }
+        }
+    }
     for name in &names {
         let xml = read_docx_text_part(&mut archive, name, &mut total)?;
         if !output.is_empty() && !output.ends_with('\n') {
@@ -266,6 +388,51 @@ mod tests {
             .unwrap();
         writer.write_all(xml.as_bytes()).unwrap();
         writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn extracts_relationship_named_header_and_footer_parts() {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        let part = |text: &str| {
+            format!(
+                r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:document>"#
+            )
+        };
+        for (name, text) in [
+            ("word/document.xml", "Body"),
+            ("word/custom/top.xml", "Header"),
+            ("word/custom/bottom.xml", "Footer"),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(part(text).as_bytes()).unwrap();
+        }
+        writer
+            .start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="h" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="custom/top.xml"/><Relationship Id="f" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="custom/bottom.xml"/></Relationships>"#).unwrap();
+        let text = extract("cv.docx", &writer.finish().unwrap().into_inner()).unwrap();
+        assert_eq!(text, "Header\nBody\nFooter");
+    }
+
+    #[test]
+    fn rejects_external_header_relationships() {
+        let relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="https://example.invalid/header.xml" TargetMode="External"/></Relationships>"#;
+        assert!(related_header_footer_parts(relationships).is_err());
+    }
+
+    #[test]
+    fn reports_missing_relationship_target() {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:document>"#).unwrap();
+        writer
+            .start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        writer.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="custom/missing.xml"/></Relationships>"#).unwrap();
+        let error = extract("cv.docx", &writer.finish().unwrap().into_inner()).unwrap_err();
+        assert!(error.contains("missing or duplicated"));
     }
 
     #[test]
