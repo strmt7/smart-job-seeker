@@ -208,7 +208,18 @@ fn ensure_inspected_form(
         || current.schema.schema_hash_input() != previous.schema.schema_hash_input()
         || (before_walls != after_walls && !loading_signals_cleared)
     {
-        let mut message = "The application page's fields or review signals changed during the check; inspect it again.".to_owned();
+        let mut message = format!(
+            "The application page's fields or review signals changed during the check; inspect it again. Earlier inspection: {} fields; later inspection: {} fields. These snapshots may be incomplete.",
+            previous.schema.fields.len(), current.schema.fields.len()
+        );
+        if previous
+            .walls
+            .iter()
+            .chain(current.walls.iter())
+            .any(|wall| wall == "captcha present")
+        {
+            message.push_str(" A possible CAPTCHA or verification challenge was observed in at least one inspection.");
+        }
         if previous
             .walls
             .iter()
@@ -1163,6 +1174,12 @@ mod tests {
             "a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".to_owned(),
         ]);
         assert!(super::ensure_inspected_form(&mut browser, &url, &earlier_obstruction).unwrap());
+        let mut earlier_challenge = original.clone();
+        earlier_challenge.walls.push("captcha present".into());
+        let error =
+            super::ensure_inspected_form(&mut browser, &url, &earlier_challenge).unwrap_err();
+        assert!(error.contains("possible CAPTCHA or verification challenge"));
+        assert!(error.contains("at least one inspection"));
         browser
             .execute(&BrowserCommand::Click {
                 selector: "#change".into(),
@@ -1171,6 +1188,9 @@ mod tests {
         assert_eq!(browser.current_url().unwrap(), url);
         let error = super::ensure_inspected_form(&mut browser, &url, &original).unwrap_err();
         assert!(error.contains("changed during the check"));
+        assert!(error.contains("Earlier inspection:"));
+        assert!(error.contains("later inspection:"));
+        assert!(error.contains("snapshots may be incomplete"));
         assert!(browser
             .trace
             .iter()
@@ -1323,6 +1343,45 @@ mod tests {
         acknowledge("live-general-check").unwrap();
         println!("Listing check: {result}; manual review: {review}");
         assert!(!result.contains("could not be opened"), "{result}");
+    }
+
+    #[test]
+    #[ignore = "read-only diagnostic of changes on a reviewed public form"]
+    fn live_public_form_change_diagnostic() {
+        let url = std::env::var("WAYPOINT_LIVE_CHECK_URL").expect("reviewed public URL");
+        crate::form_links::check_destination(&url, waypoint_policy::Operation::Read).unwrap();
+        waypoint_net::resolve_public(&waypoint_net::parse_url(&url).unwrap()).unwrap();
+        let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let first = browser.open(&url).unwrap();
+        let current_url = browser.current_url().unwrap();
+        let second = browser.inspect_current().unwrap();
+        assert_eq!(browser.current_url().unwrap(), current_url);
+        let added = second
+            .schema
+            .fields
+            .iter()
+            .filter(|field| !first.schema.fields.contains(field))
+            .count();
+        let removed = first
+            .schema
+            .fields
+            .iter()
+            .filter(|field| !second.schema.fields.contains(field))
+            .count();
+        let mut first_walls = first.walls.clone();
+        let mut second_walls = second.walls.clone();
+        first_walls.sort_unstable();
+        second_walls.sort_unstable();
+        println!("fields before={} after={} added_or_changed={} removed_or_changed={} schema_changed={} walls_changed={} first_warnings={} second_warnings={}",first.schema.fields.len(),second.schema.fields.len(),added,removed,first.schema.schema_hash_input()!=second.schema.schema_hash_input(),first_walls!=second_walls,first_walls.len(),second_walls.len());
+        println!(
+            "first signals: {}; second signals: {}",
+            super::obstacle_message(&first_walls),
+            super::obstacle_message(&second_walls)
+        );
+        assert!(browser
+            .trace
+            .iter()
+            .all(|event| !event.contains("typed") && !event.contains("submitted")));
     }
 
     #[test]
