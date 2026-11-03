@@ -111,6 +111,8 @@
 
 ## Form experience context — 2026-11-02
 
+- Form-mapping experience hints now include the reported application stage. Otherwise identical observations from different stages remain distinct instead of being collapsed into one hint. The context tests passed (7 passed, 8 ignored) and Windows web Clippy passed. No live-model comparison was run, so any effect on mapping quality remains unmeasured.
+
 - The form-mapping model wrapper now independently excludes disabled, unreviewed, unsupported-version and undated experiences before applying its ten-item limit. Normal workspace selection already enforced these conditions; this closes an assumption at the wrapper boundary and prevents rejected records from consuming the limit. Fictional context tests passed (5 passed, 7 ignored), as did Windows web Clippy. No local model or application was used in this check.
 
 ## Match input coverage — 2026-11-02

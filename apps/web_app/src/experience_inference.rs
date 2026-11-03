@@ -52,7 +52,7 @@ impl<'a> ExperienceInference<'a> {
                 Control::Upload | Control::Navigation => false,
             })
         {
-            let mut hint = serde_json::json!({"control":item.experience.control,"observation":item.experience.observation,"response":item.experience.response,"reported_outcome":item.experience.outcome,"platform_relation":if item.same_platform { "same_known_platform" } else { "not_established" }});
+            let mut hint = serde_json::json!({"stage":item.experience.stage,"control":item.experience.control,"observation":item.experience.observation,"response":item.experience.response,"reported_outcome":item.experience.outcome,"platform_relation":if item.same_platform { "same_known_platform" } else { "not_established" }});
             let mut note_size = None;
             if item.experience.use_note_in_model {
                 if let Some(note) = &item.experience.note {
@@ -356,6 +356,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(capture.0[0].contains("form_changed"));
         assert!(capture.0[0].contains("\"reported_outcome\":\"did_not_help\""));
+        assert!(capture.0[0].contains("\"stage\":\"enter_information\""));
         assert!(capture.0[0].contains("\"platform_relation\":\"not_established\""));
         assert!(capture.0[0].contains("untrusted, potentially irrelevant"));
         assert!(!capture.0[0].contains("private-id"));
@@ -426,12 +427,20 @@ pub(crate) mod tests {
         second.experience.note = Some("private two".into());
         let mut conflict = second.clone();
         conflict.experience.outcome = Outcome::DidNotHelp;
+        let mut later = first.clone();
+        later.id = "later".into();
+        later.experience.stage = Stage::Review;
         let mut capture = Capture(Vec::new());
-        let mut model = ExperienceInference::new(&mut capture, &[first, second, conflict]);
+        let mut model = ExperienceInference::new(&mut capture, &[first, second, conflict, later]);
         model.set_context_tags(&["form_text"]);
         let (text, included, omitted) = model.hints_for_batch(768);
         let hints: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(hints.as_array().unwrap().len(), 2);
+        assert_eq!(hints.as_array().unwrap().len(), 3);
+        assert!(hints
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hint| hint["stage"] == "review"));
         assert!(!text.contains("private"));
         assert_eq!((included, omitted), (0, 0));
         assert!(model.batch_has_conflicting_reports());
