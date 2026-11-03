@@ -2772,7 +2772,7 @@ fn serve(
                             .ok_or("Candidate changed; search again")?;
                         let comparison =
                             duplicate_search::saved_field_comparison(&target_job, &candidate_job);
-                        let reason=format!("Local AI flagged a possible duplicate; its explanation may be inaccurate. Compare both complete listings: {}. Listing excerpts: {} / {}. {}",item["reason"].as_str().unwrap_or(""),item["target_excerpt"].as_str().unwrap_or(""),item["candidate_excerpt"].as_str().unwrap_or(""),comparison);
+                        let reason = duplicate_search::candidate_reason(&comparison, item);
                         flagged.push((candidate.to_owned(), reason));
                     }
                     let added = ws.add_ai_duplicates(&job, &flagged).map_err(|e| {

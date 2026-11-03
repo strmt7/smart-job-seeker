@@ -40,6 +40,16 @@ static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 pub(crate) const OMITTED: &str = "\n[... omitted ...]\n";
 
+pub(crate) fn candidate_reason(comparison: &str, item: &Value) -> String {
+    format!(
+        "Local AI flagged a possible duplicate; its explanation may be inaccurate. {} Model explanation: {}. Listing excerpts: {} / {}. Compare both complete listings.",
+        comparison,
+        item["reason"].as_str().unwrap_or(""),
+        item["target_excerpt"].as_str().unwrap_or(""),
+        item["candidate_excerpt"].as_str().unwrap_or("")
+    )
+}
+
 /// Compare saved text literally, without deciding whether two vacancies match.
 pub(crate) fn saved_field_comparison(
     first: &waypoint_store::StoredJob,
@@ -391,6 +401,18 @@ mod tests {
         case_variant.requisition_id = Some("a-10".into());
         assert!(saved_field_comparison(&job(&first["id"]), &case_variant)
             .contains("requisition different text"));
+        let mut different_location = job(&first["id"]);
+        different_location.location = "Prague".into();
+        let location_comparison = saved_field_comparison(&job(&first["id"]), &different_location);
+        let reason = candidate_reason(
+            &location_comparison,
+            &json!({"reason":"Identical location", "target_excerpt":"Berlin", "candidate_excerpt":"Prague"}),
+        );
+        assert!(reason.contains("location different text"));
+        assert!(
+            reason.find("location different text").unwrap()
+                < reason.find("Identical location").unwrap()
+        );
     }
     static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
     #[test]
@@ -1120,6 +1142,38 @@ mod tests {
         crate::experience_inference::tests::with_resource_gated_model(
             live_duplicate_search_handles_bounded_multilingual_context,
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model on fictional semantically related vacancies"]
+    fn resource_gated_semantic_duplicate_with_different_titles() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let target = "Title: Backend Engineer; Employer: Example Transit; Location: Vienna; Description: Build server-side ticketing APIs in Go and operate distributed payment services for the transit platform.";
+            let candidates = vec![
+                ("repost".into(), "Title: Software Engineer, Server Platform; Employer: Example Transit; Location: Vienna; Description: Develop Go ticketing APIs and run distributed payment services for the transit platform.".into()),
+                ("other_team".into(), "Title: Backend Engineer; Employer: Example Transit; Location: Vienna; Description: Build Java fleet maintenance APIs for vehicle diagnostics and repair scheduling.".into()),
+                ("other_location".into(), "Title: Backend Engineer; Employer: Example Transit; Location: Prague; Description: Build server-side ticketing APIs in Go and operate distributed payment services for the transit platform.".into()),
+            ];
+            let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                "qwen3.5:9b".into(),
+                crate::resident_model_identity,
+            );
+            let result = search(&mut model, target, &candidates).unwrap();
+            println!(
+                "fictional semantic duplicates: {:?}; examined={}; failed={}",
+                result.matches, result.examined, result.failed_batches
+            );
+            assert_eq!(result.examined, 3);
+            assert!(result.matches.iter().any(|item| item["id"] == "repost"));
+            assert!(!result.matches.iter().any(|item| item["id"] == "other_team"));
+            // Locations can differ across postings for one vacancy; keep any
+            // such match for review and surface the literal field comparison.
+        });
     }
 
     #[cfg(windows)]
