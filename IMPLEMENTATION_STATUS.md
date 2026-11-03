@@ -3290,3 +3290,9 @@ no fields were filled. The independent validation fallback now also recognizes
 these section names and tested Spanish and German variants, even if a model
 proposes an applicant value. This vocabulary is not exhaustive, and other
 languages or wording can still require manual review. The model was unloaded.
+
+The bounded recovery prompt for an incomplete form-review list now also asks
+about third-party and ambiguous contact fields. In a fictional French case,
+the initial mapping was deliberately simulated as wrong and its review list
+omitted; Qwen3.5:9b's recovery pass flagged the contact, and the mapping was
+withheld. This is one local-model observation, not a guarantee for all wording.
