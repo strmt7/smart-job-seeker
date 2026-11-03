@@ -1151,7 +1151,10 @@ fn build_preview(
                 } else {
                     "Suggested value exceeds field limit: "
                 };
-                manual_review.push(format!("{reason}{}", field.label));
+                manual_review.push(format!(
+                    "{reason}{}",
+                    field_review_label(&live.schema, field)
+                ));
                 return false;
             }
         }
@@ -1241,6 +1244,18 @@ pub fn refresh_required_review(preview: &mut FormPreview) {
             "Suggested value is shorter than field minimum: ",
         ] {
             if let Some(label) = reason.strip_prefix(prefix) {
+                if !preview
+                    .schema
+                    .fields
+                    .iter()
+                    .any(|field| field.label == label)
+                {
+                    if let Some(field) = preview.schema.fields.iter().find(|field| {
+                        field_review_label(&preview.schema, field) == label && field.label != label
+                    }) {
+                        return !valid_selectors.contains(&field.selector);
+                    }
+                }
                 let fields: Vec<_> = preview
                     .schema
                     .fields
@@ -5981,6 +5996,55 @@ mod tests {
             .manual_review
             .iter()
             .any(|item| item.contains("First name")));
+    }
+
+    #[test]
+    fn repeated_field_length_warnings_clear_independently() {
+        let field = |selector: &str| waypoint_applications::form_mapping::FormField {
+            selector: selector.into(),
+            label: "First name".into(),
+            field_type: FormFieldType::Text,
+            required: true,
+            sensitive: false,
+            editing_mode: None,
+            max_length_utf16: Some(2),
+            min_length_utf16: None,
+            pattern: None,
+            autocomplete: Some("given-name".into()),
+        };
+        let live = LiveForm {
+            origin: "https://example.test".into(),
+            schema: FormSchema {
+                origin: "https://example.test".into(),
+                fields: vec![field("#first"), field("#second")],
+                multi_step: false,
+                steps: 1,
+            },
+            walls: vec![],
+        };
+        let mut preview =
+            suggest_without_model(live, &json!({"first_name":"Avery"}), "No model").unwrap();
+        let first = "Suggested value exceeds field limit: First name (field 1 of 2)";
+        let second = "Suggested value exceeds field limit: First name (field 2 of 2)";
+        assert!(preview.manual_review.iter().any(|warning| warning == first));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|warning| warning == second));
+        preview.suggestions.push(ProposedMapping {
+            field_selector: "#first".into(),
+            value: PacketValue::Text("Al".into()),
+        });
+        refresh_required_review(&mut preview);
+        assert!(!preview.manual_review.iter().any(|warning| warning == first));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|warning| warning == second));
+        assert!(preview
+            .manual_review
+            .iter()
+            .any(|warning| warning == "Required field needs review: First name (field 2 of 2)"));
     }
 
     #[test]
