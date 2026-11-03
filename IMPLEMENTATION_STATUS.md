@@ -3308,3 +3308,11 @@ Java evidence left it unknown. A separate three-case grouped check retained
 its expected supported/unknown/supported results. These small examples do not
 establish general score accuracy; grouped criteria and coverage still require
 review, and the model was unloaded.
+
+For a separate fictional language example, the first conjunction assessment
+returned overlapping excerpts and no score. A generic prompt revision later
+fell back to an incomplete rubric in repeated checks. With a different-language
+example in the instructions, a subsequent run kept “German or French” as one
+supported criterion and separated “German and French” into supported French
+and unknown German. The earlier Python/SQL check also passed. This records
+observed model sensitivity to prompt wording, not a repeatability guarantee.
