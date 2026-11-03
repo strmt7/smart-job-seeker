@@ -3709,3 +3709,5 @@ model accuracy or visual quality.
 2026-11-03: Screenshot-reference inspection now checks filesystem metadata once per unique canonical reference within the bounded event scan. The existing fictional screenshot viewer test passed; no storage performance measurement was made.
 
 2026-11-03: Screenshot references now also require an accessible file with a PNG signature, using the same bounded check as the screenshot list. A fictional test covered a missing file, an oversized file, a bad signature and duplicate references. A PNG signature is not a full decode or integrity check; later corruption may remain undetected.
+
+2026-11-03: Hosted coverage run `41597789874` for commit `352cebc4` completed successfully. It does not cover later local commits. The audit notices trace through the legacy desktop shell's accessibility dependencies; disabling accessibility solely to make the audit pass would remove functionality and was not done.
