@@ -410,6 +410,12 @@ fn recheck_navigation_preview(
     Ok(changed)
 }
 
+// Each section is separately capped before it is retained. Sixteen sections
+// support longer wizards while keeping the serialized input to at most 4 MiB;
+// in-memory object overhead can be higher.
+const MAX_PRIOR_SECTIONS: usize = 16;
+const MAX_PRIOR_SECTION_BYTES: usize = 256 * 1024;
+
 fn remember_prior_section(session: &mut ReviewSession) {
     let attachment_groups =
         crate::current_attachment_groups(&session.attachments, &session.id).len();
@@ -428,11 +434,11 @@ fn remember_prior_section(session: &mut ReviewSession) {
         .cloned()
         .collect();
     let size = serde_json::to_vec(&serde_json::json!({"schema":session.preview.schema,"suggestions":suggestions,"completed":session.completed_selectors})).map(|bytes| bytes.len());
-    if size.is_err() || size.is_ok_and(|bytes| bytes > 256 * 1024) {
+    if size.is_err() || size.is_ok_and(|bytes| bytes > MAX_PRIOR_SECTION_BYTES) {
         session.prior_sections_omitted = true;
         return;
     }
-    if session.prior_sections.len() >= 4 {
+    if session.prior_sections.len() >= MAX_PRIOR_SECTIONS {
         session.prior_sections.remove(0);
         session.prior_sections_omitted = true;
     }
@@ -1605,7 +1611,12 @@ mod tests {
         for _ in 0..5 {
             super::remember_prior_section(&mut returned);
         }
-        assert_eq!(returned.prior_sections.len(), 4);
+        assert!(returned.prior_sections.len() > 4);
+        assert!(!returned.prior_sections_omitted);
+        for _ in 0..super::MAX_PRIOR_SECTIONS {
+            super::remember_prior_section(&mut returned);
+        }
+        assert_eq!(returned.prior_sections.len(), super::MAX_PRIOR_SECTIONS);
         assert!(returned.prior_sections_omitted);
         let mut ambiguous = returned.preview.clone();
         ambiguous.manual_review.clear();
