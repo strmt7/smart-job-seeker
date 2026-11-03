@@ -116,12 +116,25 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     let mut sources = vec![selected_source.clone()];
     sources.extend(input.facts);
     let request=crate::answer_task::Inputs{numeric_only:false,max_length_utf16:None,min_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; add other candidate facts only if the writing preferences request it. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
-    let mut suggestion = crate::answer_task::generate_template_with_selection(model, request)?;
+    let mut suggestion =
+        crate::answer_task::generate_template_with_selection(model, request.clone())?;
     if suggestion["text"]
         .as_str()
         .is_none_or(|text| text.chars().any(char::is_control))
     {
         return Err("Model returned a multi-line or invalid replacement; review manually".into());
+    }
+    if cosmetic_only(
+        &input.before,
+        suggestion["text"].as_str().unwrap_or_default(),
+    ) {
+        let mut retry = request;
+        retry.question.push_str(" The previous suggestion changed only spacing or apostrophe style. If a clearer, concise rephrasing is justified by the source, provide it without adding or changing facts; otherwise return the original passage.");
+        let (result, status) = retry_cosmetic_suggestion(&input.before, suggestion, || {
+            crate::answer_task::generate_template_with_selection(model, retry)
+        });
+        suggestion = result;
+        suggestion["cosmetic_retry"] = json!(status);
     }
     let replacement = suggestion["text"].as_str().unwrap_or_default();
     suggestion["first_person_opening_changed"] =
@@ -135,6 +148,44 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
         ));
     qualify_unverified_support(&mut suggestion, &selected_source);
     Ok(suggestion)
+}
+
+fn cosmetic_only(original: &str, replacement: &str) -> bool {
+    fn normalize(text: &str) -> String {
+        text.replace('’', "'")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    normalize(original) == normalize(replacement)
+}
+
+fn retry_cosmetic_suggestion(
+    original: &str,
+    initial: Value,
+    retry: impl FnOnce() -> Result<Value, String>,
+) -> (Value, &'static str) {
+    let Ok(candidate) = retry() else {
+        return (initial, "failed");
+    };
+    let Some(text) = candidate["text"]
+        .as_str()
+        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+    else {
+        return (initial, "failed");
+    };
+    if cosmetic_only(original, text) {
+        return (initial, "unchanged");
+    }
+    let evidence = &candidate["evidence_check"];
+    if evidence["status"] != "completed"
+        || evidence["claims"]
+            .as_array()
+            .is_none_or(|claims| claims.iter().any(|claim| claim["status"] == "unsupported"))
+    {
+        return (initial, "needs_review");
+    }
+    (candidate, "revised")
 }
 
 /// Reviews cite sources for the whole suggestion, not individual claims. If
@@ -210,6 +261,31 @@ mod tests {
     use std::io::{Cursor, Write};
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
     static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn cosmetic_retry_keeps_only_reviewed_noncosmetic_results() {
+        let initial = json!({"text":"I've built tools."});
+        let original = "I’ve built tools.";
+        assert!(cosmetic_only(original, initial["text"].as_str().unwrap()));
+        assert!(!cosmetic_only("Built C++ tools", "Built C tools"));
+        let safe = json!({"text":"I built tools.","evidence_check":{"status":"completed","claims":[{"status":"uncertain"}]}});
+        assert_eq!(
+            retry_cosmetic_suggestion(original, initial.clone(), || Ok(safe.clone())),
+            (safe, "revised")
+        );
+        let unsupported = json!({"text":"I led a team.","evidence_check":{"status":"completed","claims":[{"status":"unsupported"}]}});
+        assert_eq!(
+            retry_cosmetic_suggestion(original, initial.clone(), || Ok(unsupported)),
+            (initial.clone(), "needs_review")
+        );
+        assert_eq!(
+            retry_cosmetic_suggestion(original, initial.clone(), || Err("unavailable".into())),
+            (initial.clone(), "failed")
+        );
+        assert_eq!(
+            retry_cosmetic_suggestion(original, initial.clone(), || Ok(initial.clone())),
+            (initial, "unchanged")
+        );
+    }
     #[test]
     fn first_person_opening_recognizes_english_contractions() {
         for text in [
@@ -698,8 +774,8 @@ mod tests {
             let result = suggest(&mut model, input).unwrap();
             let replacement = result["text"].as_str().unwrap();
             println!(
-                "Fictional contracted template rewrite: {replacement}; voice change flagged: {}",
-                result["first_person_opening_changed"]
+                "Fictional contracted template rewrite: {replacement}; voice change flagged: {}; cosmetic retry: {}",
+                result["first_person_opening_changed"], result["cosmetic_retry"]
             );
             assert_eq!(
                 result["first_person_opening_changed"],

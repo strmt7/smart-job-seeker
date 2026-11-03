@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::sync::Mutex;
 use waypoint_inference::{Inference, InferenceError, OllamaInference};
 
+#[derive(Clone)]
 pub struct Inputs {
     pub numeric_only: bool,
     pub session_id: String,

@@ -12,6 +12,10 @@ for (const [original, replacement, expected] of [
   const box=node('div'); review(box,{text:replacement},original);
   assert.equal(box.children.some(item=>item.textContent.includes('Only spacing or apostrophe style changed')),expected);
 }
+for (const [status, message] of [['revised','second drafting attempt produced'],['failed','did not produce an accepted alternative'],['needs_review','did not produce an accepted alternative'],['unchanged','did not produce an accepted alternative']]) {
+  const box=node('div'); review(box,{text:'Revised passage',cosmetic_retry:status},'Original passage');
+  assert.ok(box.children.some(item=>item.textContent.includes(message)));
+}
 const start = source.indexOf('function batchTemplateSuggestions(');
 const end = source.indexOf('\nfunction ', start);
 assert.ok(start >= 0 && end > start);
