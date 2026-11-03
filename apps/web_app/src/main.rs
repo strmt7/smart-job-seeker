@@ -1841,6 +1841,20 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// Keep all fields verified in this inspection, including earlier attempts
+/// when a later attempt stops partway through. They must be checked again
+/// against the live page; retaining a selector is not proof its value survived.
+fn merge_completed_selectors(existing: &mut Vec<String>, completed: &[Value]) {
+    for selector in completed
+        .iter()
+        .filter_map(|item| item["selector"].as_str())
+    {
+        if !existing.iter().any(|old| old == selector) {
+            existing.push(selector.to_owned());
+        }
+    }
+}
+
 /// Reserve a conservative share of RAM before beginning another inference.
 /// This is a snapshot, not a reservation or a guarantee against later pressure.
 #[cfg(any(windows, test))]
@@ -7581,10 +7595,7 @@ fn serve(
                     completed: &mut completed,
                 },
             );
-            current.completed_selectors = completed
-                .iter()
-                .filter_map(|item| item["selector"].as_str().map(str::to_owned))
-                .collect();
+            merge_completed_selectors(&mut current.completed_selectors, &completed);
             let network_after = current
                 .driver
                 .with_review_timeout(|driver| driver.observed_non_read_requests())
@@ -9928,6 +9939,18 @@ mod tests {
             startup_error_message("\n\t"),
             "Waypoint could not start. Check the workspace and try again."
         );
+    }
+
+    #[test]
+    fn partial_refill_keeps_earlier_fields_available_for_review() {
+        let mut completed = vec!["#name".to_owned(), "#email".to_owned()];
+        merge_completed_selectors(&mut completed, &[]);
+        assert_eq!(completed, ["#name", "#email"]);
+        merge_completed_selectors(
+            &mut completed,
+            &[json!({"selector":"#email"}), json!({"selector":"#phone"})],
+        );
+        assert_eq!(completed, ["#name", "#email", "#phone"]);
     }
 
     #[test]
@@ -14878,10 +14901,12 @@ mod tests {
                 error.contains("An attachment could not be verified"),
                 "{error}"
             );
-            assert_eq!(session.as_ref().unwrap().completed_selectors.len(), 2);
+            let retained = &session.as_ref().unwrap().completed_selectors;
+            assert_eq!(retained.len(), 8);
+            assert!(retained.iter().any(|selector| selector == "#email"));
             json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
             drop(stream);
-            for (requested, expected_count) in [("test-session", Some(2)), ("other-session", None)]
+            for (requested, expected_count) in [("test-session", Some(8)), ("other-session", None)]
             {
                 let listener = TcpListener::bind("127.0.0.1:0").unwrap();
                 let port = listener.local_addr().unwrap().port();
