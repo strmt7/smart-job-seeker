@@ -881,6 +881,54 @@ pub(crate) mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "loads a local model after the application resource gate for a fictional emergency-contact form"]
+    fn resource_gated_emergency_contact_sections() {
+        use waypoint_applications::driver::BrowserDriver;
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-emergency-contacts.html")
+            .canonicalize()
+            .unwrap();
+        let live = {
+            let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+            let form = browser
+                .open(url::Url::from_file_path(fixture).unwrap().as_str())
+                .unwrap();
+            assert!(form.walls.is_empty(), "{:?}", form.walls);
+            form
+        };
+        with_resource_gated_model(|| {
+            let model = crate::resident_model().unwrap().expect("resident model");
+            let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+                .unwrap()
+                .with_resident_context();
+            let mut llm = crate::resident_inference::ResidentInference::new(
+                llm,
+                model,
+                crate::resident_model_identity,
+            );
+            let preview = crate::form_preview::suggest_for_live_form(
+                live,
+                &mut llm,
+                &serde_json::json!({"email":"avery@example.invalid"}),
+            )
+            .unwrap();
+            let selectors: Vec<_> = preview
+                .suggestions
+                .iter()
+                .map(|item| item.field_selector.as_str())
+                .collect();
+            println!(
+                "fictional emergency contact mappings={selectors:?}; review={:?}",
+                preview.manual_review
+            );
+            assert!(selectors.contains(&"#applicant"));
+            assert!(!selectors.contains(&"#emergency-it"));
+            assert!(!selectors.contains(&"#emergency-pt"));
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "loads a local model after the application resource gate and opens a fictional form"]
     fn resource_gated_experience_comparison() {
         with_resource_gated_model(live_experience_comparison_on_fictional_contacts);

@@ -281,10 +281,19 @@ fn names_third_party(label: &str) -> bool {
                 | "références"
                 | "referencia"
                 | "referencias"
+                | "notfallkontakt"
         )
     }) || words
         .windows(2)
         .any(|pair| pair == ["emergency", "contact"])
+        || words.windows(3).any(|triple| {
+            matches!(
+                triple,
+                ["contatto", "di", "emergenza"]
+                    | ["contato", "de", "emergência"]
+                    | ["contacto", "de", "emergencia"]
+            )
+        })
 }
 
 // A combined street address cannot be safely split into site-specific lines.
@@ -2473,6 +2482,10 @@ mod tests {
             ("Current manager phone", "phone", "tel"),
             ("Referee full name", "full_name", "name"),
             ("Emergency contact first name", "first_name", "given-name"),
+            ("Contatto di emergenza — Email", "email", "email"),
+            ("Contato de emergência — Email", "email", "email"),
+            ("Contacto de emergencia — Email", "email", "email"),
+            ("Notfallkontakt — Email", "email", "email"),
             ("E-Mail der Referenzperson", "email", "email"),
             (
                 "Adresse e-mail de la personne de référence",

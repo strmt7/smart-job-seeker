@@ -3280,3 +3280,13 @@ field comparison reports requisition case differences instead of normalizing
 them away, while retaining the warning that text differences are inconclusive.
 The focused comparison test passed and the model was unloaded. This small
 fixture is not a measurement of duplicate recall or precision.
+
+### Emergency-contact mapping (2026-11-03)
+
+A fictional form with Italian and Portuguese emergency-contact sections was
+inspected in a local browser and evaluated by resource-gated Qwen3.5:9b. It
+mapped the applicant email and sent both emergency-contact fields for review;
+no fields were filled. The independent validation fallback now also recognizes
+these section names and tested Spanish and German variants, even if a model
+proposes an applicant value. This vocabulary is not exhaustive, and other
+languages or wording can still require manual review. The model was unloaded.
