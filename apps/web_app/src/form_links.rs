@@ -922,7 +922,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = std::fs::read_to_string(fixture).unwrap().replace(
             "<button type=\"button\" id=\"next\"",
-            "<label for=\"resume\">Resume</label><input type=\"file\" id=\"resume\"><button type=\"button\" id=\"next\"",
+            "<label for=\"resume\">Resume</label><input type=\"file\" id=\"resume\"><button type=\"button\" id=\"clear-resume\" onclick=\"document.getElementById('resume').value=''\">Clear attachment</button><button type=\"button\" id=\"next\"",
         );
         let fixture = temp.path().join("wizard.html");
         std::fs::write(&fixture, source).unwrap();
@@ -1024,13 +1024,59 @@ mod tests {
             Some("https://example.invalid/next".into()),
             false,
             None,
-            profile,
+            profile.clone(),
             (0, vec![]),
             fixture_check
         )
         .is_ok());
         let mut returned = loop {
             if let Some(result) = super::poll("attachment-preflight").unwrap() {
+                break match result {
+                    Ok((session, _, _)) => session,
+                    Err(failure) => panic!("navigation failed: {}", failure.reason),
+                };
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        assert_eq!(returned.driver.current_url().unwrap(), url);
+        assert!(returned
+            .preview
+            .manual_review
+            .iter()
+            .any(|reason| reason.contains("previously attached file changed")));
+        std::fs::write(&staged, original).unwrap();
+        returned
+            .driver
+            .attach_local_file("#resume", &staged)
+            .unwrap();
+        returned
+            .driver
+            .execute(&BrowserCommand::Click {
+                selector: "#clear-resume".into(),
+            })
+            .unwrap();
+        let live = returned.driver.inspect_current().unwrap();
+        returned.preview = form_preview::suggest_without_model(live, &profile, "fixture").unwrap();
+        returned.attachments = vec![(
+            "#resume".into(),
+            staged.clone(),
+            returned.id.clone(),
+            waypoint_domain::sha256_hex(original),
+        )];
+        assert!(super::start_with_destination_check(
+            "cleared-attachment".into(),
+            returned,
+            Some("https://example.invalid/next".into()),
+            false,
+            None,
+            profile,
+            (0, vec![]),
+            fixture_check
+        )
+        .is_ok());
+        let mut returned = loop {
+            if let Some(result) = super::poll("cleared-attachment").unwrap() {
                 break match result {
                     Ok((session, _, _)) => session,
                     Err(failure) => panic!("navigation failed: {}", failure.reason),

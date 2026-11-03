@@ -1,5 +1,7 @@
 ## Verify answers before link navigation — 2026-11-03
 
+- The fictional navigation-worker test also restored the staged file and then cleared the browser's file input. The worker stopped for review and remained on the original page, confirming that an intact staged file alone does not pass the attachment check.
+
 - Reviewed-link navigation now also rechecks current-section attachments, including staged-file hashes and browser file selection, within the existing group and time limits. A changed or unverified attachment stops navigation for review. A fictional worker test changed the staged file and confirmed that the browser stayed on the original page. This does not verify attachments after manual navigation or on real employer sites.
 
 - A fictional live-browser worker test now changes a filled answer before requesting a reviewed link. The worker reported the changed answer and the browser remained on the original page. An initial test compile failed because the error type lacks `Debug`; the corrected test passed. The destination was never contacted.
