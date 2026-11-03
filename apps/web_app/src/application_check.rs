@@ -2228,7 +2228,7 @@ mod tests {
             route_binding: None,
             receiver,
             result: Some((
-                "Unverified contact".into(),
+                "The application page's fields or review signals changed during the check; inspect it again. Earlier inspection: 8 fields; later inspection: 9 fields. These snapshots may be incomplete. A possible CAPTCHA or verification challenge was observed in at least one inspection. Manual review needed.".into(),
                 true,
                 vec![serde_json::json!({"address":"jobs@example.invalid","source":"page_text"})],
             )),
@@ -2248,7 +2248,16 @@ mod tests {
                 serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
             assert_eq!(result["current"], true);
             assert_eq!(result["contacts"][0]["address"], "jobs@example.invalid");
+            let message = result["result"].as_str().unwrap();
+            assert!(message.contains("Earlier inspection: 8 fields; later inspection: 9 fields"));
+            assert!(message.contains("possible CAPTCHA or verification challenge"));
         }
+        let id = waypoint_domain::JobIdentityId::new(job["id"].as_str().unwrap()).unwrap();
+        assert!(ws
+            .manual_review_reasons(&id)
+            .unwrap()
+            .iter()
+            .any(|reason| reason.reason.contains("Earlier inspection: 8 fields")));
     }
 
     #[test]
