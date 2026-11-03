@@ -1,6 +1,6 @@
 ## Public web-search batch observation — 2026-11-03
 
-- A local API integration test now verifies that a selected-page retry rejects a query outside the reviewed phrases, requests only the chosen page from a fictional provider and returns an explicit checkpoint-saved status. The test passed; it does not verify restart recovery for this new plan or contact a public provider.
+- A local API integration test verifies that a selected-page retry rejects a query outside the reviewed phrases, requests only the chosen page from a fictional provider and returns an explicit checkpoint-saved status. A separate constructed sparse checkpoint survived workspace reopening, and the UI prepared only its unfinished pages. Both checks passed; neither forcibly terminated the app or contacted a public provider.
 
 - Completed or stopped web-search batches retain their bounded request plan and provider, allowing “Prepare unfinished searches” to identify failed and unattempted pages without waiting for a restart. A prepared retry requests only those query/page pairs unless the user edits the prepared phrases or page count, in which case the normal full batch runs. Preparing preserves displayed candidates; starting a new batch replaces the displayed results. Local provider and UI checks passed; this does not automatically switch providers or confirm candidate relevance.
 

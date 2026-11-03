@@ -621,9 +621,9 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             total: 3,
             plan: vec![
-                ("fictional".into(), 1),
                 ("fictional".into(), 2),
                 ("other".into(), 1),
+                ("other".into(), 3),
             ],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
@@ -649,7 +649,7 @@ mod tests {
             assert_eq!(initial["plan"].as_array().unwrap().len(), 3);
             tx.send(Message::Query(
                 "fictional".into(),
-                1,
+                2,
                 Ok(json!({"results":[{"url":"https://example.test/job"}]})),
             ))
             .unwrap();
@@ -673,7 +673,13 @@ mod tests {
         assert_eq!(result["recovered_partial"], true);
         assert_eq!(result["processed"], 1);
         assert_eq!(result["total"], 3);
-        assert_eq!(result["plan"][1], json!({"query":"fictional","page":2}));
+        assert_eq!(
+            result["plan"],
+            json!([
+                {"query":"fictional","page":2}, {"query":"other","page":1}, {"query":"other","page":3}
+            ])
+        );
+        assert_eq!(result["history"][0]["page"], 2);
         assert_eq!(
             result["history"][0]["data"]["results"][0]["url"],
             "https://example.test/job"

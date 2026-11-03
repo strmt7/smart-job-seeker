@@ -8,3 +8,8 @@ const terminal={...recovery,recovered_partial:false,status:'complete'};
 assert.deepEqual(Array.from(context.unfinishedWebSearchQueries(terminal)),['first','second']);
 assert.deepEqual(Array.from(context.unfinishedWebSearchQueries({...terminal,history:terminal.plan.map(item=>({...item,data:{results:[]}}))})),[]);
 assert.deepEqual(Array.from(context.unfinishedWebSearchQueries({...terminal,status:'running'})),[]);
+const sparse={recovered_partial:true,plan:[{query:'first',page:2},{query:'second',page:1},{query:'second',page:3}],history:[{query:'first',page:2,data:{results:[]}}]};
+assert.deepEqual(Array.from(context.unfinishedWebSearchQueries(sparse)),['second']);
+items.length=0;form.elements.queries.value='';context.offerInterruptedSearchRetry(sparse);items.find(item=>item.tag==='button').click();
+assert.equal(form.elements.pages.value,'3');
+assert.equal(JSON.stringify(form._waypointRetry.plan),JSON.stringify([{query:'second',page:1},{query:'second',page:3}]));
