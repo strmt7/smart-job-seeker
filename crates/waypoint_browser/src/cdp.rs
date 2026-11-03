@@ -922,6 +922,44 @@ impl Cdp {
         std::mem::take(&mut self.events)
     }
 
+    /// Fail one already-buffered Fetch pause in its originating session.
+    ///
+    /// This is a protocol primitive, not a continuous interception guard:
+    /// callers must separately arrange attachment, interception and servicing.
+    /// A failed protocol command leaves the event available for diagnosis.
+    pub fn fail_next_paused_request(&mut self) -> Result<bool, CdpError> {
+        let Some((_, event)) = self
+            .events
+            .iter()
+            .find(|(name, _)| name == "Fetch.requestPaused")
+        else {
+            return Ok(false);
+        };
+        let request_id = event
+            .pointer("/params/requestId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CdpError("paused request has no request identifier".into()))?
+            .to_owned();
+        let session = event
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        self.call_inner(
+            "Fetch.failRequest",
+            json!({"requestId":request_id,"errorReason":"BlockedByClient"}),
+            session.clone(),
+        )?;
+        if let Some(index) = self.events.iter().position(|(name, event)| {
+            name == "Fetch.requestPaused"
+                && event.pointer("/params/requestId").and_then(Value::as_str)
+                    == Some(request_id.as_str())
+                && event.get("sessionId").and_then(Value::as_str) == session.as_deref()
+        }) {
+            self.events.remove(index);
+        }
+        Ok(true)
+    }
+
     pub fn observed_non_read_requests(&self) -> u64 {
         self.observed_non_read_requests
     }

@@ -2966,8 +2966,8 @@ fn fetch_request_stage_can_block_a_loopback_post() {
     while !cdp.saw_event("Fetch.requestPaused") && Instant::now() < deadline {
         cdp.pump(Duration::from_millis(100));
     }
-    let events = cdp.take_events();
-    let paused = events
+    let paused = cdp
+        .events
         .iter()
         .find(|(name, value)| {
             name == "Fetch.requestPaused"
@@ -2977,16 +2977,19 @@ fn fetch_request_stage_can_block_a_loopback_post() {
                     == Some("POST")
         })
         .expect("fictional POST was not paused");
-    let request_id = paused
+    assert!(paused
         .1
         .pointer("/params/requestId")
         .and_then(serde_json::Value::as_str)
-        .unwrap();
-    cdp.call(
-        "Fetch.failRequest",
-        json!({"requestId":request_id,"errorReason":"BlockedByClient"}),
-    )
-    .unwrap();
+        .is_some());
+    assert!(cdp.fail_next_paused_request().unwrap());
+    assert!(!cdp.fail_next_paused_request().unwrap());
+    cdp.events.push((
+        "Fetch.requestPaused".into(),
+        json!({"sessionId":cdp.session,"params":{"requestId":"fictional-invalid"}}),
+    ));
+    assert!(cdp.fail_next_paused_request().is_err());
+    assert!(cdp.saw_event("Fetch.requestPaused"));
     cdp.pump(Duration::from_millis(500));
     stopped.store(true, Ordering::Relaxed);
     server.join().unwrap();
