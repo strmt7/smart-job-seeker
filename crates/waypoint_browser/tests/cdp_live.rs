@@ -1515,6 +1515,26 @@ fn forced_parent_termination_closes_owned_browser_tree() {
         std::thread::sleep(Duration::from_millis(250));
         remaining = check_tree();
     }
+    // Retain bounded, non-command-line diagnostics before cleanup so a CI
+    // failure can distinguish surviving browsers from unrelated reused PIDs.
+    let survivor_summary = if remaining > 0 {
+        let ids = observed_pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let output = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ids=@($env:WAYPOINT_TEST_PIDS -split ',' | Where-Object { $_ } | ForEach-Object { [int]$_ }); Get-Process -Id $ids -ErrorAction SilentlyContinue | Select-Object -First 20 Id,ProcessName | ConvertTo-Json -Compress"])
+            .env("WAYPOINT_TEST_PIDS", ids)
+            .stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
+        if output.status.success() {
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        } else {
+            "survivor details unavailable".into()
+        }
+    } else {
+        String::new()
+    };
     if remaining > 0 {
         let _ = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe' OR Name = 'msedge.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"]).env("WAYPOINT_TEST_PROFILE", &profile).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     }
@@ -1530,7 +1550,7 @@ fn forced_parent_termination_closes_owned_browser_tree() {
     );
     assert_eq!(
         remaining, 0,
-        "owned browser processes survived forced parent termination"
+        "observed process IDs still present after forced parent termination (first 20, identity reuse possible): {survivor_summary}"
     );
 }
 
