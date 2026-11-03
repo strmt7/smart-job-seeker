@@ -92,9 +92,9 @@ build and configuration.
    auto-attachment has to be handled recursively for related frames and workers. A headless fictional
    loopback test showed that a scripted form GET reaches the server while the
    click returns success; GET is not necessarily read-only. Do not assume Fetch
-   covers existing WebSocket connections, browser-level
-   traffic, service workers or every external side effect. Those channels and
-   A fictional loopback POST paused by Fetch was delivered after its CDP
+   covers existing WebSocket connections, browser-level traffic, service
+   workers or every external side effect. A fictional loopback POST paused
+   by Fetch was delivered after its CDP
    connection was dropped while the browser remained running. Interception
    alone therefore does not fail closed on disconnect on this host.
    Interception failure, asynchronous actions and teardown need separate tests.

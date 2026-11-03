@@ -1,3 +1,7 @@
+## Hosted supply-chain check — 2026-11-03
+
+- GitHub CI run 41611285863 for commit `51fea7d7` failed its deny-warnings audit on three unmaintained advisories: `RUSTSEC-2026-0370` (`zvariant`), `RUSTSEC-2026-0371` (`zbus_names`), and `RUSTSEC-2026-0372` (`zvariant_derive`). These are unmaintained notices, not reports of vulnerabilities. `cargo tree --target all` traces them through the Unix accessibility dependencies of the older `waypoint_desktop`/`windows_app` stack. No dependency or audit exemption was changed; license/ban/source checks in that job did not run after the failure. The remaining hosted jobs were still running when this was recorded.
+
 ## Missing employer result through listing inspection — 2026-11-03
 
 - The listing-inspection start and status endpoints were tested read-only on the Capital One search result whose independent source capture returned HTTP 404. Waypoint reported the HTTP error, explicitly stated that it does not establish whether the vacancy is closed, and saved no job. The test used no local model and did not open or submit an application. This confirms the handling of one missing page, not general stale-link coverage.
