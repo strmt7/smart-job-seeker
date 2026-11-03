@@ -99,6 +99,15 @@ const MAX_EVENTS: usize = 64;
 #[derive(Debug)]
 pub struct CdpError(pub String);
 
+/// Result of a bounded servicing window; neither outcome means interception is
+/// active after the method returns.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PauseServiceOutcome {
+    pub rejected: usize,
+    pub budget_exhausted: bool,
+    pub pending: usize,
+}
+
 /// Stable discovery failure, separate from errors while starting a browser.
 pub const NO_BROWSER: &str = "no Chromium-family browser found (Edge/Chrome/Chromium)";
 
@@ -1029,6 +1038,62 @@ impl Cdp {
             self.events.remove(index);
         }
         Ok(true)
+    }
+
+    /// Service pauses for a bounded window. This is not a background guard:
+    /// it does not attach targets, establish Fetch, or cover other channels.
+    pub fn service_paused_requests(
+        &mut self,
+        duration: Duration,
+        request_budget: usize,
+    ) -> Result<PauseServiceOutcome, CdpError> {
+        if duration.is_zero()
+            || duration > Duration::from_secs(30)
+            || request_budget == 0
+            || request_budget > MAX_EVENTS
+        {
+            return err("invalid paused request servicing budget");
+        }
+        let deadline = Instant::now() + duration;
+        let mut rejected = 0;
+        while Instant::now() < deadline {
+            if rejected == request_budget {
+                return Ok(PauseServiceOutcome {
+                    rejected,
+                    budget_exhausted: true,
+                    pending: self
+                        .events
+                        .iter()
+                        .filter(|(name, _)| name == "Fetch.requestPaused")
+                        .count(),
+                });
+            }
+            let previous_timeout = self.timeout;
+            self.timeout = previous_timeout.min(deadline.saturating_duration_since(Instant::now()));
+            let result = self.fail_next_paused_request();
+            self.timeout = previous_timeout;
+            if result? {
+                rejected += 1;
+            } else {
+                self.pump_checked(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(50)),
+                )?;
+            }
+        }
+        if self.paused_event_lost {
+            return err("paused request event lost; interception state is incomplete");
+        }
+        Ok(PauseServiceOutcome {
+            rejected,
+            budget_exhausted: rejected == request_budget,
+            pending: self
+                .events
+                .iter()
+                .filter(|(name, _)| name == "Fetch.requestPaused")
+                .count(),
+        })
     }
 
     pub fn observed_non_read_requests(&self) -> u64 {

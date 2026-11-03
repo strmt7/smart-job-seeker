@@ -3001,26 +3001,39 @@ fn fetch_request_stage_can_block_a_loopback_post() {
     // Draining ordinary events must not lose requests awaiting a decision.
     cdp.take_events();
     assert!(cdp.saw_event("Fetch.requestPaused"));
-    let mut failed = 0;
-    let mut sessions = std::collections::HashSet::new();
-    while failed < 2 && Instant::now() < deadline {
-        if let Some((_, event)) = cdp
-            .events
-            .iter()
-            .find(|(name, _)| name == "Fetch.requestPaused")
-        {
-            sessions.insert(event["sessionId"].as_str().unwrap().to_owned());
-        }
-        if cdp.fail_next_paused_request().unwrap() {
-            failed += 1;
-        } else {
-            cdp.pump_checked(Duration::from_millis(100)).unwrap();
-        }
+    while cdp
+        .events
+        .iter()
+        .filter(|(name, _)| name == "Fetch.requestPaused")
+        .count()
+        < 2
+        && Instant::now() < deadline
+    {
+        cdp.pump_checked(Duration::from_millis(100)).unwrap();
     }
-    assert_eq!(failed, 2, "both fictional requests must be paused");
+    let sessions: std::collections::HashSet<_> = cdp
+        .events
+        .iter()
+        .filter(|(name, _)| name == "Fetch.requestPaused")
+        .map(|(_, event)| event["sessionId"].as_str().unwrap().to_owned())
+        .collect();
     assert_eq!(
         sessions,
         [cdp.session.clone(), second].into_iter().collect()
+    );
+    let first = cdp
+        .service_paused_requests(Duration::from_secs(1), 1)
+        .unwrap();
+    assert_eq!(
+        (first.rejected, first.budget_exhausted, first.pending),
+        (1, true, 1)
+    );
+    let rest = cdp
+        .service_paused_requests(Duration::from_millis(300), 3)
+        .unwrap();
+    assert_eq!(
+        (rest.rejected, rest.budget_exhausted, rest.pending),
+        (1, false, 0)
     );
     cdp.events.push((
         "Fetch.requestPaused".into(),
