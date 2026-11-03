@@ -3697,3 +3697,5 @@ model accuracy or visual quality.
 2026-11-03: Saving a profile with an unavailable selected template now identifies whether the CV or cover letter needs a replacement or a cleared selection. A fictional API test verified both messages and that the rejected save leaves the prior profile and revision unchanged. The rendered error path was not checked.
 
 2026-11-03: The Windows web test suite passed 699 tests with 385 ignored, using one build job and two test threads on local source commit `54db3e43`. Ignored live-browser and model checks are not included in that result. The three denied unmaintained notices originate in the older desktop UI's Unix accessibility dependency chain; no dependency was removed or suppressed in this check. Hosted qualification remains separate.
+
+2026-11-03: When two application-inspection snapshots show different loading problems, the change report now retains both disappearing-field and continuing-change warnings, without duplicating either. A focused fictional test covered both observation orders and repeated signals. The form still requires manual review; no real employer page or model was used in this change.

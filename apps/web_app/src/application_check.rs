@@ -156,6 +156,11 @@ fn report_loading_instability(message: &mut String, walls: &[String]) {
     }
 }
 
+fn report_loading_instability_across(message: &mut String, before: &[String], after: &[String]) {
+    let walls: Vec<_> = before.iter().chain(after).cloned().collect();
+    report_loading_instability(message, &walls);
+}
+
 fn ensure_inspected_page(
     browser: &mut waypoint_browser::CdpDriver,
     expected: &str,
@@ -220,15 +225,9 @@ fn ensure_inspected_form(
         {
             message.push_str(" A possible CAPTCHA or verification challenge was observed in at least one inspection.");
         }
-        if previous
-            .walls
-            .iter()
-            .any(|wall| wall == waypoint_browser::DYNAMIC_FIELD_LOSS_REVIEW)
-        {
-            report_loading_instability(&mut message, &previous.walls);
-        } else {
-            report_loading_instability(&mut message, &current.walls);
-        }
+        // Preserve both kinds of instability even when they were observed in
+        // different snapshots. Each warning is emitted at most once.
+        report_loading_instability_across(&mut message, &before_walls, &after_walls);
         return Err(message);
     }
     Ok(loading_signals_cleared)
@@ -1128,6 +1127,21 @@ mod tests {
         let mut unchanged = "Existing summary.".to_owned();
         super::report_loading_instability(&mut unchanged, &["untrusted page text".into()]);
         assert_eq!(unchanged, "Existing summary.");
+        for (before, after) in [
+            (&walls[1..2], &walls[2..3]),
+            (&walls[2..3], &walls[1..2]),
+            (&walls[1..3], &walls[1..3]),
+        ] {
+            let mut message = String::new();
+            super::report_loading_instability_across(&mut message, before, after);
+            assert_eq!(
+                message
+                    .matches("Fields seen during loading disappeared")
+                    .count(),
+                1
+            );
+            assert_eq!(message.matches("form was still changing").count(), 1);
+        }
     }
 
     #[test]
