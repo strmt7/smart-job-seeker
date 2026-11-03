@@ -899,7 +899,7 @@ fn sampled_page_kind_text(source: &str) -> String {
         return source.to_owned();
     }
     let head = source.floor_char_boundary(2000);
-    let middle = source.floor_char_boundary(source.len() / 2);
+    let middle = source.floor_char_boundary(source.len() / 2 - 1000);
     let middle_end = source.floor_char_boundary((middle + 2000).min(source.len()));
     let tail = source.floor_char_boundary(source.len() - 2000);
     format!(
@@ -911,7 +911,13 @@ fn sampled_page_kind_text(source: &str) -> String {
 }
 
 fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -> (String, bool) {
-    let initial = classify_page_segment(inference, source);
+    let is_sampled = source.len() > 6000;
+    let initial_source = if is_sampled {
+        &source[..source.floor_char_boundary(4000)]
+    } else {
+        source
+    };
+    let initial = classify_page_segment(inference, initial_source);
     if initial == "uncertain" && source.len() > 6000 {
         let sample = sampled_page_kind_text(source);
         if classify_page_segment(inference, &sample) == "not_vacancy" {
@@ -921,11 +927,10 @@ fn classify_page_kind_with_sample(inference: &mut dyn Inference, source: &str) -
         }
     }
     if initial != "not_vacancy" || source.len() <= 4000 {
-        return (initial, false);
+        return (initial, is_sampled);
     }
     if source.len() > 6000 {
-        // The initial request may exceed the resident model's context. Include
-        // the middle as well as both ends before treating a long page as a
+        // Include the middle as well as both ends before treating a long page as a
         // likely non-vacancy, and never present an inconclusive check as a
         // confirmed negative.
         let sample = sampled_page_kind_text(source);
@@ -1183,6 +1188,9 @@ fn extract_page_text_with_hint(
         );
     } else if page_kind == "uncertain" {
         warnings.push("The local model could not determine whether this page is a job vacancy; verify the original page.".into());
+    }
+    if classification_sampled {
+        warnings.push("The vacancy classification used excerpts from the page; omitted text may change its meaning.".into());
     }
     if section_title.is_some() && section_text.is_none() {
         warnings.push("The selected role section could not be bounded; location and deadline were omitted. Verify each extracted detail against the role.".into());
@@ -1468,7 +1476,7 @@ fn extract_page_text_with_hint(
         warnings.push("The hiring organization could not be independently established; a department, client, recruiter or platform may have been mistaken for the employer. Verify the original page.".into());
     }
     Ok(
-        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"deadline_excerpt":deadline_excerpt,"possible_closure_evidence":closure_evidence,"page_kind":page_kind,"possible_non_job":possible_non_job,"remote":false,"extraction":"local_model","extraction_warnings":warnings,"employer_audit":{"status":status,"evidence":if valid_evidence { evidence } else { "" }},"other_open_roles":other_roles,"other_role_assessments":role_assessments,"other_roles_status":roles_status,"rejected_role_suggestions":rejected_roles}),
+        json!({"url":url,"title":title,"employer":employer,"location":location,"description":description,"deadline_excerpt":deadline_excerpt,"possible_closure_evidence":closure_evidence,"page_kind":page_kind,"possible_non_job":possible_non_job,"classification_sampled":classification_sampled,"remote":false,"extraction":"local_model","extraction_warnings":warnings,"employer_audit":{"status":status,"evidence":if valid_evidence { evidence } else { "" }},"other_open_roles":other_roles,"other_role_assessments":role_assessments,"other_roles_status":roles_status,"rejected_role_suggestions":rejected_roles}),
     )
 }
 
@@ -4823,6 +4831,10 @@ mod tests {
             ) -> Result<(Value, waypoint_inference::UsageReport), waypoint_inference::InferenceError>
             {
                 self.calls += 1;
+                if self.calls == 1 {
+                    assert!(!prompt.contains("middle vacancy marker"));
+                    assert!(prompt.len() < 5000);
+                }
                 if self.calls == 2 {
                     assert!(prompt.contains("middle vacancy marker"));
                     assert!(prompt.contains("[Excerpt omitted]"));
@@ -5256,7 +5268,7 @@ mod tests {
         };
         assert_eq!(
             classify_page_kind_with_sample(&mut positive, &source),
-            ("uncertain".into(), false)
+            ("uncertain".into(), true)
         );
         assert!(sampled_page_kind_text(&source).len() < source.len());
     }
