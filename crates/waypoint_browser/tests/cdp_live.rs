@@ -2286,6 +2286,19 @@ fn visible_controls_are_found_after_css_hidden_candidates() {
         .iter()
         .all(|control| !control.label.starts_with("Hidden ")));
     assert!(!inventory.incomplete);
+    driver
+        .open(&file_url("form_unlabelled_button.html"))
+        .unwrap();
+    let unlabelled = driver.page_controls().unwrap();
+    assert!(unlabelled.incomplete);
+    assert!(unlabelled
+        .controls
+        .iter()
+        .any(|control| control.label == "Unlabelled control"));
+    driver.open(&file_url("form_thirty_buttons.html")).unwrap();
+    let exact = driver.page_controls().unwrap();
+    assert_eq!(exact.controls.len(), 30);
+    assert!(!exact.incomplete);
     driver.open(&file_url("form_many_buttons.html")).unwrap();
     let capped = driver.page_controls().unwrap();
     assert_eq!(capped.controls.len(), 30);

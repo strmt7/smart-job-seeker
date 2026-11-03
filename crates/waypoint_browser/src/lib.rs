@@ -599,32 +599,34 @@ impl CdpDriver {
                 } else {
                     anchor_label(node, &attrs, &references).unwrap_or_default()
                 };
+                let label_incomplete = label.trim().is_empty() || label.chars().count() > 200;
                 let label = if label.trim().is_empty() {
-                    incomplete = true;
                     "Unlabelled control".to_owned()
                 } else {
-                    if label.chars().count() > 200 {
-                        incomplete = true;
-                    }
                     label.chars().take(200).collect()
                 };
                 let disabled = attrs.contains_key("disabled")
                     || attrs
                         .get("aria-disabled")
                         .is_some_and(|v| v.eq_ignore_ascii_case("true"));
-                candidates.push((id, label, disabled));
+                candidates.push((id, label, disabled, label_incomplete));
             }
             true
         });
         let started = Instant::now();
         let mut controls = Vec::new();
-        for (id, label, disabled) in candidates {
-            if controls.len() >= 30 || started.elapsed() >= Duration::from_secs(4) {
+        for (id, label, disabled, label_incomplete) in candidates {
+            if started.elapsed() >= Duration::from_secs(4) {
                 incomplete = true;
                 break;
             }
             match self.with_review_timeout(|driver| driver.control_visibility_and_path(id)) {
                 Ok((true, selector, available, _, _)) => {
+                    if controls.len() >= 30 {
+                        incomplete = true;
+                        break;
+                    }
+                    incomplete |= label_incomplete;
                     controls.push(PageControl {
                         label,
                         disabled: disabled || !available,
