@@ -1,5 +1,7 @@
 ## Navigation advice coverage — 2026-11-03
 
+- In the same fictional seven-control scenario, an unscripted `qwen3.5:9b` run selected all six navigation controls and omitted the submission control. Its first pass reached the limit and the bounded follow-up completed without a reported error. This is one scenario, not evidence of general form-navigation accuracy.
+
 - In one resource-gated fictional control test, `qwen3.5:9b` selected the remaining navigation control and omitted the submission control on the follow-up pass. The test injected the first five selections to force that pass; it did not measure the model's first-pass selection or real-site behavior. The model unloaded afterward. One concurrent system-memory snapshot showed 16,614,596 KiB available, not a measured minimum.
 
 - If a control-ranking response reaches its five-item limit, the advisor now makes at most one extra pass over controls not already suggested. Results retain their original page indices; invalid or repeated suggestions from that pass leave the earlier advice intact and flag the additional check as incomplete. The existing cap warning remains because the extra pass can also miss controls. Scripted model tests and the UI fixture passed; no live model or employer page was used.

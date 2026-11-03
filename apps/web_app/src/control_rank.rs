@@ -1288,6 +1288,12 @@ mod tests {
             assert!(!result.navigation_incomplete);
             assert!(result.indices.contains(&5));
             assert!(!result.indices.contains(&6));
+            let full = rank(&mut local, &controls, &json!({"fields":[],"walls":[]})).unwrap();
+            println!(
+                "Unscripted fictional suggestions: {:?}; at limit: {}; incomplete: {}",
+                full.indices, full.response_at_limit, full.navigation_incomplete
+            );
+            assert!(!full.indices.contains(&6));
         });
     }
 
