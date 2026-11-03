@@ -84,6 +84,9 @@ build and configuration.
    unproven. In a headless loopback experiment on this host, auto-attachment
    paused a dedicated worker, but its session rejected `Fetch.enable` as an
    unknown command. The worker was not resumed and no fixture request arrived.
+   In a separate loopback test, enabling Fetch on the parent intercepted one
+   dedicated worker GET after resume; this does not establish coverage of
+   nested workers, service workers, other channels, or disconnection.
    This is a blocker for assuming target-level Fetch covers workers; another
    independently verified network isolation boundary is needed. Target
    auto-attachment has to be handled recursively for related frames and workers. A headless fictional
