@@ -3827,7 +3827,7 @@ mod tests {
             _: u32,
         ) -> Result<(Value, UsageReport), InferenceError> {
             Ok((
-                json!({"mappings":[{"selector":"#candidate","profile_key":"first_name"}]}),
+                json!({"mappings":[{"selector":"#candidate","profile_key":"first_name"}],"manual_review":[]}),
                 UsageReport {
                     prompt_tokens: 0,
                     completion_tokens: 0,
@@ -6763,7 +6763,14 @@ mod tests {
             .any(|reason| reason.contains("Work authorization")));
         let intent = IntentId::new("fixture-intent").unwrap();
         let packet = Sha256Digest::of("fictional candidate packet");
-        let payload = Sha256Digest::of(&serde_json::to_string(&result.suggestions).unwrap());
+        let snapshot = driver.text_value_snapshot("#candidate").unwrap();
+        assert_eq!(snapshot.value, "Old value");
+        let mut replacements = ReviewedReplacements::new();
+        replacements.insert(
+            "#candidate".into(),
+            text_snapshot_digest(intent.as_str(), "#candidate", &snapshot),
+        );
+        let payload = fill_payload_digest(&result, &replacements).unwrap();
         let schema = Sha256Digest::of(&result.schema.schema_hash_input());
         let mut ws = Workspace::in_memory().unwrap();
         let job_id = JobIdentityId::new("prefill-fixture").unwrap();
@@ -6798,12 +6805,12 @@ mod tests {
             expired: false,
         };
         assert_eq!(
-            apply_reviewed_text_fields(
+            apply_reviewed_text_fields_with_replacements(
                 &mut ws,
                 &job_id,
                 &mut driver,
                 &url,
-                &result,
+                (&result, &replacements, None),
                 &mut grant,
                 FillContext {
                     intent: &intent,
@@ -6888,8 +6895,8 @@ mod tests {
             }
         )
         .is_err());
-        assert_eq!(completed.len(), 1);
-        assert_eq!(completed[0]["selector"], "#candidate");
+        assert!(completed.is_empty());
+        assert!(!partial_grant.consumed);
         let changed = FormPreview {
             model_review_selectors: Default::default(),
             schema: result.schema.clone(),
@@ -6948,9 +6955,13 @@ mod tests {
             ambiguous.display().to_string().replace('\\', "/")
         );
         let blocked = driver.open(&ambiguous_url).unwrap();
-        assert!(blocked
-            .walls
+        let selectors: std::collections::HashSet<_> = blocked
+            .schema
+            .fields
             .iter()
-            .any(|reason| reason.contains("ambiguous")));
+            .map(|field| field.selector.as_str())
+            .collect();
+        assert_eq!(blocked.schema.fields.len(), 2);
+        assert_eq!(selectors.len(), 2, "fixture controls must be distinguished");
     }
 }
