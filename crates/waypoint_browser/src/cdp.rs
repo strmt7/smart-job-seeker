@@ -285,7 +285,7 @@ struct OwnedBrowserChild(Child);
 
 #[cfg(not(windows))]
 impl OwnedBrowserChild {
-    fn spawn(command: &mut Command, _timeout: Duration) -> Result<Self, String> {
+    fn spawn(command: &mut Command, _timeout: Duration, _profile: &Path) -> Result<Self, String> {
         command.spawn().map(Self).map_err(|e| e.to_string())
     }
     fn exited(&mut self) -> Result<bool, String> {
@@ -311,12 +311,17 @@ struct OwnedBrowserChild {
     commands: std::sync::mpsc::Sender<BrowserWorkerCommand>,
 }
 
+#[cfg(all(windows, test))]
+static TEST_OWNER_READY_DELAY_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(windows)]
 impl OwnedBrowserChild {
-    fn spawn(command: &mut Command, timeout: Duration) -> Result<Self, String> {
+    fn spawn(command: &mut Command, timeout: Duration, profile: &Path) -> Result<Self, String> {
         use processkit::{Command as GroupCommand, ProcessGroup, Stdin, StdioMode};
         let program = command.get_program().to_owned();
         let args: Vec<_> = command.get_args().map(std::ffi::OsStr::to_owned).collect();
+        let profile = profile.to_owned();
         let (commands, receiver) = std::sync::mpsc::channel();
         let (ready, started) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -345,11 +350,24 @@ impl OwnedBrowserChild {
                 let (runtime, group, process, pid) = match setup() {
                     Ok(owned) => owned,
                     Err(error) => {
-                        let _ = ready.send(Err(error));
+                        if ready.send(Err(error)).is_err() {
+                            let _ = std::fs::remove_dir_all(&profile);
+                        }
                         return;
                     }
                 };
+                #[cfg(test)]
+                std::thread::sleep(Duration::from_millis(
+                    TEST_OWNER_READY_DELAY_MS.swap(0, std::sync::atomic::Ordering::SeqCst),
+                ));
                 if ready.send(Ok(())).is_err() {
+                    let _ = group.kill_all();
+                    let _ = runtime.block_on(async {
+                        tokio::time::timeout(Duration::from_secs(1), process.wait()).await
+                    });
+                    drop(group);
+                    drop(runtime);
+                    let _ = std::fs::remove_dir_all(&profile);
                     return;
                 }
                 while let Ok(command) = receiver.recv() {
@@ -376,6 +394,7 @@ impl OwnedBrowserChild {
                 drop(process);
                 drop(group);
                 drop(runtime);
+                let _ = std::fs::remove_dir_all(&profile);
             })
             .map_err(|e| format!("Cannot start browser ownership worker: {e}"))?;
         started
@@ -538,7 +557,7 @@ impl BrowserProcess {
         cmd.arg("about:blank")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let child = match OwnedBrowserChild::spawn(&mut cmd, timeout) {
+        let child = match OwnedBrowserChild::spawn(&mut cmd, timeout, &user_data_dir) {
             Ok(child) => child,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&user_data_dir);
@@ -895,6 +914,46 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn late_browser_owner_cleans_its_unclaimed_profile() {
+        use std::sync::atomic::Ordering;
+        let temp = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let profile = temp.join(format!(
+            "waypoint-owner-timeout-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&profile).unwrap();
+        let system_root = std::env::var_os("SystemRoot").unwrap();
+        let mut command = Command::new(PathBuf::from(system_root).join("System32/cmd.exe"));
+        command.args(["/C", "ping -n 10 127.0.0.1 >nul"]);
+        struct ResetDelay;
+        impl Drop for ResetDelay {
+            fn drop(&mut self) {
+                TEST_OWNER_READY_DELAY_MS.store(0, Ordering::SeqCst);
+            }
+        }
+        let _reset = ResetDelay;
+        TEST_OWNER_READY_DELAY_MS.store(200, Ordering::SeqCst);
+        let result = OwnedBrowserChild::spawn(&mut command, Duration::from_millis(25), &profile);
+        assert!(
+            result.is_err(),
+            "the owner should time out before the delayed handoff"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while profile.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !profile.exists(),
+            "late owner did not remove its private profile"
+        );
+    }
 
     #[test]
     fn non_read_observation_does_not_retain_request_contents() {

@@ -1,3 +1,7 @@
+## Late browser startup cleanup — 2026-11-03
+
+- When Windows browser ownership starts after its caller has timed out, the owner now terminates its unclaimed process group and attempts to remove its private temporary profile. A focused fictional process test forced a delayed handoff and verified profile cleanup; normal browser shutdown, forced-parent termination and browser Clippy also passed. Cleanup remains best-effort if filesystem removal itself fails, and a forcibly terminated application can still leave its profile directory on disk.
+
 ## Windows browser process ownership — 2026-11-03
 
 - Newly launched Windows browsers now run inside a `processkit` process group whose job handle is held by a dedicated owner thread. If the Waypoint process is forcibly terminated, Windows closes that job and terminates its contained browser processes. A fictional Windows test recorded the browser and its observed descendants, killed only the helper parent, and confirmed those recorded PIDs exited; normal shutdown and a local form-capture test also passed. This does not cover previously orphaned processes, every browser configuration, or removal of the temporary profile after a forced parent termination. Browser unit tests and Clippy passed; licenses/bans/sources passed. The required advisory check reported three existing unmaintained-crate warnings (RUSTSEC-2026-0370, -0371 and -0372); the lockfile change adds dependency edges only, not package versions. No model or employer application was used.
