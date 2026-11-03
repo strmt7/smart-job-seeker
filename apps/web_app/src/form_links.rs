@@ -1319,7 +1319,7 @@ mod tests {
         let source = source.replace("<label for=\"email\">", "<p>Do not use AI tools.</p><button type=\"button\" id=\"back\" onclick=\"document.getElementById('step-two').hidden=true;document.getElementById('step-one').hidden=false\">Back</button><label for=\"email\">").replace("<button type=\"button\" id=\"next\"", "<label for=\"resume\">Resume</label><input type=\"file\" id=\"resume\" accept=\".pdf\"><button type=\"button\" id=\"clear-file\" onclick=\"document.getElementById('resume').value=''\">Clear file</button><button type=\"button\" id=\"mutate\" onclick=\"document.getElementById('given').value='Changed'\">Change saved answer</button><button type=\"button\" id=\"next\"");
         use std::io::{Read, Write};
         use std::sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         };
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1327,13 +1327,19 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_worker = stop.clone();
+        let non_get_requests = Arc::new(AtomicUsize::new(0));
+        let observed_writes = non_get_requests.clone();
         let server = std::thread::spawn(move || {
             while !stop_worker.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
                         let mut request = [0u8; 4096];
-                        let _ = stream.read(&mut request);
+                        if let Ok(count) = stream.read(&mut request) {
+                            if count > 0 && !request[..count].starts_with(b"GET ") {
+                                observed_writes.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", source.len(), source);
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1658,6 +1664,11 @@ mod tests {
             .all(|entry| !entry.contains("submitted")));
         stop.store(true, Ordering::Relaxed);
         server.join().unwrap();
+        assert_eq!(
+            non_get_requests.load(Ordering::Relaxed),
+            0,
+            "fixture received a non-GET request"
+        );
     }
 
     #[test]
