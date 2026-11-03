@@ -7644,20 +7644,29 @@ fn serve(
                 Ok(count) => count,
                 Err(error) => {
                     let mut outcome_error = None;
+                    let mut capture_incomplete = false;
                     if let Some(record) = &mut current.record {
                         let outcome = json!({"type":"fill_incomplete","time":now(),"answer_file":requested_answer_file,"error":error,"completed_commands":completed,"note":"These fields were entered or already matched before the failure; they are not proof that values remain correct or that an application was submitted."});
                         if let Err(problem) = record.incomplete_fill(outcome, now()) {
                             outcome_error = Some(problem);
                         }
-                        if let Ok(image) = current.driver.screenshot_base64() {
-                            if let Ok(name) = record.screenshot_with_name(&image) {
-                                let _ = record.event(json!({"type":"fill_failure_viewport","time":now(),"screenshot":format!("screenshots/{name}")}));
+                        let viewport = current.driver.screenshot_base64().map_err(|error| error.to_string()).and_then(|image| {
+                            record.screenshot_with_name(&image)
+                                .and_then(|name| record.event(json!({"type":"fill_failure_viewport","time":now(),"screenshot":format!("screenshots/{name}")})))
+                        });
+                        if viewport.is_err() {
+                            capture_incomplete = true;
+                            if let Err(problem) = record.event(json!({"type":"capture_incomplete","time":now(),"note":"The failure viewport could not be captured or saved."})) {
+                                outcome_error.get_or_insert(problem);
                             }
                         }
                         if let Err(capture_error) =
                             attempt_record::capture_page(&mut current.driver, record, now())
                         {
-                            let _ = record.event(json!({"type":"capture_incomplete","time":now(),"error":capture_error}));
+                            capture_incomplete = true;
+                            if let Err(problem) = record.event(json!({"type":"capture_incomplete","time":now(),"error":capture_error})) {
+                                outcome_error.get_or_insert(problem);
+                            }
                         }
                     }
                     let review_error = ws
@@ -7695,8 +7704,13 @@ fn serve(
                     let outcome_note = outcome_error
                         .map(|e| format!(" The attempt record could not be fully updated: {e}."))
                         .unwrap_or_default();
+                    let capture_note = if capture_incomplete {
+                        " Screenshots could not all be captured or saved; inspect the form manually."
+                    } else {
+                        ""
+                    };
                     return Err(format!(
-                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{network_note}{network_record_note}{flag_note}{outcome_note}", completed.len()
+                        "Autofill stopped after {} successful field commands; the failing field and earlier fields may have changed. Review the browser: {error}.{attachment_note}{network_note}{network_record_note}{flag_note}{outcome_note}{capture_note}", completed.len()
                     ));
                 }
             };
