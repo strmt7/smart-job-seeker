@@ -1,3 +1,7 @@
+## Linked DOCX part PDF fixture — 2026-11-03
+
+- A self-contained fictional DOCX with custom-named linked header and footer was edited, converted with local LibreOffice and checked with the existing bundled Python PDF runtime. Extracted PDF text contained the edited header, body and footer; a Poppler render of the single page showed those three lines without visible clipping. The first run converted the document but could not find `pypdf` in the test process; a subsequent run explicitly selected the existing bundled runtime and passed. This is one simple fixture and does not establish layout fidelity for arbitrary real CVs or clean-host dependency setup.
+
 ## Linked DOCX part editing — 2026-11-03
 
 - The shared DOCX part inventory now includes internally linked custom-named headers and footers, allowing the existing unique-passage editor and accepted-revision preparation to process them. Fictional tests verified a header edit with relationships preserved and removal of deleted header text in a temporary accepted view. The focused editor suite passed (9, five conversion tests ignored), revision suite passed (2), extraction suite passed (13), and conversion unit checks passed (6, two conversion tests ignored); Windows web Clippy passed. A real-world DOCX or PDF render for these custom parts was not tested, and this does not establish general template-editing fidelity.

@@ -668,6 +668,54 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "converts a fictional DOCX with custom header and footer parts using local LibreOffice and PDF tools"]
+    fn edited_custom_parts_convert_to_extractable_pdf() {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        let parts: [(&str, &[u8]); 6] = [
+            ("[Content_Types].xml", br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/custom/top.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/custom/bottom.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#),
+            ("_rels/.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="root" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#),
+            ("word/_rels/document.xml.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="header" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="custom/top.xml"/><Relationship Id="footer" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="custom/bottom.xml"/></Relationships>"#),
+            ("word/document.xml", br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>Fictional experience</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="header"/><w:footerReference w:type="default" r:id="footer"/></w:sectPr></w:body></w:document>"#),
+            ("word/custom/top.xml", br#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Synthetic Header Name</w:t></w:r></w:p></w:hdr>"#),
+            ("word/custom/bottom.xml", br#"<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Synthetic Footer Contact</w:t></w:r></w:p></w:ftr>"#),
+        ];
+        for (name, content) in parts {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(content).unwrap();
+        }
+        let doc = writer.finish().unwrap().into_inner();
+        let edited = replace(&doc, "Synthetic Header Name", "Fictional Header Name").unwrap();
+        let edited = replace(
+            &edited,
+            "Synthetic Footer Contact",
+            "Fictional Footer Contact",
+        )
+        .unwrap();
+        let pdf = crate::document_convert::docx_to_pdf(&edited).unwrap();
+        let text = crate::pdf_extract::extract(&pdf).unwrap();
+        for value in [
+            "Fictional Header Name",
+            "Fictional experience",
+            "Fictional Footer Contact",
+        ] {
+            assert!(
+                text.contains(value),
+                "missing expected text {value:?}: {text:?}"
+            );
+        }
+        if let Ok(path) = std::env::var("WAYPOINT_CUSTOM_PARTS_PDF") {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap()
+                .write_all(&pdf)
+                .unwrap();
+        }
+    }
+
+    #[test]
     #[ignore = "converts a fictional DOCX header and footer with local LibreOffice"]
     fn edited_header_and_footer_convert_to_pdf() {
         let source = std::env::var("WAYPOINT_HEADER_FIXTURE").expect("fixture path");
