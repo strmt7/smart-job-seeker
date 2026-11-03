@@ -1,5 +1,7 @@
 ## Public web-search batch observation — 2026-11-03
 
+- If loading carried search history fails during same-tab recovery, the interface now reports the issue but still reconnects to the active task. A later terminal response restores its sealed prior history. Focused UI tests covered the transient lookup failure and terminal restoration; this does not guarantee recovery if both backend requests fail.
+
 - When a retry carries earlier pages, exact repeated URLs now appear as one candidate card. Later reports are retained as repeated-result evidence and contribute bounded provider/date metadata; the stored histories are unchanged. Similar URLs remain separate for review, and repeated-report limits remain visible. Focused candidate-selection, retry and restart UI checks passed.
 
 - A fictional local API test now exercises the sealed-history retry end to end: a mismatched prior task is rejected, client-supplied history is ignored, and the matching saved candidate remains in the sealed workspace after the retry and reopen. The test passed against the configured Windows workspace; no public provider was contacted.
