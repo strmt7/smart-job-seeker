@@ -2432,6 +2432,45 @@ fn unambiguous_minimum_context(excerpt: &str, context: &str) -> bool {
     true
 }
 
+// An upper bound on experience does not establish a minimum. Match adjacent
+// words around the duration so unrelated upper bounds in the fact do not count.
+fn upper_bound_candidate_duration(fact: &str) -> bool {
+    let lower = fact.to_lowercase();
+    let words: Vec<_> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    words.iter().enumerate().any(|(i, unit)| {
+        if i == 0
+            || !matches!(
+                *unit,
+                "year" | "years" | "yr" | "yrs" | "month" | "months" | "mo" | "mos"
+            )
+        {
+            return false;
+        }
+        let before = &words[..i - 1];
+        let after = &words[i + 1..];
+        [
+            &["up", "to"][..],
+            &["at", "most"],
+            &["less", "than"],
+            &["fewer", "than"],
+            &["no", "more", "than"],
+            &["not", "more", "than"],
+            &["no", "greater", "than"],
+            &["maximum", "of"],
+            &["at", "maximum"],
+            &["under"],
+            &["maximum"],
+        ]
+        .iter()
+        .any(|prefix| before.ends_with(prefix))
+            || after.starts_with(&["or", "less"])
+            || after.starts_with(&["or", "fewer"])
+    })
+}
+
 fn insufficient_stated_duration(excerpt: &str, fact: &str, context: &str) -> bool {
     unambiguous_minimum_context(excerpt, context)
         && simple_duration_months(excerpt, false)
@@ -2542,6 +2581,7 @@ fn unique_duration_candidate(excerpt: &str, context: &str, facts: &[String]) -> 
             });
         if has_explicit_negation(fact)
             || negated_contraction
+            || upper_bound_candidate_duration(fact)
             || simple_duration_months(fact, true).is_none_or(|duration| duration < required)
         {
             continue;
@@ -2619,6 +2659,27 @@ fn check_qualification_judgments_with_source(
             item["status"] = json!("unknown");
             item["fact_index"] = Value::Null;
             item["explanation"] = json!("The cited fact states less experience than this requirement; other experience may exist, so review it manually.");
+            duration_review += 1;
+            continue;
+        }
+        let upper_bound = item["source"] == "listing"
+            && item["status"] == "supported"
+            && item["excerpt"].as_str().is_some_and(|excerpt| {
+                duration_mentions(excerpt) > 0
+                    || verification_text
+                        .and_then(|source| unique_requirement_context(source, excerpt))
+                        .is_some_and(|context| duration_mentions(context) > 0)
+            })
+            && item["fact_index"]
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|i| facts.get(i))
+                .is_some_and(|fact| upper_bound_candidate_duration(fact));
+        if upper_bound {
+            item["status"] = json!("unknown");
+            item["fact_index"] = Value::Null;
+            item["explanation"] = json!("The cited experience duration is an upper bound and does not establish a minimum; review the evidence manually.");
             duration_review += 1;
             continue;
         }
@@ -5525,6 +5586,28 @@ mod tests {
         assert_eq!(duration_mentions("fifteen years Java, 2 yrs Python"), 2);
         assert_eq!(duration_mentions("5 Jahre Java, 18 Monate Python"), 2);
         assert_eq!(duration_mentions("an engineer with Python experience"), 0);
+        for fact in [
+            "up to six years of SQL",
+            "at most 6 years of SQL",
+            "less than six years of SQL",
+            "no more than 6 years of SQL",
+            "6 years or less of SQL",
+            "up\u{00a0}to six years of SQL",
+        ] {
+            assert!(upper_bound_candidate_duration(fact), "{fact}");
+            assert_eq!(
+                unique_duration_candidate(
+                    "five years of SQL",
+                    "Required: five years of SQL.",
+                    &[fact.into()]
+                ),
+                None
+            );
+        }
+        assert!(!upper_bound_candidate_duration(
+            "Used SQL for six years on projects with up to 10 people"
+        ));
+        assert!(!upper_bound_candidate_duration("Used SQL for six years"));
         assert_eq!(simple_duration_months("five years of SQL", false), Some(60));
         assert_eq!(
             simple_duration_months("used SQL for 18 months", true),
@@ -5569,6 +5652,19 @@ mod tests {
             "Used SQL for four years",
             "Required: 3-5 years of SQL."
         ));
+        let bounded_fact = vec!["Used SQL for up to six years".to_owned()];
+        let required = "Required: five years of SQL.";
+        let claimed = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Model support"}]});
+        let fallback = validate(claimed.clone(), &bounded_fact, "", required).unwrap();
+        let (_, checked) = check_qualification_judgments(
+            &mut NoCalls,
+            claimed,
+            fallback,
+            &bounded_fact,
+            "",
+            required,
+        );
+        assert_eq!(checked["rubric"][0]["status"], "unknown");
         let short_fact = vec!["Used SQL for one year".to_owned()];
         let required = "Required: five years of SQL.";
         let wrong = json!({"summary":"fixture","criteria":[{"source":"listing","excerpt":"five years of SQL","importance":"required","status":"supported","fact_index":1,"explanation":"Model support"}]});
