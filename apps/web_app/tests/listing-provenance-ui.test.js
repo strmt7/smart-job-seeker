@@ -5,7 +5,7 @@ const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf('function showListingProvenance(');
 const end = source.indexOf('\nfunction ', start);
 assert.ok(start >= 0 && end > start);
-function element(tag, text = '') { return {tag, text}; }
+function element(tag, text = '') { return {tag, text, children:[], append(...items){this.children.push(...items);}}; }
 let recoveredRoles;
 const context = {element,showOtherRoles:(_panel,result)=>{recoveredRoles=result.job;}};
 vm.runInNewContext(source.slice(start, end), context);
@@ -37,3 +37,17 @@ console.log('Listing provenance UI checks passed.');
 const closurePanel={items:[],append(item){this.items.push(item);}};
 context.showListingProvenance(closurePanel,{matches_current_url:true,extraction_provenance:{kind:'local_model',matches_current_listing:true,possible_closure_evidence:'This fictional vacancy has expired.'}});
 assert.ok(closurePanel.items.some(item=>/Possible closure wording.*expired.*Verify/.test(item.text)));
+
+const tailPanel={items:[],append(...items){this.items.push(...items);}};
+context.showListingProvenance(tailPanel,{matches_current_url:true,extraction_provenance:{kind:'structured',matches_current_listing:true,page_tail_status:'truncated',page_tail_text:'This fictional vacancy has expired.'}});
+const details=tailPanel.items.find(item=>item.tag==='details');
+assert.ok(details);
+assert.ok(details.children.some(item=>item.text.includes('intervening text may be missing')));
+assert.ok(details.children.some(item=>item.text.includes('fictional vacancy has expired')));
+const omittedPanel={items:[],append(...items){this.items.push(...items);}};
+context.showListingProvenance(omittedPanel,{matches_current_url:true,extraction_provenance:{kind:'structured',matches_current_listing:true,page_tail_status:'omitted_size_limit'}});
+assert.ok(omittedPanel.items.some(item=>item.text.includes('could not be retained')));
+
+const invalidPanel={items:[],append(...items){this.items.push(...items);}};
+context.showListingProvenance(invalidPanel,{matches_current_url:true,extraction_provenance:{kind:'structured',matches_current_listing:true,page_tail_status:'captured',page_tail_text:null}});
+assert.ok(invalidPanel.items.some(item=>item.text.includes('unavailable or invalid')));

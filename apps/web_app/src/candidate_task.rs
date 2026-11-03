@@ -625,12 +625,25 @@ pub fn extraction_provenance(capture: &Value, current: &Value) -> Option<Value> 
     let matches = saved_digest
         .zip(current_digest.as_deref())
         .map(|(saved, current)| saved == current);
+    let tail_status = capture["page_tail_status"]
+        .as_str()
+        .filter(|status| matches!(*status, "captured" | "truncated" | "omitted_size_limit"));
+    let tail = tail_status
+        .filter(|status| matches!(*status, "captured" | "truncated"))
+        .and_then(|_| capture["page_tail_text"].as_str())
+        .filter(|text| {
+            !text.is_empty()
+                && text.len() <= 16_000
+                && !text
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        });
     let role_source = Value::Object(saved.clone());
     let roles_status = role_source["other_roles_status"]
         .as_str()
         .filter(|status| matches!(*status, "review" | "unavailable"));
     Some(
-        json!({"kind":kind,"partial_structured_fields":fields,"warnings":warnings,"page_text_truncated":saved.get("page_text_truncated").and_then(Value::as_bool),"matches_current_listing":matches,"source_url":capture["source_url"].as_str(),"employer_audit":saved.get("employer_audit").and_then(saved_employer_audit),"deadline_excerpt":saved.get("deadline_excerpt").and_then(saved_deadline_excerpt),"possible_closure_evidence":saved.get("possible_closure_evidence").and_then(saved_deadline_excerpt),"other_roles_status":roles_status,"other_role_assessments":saved_role_assessments(&role_source, capture["source_url"].as_str().unwrap_or(""))}),
+        json!({"kind":kind,"partial_structured_fields":fields,"warnings":warnings,"page_text_truncated":saved.get("page_text_truncated").and_then(Value::as_bool),"matches_current_listing":matches,"source_url":capture["source_url"].as_str(),"employer_audit":saved.get("employer_audit").and_then(saved_employer_audit),"deadline_excerpt":saved.get("deadline_excerpt").and_then(saved_deadline_excerpt),"possible_closure_evidence":saved.get("possible_closure_evidence").and_then(saved_deadline_excerpt),"other_roles_status":roles_status,"other_role_assessments":saved_role_assessments(&role_source, capture["source_url"].as_str().unwrap_or("")),"page_tail_status":tail_status,"page_tail_text":tail}),
     )
 }
 struct Task {
@@ -5408,6 +5421,15 @@ mod tests {
             .contains("no está disponible"));
         assert!(job["possible_closure_evidence"].is_null());
         attach_provenance(&mut capture, &job);
+        let recovered = extraction_provenance(&capture.metadata, &job).unwrap();
+        assert_eq!(recovered["page_tail_status"], "truncated");
+        assert!(recovered["page_tail_text"]
+            .as_str()
+            .unwrap()
+            .contains("no está disponible"));
+        let mut invalid = capture.metadata.clone();
+        invalid["page_tail_text"] = json!("x".repeat(16_001));
+        assert!(extraction_provenance(&invalid, &job).unwrap()["page_tail_text"].is_null());
         assert!(capture.metadata["extraction_provenance"]["warnings"][0]
             .as_str()
             .unwrap()
