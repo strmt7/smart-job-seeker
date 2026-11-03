@@ -5,6 +5,12 @@ const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
 const line=source.split('\n').find(x=>x.startsWith('function appendSavedExportRecheck('));
 assert.ok(line);
 assert.ok(source.includes('appendSavedExportRecheck(entry,job,record);'));
+const noticeLine=source.split('\n').find(x=>x.startsWith('function emptyAttemptNotice('));
+assert.ok(noticeLine);
+const notice=vm.runInNewContext(`(${noticeLine})`);
+assert.match(notice({truncated:false,unreadable:0}),/No saved preparation attempts/);
+assert.match(notice({truncated:true,unreadable:0}),/Some records may be missing/);
+assert.match(notice({truncated:false,unreadable:1}),/Some records may be missing/);
 (async()=>{
   const calls=[];
   const context={element:(tag,text)=>({tag,text,addEventListener:(_,fn)=>{context.click=fn;}}),recheckExportText:async(result,output)=>{calls.push([result,output]);}};
