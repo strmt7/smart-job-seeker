@@ -1,3 +1,7 @@
+## Listing inspection with unavailable local inference — 2026-11-03
+
+- A read-only test exercised the listing-inspection start and status endpoints on the previously captured University of Cyprus vacancy while no model was resident. It returned the page's possible closure wording for manual review and saved no job. The UI now retains an individual inspection failure message in the recovery panel; a focused JavaScript test checked that behavior. This is one external listing and a backend endpoint test, not a rendered UI or broad vacancy-classification evaluation. The no-model case was retested after extending the same advisory to model setup and extraction errors; the latter errors have only been exercised with a simulated inference failure. Windows web Clippy and focused tests passed. No application was submitted.
+
 ## Captured-page closure hint — 2026-11-03
 
 - Listing inspection now reports certain literal English closure phrases found in bounded captured page text as an advisory, including for structured postings. It does not mark a job closed: the wording could concern another role, be negated, or be stale. The warning is kept with extraction provenance. A fictional test covered the warning and absent capture, and a separate test on the retained public-page receipt found the observed “Closed Positions” wording without a model. This is a narrow phrase check, not multilingual or exhaustive closure detection; the real app's end-to-end inspection of that page was not exercised. Focused tests and Windows web Clippy passed.
