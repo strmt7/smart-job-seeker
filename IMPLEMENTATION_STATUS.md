@@ -3264,3 +3264,15 @@ could not compare its text. Conversion and template-edit results now show a
 setup or Python-override recovery hint for this specific missing-tools case;
 other worker errors are not exposed as document text. This does not establish
 visual quality or fidelity for arbitrary documents and templates.
+
+### Overlapping duplicate candidates (2026-11-03)
+
+In a resource-gated fictional three-candidate check, Qwen3.5:9b flagged a
+reposted role with a slightly different title and also flagged an otherwise
+identical listing with a different requisition; it did not flag a junior role.
+Different identifiers can indicate separate openings or syndication, so this
+check does not establish the true identity of the ambiguous pair. The saved
+field comparison reports requisition case differences instead of normalizing
+them away, while retaining the warning that text differences are inconclusive.
+The focused comparison test passed and the model was unloaded. This small
+fixture is not a measurement of duplicate recall or precision.

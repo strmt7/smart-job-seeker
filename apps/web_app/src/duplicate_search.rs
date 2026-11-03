@@ -45,13 +45,14 @@ pub(crate) fn saved_field_comparison(
     first: &waypoint_store::StoredJob,
     second: &waypoint_store::StoredJob,
 ) -> String {
-    fn relation(a: Option<&str>, b: Option<&str>) -> &'static str {
+    fn relation(a: Option<&str>, b: Option<&str>, case_sensitive: bool) -> &'static str {
         let normalize = |value: &str| {
-            value
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase()
+            let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+            if case_sensitive {
+                normalized
+            } else {
+                normalized.to_lowercase()
+            }
         };
         let (Some(a), Some(b)) = (
             a.filter(|s| !s.trim().is_empty()),
@@ -65,7 +66,7 @@ pub(crate) fn saved_field_comparison(
             "different text"
         }
     }
-    format!("Saved field text comparison at assessment time (ignoring case and whitespace): title {}; employer {}; location {}; requisition {}. Different text can still refer to the same vacancy; matching text does not prove it. Listings may have changed.", relation(Some(&first.title), Some(&second.title)), relation(Some(&first.employer), Some(&second.employer)), relation(Some(&first.location), Some(&second.location)), relation(first.requisition_id.as_deref(), second.requisition_id.as_deref()))
+    format!("Saved field text comparison at assessment time (ignoring whitespace and case except in requisitions): title {}; employer {}; location {}; requisition {}. Different text can still refer to the same vacancy; matching text does not prove it. Listings may have changed.", relation(Some(&first.title), Some(&second.title), false), relation(Some(&first.employer), Some(&second.employer), false), relation(Some(&first.location), Some(&second.location), false), relation(first.requisition_id.as_deref(), second.requisition_id.as_deref(), true))
 }
 
 /// Keep the listing header and samples from later sections within a fixed
@@ -373,6 +374,24 @@ fn validate(
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+    #[test]
+    fn saved_comparison_surfaces_different_requisitions_without_deciding_identity() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let first = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/a","title":"Senior Designer","employer":"Example Labs","location":"Berlin","requisition_id":"A-10"}), 1).unwrap();
+        let second = crate::manual_job::add(&mut ws, &json!({"url":"https://example.org/b","title":"Sr Designer","employer":"Example Labs","location":"Berlin","requisition_id":"B-11"}), 1).unwrap();
+        let job = |id: &Value| {
+            ws.job(&waypoint_domain::JobIdentityId::new(id.as_str().unwrap()).unwrap())
+                .unwrap()
+                .unwrap()
+        };
+        let comparison = saved_field_comparison(&job(&first["id"]), &job(&second["id"]));
+        assert!(comparison.contains("requisition different text"));
+        assert!(comparison.contains("Different text can still refer to the same vacancy"));
+        let mut case_variant = job(&first["id"]);
+        case_variant.requisition_id = Some("a-10".into());
+        assert!(saved_field_comparison(&job(&first["id"]), &case_variant)
+            .contains("requisition different text"));
+    }
     static TASK_TEST_LOCK: Mutex<()> = Mutex::new(());
     #[test]
     fn samples_later_sections_without_treating_omissions_as_evidence() {
@@ -1137,6 +1156,41 @@ mod tests {
                 .matches
                 .iter()
                 .any(|item| item["id"] == "different_location"));
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "resource-gated local model on fictional overlapping vacancies"]
+    fn resource_gated_duplicate_search_distinguishes_overlapping_openings() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            let target = "Title: Senior Product Designer; Employer: Northstar Health; Location: Remote, Germany; Requisition: PD-104; Description: Lead accessibility design for patient scheduling in the care platform.";
+            let candidates = vec![
+                ("repost".into(), "Title: Sr. Product Designer - Patient Scheduling; Employer: Northstar Health; Location: Remote, Germany; Requisition: PD-104; Description: Lead accessible patient scheduling design for the care platform.".into()),
+                ("separate_requisition".into(), "Title: Senior Product Designer; Employer: Northstar Health; Location: Remote, Germany; Requisition: PD-105; Description: Lead accessibility design for patient scheduling in the care platform.".into()),
+                ("different_level".into(), "Title: Junior Product Designer; Employer: Northstar Health; Location: Remote, Germany; Requisition: PD-106; Description: Support accessibility design for patient scheduling in the care platform.".into()),
+            ];
+            let llm = OllamaInference::new("http://127.0.0.1:11434", "qwen3.5:9b")
+                .unwrap()
+                .with_resident_context();
+            let mut model = crate::resident_inference::ResidentInference::new(
+                llm,
+                "qwen3.5:9b".into(),
+                crate::resident_model_identity,
+            );
+            let result = search(&mut model, target, &candidates).unwrap();
+            println!(
+                "fictional overlapping openings: {:?}; examined={}; failed={}",
+                result.matches, result.examined, result.failed_batches
+            );
+            assert_eq!(result.examined, 3);
+            assert!(result.matches.iter().any(|item| item["id"] == "repost"));
+            // Different identifiers are not conclusive across syndication;
+            // a possible match may be retained for human review.
+            assert!(!result
+                .matches
+                .iter()
+                .any(|item| item["id"] == "different_level"));
         });
     }
 
