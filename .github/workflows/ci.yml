@@ -105,7 +105,7 @@ jobs:
         # These two opt-in probes require a separately reviewed public URL.
         # The CI job exercises local fixtures only. The separate scripted-submit
         # diagnostic demonstrates an open bug and is not a passing safety test.
-        run: cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1 --skip public_listing_navigation_probe --skip identified_public_navigation_probe --skip generic_click_can_trigger_scripted_form_submission_on_loopback
+        run: cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1 --skip public_listing_navigation_probe --skip identified_public_navigation_probe --skip generic_click_can_trigger_scripted_form_submission_on_loopback --skip inert_private_form_structure_qualification
 
   supply-chain:
     runs-on: ubuntu-latest

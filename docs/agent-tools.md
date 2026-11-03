@@ -61,6 +61,10 @@ captures and fixtures can contain private or third-party text and must not be
 committed. This is not a replay of the original site's behavior, styling,
 JavaScript, validation, custom widgets or multi-step flow. Use it alongside
 other evidence, not as proof that the real application can be completed.
+For the headless local browser qualification, set `WAYPOINT_INERT_FIXTURE` to
+the generated file and `WAYPOINT_INERT_FIXTURE_SHA256` to its SHA-256, then run
+`cargo test -p waypoint_browser --test cdp_live inert_private_form_structure_qualification -- --ignored --exact`.
+The test is excluded from CI because the private fixture is not in the repo.
 
 ## Coverage
 

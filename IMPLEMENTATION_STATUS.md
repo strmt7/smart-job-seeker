@@ -1,3 +1,7 @@
+## Inert captured-form qualification — 2026-11-03
+
+- A previously retained public Workable HTML capture was transformed locally into an inert fixture containing 20 standard controls. A headless file-based test detected 19 fields and filled and verified one text control using fictional data. The fixture contains no original scripts, form element, network attributes or entered values, is kept under ignored `target/`, and was not published. This establishes neither why one control was not detected nor performance on the real site, its JavaScript, validation, custom widgets or multi-step flow. No real application form was contacted or submitted during this qualification. The first local attempt failed on Windows extended-path URL handling; the corrected rerun passed.
+
 ## Hosted supply-chain check — 2026-11-03
 
 - GitHub CI run 41611285863 for commit `51fea7d7` failed its deny-warnings audit on three unmaintained advisories: `RUSTSEC-2026-0370` (`zvariant`), `RUSTSEC-2026-0371` (`zbus_names`), and `RUSTSEC-2026-0372` (`zvariant_derive`). These are unmaintained notices, not reports of vulnerabilities. `cargo tree --target all` traces them through the Unix accessibility dependencies of the older `waypoint_desktop`/`windows_app` stack. No dependency or audit exemption was changed; license/ban/source checks in that job did not run after the failure. The remaining hosted jobs were still running when this was recorded.

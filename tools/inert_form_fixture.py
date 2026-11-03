@@ -100,7 +100,9 @@ def make_fixture(source: str) -> str:
         else:
             field = f'<input id="field-{index}" type="{kind}"{required}>'
         rows.append(f'<p><label for="field-{index}">{label}</label>{field}</p>')
-    return '<!doctype html><meta charset="utf-8"><title>Inert form fixture</title><h1>Inert form fixture</h1>' + "\n".join(rows)
+    return ('<!doctype html><meta charset="utf-8">'
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; form-action \'none\'; base-uri \'none\'">'
+            '<title>Inert form fixture</title><h1>Inert form fixture</h1>' + "\n".join(rows))
 
 
 def main() -> None:

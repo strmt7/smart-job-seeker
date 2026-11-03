@@ -43,6 +43,62 @@ fn file_url(name: &str) -> String {
 }
 
 #[test]
+#[ignore = "headless local-only qualification using an explicitly supplied inert fixture"]
+fn inert_private_form_structure_qualification() {
+    let path = std::env::var_os("WAYPOINT_INERT_FIXTURE").expect("set a local inert fixture path");
+    let expected = std::env::var("WAYPOINT_INERT_FIXTURE_SHA256").expect("set fixture SHA-256");
+    let path = std::fs::canonicalize(path).unwrap();
+    let root =
+        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"))
+            .unwrap();
+    assert!(
+        path.starts_with(root),
+        "fixture must remain in the ignored target directory"
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(
+        waypoint_domain::sha256_hex(&bytes),
+        expected,
+        "fixture changed"
+    );
+    let source = std::str::from_utf8(&bytes).unwrap();
+    assert!(source.starts_with(
+        "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\""
+    ));
+    for forbidden in [
+        "<script", "<iframe", "<form", "<img", "<link", "<object", "<embed",
+    ] {
+        assert!(
+            !source.to_ascii_lowercase().contains(forbidden),
+            "fixture contains active markup"
+        );
+    }
+    let display = path.to_string_lossy();
+    let ordinary_path = display.strip_prefix(r"\\?\").unwrap_or(&display);
+    let url = format!("file:///{}", ordinary_path.replace('\\', "/"));
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let form = driver.open(&url).unwrap();
+    println!(
+        "Inert fixture detected fields: {}",
+        form.schema.fields.len()
+    );
+    assert!(!form.schema.fields.is_empty());
+    driver
+        .execute(&BrowserCommand::Fill {
+            selector: "#field-0".into(),
+            value: PacketValue::Text("Fictional Candidate".into()),
+        })
+        .unwrap();
+    driver
+        .verify_text_value("#field-0", "Fictional Candidate")
+        .unwrap();
+    assert!(driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
 #[ignore = "launches one local browser against a fictional fixture"]
 fn aria_invalid_fields_require_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
