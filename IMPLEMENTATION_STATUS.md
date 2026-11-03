@@ -1,5 +1,7 @@
 ## Public application control observation — 2026-11-03
 
+- A resource-gated visual check targeted the empty phone field on the same public application. The first test expected a visible field and failed because the model returned no observation; inspection of its screenshot showed a cookie overlay covering the target area. A separate obscured-field expectation then passed with `qwen3.5:9b` returning `unobserved` instead of matching the fictional value. No candidate value was entered, no control clicked and no application submitted. This covers one obstruction, not reliable visual verification in general.
+
 - A permitted read-only inspection of an ENFOS Workable application found an overlay and custom or obscured fields requiring review. In a separate resource-gated run, `qwen3.5:9b` suggested four cookie controls and omitted the submission control. The test read labels and page context only; it did not test vision, filling, navigation or delivery. No control was clicked and no application was submitted. The model unloaded after the run.
 - Crawl4AI 0.9.5+flitzzip.portable2 with robots checking initially returned only the cookie overlay and failed the expected-content check. A second capture with a three-second settle returned HTTP 200 and the expected job text; its native capture SHA-256 is `8feef44120dd7eb8a48e1a44d7459504b4942fc1b3209678b6dcda91204d98cf`. Both captures remain outside the repository. This single page does not establish general Workable support.
 

@@ -1262,6 +1262,19 @@ mod tests {
     #[test]
     #[ignore = "read-only public application and resource-gated local vision model"]
     fn live_public_empty_field_visual_review_is_read_only() {
+        check_public_empty_field_visual_review(false);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "opens an overlay-covered public application with a resource-gated local vision model"]
+    fn resource_gated_public_obscured_field_visual_review() {
+        crate::experience_inference::tests::with_resource_gated_model(|| {
+            check_public_empty_field_visual_review(true)
+        });
+    }
+
+    fn check_public_empty_field_visual_review(expect_obscured: bool) {
         use waypoint_applications::driver::BrowserDriver;
         let url = std::env::var("WAYPOINT_PUBLIC_APPLICATION_URL").expect("public application URL");
         let label = std::env::var("WAYPOINT_PUBLIC_FIELD_LABEL").expect("public field label");
@@ -1313,12 +1326,20 @@ mod tests {
                 })
             })
             .collect();
-        assert_eq!(
-            observations.len(),
-            1,
-            "target label was not uniquely observed"
-        );
-        assert_eq!(observations[0]["visible_value"], "");
+        if expect_obscured {
+            assert!(
+                observations.is_empty(),
+                "obscured target was reported as visible"
+            );
+            assert_eq!(result["comparisons"][0]["status"], "unobserved");
+        } else {
+            assert_eq!(
+                observations.len(),
+                1,
+                "target label was not uniquely observed"
+            );
+            assert_eq!(observations[0]["visible_value"], "");
+        }
         assert_ne!(result["comparisons"][0]["status"], "matches_transcription");
         assert_eq!(driver.text_value_snapshot(selector).unwrap().value, "");
         assert!(driver.trace.iter().all(|entry| !entry.contains("typed")
