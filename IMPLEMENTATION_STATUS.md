@@ -20,6 +20,8 @@
 
 ## Windows web integration check — 2026-11-03
 
+- The current Windows web backend passed its serial suite: 672 passed and 376 ignored. The first run failed one experience-ranking fixture because it used an observation timestamp of zero, which current selection correctly excludes; the fixture was corrected and the full suite rerun. Ignored tests include live model, public network and browser cases, so this is not end-to-end qualification.
+
 - After the recent template, match-coverage and navigation changes, the Windows web-app suite passed with 653 tests passed and 359 ignored. The ignored tests include live-model, browser and network cases; this run does not establish their behavior or end-to-end application capability. Tests ran serially with the model unloaded.
 
 ## Template voice review — 2026-11-03

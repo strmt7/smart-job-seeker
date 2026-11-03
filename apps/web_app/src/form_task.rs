@@ -1460,7 +1460,7 @@ mod tests {
                         Control::Choice
                     },
                     Platform::Greenhouse,
-                    i as i64,
+                    i as i64 + 1,
                 );
                 entry.experience.observation = match i % 5 {
                     0 => Observation::AmbiguousLabel,
@@ -1477,6 +1477,9 @@ mod tests {
         let selected = relevant_experiences(&schema, &full);
         assert_eq!(selected.len(), 10);
         assert!(selected[0].same_platform && selected[5].same_platform);
+        full[0].experience.observed_at = 0;
+        let selected = relevant_experiences(&schema, &full);
+        assert!(selected.iter().all(|item| item.experience.observed_at > 0));
         let mut reports: Vec<_> = (0..7)
             .map(|i| item(i, Control::Text, Platform::Lever, i as i64 + 1))
             .collect();
