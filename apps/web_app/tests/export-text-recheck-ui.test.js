@@ -12,6 +12,8 @@ assert.ok(line);
   await run({job_id:'j',id:'d'},output);
   assert.match(output.textContent,/matched.*result was saved.*visual layout/);
   assert.equal(calls[0][1].document_id,'d');
+  await run({job_id:'j',id:'d',attempt_id:'a'},output);
+  assert.equal(calls[2][1].attempt_id,'a');
   context.api=async()=>{throw new Error('missing export record')};
   await run({job_id:'j',id:'d'},output);
   assert.match(output.textContent,/missing export record/);

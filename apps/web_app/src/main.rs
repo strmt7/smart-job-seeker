@@ -4240,7 +4240,16 @@ fn serve(
                 .document_content(document)
                 .map_err(|e| e.to_string())?
                 .ok_or("Document not found")?;
-            let lookup = attempt_record::matching_generated_evidence(ws, &job, document, &pdf)?;
+            let lookup = match body.get("attempt_id") {
+                Some(value) => attempt_record::matching_generated_evidence_for_attempt(
+                    ws,
+                    &job,
+                    document,
+                    &pdf,
+                    value.as_str().ok_or("invalid attempt id")?,
+                )?,
+                None => attempt_record::matching_generated_evidence(ws, &job, document, &pdf)?,
+            };
             if lookup.incomplete {
                 return Err(
                     "Export records could not be checked completely; review the document manually"
@@ -4278,7 +4287,14 @@ fn serve(
                 let matched = current
                     .as_ref()
                     .and_then(|pdf| {
-                        attempt_record::matching_generated_evidence(ws, &job, document, pdf).ok()
+                        attempt_record::matching_generated_evidence_for_attempt(
+                            ws,
+                            &job,
+                            document,
+                            pdf,
+                            result["attempt_id"].as_str()?,
+                        )
+                        .ok()
                     })
                     .filter(|lookup| !lookup.incomplete)
                     .and_then(|lookup| lookup.found)
@@ -10086,11 +10102,29 @@ mod tests {
             Sha256Digest::of("context").as_str(),
         )
         .unwrap();
+        let listing = attempt_record::list(&ws, &job).unwrap();
+        let attempt = listing["attempts"][0]["attempt_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let dir = std::path::PathBuf::from(listing["attempts"][0]["folder"].as_str().unwrap());
+        let job_hash = Sha256Digest::of(job.as_str());
+        let prefix = &job_hash.as_str()[..16];
+        for number in 0..50 {
+            let other = format!("{number:032x}");
+            let folder = root
+                .path()
+                .join("application-records")
+                .join(format!("{prefix}-{other}"));
+            std::fs::create_dir(&folder).unwrap();
+            std::fs::write(folder.join("attempt.json"), json!({"attempt_id":other,"job_id":job.as_str(),"status":"manual_review","started_at":1}).to_string()).unwrap();
+        }
+        assert_eq!(attempt_record::list(&ws, &job).unwrap()["truncated"], true);
         let start = |ws: &mut Workspace| {
             call(
                 ws,
                 "/api/documents/export-text-recheck-start",
-                json!({"job_id":job.as_str(),"document_id":"fictional-doc"}),
+                json!({"job_id":job.as_str(),"document_id":"fictional-doc","attempt_id":attempt}),
             )["task_id"]
                 .as_str()
                 .unwrap()
@@ -10120,12 +10154,6 @@ mod tests {
         }
         assert_eq!(poll(&mut ws, &id), first);
         assert_eq!(ws.documents().unwrap().len(), 1);
-        let dir = std::fs::read_dir(root.path().join("application-records"))
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
         let events = std::fs::read_to_string(dir.join("events.jsonl")).unwrap();
         assert_eq!(events.matches("export_text_rechecked").count(), 1);
         let id = start(&mut ws);

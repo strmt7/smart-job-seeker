@@ -18,11 +18,12 @@ assert.match(notice({truncated:false,unreadable:1}),/Some records may be missing
   const entry={children:[],append(...nodes){this.children.push(...nodes)}};
   run(entry,{id:'job'},{});
   assert.equal(entry.children.length,0);
-  run(entry,{id:'job'},{export_document_id:'doc'});
+  run(entry,{id:'job'},{export_document_id:'doc',attempt_id:'attempt'});
   assert.equal(entry.children.length,2);
   await context.click();
   assert.equal(calls[0][0].job_id,'job');
   assert.equal(calls[0][0].id,'doc');
+  assert.equal(calls[0][0].attempt_id,'attempt');
   assert.equal(calls[0][1],entry.children[1]);
   assert.equal(entry.children[0].disabled,false);
   console.log('Saved export recheck history UI checks passed.');

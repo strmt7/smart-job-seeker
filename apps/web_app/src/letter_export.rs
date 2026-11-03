@@ -610,6 +610,26 @@ mod tests {
         )
         .unwrap();
         let linked = matched.found.unwrap();
+        let direct = crate::attempt_record::matching_generated_evidence_for_attempt(
+            &ws,
+            &id,
+            "fictional-doc",
+            b"%PDF-fictional",
+            &linked.attempt_id,
+        )
+        .unwrap();
+        assert!(!direct.incomplete);
+        assert_eq!(direct.found.unwrap().attempt_id, linked.attempt_id);
+        assert!(
+            crate::attempt_record::matching_generated_evidence_for_attempt(
+                &ws,
+                &id,
+                "fictional-doc",
+                b"%PDF-fictional",
+                "../invalid",
+            )
+            .is_err()
+        );
         assert!(!matched.incomplete);
         assert_eq!(linked.kind, "cv");
         assert_eq!(linked.context_sha256, context.as_str());

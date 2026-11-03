@@ -470,6 +470,21 @@ pub fn matching_generated_evidence(
     matching_generated_evidence_in_listing(ws, job, document_id, pdf, &listing)
 }
 
+/// Check one explicitly selected attempt without relying on the bounded history listing.
+pub fn matching_generated_evidence_for_attempt(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    document_id: &str,
+    pdf: &[u8],
+    attempt_id: &str,
+) -> Result<GeneratedEvidenceLookup, String> {
+    if attempt_id.len() != 32 || !attempt_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid export attempt".into());
+    }
+    let listing = json!({"attempts":[{"attempt_id":attempt_id}],"truncated":false,"unreadable":0});
+    matching_generated_evidence_in_listing(ws, job, document_id, pdf, &listing)
+}
+
 pub fn matching_generated_evidence_in_listing(
     ws: &Workspace,
     job: &JobIdentityId,
