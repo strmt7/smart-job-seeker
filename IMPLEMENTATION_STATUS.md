@@ -1,5 +1,7 @@
 ## Navigation advice coverage — 2026-11-03
 
+- If a control-ranking response reaches its five-item limit, the advisor now makes at most one extra pass over controls not already suggested. Results retain their original page indices; invalid or repeated suggestions from that pass leave the earlier advice intact and flag the additional check as incomplete. The existing cap warning remains because the extra pass can also miss controls. Scripted model tests and the UI fixture passed; no live model or employer page was used.
+
 - The interface now warns when either local-model control-ranking pass returns its five-item limit, since additional relevant controls may have been omitted. The warning also appears if a submission-labeled item is removed afterward. Scripted model and UI tests passed; these do not establish navigation accuracy or exercise a live model. No application was submitted.
 
 ## Model startup memory snapshot — 2026-11-03

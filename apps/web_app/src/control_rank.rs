@@ -117,6 +117,24 @@ fn rank(
             Err(_) => navigation_incomplete = true,
         }
     }
+    if response_at_limit && indices.len() < controls.controls.len() {
+        // Give the model one bounded chance to inspect the remaining controls.
+        // Original indices remain stable so the result still binds to the snapshot.
+        let remaining: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !indices.contains(index))
+            .map(|(_, item)| item)
+            .collect();
+        let followup = format!("{prompt}\nThe previous pass reached its limit. Consider only these remaining controls and return their original indices: {}", json!(remaining));
+        match rank_pass(model, controls, &followup) {
+            Ok((additional, omitted, _)) if additional.iter().all(|i| !indices.contains(i)) => {
+                omitted_submission_labels |= omitted;
+                indices.extend(additional);
+            }
+            _ => navigation_incomplete = true,
+        }
+    }
     Ok(Advice {
         indices,
         navigation_incomplete,
@@ -433,13 +451,24 @@ mod tests {
         assert!(filtered.response_at_limit);
         assert!(filtered.omitted_submission_labels);
         assert_eq!(filtered.indices.len(), 4);
-        let mut second_capped =
-            Scripted(vec![json!({"indices":[0]}), json!({"indices":[0,1,2,3,4]})]);
+        let mut second_capped = Scripted(vec![
+            json!({"indices":[0]}),
+            json!({"indices":[0,1,2,3,4]}),
+            json!({"indices":[5]}),
+        ]);
         assert!(
             rank(&mut second_capped, &controls, &context)
                 .unwrap()
                 .response_at_limit
         );
+        let mut continued = Scripted(vec![json!({"indices":[0,1,2,3,4]}), json!({"indices":[5]})]);
+        let result = rank(&mut continued, &controls, &json!({"walls":[]})).unwrap();
+        assert_eq!(result.indices, vec![0, 1, 2, 3, 4, 5]);
+        assert!(!result.navigation_incomplete);
+        let mut repeated = Scripted(vec![json!({"indices":[0,1,2,3,4]}), json!({"indices":[0]})]);
+        let result = rank(&mut repeated, &controls, &json!({"walls":[]})).unwrap();
+        assert_eq!(result.indices, vec![0, 1, 2, 3, 4]);
+        assert!(result.navigation_incomplete);
         let mut failed = Scripted(vec![json!({"indices":[3]}), json!({"indices":[99]})]);
         let partial = rank(&mut failed, &controls, &context).unwrap();
         assert_eq!(partial.indices, vec![3]);
