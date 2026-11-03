@@ -1,3 +1,7 @@
+## Qualification coverage in match estimates — 2026-11-03
+
+- When reviewed qualifications exist but the selection report says none were supplied to an assessment, the job badge now says “no qualifications used” instead of implying a subset was selected or showing only a generic limit. The distinction is derived from recorded input counts and does not change the score or prove the model used any supplied text. Focused Rust and UI checks passed.
+
 ## Public application control observation — 2026-11-03
 
 - The focused visual-review message now suggests checking overlays and scrolling when the selected field is not identified, then inspecting again while retaining the manual-review caveat. The targeted UI fixture passed. This guidance does not automatically dismiss overlays or establish why an observation failed.

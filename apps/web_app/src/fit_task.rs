@@ -1294,7 +1294,9 @@ pub(crate) fn qualification_coverage(assessment: &Value) -> &'static str {
         }
         _ => return "unavailable",
     };
-    if oversized > 0
+    if selected == 0 {
+        "none_used"
+    } else if oversized > 0
         || over_limit > 0
         || failed > 0
         || truncated
@@ -3628,6 +3630,11 @@ mod tests {
         assert_eq!(qualification_coverage(&direct), "complete");
         direct["selection"]["selected"] = json!(2);
         assert_eq!(qualification_coverage(&direct), "unavailable");
+        a["selection"]["selected"] = json!(0);
+        assert_eq!(qualification_coverage(&a), "none_used");
+        a["selection"]["budget_truncated"] = json!(true);
+        assert_eq!(qualification_coverage(&a), "none_used");
+        a["selection"]["budget_truncated"] = json!(false);
         a["selection"]["selected"] = json!(2);
         assert_eq!(qualification_coverage(&a), "selected");
         a["selection"]["budget_truncated"] = json!(true);

@@ -21,6 +21,7 @@ const label = vm.runInNewContext(`(${line})`);
 assert.equal(label(55, {lower: 10, upper: 100}), '55% AI estimate · 10–100% range');
 assert.equal(label(75, {lower: 75, upper: 75}), '75% AI estimate · 75–75% range');
 assert.equal(label(50, {lower: 0, upper: 100}), 'Insufficient evidence · 0–100% range');
+assert.match(label(50, {lower: 0, upper: 100}, null, null, false, 'none_used'), /no qualifications used/);
 assert.equal(label(55, null), 'AI estimate unavailable · range unavailable');
 assert.equal(label(55, {lower: 60, upper: 100}), 'AI estimate unavailable · range unavailable');
 assert.equal(label(-1, {lower: 0, upper: 100}), 'Estimate unavailable');
