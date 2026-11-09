@@ -5,6 +5,7 @@ mod application_check;
 pub mod application_email;
 mod ats_check;
 mod attempt_record;
+mod candidate_history;
 mod candidate_selection;
 mod candidate_task;
 mod choice_advice;
@@ -417,6 +418,7 @@ const PROFILE_FIELDS: &[&str] = &[
     "auto_assess_ai",
     "search_remote_only",
     "search_locations",
+    "career_history",
 ];
 
 fn campaign_constraints(profile: &Value) -> Result<CampaignConstraints, String> {
@@ -2315,6 +2317,15 @@ fn serve(
         );
         return Ok(());
     }
+    if path == "/candidate-history.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/candidate-history.js"),
+        );
+        return Ok(());
+    }
     if path == "/style.css" && method == "GET" {
         reply(
             stream,
@@ -3980,11 +3991,31 @@ fn serve(
                 return Err("unknown profile field".into());
             }
             let mut profile = serde_json::Map::new();
+            // An older open editor has no history control. Preserve this newer
+            // field unless explicitly supplied; the revision check below still
+            // rejects a concurrent save. An explicit empty string clears it.
+            let previous: Value = ws
+                .candidate_profile()
+                .map_err(|e| e.to_string())?
+                .map(|raw| {
+                    serde_json::from_str(&raw).map_err(|_| "Saved profile could not be read")
+                })
+                .transpose()?
+                .unwrap_or(json!({}));
             for &field in PROFILE_FIELDS {
-                let value = match input.get(field) {
+                let supplied = input.get(field).or_else(|| {
+                    (field == "career_history")
+                        .then(|| previous.get(field))
+                        .flatten()
+                });
+                let value = match supplied {
                     Some(value) => value.as_str().ok_or("profile fields must be text")?,
                     None => "",
                 };
+                if field == "career_history" {
+                    profile.insert(field.into(), json!(candidate_history::canonicalize(value)?));
+                    continue;
+                }
                 let limit = if matches!(field, "instructions" | "document_instructions") {
                     16000
                 } else {
@@ -13295,6 +13326,39 @@ mod tests {
             assert_eq!(unchanged["profile"]["first_name"], "Avery");
             assert_eq!(unchanged["profile_revision"], saved["profile_revision"]);
         }
+        let history = json!({"version":1,"employment":[{"id":"a".repeat(32),"employer":"Fictional & Co","title":"Engineer","start_date":"2020","reviewed":true}],"education":[]}).to_string();
+        let with_history = call("POST", "/api/profile", json!({"first_name":"Avery","career_history":history,"_expected_profile_revision":saved["profile_revision"]})).unwrap();
+        let persisted = call("GET", "/api/state", Value::Null).unwrap();
+        let stored_history = persisted["profile"]["career_history"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            candidate_history::canonicalize(&history).unwrap(),
+            stored_history
+        );
+        let bad = call("POST", "/api/profile", json!({"career_history":"{broken", "_expected_profile_revision":with_history["profile_revision"]})).unwrap_err();
+        assert!(bad.contains("invalid structure"));
+        let unchanged = call("GET", "/api/state", Value::Null).unwrap();
+        assert_eq!(
+            unchanged["profile_revision"],
+            with_history["profile_revision"]
+        );
+        // An old editor without the new field cannot erase saved career data.
+        let legacy = call("POST", "/api/profile", json!({"first_name":"Avery revised", "_expected_profile_revision":with_history["profile_revision"]})).unwrap();
+        let kept = call("GET", "/api/state", Value::Null).unwrap();
+        assert_eq!(kept["profile"]["career_history"], stored_history);
+        assert!(call("POST", "/api/profile", json!({"career_history":"", "_expected_profile_revision":with_history["profile_revision"]})).unwrap_err().contains("changed in another session"));
+        call(
+            "POST",
+            "/api/profile",
+            json!({"career_history":"", "_expected_profile_revision":legacy["profile_revision"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            call("GET", "/api/state", Value::Null).unwrap()["profile"]["career_history"],
+            ""
+        );
     }
 
     #[test]

@@ -184,6 +184,11 @@ build and configuration.
    set, including expired and ambiguous links and failures.
 3. **Profile, documents and matching.** Ingest varied PDF/DOCX and supporting
    documents with provenance, OCR where needed, corrections and private storage.
+   The [career-history editor](CANDIDATE_HISTORY.md) now stores reviewed employment
+   and education with partial dates and explicit value reuse. Automatic repeated-
+   section mapping, history-based tailoring and revision-bound history provenance
+   still need implementation and local-model evaluation; do not infer them from
+   the editor or its workflow tests.
    Evaluate semantic matching against labeled qualifications and preferences;
    report evidence and unknowns, test repeatability and calibration, and never
    equate a score with hiring probability. Preserve candidate facts and template

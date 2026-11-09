@@ -6,7 +6,7 @@ const line = source.split('\n').find(value=>value.startsWith("document.querySele
 assert.ok(line);
 async function run(stale){
   let handler, sent, notice, offered=false;
-  const button={disabled:false},form={querySelector:selector=>selector==='button'?button:null},editor={open:true};
+  const button={disabled:false},form={querySelector:selector=>selector==='button[type=submit]'?button:null},editor={open:true};
   const context={profileEditRevision:'a'.repeat(64),state:{profile:{}},autoFitPaused:true,autoFitAttempted:new Set(),
     FormData:function(){return [['first_name','Fictional draft']];},
     document:{querySelector(selector){return selector==='#profile-form'?{addEventListener(_name,fn){handler=fn;}}:editor;}},

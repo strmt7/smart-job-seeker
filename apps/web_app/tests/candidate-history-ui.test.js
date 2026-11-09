@@ -1,0 +1,28 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web_app/web/candidate-history.js','utf8');
+const context = {document:{querySelector(){return null;}}, TextEncoder};
+vm.createContext(context);vm.runInContext(source,context);
+const {parse,choices}=context.CandidateHistory;
+const checked={id:'a'.repeat(32),employer:'Fictional & Co',title:'Engineer',start_date:'2020',reviewed:true};
+const unchecked={id:'b'.repeat(32),institution:'Fictional University',qualification:'MSc',reviewed:false};
+const raw=JSON.stringify({version:1,employment:[checked],education:[unchecked]});
+const values=choices({career_history:raw});
+assert.equal(values.length,3);
+assert.equal(values.find(row=>row[0].endsWith(':employer'))[2],'Fictional & Co');
+assert.equal(values.find(row=>row[0].endsWith(':start_date'))[2],'2020');
+assert.ok(values.every(row=>row[0].startsWith(`history:${checked.id}:`)));
+assert.equal(choices({career_history:'{broken'}).length,0);
+for(const bad of [{version:2,employment:[],education:[]},{version:1,employment:[checked,checked],education:[]},{version:1,employment:[{...checked,id:'../escape'}],education:[]},{version:1,employment:[{...checked,reviewed:'true'}],education:[]}])assert.throws(()=>parse(JSON.stringify(bad)));
+assert.throws(()=>parse(' '.repeat(65537)));
+const app=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=app.indexOf('function profileValuePicker('),end=app.indexOf('\nfunction ',start);
+function node(tag,text=''){return {tag,text,children:[],listeners:{},append(...items){this.children.push(...items);},setAttribute(){},addEventListener(name,fn){this.listeners[name]=fn;},dispatchEvent(event){this.listeners[event.type]?.(event);},focus(){}};}
+context.element=node;context.document.createElement=node;context.Option=function(text,value){return {text,value};};context.Event=class{constructor(type){this.type=type;}};context.notify=()=>{};
+vm.runInContext(app.slice(start,end),context);
+const input=node('textarea'),picker=context.profileValuePicker({career_history:raw},input,{label:'Previous employer',field_type:'text',sensitive:false});
+picker.children[0].value=`history:${checked.id}:employer`;picker.children[1].listeners.click();assert.equal(input.value,'Fictional & Co');
+picker.children[0].value=`history:${unchecked.id}:institution`;picker.children[1].listeners.click();assert.equal(input.value,'Fictional & Co');
+assert.equal(context.profileValuePicker({career_history:raw},input,{label:'Sensitive',field_type:'text',sensitive:true}),null);
+console.log('Career history choices and explicit answer selection checks passed.');

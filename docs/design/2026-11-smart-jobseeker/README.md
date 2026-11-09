@@ -1,5 +1,11 @@
 # Smart Jobseeker interface refinement — 2026-11-09
 
+The subsequent [career-history pass](../../CANDIDATE_HISTORY.md) adds an original
+`career-history-reference.png`, a responsive employment/education editor and
+populated-state workflow, resize and actual-browser-zoom checks. That reference
+is a hierarchy guide; measured behavior and remaining integration are recorded
+in the linked capability note.
+
 `settings-reference.png` is an original generated design reference, not a product
 screenshot. Three image-generation rounds refined the workbench: an overall
 jobs/documents layout, a renamed settings screen, then a settings hierarchy

@@ -1,0 +1,98 @@
+# Career history
+
+Implemented in the local web prototype on 2026-11-09. The Profile editor supports
+up to 20 employment and 20 education entries, with independent identities,
+ordering, descriptions, dates, ongoing status and a checked-details flag.
+Saved records live inside the existing candidate profile, using its encrypted
+storage and revision checks. This adds no plaintext history database or external
+service.
+
+Dates retain their supplied precision: `2020` stays a year and `2020-06` stays a
+month. Empty dates remain unknown. An end date incompatible with an ongoing
+entry is refused; an unsuccessful toggle preserves the original valid end date.
+Chronology rejects a definitely earlier end, without inventing a month when
+year-only intervals overlap. Input is versioned, bounded to 64 KiB, and rejects
+unknown properties, invalid text and duplicate identities across both sections.
+
+Editing a value clears that entry's checked flag. Only saved, checked entries
+appear in the existing saved-value picker for nonsensitive text answers. The
+user chooses the entry and component explicitly; its exact text is copied into
+the answer editor. This does not fill a website, approve an action, attest a
+qualification claim or authorize submission. Sensitive fields do not gain a
+saved-value picker. An ongoing flag is not converted into an invented end date.
+
+Save uses the existing optimistic profile revision and interrupts an old review
+session. Concurrent edits are refused, with an explicit comparison/rebase path
+that keeps the unsaved history when both editors changed it. History conflicts
+are handled as a complete field; individual entries are not automatically merged.
+An older editor omitting the new field preserves the saved history. Explicit
+clearing still requires the current revision. Unreadable loaded data stays
+visible as an error and cannot silently replace valid saved history with empty
+data. Removal requires a second, labelled confirmation action.
+
+## Interface and checks
+
+The editor follows the shared ivory, white and forest-teal design system. Entry
+legends use the entered role/qualification and organization. Opening the Profile
+editor expands its card across the workspace; narrow containers stack fields.
+Description boxes use the native mouse resize handle with a bounded height.
+Reorder/removal controls retain usable focus targets, and checkboxes use the
+shared accent color.
+
+`docs/design/2026-11-smart-jobseeker/career-history-reference.png` is an original
+generated hierarchy reference, not a product screenshot. Implemented viewport
+captures were inspected after two refinements: expanding the open editor into
+unused workspace space and correcting screenshot scroll/notification handling.
+The reference depicts a standalone editor; the implementation remains inside
+the existing Profile workspace and its responsive navigation. No pixel-parity
+or complete accessibility qualification is claimed.
+
+Local validation:
+
+- Complete Windows web suite: 710 passed, zero failed, 391 opt-in checks ignored.
+- 159 standalone UI scripts passed; three new history parser/validation tests
+  are included in the web suite. Browser/model tests skipped by that suite are
+  not counted as executed.
+- Eleven headless workflow case groups passed against the built SQLCipher app:
+  partial-date save/reload, edit invalidation, ongoing refusal, checked-value
+  reuse, keyboard activation, reordering, confirmed removal, concurrent save and
+  conflict rebase, malformed-data preservation, five viewport widths, and native
+  mouse-drag description resizing. These are grouped observations, not eleven
+  independent model trials. No model, real candidate or employer form was used.
+- The populated-editor layout matrix passed 296 cases with zero failures or
+  script errors, covering actual browser zoom, viewport changes, mouse-drag
+  dividers and the existing menu/dialog paths. Widths span 320–3840 pixels and
+  zoom factors 80–400% where the effective viewport fits the supported minimum.
+  This is Chromium evidence, not qualification of every browser, DPI or device.
+- Windows Clippy, formatting and managed build passed. The workflow and final
+  layout receipts identify the same executable bytes. Private evidence remains
+  under ignored `target/`; their SHA-256 values are respectively
+  `191fab49ed71197f2c15842d956f51f37cfbed2bb0a75d9609c7150b909a76f8`
+  and `75bfcd7f8543032182b33ac78db9db28c69037a3ef241149060ab00611c30609`.
+
+Reproduce after the managed Windows build:
+
+```powershell
+node apps/web_app/scripts/qualify-candidate-history.cjs
+node apps/web_app/scripts/qualify-layout.cjs
+node apps/web_app/tests/candidate-history-ui.test.js
+```
+
+The headless scripts require the development-only `playwright-core` installation
+documented by `qualify-layout.cjs --help` and an installed Chromium executable.
+They use disposable workspaces; `--browser` and `--executable` select explicit
+local paths. The measured runs additionally used the existing owned-process
+controller with a 4 GiB job and bounded run time. No paid API was used.
+
+## Remaining integration
+
+History is not yet supplied to automatic model mapping or document tailoring.
+The current contact-key mapper continues to exclude the serialized history.
+Automatic history use needs independently evaluated entry/subject/section
+resolution, repeated-control handling, exact value and visual checks, partial
+date handling, revision-bound provenance and unambiguous manual fallback.
+Neither order nor a checked flag establishes that a role is current, a degree
+is completed or an experience supports an unrelated application question.
+Existing saved-value reuse is an explicit user choice, not proof of that future
+agent behavior. General no-submission isolation and broad local-model quality
+remain open gates in the completion plan.

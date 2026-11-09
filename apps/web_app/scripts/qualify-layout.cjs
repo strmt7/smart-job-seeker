@@ -162,7 +162,8 @@ async function bounded(operation, label, milliseconds = 15000) {
             pdf,
             { id: 'fictional-docx', name: 'Fictional cover letter.docx', size: 17000 },
           ];
-          data.profile = { ...data.profile, cv_template_id: pdf.id };
+          data.profile = { ...data.profile, cv_template_id: pdf.id,
+            career_history: JSON.stringify({version:1,employment:[{id:'a'.repeat(32),employer:'Fictional Centre for Applied Engineering and Environmental Research',title:'Systems engineer with a deliberately long title for layout qualification',location:'Fictional City',start_date:'2020',end_date:'',current:true,description:'Built fictional systems. '.repeat(8),reviewed:true}],education:[{id:'b'.repeat(32),institution:'Fictional University',qualification:'MSc',start_date:'2014',end_date:'2018',reviewed:false}]}) };
           return route.fulfill({ response, json: data });
         }
         if (u.pathname === '/api/documents/preview-start')
@@ -174,7 +175,7 @@ async function bounded(operation, label, milliseconds = 15000) {
         const file = u.pathname === '/' ? 'index.html' : u.pathname.slice(1);
         if (
           options['source-assets'] &&
-          ['index.html', 'app.js', 'layout.js', 'style.css', 'workspace-theme.css'].includes(file)
+          ['index.html', 'app.js', 'layout.js', 'candidate-history.js', 'style.css', 'workspace-theme.css'].includes(file)
         )
           return route.fulfill({
             path: path.join(root, 'apps/web_app/web', file),
@@ -261,6 +262,7 @@ async function bounded(operation, label, milliseconds = 15000) {
           height: innerHeight,
           ratio: devicePixelRatio,
           overflow: document.documentElement.scrollWidth > innerWidth + 1,
+          historyOverflow: view === 'profile' && (()=>{const history=document.querySelector('#candidate-history');return Boolean(history&&history.scrollWidth>history.clientWidth+1);})(),
           headingClipped: Boolean(headingClipped),
           dialogOutside: Boolean(
             box &&
@@ -293,7 +295,7 @@ async function bounded(operation, label, milliseconds = 15000) {
         path.join(scratch, 'progress.json'),
         JSON.stringify({ cases: cases.length, latest: label }),
       );
-      if (result.overflow || result.dialogOutside || result.headingClipped)
+      if (result.overflow || result.historyOverflow || result.dialogOutside || result.headingClipped)
         failures.push({ label, ...result });
       return result;
     }
