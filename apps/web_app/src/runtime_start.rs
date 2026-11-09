@@ -1,4 +1,4 @@
-//! Start an existing local Ollama runtime without changing installed files.
+//! Start local Ollama, privately provisioning it when no runtime is available.
 use serde_json::{json, Value};
 use std::sync::Mutex;
 
@@ -116,11 +116,25 @@ fn run() -> Result<Value, String> {
     if classify_port(addr)? {
         return Ok(json!({"already_running":true}));
     }
+    let binary = installed_binary()
+        .map(Ok)
+        .unwrap_or_else(|| crate::runtime_setup::ensure(crate::runtime_setup::Tool::Ollama))?;
+    let mut child = runtime_command(&binary, addr)
+        .spawn()
+        .map_err(|_| "Could not start the installed local runtime")?;
+    wait_for_runtime(addr, &mut child)?;
+    Ok(json!({"already_running":false}))
+}
+#[cfg(windows)]
+pub(crate) fn installed_binary() -> Option<std::path::PathBuf> {
+    if let Some(path) = crate::runtime_setup::managed(crate::runtime_setup::Tool::Ollama) {
+        return Some(path);
+    }
     let executable = std::env::current_exe().ok();
     let local = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
     let program = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from);
     let path = std::env::var_os("PATH");
-    let binary = candidates(
+    candidates(
         executable.as_deref(),
         local.as_deref(),
         program.as_deref(),
@@ -128,12 +142,11 @@ fn run() -> Result<Value, String> {
     )
     .into_iter()
     .find(|candidate| candidate.is_absolute() && candidate.is_file())
-    .ok_or("Ollama was not found in the bundled or standard installation locations")?;
-    let mut child = runtime_command(&binary, addr)
-        .spawn()
-        .map_err(|_| "Could not start the installed local runtime")?;
-    wait_for_runtime(addr, &mut child)?;
-    Ok(json!({"already_running":false}))
+}
+#[cfg(windows)]
+pub(crate) fn available() -> bool {
+    installed_binary().is_some()
+        || runtime_ready(std::net::SocketAddr::from(([127, 0, 0, 1], 11434)))
 }
 #[cfg(not(windows))]
 fn run() -> Result<Value, String> {

@@ -712,7 +712,7 @@ pub fn start_bound(
     std::thread::spawn(move || {
         let mut contacts = Vec::new();
         let result = (|| -> Result<(String, bool), String> {
-            let mut browser = waypoint_browser::CdpDriver::launch(vec![])
+            let mut browser = crate::runtime_setup::launch_browser(vec![], false)
                 .map_err(|error| browser_start_failure(&error).to_owned())?;
             let mut page = browser
                 .open(&url)
@@ -1632,7 +1632,7 @@ mod tests {
             .iter()
             .all(|entry| !entry.contains("typed") && !entry.contains("submitted")));
     }
-    static TASK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::email_worker::TEST_LOCK as TASK_TEST_LOCK;
     #[test]
     fn browser_start_errors_distinguish_missing_browser_without_exposing_details() {
         use waypoint_applications::driver::DriverError;

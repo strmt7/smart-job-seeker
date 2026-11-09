@@ -1760,6 +1760,7 @@ mod tests {
 
     #[test]
     fn disconnected_navigation_retains_the_job_for_review() {
+        let _guard = crate::email_worker::TEST_LOCK.lock().unwrap();
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();

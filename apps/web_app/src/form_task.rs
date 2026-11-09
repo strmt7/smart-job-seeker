@@ -249,7 +249,9 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 #[cfg(test)]
-pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+// HTTP fixtures inspect cross-module busy state; their task mutations must
+// share a lock even though production modules have separate task mutexes.
+pub(crate) use crate::email_worker::TEST_LOCK;
 static COMPLETED_FAILURE: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 pub(crate) fn pending_reason(task_id: &str) -> String {
@@ -630,7 +632,7 @@ pub fn start_bound(
         let _lease = lease;
         let mut used_revisions = Vec::new();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_, String> {
-            let mut driver = waypoint_browser::CdpDriver::launch_with_mode(vec![], visible)
+            let mut driver = crate::runtime_setup::launch_browser(vec![], visible)
                 .map_err(|e| e.to_string())?;
             let (mut live, navigation_warning) = open_application_page(&mut driver, &url)?;
             if should_seek_obscured_form(&live) {

@@ -1563,6 +1563,18 @@ impl CdpDriver {
         Self::initialize(BrowserOwner::Standard(browser), cdp, upload_dirs)
     }
 
+    /// Launch a private browser chosen by the application, preserving user overrides.
+    pub fn launch_with_binary(
+        upload_dirs: Vec<PathBuf>,
+        visible: bool,
+        binary: &std::path::Path,
+    ) -> Result<Self, DriverError> {
+        let browser = BrowserProcess::launch_with_binary(binary, Duration::from_secs(20), visible)
+            .map_err(derr)?;
+        let cdp = Cdp::new(browser.connect().map_err(derr)?).map_err(derr)?;
+        Self::initialize(BrowserOwner::Standard(browser), cdp, upload_dirs)
+    }
+
     /// Experimental local-fixture rehearsal. This is not yet qualified for
     /// interacting with real employer applications or active captured sites.
     #[cfg(windows)]

@@ -101,13 +101,18 @@ fn choose_path_python(
 
 #[cfg(windows)]
 fn worker_python(modules: &str) -> Option<PathBuf> {
-    configured_python().or_else(|| choose_path_python(path_pythons(), |path| {
+    let compatible = |path: &std::path::Path| {
         let mut command = Command::new(path);
         command.args(["-I", "-c", "import importlib.util,sys; sys.exit(0 if all(importlib.util.find_spec(n) is not None for n in sys.argv[1:]) else 1)"]);
         command.args(modules.split(','));
         crate::pdf_job::run(&command, None, 128 * 1024 * 1024, 2, 0)
             .is_ok_and(|result| result.success)
-    }))
+    };
+    // An explicit override keeps its own diagnostics. Default/managed workers
+    // must actually have the requested modules before they count as available.
+    configured_python()
+        .filter(|path| std::env::var_os("WAYPOINT_PDF_PYTHON").is_some() || compatible(path))
+        .or_else(|| choose_path_python(path_pythons(), compatible))
 }
 
 #[cfg(not(windows))]
@@ -195,24 +200,38 @@ pub(crate) fn acquire() -> Result<PdfLease, String> {
         .map_err(|_| "A PDF operation is already running")?;
     Ok(PdfLease)
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputKind {
+    Pdf,
+    Other,
+    Probe,
+}
 fn run(
     bytes: &[u8],
     input: &[u8],
     script: &str,
     argument: Option<&str>,
     limit: u64,
-    pdf_input: bool,
+    input_kind: InputKind,
     modules: &str,
 ) -> Result<Vec<u8>, String> {
-    let _lease = acquire()?;
+    let lease = acquire()?;
     if bytes.is_empty()
         || bytes.len() > 10 * 1024 * 1024
-        || (pdf_input && !bytes.starts_with(b"%PDF-"))
+        || (input_kind == InputKind::Pdf && !bytes.starts_with(b"%PDF-"))
     {
         return Err("Invalid or oversized document".into());
     }
-    let python = worker_python(modules)
-        .ok_or("PDF operations need a local Python runtime; configure WAYPOINT_PDF_PYTHON")?;
+    let (python,_lease) = match worker_python(modules) {
+        Some(python) => (python,lease),
+        #[cfg(windows)]
+        None if input_kind != InputKind::Probe && std::env::var_os("WAYPOINT_PDF_PYTHON").is_none() => {
+            drop(lease); // The installer acquires the same PDF lease itself.
+            let python=crate::runtime_setup::ensure_pdf_tools()?;
+            (python,acquire()?)
+        }
+        None => return Err("PDF tools are unavailable. Use Settings > Local tools and setup; an explicit Python override is preserved.".into()),
+    };
     let mut command = Command::new(python);
     command.args(["-I", "-c", script]);
     if let Some(argument) = argument {
@@ -334,7 +353,7 @@ fn extract_coverage_mode(
             allow_empty.then_some("allow-empty")
         },
         2_600_000,
-        true,
+        InputKind::Pdf,
         "pypdf",
     )?;
     let result: serde_json::Value =
@@ -460,7 +479,7 @@ fn render_page_inner(bytes: &[u8], page: usize, region: &str) -> Result<serde_js
         include_str!("pdf_render.py"),
         Some(&argument),
         4 * 1024 * 1024,
-        true,
+        InputKind::Pdf,
         "pypdf,pypdfium2,PIL",
     )?;
     serde_json::from_slice(&data).map_err(|_| "PDF renderer returned invalid data".into())
@@ -490,7 +509,7 @@ pub fn edit(bytes: &[u8], before: &str, after: &str) -> Result<Vec<u8>, String> 
         ),
         None,
         10 * 1024 * 1024,
-        true,
+        InputKind::Pdf,
         "pypdf,pypdfium2,PIL",
     )
 }
@@ -502,7 +521,7 @@ pub fn image_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
         include_str!("image_to_pdf.py"),
         None,
         10 * 1024 * 1024,
-        false,
+        InputKind::Other,
         "PIL",
     )
 }
@@ -522,7 +541,7 @@ except Exception as error:
         script,
         None,
         4096,
-        false,
+        InputKind::Probe,
         "pypdf,pypdfium2,PIL",
     )?;
     serde_json::from_slice(&result).map_err(|_| "PDF dependency check returned invalid data".into())

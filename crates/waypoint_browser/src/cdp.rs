@@ -505,6 +505,15 @@ impl BrowserProcess {
         Self::launch_candidates(&binaries, timeout, visible)
     }
 
+    /// Use a caller-selected private runtime without changing process-wide settings.
+    pub fn launch_with_binary(
+        binary: &Path,
+        timeout: Duration,
+        visible: bool,
+    ) -> Result<Self, CdpError> {
+        Self::launch_candidates(&[binary.to_path_buf()], timeout, visible)
+    }
+
     fn launch_candidates(
         binaries: &[PathBuf],
         timeout: Duration,

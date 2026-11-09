@@ -72,6 +72,7 @@ mod pdf_runtime;
 mod pdf_setup;
 mod pdf_transcribe;
 mod resident_inference;
+mod runtime_setup;
 mod runtime_start;
 mod search_planner;
 mod smtp_handoff;
@@ -2489,6 +2490,15 @@ fn serve(
         );
         return Ok(());
     }
+    if path == "/runtime-setup.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/runtime-setup.js"),
+        );
+        return Ok(());
+    }
     if path == "/history-mapping.js" && method == "GET" {
         reply(
             stream,
@@ -2682,9 +2692,7 @@ fn serve(
         let office_setting = storage_settings::control_dir()
             .map(|control| document_convert::office_setting_status(&control))
             .unwrap_or_else(|error| json!({"path":null,"available":false,"error":error}));
-        let browser = waypoint_browser::cdp::BrowserProcess::discover_binaries()
-            .into_iter()
-            .next();
+        let browser = runtime_setup::browser_path();
         json_reply(
             stream,
             "200 OK",
@@ -2860,6 +2868,22 @@ fn serve(
             let id = random_id()?;
             runtime_start::start(id.clone())?;
             json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/tools-setup/start" => {
+            let id = random_id()?;
+            runtime_setup::start(id.clone(), body["component"].as_str().unwrap_or("missing"))?;
+            json_reply(stream, "200 OK", json!({"task_id":id}));
+        }
+        "/api/tools-setup/status" => {
+            let id = body["task_id"].as_str().ok_or("missing task id")?;
+            json_reply(stream, "200 OK", runtime_setup::poll(id)?);
+        }
+        "/api/tools-setup/pending" => {
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":runtime_setup::active()?}),
+            );
         }
         "/api/runtime-start/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;

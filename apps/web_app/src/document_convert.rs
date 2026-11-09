@@ -94,6 +94,9 @@ pub fn office_path() -> Option<PathBuf> {
             Ok(None) => {}
             Err(_) => return None,
         }
+        if let Some(path) = crate::runtime_setup::managed(crate::runtime_setup::Tool::Office) {
+            candidates.push(path);
+        }
     }
     if let Ok(executable) = std::env::current_exe() {
         if let Some(root) = executable.parent() {
@@ -264,9 +267,25 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
     if !text {
         reject_removed_revisions(conversion_bytes)?;
     }
-    let office = office_path().ok_or(
-        "LibreOffice was not found. Install it or configure soffice.com in Settings > Local tools and setup.",
-    )?;
+    let office = match office_path() {
+        Some(path) => path,
+        None => {
+            let control = crate::storage_settings::control_dir()?;
+            if std::env::var_os("WAYPOINT_SOFFICE").is_some()
+                || stored_office_path(&control)?.is_some()
+            {
+                return Err("The configured LibreOffice executable is unavailable; correct its path in Settings. Existing installations were left unchanged.".into());
+            }
+            #[cfg(windows)]
+            {
+                crate::runtime_setup::ensure(crate::runtime_setup::Tool::Office)?
+            }
+            #[cfg(not(windows))]
+            {
+                return Err("Automatic LibreOffice setup supports Windows x64 only".into());
+            }
+        }
+    };
     let temp = tempfile::Builder::new()
         .prefix("waypoint-convert-")
         .tempdir()

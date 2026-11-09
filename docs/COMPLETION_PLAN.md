@@ -39,7 +39,9 @@ acceptance gates. Do not create a release as part of this plan.
   platforms, visual verification accuracy, and live local-model reliability
   are not established. Do not generalize a single fixture or site to all forms.
 - Automatic [runtime provisioning](RUNTIME_SETUP.md) now covers the default
-  package and a native PDF setup path without host Python. Clean-Windows
+  package, native PDF bootstrap and private missing-tool setup/repair without
+  host Python. Actual browser/PDF repair and rendered setup have local evidence;
+  the new LibreOffice/Ollama repair paths still need live qualification. Clean-Windows
   installation, browser servicing and recovery across machines remain unproven.
   The existing prototype bundle
   is unsigned and is not a distribution-ready package.

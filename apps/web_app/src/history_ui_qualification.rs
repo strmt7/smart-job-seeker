@@ -292,6 +292,8 @@ fn allowed_mutation(path: &str) -> bool {
             | "/api/application-check/pending"
             | "/api/gmail/status"
             | "/api/storage/status"
+            | "/api/tools-setup/pending"
+            | "/api/pdf-setup/pending"
             | "/api/documents/convert-pdf-pending"
             | "/api/web-search/selection"
             | "/api/web-search/pending"

@@ -1,5 +1,12 @@
 # Browser-interface prototype checkpoint
 
+Latest dependency checkpoint, 2026-11-09: Settings can install missing tools or
+repair private runtimes, and default missing tools can be installed when needed.
+Downloads, readback, activation, memory/disk admission and prior-version
+preservation are bounded. Actual private browser/PDF setup and the rendered
+Settings path passed; [runtime scope and remaining installation gates](RUNTIME_SETUP.md)
+remain explicit. No release was created.
+
 Latest connected-workflow checkpoint, 2026-11-09: the rendered history-selection,
 reviewed-fill and automatic vision flow passed with actual production handlers
 and the local 12B model on two fictional layouts/profiles. See [the measured

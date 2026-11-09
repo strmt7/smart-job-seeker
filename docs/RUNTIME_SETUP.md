@@ -38,6 +38,17 @@ are required. Offline packaging accepts the exact verified local archives.
 
 ## PDF setup and repair
 
+Settings > **Local tools and setup > Set up tools** now installs all missing
+core tools in the background. The selector can instead repair the private
+browser, document converter or Ollama distribution. PDF tools are bootstrapped
+first when needed, without using or changing a host Python installation.
+
+Missing default tools can also be provisioned when starting Ollama, opening a
+browser inspection or converting a document. PDF operations can bootstrap their
+missing default worker; **Check PDF tools** remains a read-only probe. Explicit
+custom paths retain precedence and their diagnostics. Installing a private copy
+does not replace an override or automatically repeat a form interaction.
+
 In Settings, leave **Custom Python executable** empty and choose **Set up PDF
 tools**. A background native installer downloads Python and its PDF wheels into
 a fresh per-user staging directory. No existing Python, pip, venv or package
@@ -68,9 +79,78 @@ Browser update/serviceability and clean-host compatibility remain open gates.
 Ollama is bundled by default; Settings can start the private runtime. Model
 weights are separate and selected explicitly. Existing RAM/GPU admission and
 concurrency limits still apply. The application never unloads another workload's
-model to make space. Full automatic repair of a deleted Ollama or LibreOffice
-distribution is not yet implemented in Settings; reinstalling a complete bundle
-provides those components without a separate system installer.
+model to make space. Missing-runtime setup and the Settings repair action reuse
+the same pinned distributions as packaging. Repair creates a new private version,
+verifies its complete file inventory and version command, then atomically changes
+its per-user pointer. Prior versions and unrelated installations are preserved.
+The browser status display follows the selected private runtime. Models are not
+downloaded or loaded by this tool-setup action.
+
+Each setup worker is hidden and limited to 768 MiB of process-tree commit and
+20 minutes. Setup requires a reliable observation of at least three GiB of free
+host RAM and checks again before each component. This is a snapshot, not a
+reservation; unrelated workloads and Windows Installer service allocations are
+outside that worker limit. Disk admission requires two GiB for browser setup,
+four for the converter or twelve for Ollama. Downloads stream to disk, and
+archives retain their pinned size/hash, path, count and expansion checks.
+Ollama's two compressed runtime archives total about 1.8 GB; weights are separate.
+
+There is one automatic runtime installer at a time. Page reload can recover the
+in-process task; terminal status can be polled repeatedly. Failed stages remain
+with diagnostics because a Windows Installer administrative-extraction service
+can outlive its client after timeout. No failed result activates the new runtime
+or deletes its predecessor. A later setup uses a separate directory. An app
+restart does not resume a partial download automatically. No machine-wide package
+installation, service registration, global PATH change or replacement of another
+application is requested. The previously described administrative MSI extraction
+and read-only cabinet extraction are reused, rather than running the normal
+LibreOffice or Microsoft runtime installers.
+
+## Recovery qualification, 2026-11-09
+
+The explicit ignored native test downloaded pinned private Python/PDF libraries
+and the browser, activated a complete 288-file browser distribution, opened an
+owned fictional file page through the real CDP driver and captured it. It passed
+inside a four-GiB outer Windows job, in 17.432 seconds including the test command.
+The browser reported `Google Chrome for Testing 157.0.8103.38`.
+
+Private evidence: `target/runtime-repair-9Rb8dc/qualification.private.json`,
+SHA-256 `7bb2682945907e431514b52236b5cbf632680f14162e1c51d66969e85525cca3`.
+Its source digests bind the installer version used; a later status-only getter
+was added afterward. The subsequent rendered qualification binds the updated
+executable. Both are scoped observations rather than qualification on a clean VM.
+
+The actual Settings page then downloaded and activated PDF/browser tools through
+production endpoints, without substituted responses. One setup request passed
+five widths (320, 390, 768, 1440 and 1920 pixels) and six actual browser zoom
+factors (80, 100, 125, 150, 200 and 400 percent). The selected browser status
+matched the installed path, and no UI script errors or external UI requests were
+observed. The outer four-GiB job run took 19.048 seconds; worker allocations and
+host/GPU peaks were not measured. Screenshots were inspected. This also exposed
+an older PDF recovery GET/POST mismatch, corrected with a transport assertion.
+
+Final private rendered evidence:
+`target/runtime-setup-ui-lBQwBZ/result.private.json`, SHA-256
+`f916f8f7603c6cac3684fac75616dc15906e5c7895ebd1f4b8486ad39af6248a`.
+The development script is `apps/web_app/scripts/qualify-runtime-setup.cjs` and
+requires an explicitly chosen `--browser` executable plus the existing private
+Playwright development dependency. The measured invocation used the repository's
+`qualify_rehearsal.run` Windows process-tree containment. All generated workspaces,
+profiles, receipts and downloaded runtimes stayed under ignored `target/`.
+
+Seven offline Python tests use fictional files with the actual packager's sink,
+archive, runtime-DLL and license paths. They cover corruption, missing/extra
+members, traversal/Windows aliases, duplicate paths, disk refusal, failed probes
+and refusal to overwrite an existing output directory. Native tests cover
+pointer traversal, incomplete versions, prior-pointer preservation, missing
+files, RAM boundaries and retryable status. Ordinary Rust tests cannot implicitly
+download a missing dependency. The existing package checks also passed.
+
+Actual new-path LibreOffice/Ollama downloads, clean-Windows installation,
+installer-service failure schedules, restart cleanup and updater servicing remain
+open acceptance gates. The implementation shares the existing verified package
+provisioners; offline tests are not live installation evidence for those two
+components. Rust/MSVC development-toolchain installation remains separate.
 
 `--no-ollama`, `--no-libreoffice` and `--no-chromium` deliberately produce minimal
 development bundles with missing capabilities. They are not the default

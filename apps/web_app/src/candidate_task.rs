@@ -2101,7 +2101,7 @@ pub fn start(id: String, url: String, search_context: Option<Value>) -> Result<(
             let parsed = waypoint_net::parse_url(&url).map_err(|e| e.to_string())?;
             waypoint_net::resolve_public(&parsed).map_err(|e| e.to_string())?;
             let mut browser =
-                waypoint_browser::CdpDriver::launch(vec![]).map_err(|e| e.to_string())?;
+                crate::runtime_setup::launch_browser(vec![], false).map_err(|e| e.to_string())?;
             let page = open_listing(&mut browser, &url)?;
             let current = browser.current_url().map_err(|e| e.to_string())?;
             let original = url::Url::parse(&url).map_err(|_| "Invalid URL")?;
