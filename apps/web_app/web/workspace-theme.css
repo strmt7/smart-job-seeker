@@ -67,6 +67,9 @@ dialog { border-radius: 12px; border-color: var(--line); }
 #document-job-check>.footnote { padding: 8px 0; }
 .document-job-results .footnote { padding: 6px 0; }
 .document-job-results button { margin: 10px 8px 0 0; }
+.document-job-results details { margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.document-job-results summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.saved-visual-findings>strong { display: block; margin-top: 14px; }
 @media(min-width:1101px) { .document-layout:has(#document-job-check:not(:empty)) { grid-template-columns: minmax(0,.95fr) minmax(0,1.05fr); } }
 @media(max-width:420px) { .document-library-filters { grid-template-columns: 1fr; gap: 10px; } }
 @media(min-width:851px) { main { height: calc(100dvh - var(--header-height)); min-height: 0; } }

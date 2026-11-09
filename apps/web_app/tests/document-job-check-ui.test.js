@@ -6,6 +6,7 @@ const panel=element('div'),requests=[];
 const notifications=[];
 const ctx=vm.createContext({documentJobCheckGeneration:0,activeJobId:'job-a',state:{jobs:[{job:{id:'job-a',title:'Fictional role',employer:'Example'}}]},element,Option:function(text,value){this.textContent=text;this.value=value;},setWorkspaceView(){},notify(){},document:{querySelector:()=>panel,createElement:element},api:(_path,body)=>new Promise(resolve=>requests.push({body,resolve}))});
 vm.runInContext(summary,ctx);
+for(const name of ['renderSavedDocumentReview','appendSavedDocumentReviews'])vm.runInContext(source.split('\n').find(line=>line.startsWith(`function ${name}(`)),ctx);
 ctx.pendingDocumentVisual=ctx.pendingAtsCheck=()=>({doc:'second',job:'other-job'});
 ctx.notify=text=>notifications.push(text);
 vm.runInContext(source.slice(source.indexOf('function showDocumentJobCheck('),source.indexOf('function documentPreparationStatus(')),ctx);

@@ -1,3 +1,9 @@
+## Opening saved PDF visual findings — 2026-11-09
+
+- Document job checks now list up to 12 matching saved visual reviews, with an explicit omitted count. Opening one uses the authenticated `/api/documents/job-check-review` endpoint, which rechecks the existing job, document and exact PDF bytes before returning that archived review. Its job/profile context is recomputed and reported as current, historical or unavailable; historical findings remain accessible with a warning. Reading a saved review starts no inference and creates no application approval.
+- The interface displays page coverage, recorded vision status, text-geometry checks and issue descriptions, with explicit limits for long inventories. Different PDF bytes, invalid attempts and wrong jobs are refused; request races and mismatched responses do not replace a newer review panel.
+- Backend tests covered bounded references, historical context, byte mismatch, invalid attempt IDs and authenticated loopback reading. All 154 UI check scripts, Windows build and web Clippy passed. A headless isolated-app probe opened mocked fictional findings, verified the historical-context warning and reviewed a screenshot of the visible findings panel; no script errors or horizontal overflow were observed. No new visual inference or employer-site actions were performed.
+
 ## Saved document evidence for a selected job — 2026-11-09
 
 - PDF rows now offer Check for job. The authenticated, read-only `/api/documents/job-check` endpoint binds its response to an existing job, document ID and current PDF-byte hash. It reports matching generated-draft evidence, current/stale/unverifiable draft context, and bounded visual-review inventory. Missing generation evidence is normal for imported PDFs; unreadable or incomplete lookups remain explicit. The response always requires user review and makes no claim of factual accuracy, ATS acceptance, attachment or submission authorization.

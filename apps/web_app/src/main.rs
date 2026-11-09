@@ -4707,6 +4707,17 @@ fn serve(
                 document_job_check::inspect(ws, &job, document)?,
             );
         }
+        "/api/documents/job-check-review" => {
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let document = body["document_id"].as_str().ok_or("missing document id")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                document_job_check::read_review(ws, &job, document, attempt)?,
+            );
+        }
         "/api/documents/visual-review-candidates" => {
             let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
                 .map_err(|e| e.to_string())?;

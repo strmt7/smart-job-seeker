@@ -39,7 +39,9 @@ paths. No employer application pages were contacted during this design work.
    focused role-specific review layout, including
    PDF preview, factual review, revisions and outstanding checks. PDF rows now
    expose saved draft-context and visual-review evidence for a selected job;
-   this remains an evidence snapshot rather than a readiness certificate.
+   this remains an evidence snapshot rather than a readiness certificate. Saved
+   visual findings can now be opened after a document-byte check, with historical
+   context distinguished from current context.
 3. Reorganize local-tool setup around actual detected states and distinct actions;
    avoid implying a dependency is installed before checking it.
 4. Extend the mobile Jobs/Workspace dock with long-form review usability checks.

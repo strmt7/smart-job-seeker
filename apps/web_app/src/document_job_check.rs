@@ -21,8 +21,50 @@ fn visual_summary(candidates: &Value) -> Result<Value, String> {
                 && r["report"]["complete"] == true
         })
         .count();
+    let references: Vec<_> = reviews.iter().filter_map(|review| {
+        let id = review["attempt_id"].as_str().filter(|id| id.len()==32 && id.bytes().all(|b| b.is_ascii_hexdigit()))?;
+        Some(json!({"attempt_id":id,"context_current":review["context_current"],"status":review["status"]}))
+    }).take(12).collect();
     Ok(
-        json!({"status":"available","recorded":reviews.len(),"current_completed":current_completed,"other":reviews.len()-current_completed,"incomplete":truncated || unreadable>0}),
+        json!({"status":"available","recorded":reviews.len(),"current_completed":current_completed,"other":reviews.len()-current_completed,"incomplete":truncated || unreadable>0,"references_omitted":reviews.len().saturating_sub(references.len()),"references":references}),
+    )
+}
+
+/// Recheck the saved PDF and job before exposing one immutable review record.
+pub fn read_review(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    document: &str,
+    attempt: &str,
+) -> Result<Value, String> {
+    ws.job(job)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job not found")?;
+    let metadata = ws
+        .documents()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|doc| doc.id == document)
+        .ok_or("Document not found")?;
+    let bytes = ws
+        .document_content(document)
+        .map_err(|e| e.to_string())?
+        .ok_or("Document not found")?;
+    if !metadata.name.to_ascii_lowercase().ends_with(".pdf") || !bytes.starts_with(b"%PDF-") {
+        return Err("Choose a saved PDF".into());
+    }
+    let review = crate::attempt_record::document_visual_review(ws, job, attempt)?;
+    let digest = waypoint_domain::sha256_hex(&bytes);
+    if review["document_sha256"].as_str() != Some(digest.as_str()) {
+        return Err(
+            "Saved review does not match these document bytes; check the document again".into(),
+        );
+    }
+    let current = crate::document_visual_context(ws, job)
+        .ok()
+        .map(|context| review["context_sha256"].as_str() == Some(context.digest.as_str()));
+    Ok(
+        json!({"document_id":document,"document_sha256":digest,"job_id":job.as_str(),"attempt_id":attempt,"context_current":current,"status":review["status"],"error":review["error"],"report":review["report"],"requires_user_review":true}),
     )
 }
 
@@ -85,6 +127,11 @@ mod tests {
         assert_eq!(summary["other"], 2);
         assert_eq!(summary["incomplete"], true);
         assert!(visual_summary(&json!({"reviews":[]})).is_err());
+        let reviews: Vec<_> = (0..13).map(|n|json!({"attempt_id":format!("{n:032x}"),"context_current":false,"status":"complete","report":{"complete":true}})).collect();
+        let bounded =
+            visual_summary(&json!({"reviews":reviews,"truncated":false,"unreadable":0})).unwrap();
+        assert_eq!(bounded["references"].as_array().unwrap().len(), 12);
+        assert_eq!(bounded["references_omitted"], 1);
     }
 
     #[test]
@@ -175,5 +222,52 @@ mod tests {
         .unwrap();
         let changed = inspect(&disk, &job, "pdf").unwrap();
         assert_eq!(changed["provenance"]["context_current"], false);
+        let visual_context = crate::document_visual_context(&disk, &job).unwrap();
+        let attempt = "0123456789abcdef0123456789abcdef";
+        let mut record = crate::attempt_record::AttemptRecord::start(&disk, &job, attempt, 1)
+            .unwrap()
+            .unwrap();
+        let material = record.material("resume.pdf", b"%PDF-fictional").unwrap();
+        record.document_visual_report(&json!({"status":"complete","material":material,"document_sha256":waypoint_domain::sha256_hex(b"%PDF-fictional"),"context_sha256":visual_context.digest,"report":{"complete":true,"findings":[]}})).unwrap();
+        assert_eq!(
+            read_review(&disk, &job, "pdf", attempt).unwrap()["context_current"],
+            true
+        );
+        disk.add_fact(
+            "Another fictional qualification",
+            waypoint_workspace::FactOrigin::UserAttested,
+        )
+        .unwrap();
+        assert_eq!(
+            read_review(&disk, &job, "pdf", attempt).unwrap()["context_current"],
+            false
+        );
+        disk.add_document("other-pdf", "other.pdf", b"%PDF-different", 1)
+            .unwrap();
+        assert!(read_review(&disk, &job, "other-pdf", attempt).is_err());
+        assert!(read_review(
+            &disk,
+            &JobIdentityId::new("unknown-job").unwrap(),
+            "pdf",
+            attempt
+        )
+        .is_err());
+        assert!(read_review(&disk, &job, "pdf", "../bad").is_err());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let body =
+            json!({"job_id":job.as_str(),"document_id":"pdf","attempt_id":attempt}).to_string();
+        write!(client, "POST /api/documents/job-check-review HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        crate::serve(&mut server, &mut disk, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"));
+        let payload: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(payload["attempt_id"], attempt);
+        assert_eq!(payload["context_current"], false);
     }
 }
