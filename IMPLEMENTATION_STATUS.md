@@ -1,3 +1,9 @@
+## Fractional viewport-edge inspection — 2026-11-09
+
+- The missing field in the inert captured-form fixture had its center at y=801.875 in an 802-pixel viewport. Chromium's hit test returned no element at that fractional edge point; after scrolling, all 20 controls were detected. Visibility inspection now samples an interior viewport pixel while requiring that point to remain inside the control. The same inert fixture then reported all 20 controls before scrolling and filled and verified one fictional text value. This establishes local structural behavior only; it does not validate the original employer site's dynamic flow or submission isolation.
+- A fictional edge-positioned textarea regression passed while an overlaid textarea remained excluded. Existing obscured-field and hidden/transparent-field browser tests passed; browser Clippy passed. All browser testing was headless and local.
+- Hosted checks for the earlier pushed commit `51fea7d7` completed: build-and-test, browser-e2e, PDF regression, agent-tool contracts, coverage, and code analysis passed. Supply-chain failed on the three unmaintained notices recorded below. These hosted results do not cover this later local fix.
+
 ## Inert captured-form qualification — 2026-11-03
 
 - A previously retained public Workable HTML capture was transformed locally into an inert fixture containing 20 standard controls. A headless file-based test detected 19 fields and filled and verified one text control using fictional data. The fixture contains no original scripts, form element, network attributes or entered values, is kept under ignored `target/`, and was not published. This establishes neither why one control was not detected nor performance on the real site, its JavaScript, validation, custom widgets or multi-step flow. No real application form was contacted or submitted during this qualification. The first local attempt failed on Windows extended-path URL handling; the corrected rerun passed.

@@ -2501,7 +2501,11 @@ impl CdpDriver {
             const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
             if (!needsReview && !outsideScrollArea && (this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement || (this instanceof HTMLInputElement && this.type !== 'file') || this.isContentEditable) && rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight) {
                 const root = visibleNode.getRootNode();
-                const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x, y) : null;
+                // Chromium rounds fractional hit-test coordinates. A center less
+                // than half a pixel from the viewport edge can round outside it.
+                // Sample an interior viewport pixel, still inside this control.
+                const hitX = Math.min(x, innerWidth - 1), hitY = Math.min(y, innerHeight - 1);
+                const hit = hitX >= rect.left && hitX < rect.right && hitY >= rect.top && hitY < rect.bottom && typeof root.elementFromPoint === 'function' ? root.elementFromPoint(hitX, hitY) : null;
                 if (!hit || (hit !== visibleNode && !visibleNode.contains(hit))) { needsReview = true; dialogObscured = !!hit?.closest('[role="dialog" i], dialog, [aria-modal="true" i]'); }
             }
             const visible = visibleNode.getClientRects().length > 0 && style.visibility !== 'hidden' && style.visibility !== 'collapse' && !needsReview;

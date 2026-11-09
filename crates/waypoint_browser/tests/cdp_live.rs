@@ -100,6 +100,26 @@ fn inert_private_form_structure_qualification() {
 
 #[test]
 #[ignore = "launches one local browser against a fictional fixture"]
+fn fractional_viewport_edge_keeps_visible_field_but_rejects_obstruction() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let form = driver
+        .open(&file_url("form_fractional_viewport_edge.html"))
+        .unwrap();
+    assert!(form
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#edge"));
+    assert!(!form
+        .schema
+        .fields
+        .iter()
+        .any(|field| field.selector == "#covered"));
+    assert!(form.walls.iter().any(|wall| wall.contains("obscured")));
+}
+
+#[test]
+#[ignore = "launches one local browser against a fictional fixture"]
 fn aria_invalid_fields_require_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     driver
