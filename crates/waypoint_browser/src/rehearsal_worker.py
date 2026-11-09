@@ -132,8 +132,10 @@ def copy_verified(root, files, destination, budget, content=False):
                 raise WorkerError('unsupported_snapshot_file')
             if len(actual) > 4096 or total > budget:
                 raise WorkerError('source_copy_budget_exceeded')
-    if actual != set(files) or shutil.disk_usage(destination.parent).free < total + 1024**3:
-        raise WorkerError('source_inventory_or_disk_budget_mismatch')
+    if actual != set(files):
+        raise WorkerError('source_inventory_mismatch')
+    if shutil.disk_usage(destination.parent).free < total + 1024**3:
+        raise WorkerError('source_copy_disk_budget_unavailable')
     destination.mkdir()
     copied = 0
     for name in sorted(files):
@@ -691,9 +693,11 @@ class Container:
             startup.startup.stdin, startup.startup.stdout, startup.startup.stderr = handles
             startup.attributes = ct.cast(attributes, P)
             args = [str(binary), '--headless=new', '--no-sandbox', '--no-first-run',
+                    '--enable-logging=stderr',
                     '--disable-gpu', '--disable-background-networking', '--disable-extensions',
                     '--disable-sync', '--no-default-browser-check', '--window-size=1280,900',
                     '--user-data-dir=' + str(self.folder / 'browser'), '--remote-debugging-pipe',
+                    '--log-file=' + str(self.folder / 'browser-diagnostics.log'),
                     f'--remote-debugging-io-pipes={handles[0]},{handles[1]}', 'about:blank']
             command = ct.create_unicode_buffer(subprocess.list2cmdline(args))
             temp = self.folder / 'Temp'
@@ -702,6 +706,7 @@ class Container:
                            'PATH': str(Path(os.environ['SystemRoot']) / 'System32'),
                            'LOCALAPPDATA': str(self.folder), 'APPDATA': str(self.folder),
                            'USERPROFILE': str(self.folder), 'TEMP': str(temp), 'TMP': str(temp)}
+            environment['CHROME_LOG_FILE'] = str(self.folder / 'browser-diagnostics.log')
             block = ct.create_unicode_buffer('\0'.join(f'{key}={value}' for key, value in sorted(environment.items())) + '\0\0')
             api.check(api.CreateProcessW(str(binary), command, None, None, True,
                 0x08000000 | 0x80000 | 4 | 0x400 | 0x4000, block, str(binary.parent),
@@ -873,6 +878,9 @@ def run():
                 if available_ram < 2 * 1024**3:
                     raise WorkerError('host_memory_pressure')
                 if (owner.folder / 'browser-errors.log').stat().st_size > 2 * 1024**2:
+                    raise WorkerError('browser_diagnostic_budget_exceeded')
+                log = owner.folder / 'browser-diagnostics.log'
+                if log.exists() and log.stat().st_size > 2 * 1024**2:
                     raise WorkerError('browser_diagnostic_budget_exceeded')
                 resource_at = time.monotonic() + .5
             if time.monotonic() >= storage_at:

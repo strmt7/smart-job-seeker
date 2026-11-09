@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+import tempfile
 from unittest.mock import patch
 
 TOOLS = Path(__file__).resolve().parents[1]
@@ -33,6 +34,28 @@ class TestQualificationDenominators(unittest.TestCase):
         for summary in ['Ran 6 tests in 1.0s\nOK (skipped=1)\n', 'Ran 0 tests in 0.0s\nOK\n', 'OK']:
             with self.subTest(summary=summary), self.assertRaises(RuntimeError):
                 qualification.test_denominator(summary, 'python', 6)
+
+    def test_control_cleanup_removes_only_the_owned_execution_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            control = folder / 'control-engine'
+            control.mkdir()
+            (control / 'fixture.bin').write_bytes(b'fictional runtime')
+            source = folder / 'source.bin'
+            source.write_bytes(b'preserve source')
+            qualification.cleanup_control_runtime(folder)
+            self.assertFalse(control.exists())
+            self.assertEqual(source.read_bytes(), b'preserve source')
+
+    def test_cleanup_failure_cannot_leave_a_successful_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            evidence = {'complete': True}
+            with patch.object(qualification, 'cleanup_control_runtime', side_effect=RuntimeError('fixture')):
+                with self.assertRaises(RuntimeError): qualification.finish_evidence(evidence, folder)
+            self.assertFalse(evidence['complete'])
+            self.assertFalse(evidence['control_cleanup_complete'])
+            self.assertTrue((folder / 'result.private.json').is_file())
 
 
 if __name__ == '__main__':

@@ -15,10 +15,10 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    pub fn start() -> Self {
+    pub fn start_on(address: std::net::SocketAddr) -> Self {
         let counts = Arc::new(Mutex::new(BTreeMap::new()));
         let received = counts.clone();
-        let fixture = HttpFixture::start_observing(move |path| {
+        let fixture = HttpFixture::start_observing_on(address, move |path| {
             let channel = path
                 .strip_prefix('/')
                 .ok_or_else(|| std::io::Error::other("invalid receiver path"))?;
@@ -63,7 +63,8 @@ impl Receiver {
 }
 
 pub fn page(origin: &str) -> String {
-    assert!(origin.starts_with("http://127.0.0.1:"));
+    let address: std::net::SocketAddr = origin.strip_prefix("http://").unwrap().parse().unwrap();
+    assert!(address.ip().is_loopback() && address.port() != 0);
     format!(
         r#"<!doctype html><meta charset="utf-8">
 <label for="name">Fictional name</label><input id="name"><span id="status" data-fired="false"></span>

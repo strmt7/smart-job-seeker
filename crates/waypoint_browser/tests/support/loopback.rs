@@ -1,7 +1,7 @@
 //! Bounded fictional HTTP fixtures. Idle speculative connections must not block
 //! navigation, and dropping a fixture joins every thread, including on panic.
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -20,17 +20,28 @@ pub struct HttpFixture {
 
 impl HttpFixture {
     pub fn start(body: impl Into<String>) -> Self {
-        Self::start_inner(body.into(), None)
+        Self::start_inner("127.0.0.1:0".parse().unwrap(), body.into(), None)
     }
 
     pub fn start_observing(
         observer: impl Fn(&str) -> io::Result<()> + Send + Sync + 'static,
     ) -> Self {
-        Self::start_inner(String::new(), Some(Arc::new(observer)))
+        Self::start_observing_on("127.0.0.1:0".parse().unwrap(), observer)
     }
 
-    fn start_inner(body: String, observer: Option<RequestObserver>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    pub fn start_observing_on(
+        address: SocketAddr,
+        observer: impl Fn(&str) -> io::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_inner(address, String::new(), Some(Arc::new(observer)))
+    }
+
+    fn start_inner(address: SocketAddr, body: String, observer: Option<RequestObserver>) -> Self {
+        assert!(
+            address.ip().is_loopback() && address.port() == 0,
+            "fictional fixtures require an ephemeral loopback address"
+        );
+        let listener = TcpListener::bind(address).unwrap();
         listener.set_nonblocking(true).unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let body = Arc::new(body);

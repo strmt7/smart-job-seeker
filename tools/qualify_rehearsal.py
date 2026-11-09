@@ -10,6 +10,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -21,6 +22,7 @@ import tempfile
 import time
 
 from owned_process import ChildContainment, CREATE_SUSPENDED, admit_child_memory_bytes, resume_owned_child
+from internet_canary import InternetCanary
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = '''<!doctype html><meta charset="utf-8"><title>Fictional rehearsal</title>
@@ -124,10 +126,48 @@ def test_denominator(text: str, kind: str, expected: int) -> dict[str, int]:
     return {'executed_tests': passed, 'ignored_tests': ignored}
 
 
+def cleanup_control_runtime(folder: Path):
+    control = folder / 'control-engine'
+    if control.exists():
+        if (not control.is_dir() or control.is_symlink() or control.is_junction()
+                or control.resolve().parent != folder.resolve()):
+            raise RuntimeError('Control-runtime cleanup path changed')
+        shutil.rmtree(control)
+
+
+def finish_evidence(evidence: dict, folder: Path, canary=None):
+    try:
+        if canary is not None:
+            if not evidence.get('complete'):
+                try:
+                    evidence['internet_receiver_on_failure'] = canary.snapshot()
+                except RuntimeError:
+                    evidence['internet_receiver_on_failure'] = {'inspection': 'unavailable'}
+            canary.close()
+            evidence['internet_receiver_deleted'] = True
+    except RuntimeError:
+        evidence['complete'] = False
+        evidence['internet_receiver_deleted'] = False
+        raise
+    finally:
+        try:
+            cleanup_control_runtime(folder)
+            evidence['control_cleanup_complete'] = True
+        except (RuntimeError, OSError):
+            evidence['complete'] = False
+            evidence['control_cleanup_complete'] = False
+            raise
+        finally:
+            evidence['ended_at'] = datetime.now(timezone.utc).isoformat()
+            (folder / 'result.private.json').write_text(json.dumps(evidence, indent=2), encoding='utf-8')
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--python', type=Path, default=Path(sys.executable))
+    parser.add_argument('--public-egress', action='store_true',
+        help='Opt in to a temporary free public HTTPS receiver; fictional markers only, no account/key')
     args = parser.parse_args()
     if os.name != 'nt':
         parser.error('This qualification requires 64-bit Windows')
@@ -140,6 +180,12 @@ def main() -> int:
     target = REPO / 'target'
     target.mkdir(exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='rehearsal-qualification-', dir=target))
+    control = folder / 'control-engine'
+    worker_path = REPO / 'crates/waypoint_browser/src/rehearsal_worker.py'
+    spec = importlib.util.spec_from_file_location('qualification_copy_worker', worker_path)
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+    worker.copy_verified(args.engine, files, control, 600 * 1024**2)
     content = folder / 'content'
     content.mkdir()
     (content / 'index.html').write_text(FIXTURE, encoding='utf-8')
@@ -153,20 +199,31 @@ def main() -> int:
     environment = os.environ.copy()
     environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path), WAYPOINT_REHEARSAL_CONFIG_SHA256=digest(path),
                        WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2',
-                       WAYPOINT_BROWSER=str(args.engine / 'chrome-headless-shell.exe'))
+                       WAYPOINT_BROWSER=str(control / 'chrome-headless-shell.exe'))
     sources = [REPO / 'crates/waypoint_browser' / item for item in [
         'Cargo.toml', 'src/cdp.rs', 'src/lib.rs', 'src/rehearsal.rs', 'src/rehearsal_worker.py',
         'tests/rehearsal_live.rs', 'tests/test_rehearsal_windows.py', 'tests/support/rehearsal_network.rs',
         'tests/support/loopback.rs']]
-    sources += [Path(__file__), REPO / 'Cargo.lock', REPO / 'tools/owned_process.py']
+    sources.append(REPO / 'crates/waypoint_browser/tests/support/rehearsal_relay.rs')
+    sources += [Path(__file__), REPO / 'Cargo.lock', REPO / 'tools/owned_process.py', REPO / 'tools/internet_canary.py']
     evidence = {'schema': 1, 'source_sha256': {p.relative_to(REPO).as_posix(): digest(p) for p in sources},
                 'started_at': datetime.now(timezone.utc).isoformat(),
                 'config_sha256': digest(path), 'results': [], 'complete': False,
                 'scope': 'fictional local forms and loopback receiver; no general no-egress claim'}
     receipt = folder / 'result.private.json'
+    canary = None
     try:
+        if args.public_egress:
+            canary = InternetCanary.create()
+            spec_path = folder / 'internet-canary.private.json'
+            canary.write_spec(spec_path)
+            environment.update(WAYPOINT_INTERNET_CANARY_CONFIG=str(spec_path),
+                               WAYPOINT_INTERNET_CANARY_SHA256=digest(spec_path))
+        browser_command = [cargo, 'test', '-p', 'waypoint_browser', '--test', 'rehearsal_live', '--', '--ignored', '--test-threads=1']
+        if not args.public_egress:
+            browser_command += ['--skip', 'public_https_canary_observations']
         commands = [
-            ('rust', 2, [cargo, 'test', '-p', 'waypoint_browser', '--test', 'rehearsal_live', '--', '--ignored', '--test-threads=1']),
+            ('rust', 5 if args.public_egress else 4, browser_command),
             ('rust', 1, [cargo, 'test', '-p', 'waypoint_browser', '--lib', 'consumer_failure_recovers_the_profile_before_releasing_admission', '--', '--ignored', '--test-threads=1']),
             ('python', 6, [str(args.python), '-X', 'utf8', '-B', str(REPO / 'crates/waypoint_browser/tests/test_rehearsal_windows.py'), '-v']),
         ]
@@ -194,12 +251,17 @@ def main() -> int:
             'minimum_sampled_available_ram_bytes': min(s['minimum_sampled_available_ram_bytes'] for s in sessions),
             'maximum_sampled_profile_bytes': max(s['maximum_sampled_profile_bytes'] for s in sessions),
         }
+        if inventory(args.engine) != files:
+            raise RuntimeError('Source runtime changed during qualification')
+        evidence['source_runtime_unchanged'] = True
+        if canary is not None:
+            observations = json.loads((folder / 'internet-browser.private.json').read_text(encoding='utf-8'))
+            evidence['internet_egress'] = canary.verify(observations)
         if evidence['source_sha256'] != {p.relative_to(REPO).as_posix(): digest(p) for p in sources}:
             raise RuntimeError('Qualification source changed during execution')
         evidence.update(complete=True, screenshot_sha256=digest(screenshot))
     finally:
-        evidence['ended_at'] = datetime.now(timezone.utc).isoformat()
-        receipt.write_text(json.dumps(evidence, indent=2), encoding='utf-8')
+        finish_evidence(evidence, folder, canary)
     print('Headless qualification passed; private evidence: ' + str(receipt))
     return 0
 

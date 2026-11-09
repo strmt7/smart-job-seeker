@@ -325,11 +325,38 @@ static TEST_OWNER_READY_DELAY_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(windows)]
+fn owned_group_command(command: &Command) -> processkit::Command {
+    use processkit::{Command as GroupCommand, Stdin, StdioMode};
+    let program = command.get_program().to_owned();
+    let args: Vec<_> = command.get_args().map(std::ffi::OsStr::to_owned).collect();
+    let environment: Vec<_> = command
+        .get_envs()
+        .map(|(key, value)| (key.to_owned(), value.map(std::ffi::OsStr::to_owned)))
+        .collect();
+    let current_dir = command.get_current_dir().map(std::path::Path::to_owned);
+    let mut command = GroupCommand::new(program)
+        .args(args)
+        .stdin(Stdin::empty())
+        .stdout(StdioMode::Null)
+        .stderr(StdioMode::Null)
+        .create_no_window();
+    for (key, value) in environment {
+        command = match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
+    if let Some(folder) = current_dir {
+        command = command.current_dir(folder);
+    }
+    command
+}
+
+#[cfg(windows)]
 impl OwnedBrowserChild {
     fn spawn(command: &mut Command, timeout: Duration, profile: &Path) -> Result<Self, String> {
-        use processkit::{Command as GroupCommand, ProcessGroup, Stdin, StdioMode};
-        let program = command.get_program().to_owned();
-        let args: Vec<_> = command.get_args().map(std::ffi::OsStr::to_owned).collect();
+        use processkit::ProcessGroup;
+        let command = owned_group_command(command);
         let profile = profile.to_owned();
         let (commands, receiver) = std::sync::mpsc::channel();
         let (ready, started) = std::sync::mpsc::sync_channel(1);
@@ -342,12 +369,6 @@ impl OwnedBrowserChild {
                         .build()
                         .map_err(|e| e.to_string())?;
                     let group = ProcessGroup::new().map_err(|e| e.to_string())?;
-                    let command = GroupCommand::new(program)
-                        .args(args)
-                        .stdin(Stdin::empty())
-                        .stdout(StdioMode::Null)
-                        .stderr(StdioMode::Null)
-                        .create_no_window();
                     let process = runtime
                         .block_on(group.start(&command))
                         .map_err(|e| e.to_string())?;
@@ -550,7 +571,16 @@ impl BrowserProcess {
             cmd.arg("--headless=new");
         }
         cmd.arg("--remote-debugging-port=0")
+            .arg("--enable-logging=stderr")
             .arg(format!("--user-data-dir={}", user_data_dir.display()))
+            .env(
+                "CHROME_LOG_FILE",
+                user_data_dir.join("browser-diagnostics.log"),
+            )
+            .arg(format!(
+                "--log-file={}",
+                user_data_dir.join("browser-diagnostics.log").display()
+            ))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-extensions")
@@ -1149,6 +1179,27 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn owned_browser_command_preserves_environment_and_working_directory() {
+        let mut original = Command::new("fictional-browser.exe");
+        original
+            .arg("--headless")
+            .env("CHROME_LOG_FILE", "fictional-profile/browser.log")
+            .env_remove("FICTIONAL_REMOVED_VARIABLE")
+            .current_dir("fictional-profile");
+        let owned = owned_group_command(&original);
+        assert_eq!(owned.working_dir(), Some(Path::new("fictional-profile")));
+        assert!(owned.env_overrides().contains(&(
+            "CHROME_LOG_FILE".into(),
+            Some("fictional-profile/browser.log".into())
+        )));
+        assert!(owned
+            .env_overrides()
+            .contains(&("FICTIONAL_REMOVED_VARIABLE".into(), None)));
+        assert_eq!(owned.command_line(), "fictional-browser.exe --headless");
+    }
 
     #[test]
     fn checked_pump_distinguishes_idle_from_invalid_protocol() {

@@ -13,6 +13,9 @@ mod network;
 #[path = "support/loopback.rs"]
 pub mod loopback;
 
+#[path = "support/rehearsal_relay.rs"]
+pub mod relay;
+
 fn setup() -> (PathBuf, RehearsalConfig, PathBuf) {
     let python =
         PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").expect("explicit Python"));
@@ -40,6 +43,43 @@ fn setup() -> (PathBuf, RehearsalConfig, PathBuf) {
         config,
         PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap()),
     )
+}
+
+fn assert_matching_control_engine(config: &RehearsalConfig) {
+    use std::io::Read;
+    let executable = std::fs::canonicalize(
+        std::env::var_os("WAYPOINT_BROWSER").expect("explicit matched control engine"),
+    )
+    .unwrap();
+    let root = executable.parent().unwrap();
+    assert_eq!(executable.file_name().unwrap(), "chrome-headless-shell.exe");
+    let mut total = 0u64;
+    for (name, expected) in &config.engine_files {
+        let relative = std::path::Path::new(name);
+        assert!(
+            !name.contains(['\\', ':'])
+                && relative
+                    .components()
+                    .all(|p| matches!(p, std::path::Component::Normal(_)))
+        );
+        let file = std::fs::canonicalize(root.join(relative)).unwrap();
+        assert!(file.starts_with(root));
+        let size = std::fs::metadata(&file).unwrap().len();
+        total += size;
+        assert!(size <= 300 * 1024 * 1024 && total <= 600 * 1024 * 1024);
+        let mut bytes = Vec::with_capacity(size as usize + 1);
+        std::fs::File::open(file)
+            .unwrap()
+            .take(size + 1)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes.len() as u64, size);
+        assert_eq!(
+            &waypoint_domain::sha256_hex(&bytes),
+            expected,
+            "control engine bytes differ: {name}"
+        );
+    }
 }
 
 #[test]
@@ -144,16 +184,19 @@ fn isolated_driver_fills_navigates_captures_and_removes_profile() {
 #[test]
 #[ignore = "requires an explicitly supplied engine; fictional loopback traffic only"]
 fn isolated_scripted_channels_have_a_matching_unrestricted_baseline() {
+    scripted_channel_qualification("127.0.0.1:0".parse().unwrap());
+}
+
+#[test]
+#[ignore = "requires an explicitly supplied engine and IPv6 loopback; no external traffic"]
+fn isolated_ipv6_channels_have_a_matching_unrestricted_baseline() {
+    scripted_channel_qualification("[::1]:0".parse().unwrap());
+}
+
+fn scripted_channel_qualification(address: std::net::SocketAddr) {
     let (python, mut config, local) = setup();
-    assert_eq!(
-        std::fs::canonicalize(
-            std::env::var_os("WAYPOINT_BROWSER").expect("explicit matched headless engine")
-        )
-        .unwrap(),
-        std::fs::canonicalize(config.engine_root.join("chrome-headless-shell.exe")).unwrap(),
-        "control must use the same engine as the isolated session"
-    );
-    let server = network::Receiver::start();
+    assert_matching_control_engine(&config);
+    let server = network::Receiver::start_on(address);
     let folder = config.content_root.parent().unwrap().join(format!(
         "channel-snapshot-{}-{}",
         std::process::id(),
@@ -240,4 +283,226 @@ fn isolated_scripted_channels_have_a_matching_unrestricted_baseline() {
         "isolated script traffic reached loopback"
     );
     server.finish();
+}
+
+fn start_relay_attempt(driver: &mut CdpDriver) {
+    let _ = driver.execute(&BrowserCommand::Fill {
+        selector: "#name".into(),
+        value: PacketValue::Text("Fictional".into()),
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    loop {
+        if driver
+            .read_attribute("#status", "data-started")
+            .unwrap()
+            .as_deref()
+            == Some("true")
+        {
+            return;
+        }
+        let error = driver.read_attribute("#status", "data-error").unwrap();
+        assert!(
+            error.is_none() && std::time::Instant::now() < deadline,
+            "WebRTC relay attempt did not start: {error:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[test]
+#[ignore = "explicit matched headless engine; fictional IPv4/IPv6 UDP/TCP relay receivers only"]
+fn isolated_webrtc_relay_channels_have_matching_unrestricted_baselines() {
+    let (python, config, local) = setup();
+    assert_matching_control_engine(&config);
+    let root = config.content_root.parent().unwrap().to_owned();
+    let mut observations = Vec::new();
+    for address in ["127.0.0.1:0", "[::1]:0"] {
+        for transport in [relay::Transport::Udp, relay::Transport::Tcp] {
+            let receiver = relay::RelayFixture::start(address.parse().unwrap(), transport);
+            let label = format!("{address}-{transport:?}");
+            let folder = root.join(format!(
+                "relay-snapshot-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&folder).unwrap();
+            let source = relay::page(&receiver.url);
+            std::fs::write(folder.join("index.html"), &source).unwrap();
+            let mut selected = config.clone();
+            selected.content_root = folder.clone();
+            selected.content_files = [(
+                "index.html".into(),
+                waypoint_domain::sha256_hex(source.as_bytes()),
+            )]
+            .into();
+            let mut normal = CdpDriver::launch(vec![]).unwrap();
+            let version = normal.browser_version().unwrap();
+            let display = folder.to_string_lossy();
+            let display = display
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&display)
+                .replace('\\', "/");
+            normal
+                .open(&format!("file:///{display}/index.html"))
+                .unwrap();
+            start_relay_attempt(&mut normal);
+            assert!(
+                receiver.wait_for_baseline(),
+                "missing unrestricted TURN allocation baseline: {label}; {:?}",
+                receiver.counts()
+            );
+            normal.execute(&BrowserCommand::Close).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let baseline = receiver.counts();
+            let (mut driver, evidence) = CdpDriver::launch_rehearsal(&python, selected).unwrap();
+            assert_eq!(version, driver.browser_version().unwrap());
+            driver.open(&evidence.entry_url).unwrap();
+            start_relay_attempt(&mut driver);
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            driver.execute(&BrowserCommand::Close).unwrap();
+            let after = receiver.counts();
+            assert_eq!(
+                baseline, after,
+                "isolated relay traffic reached loopback: {label}"
+            );
+            assert!(!local
+                .join("Packages")
+                .join(evidence.profile_name)
+                .join("AC")
+                .exists());
+            observations.push(serde_json::json!({"case":label,"control_version":version,"baseline":baseline,"after_isolation":after}));
+            receiver.finish();
+        }
+    }
+    std::fs::write(
+        root.join("relay-observations.private.json"),
+        serde_json::to_vec_pretty(&observations).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Collect observations only. The opt-in Python controller must independently
+/// verify receiver history and both controls before claiming protection.
+#[test]
+#[ignore = "requires an explicitly created temporary public receiver; no employer site or real data"]
+fn public_https_canary_observations() {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Canary {
+        schema: u32,
+        root_url: String,
+        nonce: String,
+    }
+    let (python, config, local) = setup();
+    assert_matching_control_engine(&config);
+    let root = config.content_root.parent().unwrap();
+    let spec = std::fs::canonicalize(
+        std::env::var_os("WAYPOINT_INTERNET_CANARY_CONFIG").expect("explicit temporary receiver"),
+    )
+    .unwrap();
+    assert!(spec.starts_with(std::fs::canonicalize(root).unwrap()));
+    let raw = std::fs::read(spec).unwrap();
+    assert!(raw.len() <= 4096);
+    assert_eq!(
+        waypoint_domain::sha256_hex(&raw),
+        std::env::var("WAYPOINT_INTERNET_CANARY_SHA256").unwrap()
+    );
+    let canary: Canary = serde_json::from_slice(&raw).unwrap();
+    assert_eq!(canary.schema, 1);
+    let id = canary
+        .root_url
+        .strip_prefix("https://webhook.site/")
+        .expect("fixed public receiver service");
+    let parts: Vec<_> = id.split('-').collect();
+    assert_eq!(
+        parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+        [8, 4, 4, 4, 12]
+    );
+    assert!(parts
+        .iter()
+        .all(|p| p.bytes().all(|b| b.is_ascii_hexdigit())));
+    assert!(canary.nonce.len() == 32 && canary.nonce.bytes().all(|b| b.is_ascii_hexdigit()));
+    let mut observations = Vec::new();
+    let mut control_version = None;
+    for stage in ["control_before", "isolated", "control_after"] {
+        let url = format!("{}?stage={stage}&probe={}", canary.root_url, canary.nonce);
+        let body = format!("fictional-qualification:{stage}:{}", canary.nonce);
+        let source = format!(
+            r#"<!doctype html><meta charset="utf-8"><label for="name">Fictional name</label><input id="name"><span id="status"></span>
+<script>document.querySelector('#name').addEventListener('input',()=>{{const status=document.querySelector('#status');if(status.dataset.invoked)return;status.dataset.invoked='true';fetch({},{{method:'POST',mode:'cors',body:{}}}).then(response=>status.dataset.result=response.ok?'delivered':'failed').catch(()=>status.dataset.result='failed');}});</script>"#,
+            serde_json::to_string(&url).unwrap(),
+            serde_json::to_string(&body).unwrap()
+        );
+        let folder = root.join(format!(
+            "internet-{stage}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("index.html"), &source).unwrap();
+        let mut selected = config.clone();
+        selected.content_root = folder.clone();
+        selected.content_files = [(
+            "index.html".into(),
+            waypoint_domain::sha256_hex(source.as_bytes()),
+        )]
+        .into();
+        let (mut driver, evidence) = if stage == "isolated" {
+            let (driver, evidence) = CdpDriver::launch_rehearsal(&python, selected).unwrap();
+            (driver, Some(evidence))
+        } else {
+            (CdpDriver::launch(vec![]).unwrap(), None)
+        };
+        let version = driver.browser_version().unwrap();
+        if let Some(expected) = &control_version {
+            assert_eq!(&version, expected);
+        } else {
+            control_version = Some(version.clone());
+        }
+        let display = folder.to_string_lossy();
+        let display = display
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&display)
+            .replace('\\', "/");
+        let entry = evidence
+            .as_ref()
+            .map(|e| e.entry_url.clone())
+            .unwrap_or_else(|| format!("file:///{display}/index.html"));
+        driver.open(&entry).unwrap();
+        let _ = driver.execute(&BrowserCommand::Fill {
+            selector: "#name".into(),
+            value: PacketValue::Text("Fictional".into()),
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let result = loop {
+            if let Some(result) = driver.read_attribute("#status", "data-result").unwrap() {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "public probe did not complete: {stage}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        driver.execute(&BrowserCommand::Close).unwrap();
+        if let Some(evidence) = evidence {
+            assert!(!local
+                .join("Packages")
+                .join(evidence.profile_name)
+                .join("AC")
+                .exists());
+        }
+        observations.push(serde_json::json!({"stage":stage,"result":result,"version":version}));
+        std::fs::write(
+            root.join("internet-browser.private.json"),
+            serde_json::to_vec_pretty(&observations).unwrap(),
+        )
+        .unwrap();
+    }
 }

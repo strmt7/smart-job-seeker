@@ -123,7 +123,12 @@ build and configuration.
    job assignment and recovery now cover selected startup/crash/control failures,
    including an abandoned mutex. Broader failure schedules, power loss,
    additional egress/broker channels and installation remain open. The nine-channel
-   control now requires the same engine bytes and the shared concurrent receiver.
+   control now requires every selected engine file to match and uses a private
+   execution copy plus the shared concurrent receiver. IPv6 loopback and four
+   IPv4/IPv6 UDP/TCP TURN cases now have positive controls. One explicitly opted-in
+   public HTTPS receiver check passed with delivered controls before/after,
+   no observed isolated arrivals and confirmed receiver deletion. These scoped
+   results do not qualify public UDP, DNS-specific paths or external brokers.
    There is no interface exposure or unrestricted
    fallback. Real-site interaction is not enabled. Network-disabled replay also needs a
    bounded way to capture/replay permitted assets and explicit handling of

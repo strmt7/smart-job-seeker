@@ -30,6 +30,39 @@ fn observed_channels_wait_for_complete_bodies_and_tolerate_idle_connections() {
     fixture.finish();
 }
 
+#[test]
+fn observed_ipv6_requests_use_loopback_only() {
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = observed.clone();
+    let fixture = HttpFixture::start_observing_on("[::1]:0".parse().unwrap(), move |path| {
+        received.lock().unwrap().push(path.to_owned());
+        Ok(())
+    });
+    let mut client = connect(&fixture);
+    client
+        .write_all(b"GET /ipv6 HTTP/1.1\r\nHost: [::1]\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    client.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 204"));
+    assert_eq!(observed.lock().unwrap().as_slice(), &["/ipv6"]);
+    fixture.finish();
+}
+
+#[test]
+fn observed_fixture_refuses_non_loopback_addresses() {
+    assert!(std::panic::catch_unwind(|| HttpFixture::start_observing_on(
+        "0.0.0.0:0".parse().unwrap(),
+        |_| Ok(())
+    ))
+    .is_err());
+    assert!(std::panic::catch_unwind(|| HttpFixture::start_observing_on(
+        "[::]:0".parse().unwrap(),
+        |_| Ok(())
+    ))
+    .is_err());
+}
+
 fn connect(fixture: &HttpFixture) -> TcpStream {
     let stream = TcpStream::connect(fixture.origin.strip_prefix("http://").unwrap()).unwrap();
     stream
