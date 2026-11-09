@@ -3132,7 +3132,7 @@ fn paused_request_disconnect_qualification() {
     use serde_json::json;
     use std::io::{Read, Write};
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
     use std::time::{Duration, Instant};
@@ -3141,7 +3141,7 @@ fn paused_request_disconnect_qualification() {
     let port = listener.local_addr().unwrap().port();
     listener.set_nonblocking(true).unwrap();
     let stopped = Arc::new(AtomicBool::new(false));
-    let received = Arc::new(AtomicBool::new(false));
+    let received = Arc::new(AtomicUsize::new(0));
     let (worker_stop, worker_received) = (stopped.clone(), received.clone());
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -3152,7 +3152,7 @@ fn paused_request_disconnect_qualification() {
                     let mut data = [0u8; 2048];
                     let size = stream.read(&mut data).unwrap_or(0);
                     if data[..size].starts_with(b"POST /fictional-submit ") {
-                        worker_received.store(true, Ordering::Relaxed);
+                        worker_received.fetch_add(1, Ordering::Relaxed);
                     }
                     let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                 }
@@ -3176,6 +3176,13 @@ fn paused_request_disconnect_qualification() {
         cdp.pump_checked(Duration::from_millis(100)).unwrap();
     }
     assert!(cdp.saw_event("Page.loadEventFired"));
+    let version = cdp.call("Browser.getVersion", json!({})).unwrap();
+    let baseline = cdp.call("Runtime.evaluate", json!({
+        "expression":"fetch('/fictional-submit',{method:'POST',body:'baseline'}).then(()=>true)",
+        "awaitPromise":true,"returnByValue":true
+    })).unwrap();
+    assert_eq!(baseline["result"]["value"], true);
+    assert_eq!(received.load(Ordering::Relaxed), 1);
     cdp.call(
         "Fetch.enable",
         json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
@@ -3187,18 +3194,36 @@ fn paused_request_disconnect_qualification() {
         cdp.pump_checked(Duration::from_millis(100)).unwrap();
     }
     assert!(cdp.saw_event("Fetch.requestPaused"));
-    assert!(!received.load(Ordering::Relaxed));
+    assert_eq!(received.load(Ordering::Relaxed), 1);
     drop(cdp);
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !received.load(Ordering::Relaxed) && Instant::now() < deadline {
+    let disconnected_at = Instant::now();
+    let deadline = disconnected_at + Duration::from_secs(3);
+    while received.load(Ordering::Relaxed) == 1 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
     stopped.store(true, Ordering::Relaxed);
     server.join().unwrap();
-    assert!(
-        received.load(Ordering::Relaxed),
-        "disconnect behavior changed; reassess the isolation design"
-    );
+    // This measures browser behavior; delivery and non-delivery are both valid
+    // observations. Neither qualifies interception as a no-submission boundary.
+    let report = json!({
+        "schema_version": 1,
+        "browser": version,
+        "baseline_posts": 1,
+        "posts_while_paused": 0,
+        "posts_after_disconnect": received.load(Ordering::Relaxed).saturating_sub(1),
+        "observation_budget_ms": 3000,
+        "observation_elapsed_ms": disconnected_at.elapsed().as_millis(),
+        "qualifies_submission_isolation": false
+    });
+    let directory =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/browser-qualification");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("paused-request-disconnect.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    eprintln!("Disconnect qualification observation: {report}");
 }
 
 #[test]

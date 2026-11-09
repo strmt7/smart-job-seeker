@@ -108,6 +108,13 @@ jobs:
         # The CI job exercises local fixtures only. The separate scripted-submit
         # diagnostic demonstrates an open bug and is not a passing safety test.
         run: cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1 --skip public_listing_navigation_probe --skip identified_public_navigation_probe --skip generic_click_can_trigger_scripted_form_submission_on_loopback --skip inert_private_form_structure_qualification
+      - name: Retain browser qualification observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-qualification-observations
+          path: target/browser-qualification/*.json
+          if-no-files-found: warn
 
   supply-chain:
     runs-on: ubuntu-latest

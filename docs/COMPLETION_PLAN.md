@@ -1,6 +1,6 @@
 # Waypoint completion plan
 
-Status: active development, updated 2026-11-03. This plan translates the requested
+Status: active development, updated 2026-11-09. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no
 defensible completion percentage or delivery date yet: the unmeasured work is
@@ -98,6 +98,17 @@ build and configuration.
    connection was dropped while the browser remained running. Interception
    alone therefore does not fail closed on disconnect on this host.
    Interception failure, asynchronous actions and teardown need separate tests.
+   Current runner and local disconnect observations differ, so the probe now
+   records version-bound results instead of assuming delivery always occurs.
+   The observations cannot qualify a no-submission boundary. A Windows
+   zero-capability AppContainer feasibility probe blocked one loopback HTTP
+   request and rendered a local fictional page, but inherited-pipe Chromium
+   control remains unresolved. Investigate that compatibility before integrating
+   a rehearsal mode; never relax network capabilities or silently run outside
+   the container to make it start. Network-disabled replay would also need a
+   bounded way to capture/replay permitted assets and explicit handling of
+   server-dependent validation and missing steps. No live-form interaction is
+   authorized by these partial results.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,
    PDF conversion and page-by-page review. Compare ATS-readable text and visual
