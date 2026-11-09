@@ -1503,6 +1503,40 @@ fn forced_parent_browser_helper() {
 fn forced_parent_termination_closes_owned_browser_tree() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    // Helpers must never create a console on the user's desktop.
+    fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+        use std::os::windows::process::CommandExt;
+        let mut command = Command::new(program);
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command
+    }
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    struct Identity {
+        pid: u32,
+        created: String,
+        name: String,
+    }
+    fn rows(output: std::process::Output) -> Vec<Identity> {
+        assert!(
+            output.status.success(),
+            "process observer failed: {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(4096)])
+        );
+        assert!(
+            output.stdout.len() <= 64 * 1024,
+            "observer output budget exceeded"
+        );
+        let rows: Vec<Identity> = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(rows.len() <= 64, "observer identity budget exceeded");
+        assert!(rows.iter().all(|row| row.pid > 0
+            && row.name.len() <= 260
+            && !row.created.is_empty()
+            && row.created.len() <= 32
+            && row.created.bytes().all(|b| b.is_ascii_digit())));
+        rows
+    }
     let temp = std::env::temp_dir();
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1520,7 +1554,7 @@ fn forced_parent_termination_closes_owned_browser_tree() {
         }
     }
     let mut helper = Helper(
-        Command::new(std::env::current_exe().unwrap())
+        hidden_command(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "forced_parent_browser_helper"])
             .env("WAYPOINT_PARENT_TEST_READY", &ready)
             .stdin(Stdio::null())
@@ -1537,102 +1571,54 @@ fn forced_parent_termination_closes_owned_browser_tree() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let profile = std::fs::read_to_string(&ready).ok();
-    let profile = profile.expect("helper did not establish its browser");
-    let expected_prefix = format!("waypoint-profile-{helper_pid}-");
+    let profile = std::fs::read_to_string(&ready).expect("helper did not establish its browser");
     let profile_path = std::path::PathBuf::from(&profile);
     assert_eq!(profile_path.parent(), Some(temp.as_path()));
     assert!(profile_path
         .file_name()
         .unwrap()
         .to_string_lossy()
-        .starts_with(&expected_prefix));
-    let query = || {
-        let output = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "@(Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe' OR Name = 'msedge.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE) }).Count"])
-            .env("WAYPOINT_TEST_PROFILE", &profile)
-            .stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
-        assert!(output.status.success());
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .trim()
-            .parse::<u32>()
-            .unwrap()
-    };
-    let initially_running = query();
-    let tree = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", "$all=@(Get-CimInstance Win32_Process); $ids=[System.Collections.Generic.HashSet[int]]::new(); foreach($p in $all){if($p.Name -in @('chrome.exe','msedge.exe') -and $p.CommandLine -and $p.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE)){[void]$ids.Add([int]$p.ProcessId)}}; do{$before=$ids.Count; foreach($p in $all){if($ids.Contains([int]$p.ParentProcessId)){[void]$ids.Add([int]$p.ProcessId)}}}while($ids.Count -gt $before); $ids | Sort-Object"])
-        .env("WAYPOINT_TEST_PROFILE", &profile)
-        .stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
-    assert!(tree.status.success());
-    let observed_pids: Vec<u32> = String::from_utf8(tree.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| line.trim().parse().unwrap())
-        .collect();
+        .starts_with(&format!("waypoint-profile-{helper_pid}-")));
+    let observed = rows(hidden_command("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $all=@(Get-CimInstance Win32_Process); if(-not @($all | Where-Object { $_.ProcessId -eq $PID }).Count){throw 'observer self identity absent'}; $ids=[System.Collections.Generic.HashSet[int]]::new(); foreach($p in $all){if($p.Name -in @('chrome.exe','msedge.exe') -and $p.CommandLine -and $p.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE)){[void]$ids.Add([int]$p.ProcessId)}}; do{$before=$ids.Count; foreach($p in $all){if($ids.Contains([int]$p.ParentProcessId)){[void]$ids.Add([int]$p.ProcessId)}}}while($ids.Count -gt $before); $rows=@($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object { @{pid=[int]$_.ProcessId;created=$_.CreationDate.ToUniversalTime().Ticks.ToString();name=[string]$_.Name} }); ConvertTo-Json -InputObject $rows -Compress"])
+        .env("WAYPOINT_TEST_PROFILE", &profile).stdin(Stdio::null()).stderr(Stdio::piped()).output().unwrap());
+    assert!(
+        !observed.is_empty(),
+        "test did not observe its browser before termination"
+    );
+    let identities = serde_json::to_string(&observed).unwrap();
     let check_tree = || {
-        let ids = observed_pids
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let output = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "$ids=@($env:WAYPOINT_TEST_PIDS -split ',' | Where-Object { $_ } | ForEach-Object { [int]$_ }); @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count"])
-            .env("WAYPOINT_TEST_PIDS", ids).stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
-        assert!(output.status.success());
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .trim()
-            .parse::<u32>()
-            .unwrap()
+        rows(hidden_command("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $expected=ConvertFrom-Json -InputObject $env:WAYPOINT_TEST_IDENTITIES; $all=@(Get-CimInstance Win32_Process); if(-not @($all | Where-Object { $_.ProcessId -eq $PID }).Count){throw 'observer self identity absent'}; $rows=@(foreach($wanted in $expected){foreach($p in $all){if([int]$p.ProcessId -eq [int]$wanted.pid -and $p.CreationDate.ToUniversalTime().Ticks.ToString() -eq $wanted.created){@{pid=[int]$p.ProcessId;created=$p.CreationDate.ToUniversalTime().Ticks.ToString();name=[string]$p.Name}}}}); ConvertTo-Json -InputObject $rows -Compress"])
+        .env("WAYPOINT_TEST_IDENTITIES", &identities).stdin(Stdio::null()).stderr(Stdio::piped()).output().unwrap())
     };
-    let _ = helper.0.kill();
-    let _ = helper.0.wait();
+    // Re-check before termination so an invalid identity observer cannot make
+    // a permanently empty result look like successful process containment.
+    assert!(
+        !check_tree().is_empty(),
+        "identity observer failed its live baseline"
+    );
+    helper.0.kill().unwrap();
+    helper.0.wait().unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut remaining = check_tree();
-    while remaining > 0 && Instant::now() < deadline {
+    while !remaining.is_empty() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(250));
         remaining = check_tree();
     }
-    // Retain bounded, non-command-line diagnostics before cleanup so a CI
-    // failure can distinguish surviving browsers from unrelated reused PIDs.
-    let survivor_summary = if remaining > 0 {
-        let ids = observed_pids
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let output = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "$ids=@($env:WAYPOINT_TEST_PIDS -split ',' | Where-Object { $_ } | ForEach-Object { [int]$_ }); Get-Process -Id $ids -ErrorAction SilentlyContinue | Select-Object -First 20 Id,ProcessName | ConvertTo-Json -Compress"])
-            .env("WAYPOINT_TEST_PIDS", ids)
-            .stdin(Stdio::null()).stderr(Stdio::null()).output().unwrap();
-        if output.status.success() {
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        } else {
-            "survivor details unavailable".into()
-        }
-    } else {
-        String::new()
-    };
-    if remaining > 0 {
-        let _ = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe' OR Name = 'msedge.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"]).env("WAYPOINT_TEST_PROFILE", &profile).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
-    }
+    // Never terminate by a stale PID. A mismatch is a failed ownership check,
+    // not permission to stop an unrelated process that reused that identifier.
+    assert!(
+        remaining.is_empty(),
+        "original owned process identities survived: {remaining:?}"
+    );
     let resolved_temp = std::fs::canonicalize(&temp).unwrap();
     if let Ok(resolved) = std::fs::canonicalize(&profile_path) {
         assert!(resolved.starts_with(&resolved_temp));
         std::fs::remove_dir_all(resolved).unwrap();
     }
     let _ = std::fs::remove_file(ready);
-    assert!(
-        initially_running > 0,
-        "test did not observe the owned browser before termination"
-    );
-    assert_eq!(
-        remaining, 0,
-        "observed process IDs still present after forced parent termination (first 20, identity reuse possible): {survivor_summary}"
-    );
 }
-
 #[test]
 #[ignore = "launches one local browser to check normal shutdown"]
 fn normal_browser_shutdown_closes_its_private_profile() {

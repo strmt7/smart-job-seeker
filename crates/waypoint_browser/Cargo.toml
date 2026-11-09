@@ -13,8 +13,9 @@ serde_json = { version = "1", features = ["unbounded_depth"] }
 tungstenite = "0.30"
 
 [target.'cfg(windows)'.dependencies]
-processkit = { version = "=3.3.4", default-features = false, features = ["process-control"] }
+processkit = { version = "=3.3.4", default-features = false, features = ["process-control", "limits"] }
 tokio = { version = "1", features = ["rt", "time", "process", "io-util"] }
+tokio-stream = "=0.1.19"
 
 [lints]
 workspace = true

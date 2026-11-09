@@ -19,6 +19,8 @@ jobs:
           python-version: '3.13'
       - name: Check isolated agent-tool boundaries
         run: python -B -m unittest discover -s tools/tests -v
+      - name: Check isolated-browser protocol and verified copies
+        run: python -B crates/waypoint_browser/tests/test_rehearsal_worker.py -v
 
   pdf-stream-regression:
     runs-on: windows-latest

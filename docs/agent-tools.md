@@ -119,6 +119,13 @@ and must not be committed. Available-memory checks are admission checks, not
 reservations or peak measurements. All new repository tools follow the concise
 communication rules in `AGENTS.md`.
 
+## Experimental browser qualification
+
+Experimental Windows browser isolation has a separate, fictional-only
+[qualification command and explicit limits](ISOLATED_REHEARSAL.md). It runs
+headlessly, retains private source-bound evidence under `target/`, and does not
+enable employer-form interaction or select an unrestricted fallback.
+
 ## Native database dependency provenance
 
 The reviewed SQLite binding is vendored under `third_party/libsqlite3-sys/`.

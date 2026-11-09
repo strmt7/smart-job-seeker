@@ -14,13 +14,14 @@
 //!   validation would reject.
 //! - Files are attached through the file-input API, and clicks are synthesised
 //!   from the element's box model.
-//! - There is **no script execution surface**: the driver never evaluates
-//!   arbitrary JavaScript on the page. The whole protocol surface it uses is
-//!   DOM / Input / Page.
+//! - The driver exposes no model-generated script execution. Trusted, fixed
+//!   Runtime functions support DOM inspection and value checks alongside the
+//!   DOM, Input, Page, Network and Browser protocol methods.
 //! - Captchas and login walls are reported as walls. Nothing tries to climb
 //!   them.
 
 pub mod cdp;
+pub mod rehearsal;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -376,8 +377,27 @@ fn check_file_accept(accept: &str, filename: &str) -> Result<(), DriverError> {
     }
 }
 
+enum BrowserOwner {
+    Standard(BrowserProcess),
+    #[cfg(windows)]
+    Rehearsal(rehearsal::RehearsalOwner),
+}
+
+impl BrowserOwner {
+    fn shutdown(&mut self) -> Result<(), cdp::CdpError> {
+        match self {
+            Self::Standard(browser) => {
+                browser.shutdown();
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Rehearsal(browser) => browser.shutdown(),
+        }
+    }
+}
+
 pub struct CdpDriver {
-    browser: BrowserProcess,
+    browser: BrowserOwner,
     cdp: Cdp,
     /// Directories searched when a packet asks to upload a named file.
     upload_dirs: Vec<PathBuf>,
@@ -1538,6 +1558,51 @@ impl CdpDriver {
             BrowserProcess::launch_with_mode(Duration::from_secs(20), visible).map_err(derr)?;
         let ws = browser.connect().map_err(derr)?;
         let cdp = Cdp::new(ws).map_err(derr)?;
+        Self::initialize(BrowserOwner::Standard(browser), cdp, upload_dirs)
+    }
+
+    /// Experimental local-fixture rehearsal. This is not yet qualified for
+    /// interacting with real employer applications or active captured sites.
+    #[cfg(windows)]
+    pub fn launch_rehearsal(
+        python: &std::path::Path,
+        config: rehearsal::RehearsalConfig,
+    ) -> Result<(Self, rehearsal::RehearsalReady), DriverError> {
+        let relative_upload_dirs: std::collections::BTreeSet<_> = config
+            .content_files
+            .keys()
+            .filter(|name| name.to_ascii_lowercase().ends_with(".pdf"))
+            .filter_map(|name| {
+                std::path::Path::new(name)
+                    .parent()
+                    .map(std::path::Path::to_owned)
+            })
+            .collect();
+        let (owner, pipe, evidence) =
+            rehearsal::RehearsalOwner::start(python, config).map_err(derr)?;
+        let cdp = Cdp::new_rehearsal(pipe).map_err(derr)?;
+        let mut uploads = vec![evidence.content_root.clone()];
+        uploads.extend(
+            relative_upload_dirs
+                .into_iter()
+                .map(|path| evidence.content_root.join(path)),
+        );
+        let mut driver = Self::initialize(BrowserOwner::Rehearsal(owner), cdp, uploads)?;
+        driver
+            .cdp
+            .call_browser("Browser.setDownloadBehavior", json!({"behavior":"deny"}))
+            .map_err(derr)?;
+        driver
+            .trace
+            .push("experimental local rehearsal; not qualified for real applications".into());
+        Ok((driver, evidence))
+    }
+
+    fn initialize(
+        browser: BrowserOwner,
+        cdp: Cdp,
+        upload_dirs: Vec<PathBuf>,
+    ) -> Result<Self, DriverError> {
         let mut driver = Self {
             browser,
             cdp,
@@ -6363,13 +6428,19 @@ impl BrowserDriver for CdpDriver {
                 Ok(())
             }
             BrowserCommand::Close => {
-                self.browser.shutdown();
+                self.browser.shutdown().map_err(derr)?;
                 Ok(())
             }
         }
     }
 
     fn commit(&mut self) -> Result<SiteAck, DriverError> {
+        #[cfg(windows)]
+        if matches!(&self.browser, BrowserOwner::Rehearsal(_)) {
+            return Err(DriverError(
+                "Submission is unavailable in isolated rehearsal".into(),
+            ));
+        }
         let before = self.page_text()?;
         let Some(node) = self.submit_control()? else {
             return Err(DriverError(
@@ -6413,7 +6484,9 @@ impl BrowserDriver for CdpDriver {
 
 impl Drop for CdpDriver {
     fn drop(&mut self) {
-        self.browser.shutdown();
+        if let Err(error) = self.browser.shutdown() {
+            eprintln!("Browser cleanup was not confirmed: {error}");
+        }
     }
 }
 

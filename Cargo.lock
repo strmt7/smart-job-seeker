@@ -2782,6 +2782,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tungstenite",
  "waypoint_applications",
  "waypoint_domain",

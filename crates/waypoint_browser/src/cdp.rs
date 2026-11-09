@@ -700,9 +700,69 @@ impl Drop for BrowserProcess {
     }
 }
 
+enum ProtocolTransport {
+    WebSocket(Box<Ws>),
+    #[cfg(windows)]
+    Rehearsal(crate::rehearsal::PipeTransport),
+}
+
+impl ProtocolTransport {
+    fn send(&mut self, message: String) -> Result<(), CdpError> {
+        match self {
+            Self::WebSocket(ws) => ws
+                .send(Message::Text(message.into()))
+                .map_err(|e| CdpError(format!("send: {e}"))),
+            #[cfg(windows)]
+            Self::Rehearsal(pipe) => pipe.send(message),
+        }
+    }
+
+    fn receive(&mut self, timeout: Duration) -> Result<Option<String>, CdpError> {
+        match self {
+            #[cfg(windows)]
+            Self::Rehearsal(pipe) => pipe.receive(timeout),
+            Self::WebSocket(ws) => {
+                let deadline = Instant::now() + timeout;
+                loop {
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                    if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = ws.get_ref() {
+                        tcp.set_read_timeout(Some(
+                            deadline
+                                .saturating_duration_since(Instant::now())
+                                .max(Duration::from_millis(1)),
+                        ))
+                        .map_err(|e| CdpError(format!("cannot set browser timeout: {e}")))?;
+                    }
+                    match ws.read() {
+                        Ok(Message::Text(text)) => return Ok(Some(text.to_string())),
+                        Ok(Message::Binary(bytes)) => {
+                            return String::from_utf8(bytes.to_vec())
+                                .map(Some)
+                                .map_err(|_| CdpError("invalid browser protocol encoding".into()))
+                        }
+                        Ok(Message::Close(_)) => return err("browser protocol connection closed"),
+                        Ok(_) => (),
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            return Ok(None)
+                        }
+                        Err(error) => return err(format!("browser protocol read: {error}")),
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// One CDP session: request/response correlation plus event buffering.
 pub struct Cdp {
-    ws: Ws,
+    transport: ProtocolTransport,
     next_id: u64,
     pub session: String,
     /// Events observed while waiting for replies, newest last. Kept because a
@@ -808,8 +868,17 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
 
 impl Cdp {
     pub fn new(ws: Ws) -> Result<Self, CdpError> {
+        Self::from_transport(ProtocolTransport::WebSocket(Box::new(ws)))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn new_rehearsal(pipe: crate::rehearsal::PipeTransport) -> Result<Self, CdpError> {
+        Self::from_transport(ProtocolTransport::Rehearsal(pipe))
+    }
+
+    fn from_transport(transport: ProtocolTransport) -> Result<Self, CdpError> {
         let mut cdp = Self {
-            ws,
+            transport,
             next_id: 0,
             session: String::new(),
             events: vec![],
@@ -885,8 +954,8 @@ impl Cdp {
         if let Some(s) = session {
             msg["sessionId"] = Value::String(s);
         }
-        self.ws
-            .send(Message::Text(msg.to_string().into()))
+        self.transport
+            .send(msg.to_string())
             .map_err(|e| CdpError(format!("send {method}: {e}")))?;
 
         let deadline = Instant::now() + self.timeout;
@@ -894,18 +963,11 @@ impl Cdp {
             if Instant::now() >= deadline {
                 return err(format!("{method}: timed out waiting for a reply"));
             }
-            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = self.ws.get_ref() {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                tcp.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))
-                    .map_err(|e| CdpError(format!("{method}: cannot set read timeout: {e}")))?;
-            }
-            let raw = match self.ws.read() {
-                Ok(Message::Text(t)) => t.as_str().to_string(),
-                Ok(Message::Binary(b)) => String::from_utf8_lossy(&b).into_owned(),
-                Ok(Message::Close(_)) => return err(format!("{method}: connection closed")),
-                Ok(_) => continue,
-                Err(e) => return err(format!("{method}: read: {e}")),
-            };
+            let raw = self
+                .transport
+                .receive(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|error| CdpError(format!("{method}: {error}")))?
+                .ok_or_else(|| CdpError(format!("{method}: timed out waiting for a reply")))?;
             let value =
                 parse_protocol_message(&raw, method == "DOM.getDocument").map_err(|error| {
                     CdpError(format!(
@@ -936,38 +998,12 @@ impl Cdp {
     pub fn pump_checked(&mut self, duration: Duration) -> Result<(), CdpError> {
         let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
-            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = self.ws.get_ref() {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if tcp
-                    .set_read_timeout(Some(remaining.max(Duration::from_millis(10))))
-                    .is_err()
-                {
-                    self.paused_event_lost = true;
-                    return err("cannot set browser event timeout");
-                }
-            }
-            let raw = match self.ws.read() {
-                Ok(Message::Text(t)) => t.to_string(),
-                Ok(Message::Binary(b)) => match String::from_utf8(b.to_vec()) {
-                    Ok(text) => text,
-                    Err(_) => {
-                        self.paused_event_lost = true;
-                        return err("invalid browser event encoding");
-                    }
-                },
-                Ok(Message::Close(_)) => {
-                    self.paused_event_lost = true;
-                    return err("browser event connection closed");
-                }
-                Ok(_) => continue,
-                Err(tungstenite::Error::Io(e))
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    return Ok(())
-                }
+            let raw = match self
+                .transport
+                .receive(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(Some(text)) => text,
+                Ok(None) => return Ok(()),
                 Err(_) => {
                     self.paused_event_lost = true;
                     return err("browser event connection failed");
@@ -1126,7 +1162,7 @@ mod tests {
         });
         let (socket, _) = tungstenite::connect(format!("ws://{addr}")).unwrap();
         let mut cdp = Cdp {
-            ws: socket,
+            transport: ProtocolTransport::WebSocket(Box::new(socket)),
             next_id: 0,
             session: String::new(),
             events: vec![],
@@ -1486,7 +1522,7 @@ mod tests {
         });
         let (socket, _) = tungstenite::connect(format!("ws://{addr}")).unwrap();
         let mut cdp = Cdp {
-            ws: socket,
+            transport: ProtocolTransport::WebSocket(Box::new(socket)),
             next_id: 0,
             session: String::new(),
             events: vec![],
@@ -1520,7 +1556,7 @@ mod tests {
         });
         let (socket, _) = tungstenite::connect(format!("ws://{addr}")).unwrap();
         let mut cdp = Cdp {
-            ws: socket,
+            transport: ProtocolTransport::WebSocket(Box::new(socket)),
             next_id: 0,
             session: String::new(),
             events: vec![],

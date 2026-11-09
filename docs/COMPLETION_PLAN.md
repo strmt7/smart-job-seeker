@@ -116,10 +116,13 @@ build and configuration.
    complete pipe control, fictional field readback and screenshot capture inside
    a checked zero-capability root token, with zero observed loopback requests
    from four scripted mechanisms. It required a private readable engine copy,
-   separate stderr/protocol handles and document readiness checks. Qualify a
-   current engine, descendant tokens, additional channels, parent/control
-   failure and resource cleanup before integrating the production transport.
-   This remains a feasibility result; real-site interaction is not enabled. Network-disabled replay would also need a
+   separate stderr/protocol handles and document readiness checks. An experimental
+   driver transport now passes local Chrome 157 field, section, screenshot, nine
+   loopback channel-baseline and selected lifecycle checks; see
+   [isolated rehearsal](ISOLATED_REHEARSAL.md). Automatic profile recovery after
+   forced death, interrupted startup, additional egress/broker channels and
+   installation remain open. There is no interface exposure or unrestricted
+   fallback. Real-site interaction is not enabled. Network-disabled replay also needs a
    bounded way to capture/replay permitted assets and explicit handling of
    server-dependent validation and missing steps. No live-form interaction is
    authorized by these partial results.
