@@ -192,6 +192,10 @@ build and configuration.
    section mapping, history-based tailoring and revision-bound history provenance
    still need implementation and local-model evaluation; do not infer them from
    the editor or its workflow tests.
+   The [integrated history qualification](HISTORY_PIPELINE_2026-11-09.md) now
+   covers contact/history separation and seven visually checked fills on two
+   fictional layouts using the local 12B model. This is a small integrated
+   checkpoint; it does not establish broad employer-site coverage.
    Evaluate semantic matching against labeled qualifications and preferences;
    report evidence and unknowns, test repeatability and calibration, and never
    equate a score with hiring probability. Preserve candidate facts and template

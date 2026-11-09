@@ -420,10 +420,10 @@ fn local_datetime_display(value: &str) -> Option<String> {
     ))
 }
 
-/// A native time control may display a 12-hour value while retaining a
-/// 24-hour DOM value. Only reconcile an unambiguous completed time field;
-/// the caller still has to verify the live control independently.
-fn reconcile_time_transcriptions(
+/// Native month/time controls can render a localized display instead of their
+/// canonical DOM value. Reconcile only a uniquely identified completed control
+/// with a grounded typed value; the caller must still check the live control.
+fn reconcile_temporal_transcriptions(
     preview: &crate::form_preview::FormPreview,
     completed: &[String],
     result: &mut Value,
@@ -454,7 +454,7 @@ fn reconcile_time_transcriptions(
         };
         if !matches!(
             field.field_type,
-            FormFieldType::Time | FormFieldType::DateTimeLocal
+            FormFieldType::Month | FormFieldType::Time | FormFieldType::DateTimeLocal
         ) || !completed.contains(&field.selector)
         {
             continue;
@@ -485,6 +485,9 @@ fn reconcile_time_transcriptions(
             observation["visible_value"]
                 .as_str()
                 .and_then(|value| match field.field_type {
+                    FormFieldType::Month if crate::native_month::equivalent(value, expected) => {
+                        Some(expected.clone())
+                    }
                     FormFieldType::Time => twelve_hour_time(value),
                     FormFieldType::DateTimeLocal => local_datetime_display(value),
                     _ => None,
@@ -636,7 +639,7 @@ fn crosscheck_live_values_with_budget(
     budget: std::time::Duration,
 ) -> (usize, usize) {
     use waypoint_applications::form_mapping::{BrowserCommand, FormFieldType, PacketValue};
-    reconcile_time_transcriptions(preview, completed, result);
+    reconcile_temporal_transcriptions(preview, completed, result);
     let started = std::time::Instant::now();
     let Some(comparisons) = result["comparisons"].as_array_mut() else {
         return (0, 0);
@@ -1878,6 +1881,106 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "one headless fictional browser; localized month reconciliation requires a matching live value"]
+    fn month_visual_reconciliation_requires_type_completion_and_live_value() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{
+            BrowserCommand, FormFieldType, PacketValue, ProposedMapping,
+        };
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/form-career-subjects.html")
+            .canonicalize()
+            .unwrap();
+        let url = url::Url::from_file_path(fixture).unwrap();
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(url.as_str()).unwrap();
+        let field = live
+            .schema
+            .fields
+            .iter()
+            .find(|field| field.selector == "#work-month")
+            .unwrap()
+            .clone();
+        let preview = crate::form_preview::FormPreview {
+            schema: live.schema,
+            suggestions: vec![ProposedMapping {
+                field_selector: field.selector.clone(),
+                value: PacketValue::Date("2020-06".into()),
+            }],
+            manual_review: live.walls,
+            model_review_selectors: Default::default(),
+        };
+        let expected = vec![(field.label.clone(), "2020-06".into())];
+        let observed = json!({"observations":[{"label":field.label,"visible_value":"June 2020"}]});
+        let mut incomplete = compare(&observed, &expected);
+        reconcile_temporal_transcriptions(&preview, &[], &mut incomplete);
+        assert_eq!(
+            incomplete["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let mut other = preview.clone();
+        other
+            .schema
+            .fields
+            .iter_mut()
+            .find(|value| value.selector == field.selector)
+            .unwrap()
+            .field_type = FormFieldType::Text;
+        let mut literal = compare(&observed, &expected);
+        reconcile_temporal_transcriptions(
+            &other,
+            std::slice::from_ref(&field.selector),
+            &mut literal,
+        );
+        assert_eq!(
+            literal["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let duplicate = json!({"observations":[{"label":field.label,"visible_value":"June 2020"},{"label":field.label,"visible_value":"June 2020"}]});
+        let mut ambiguous = compare(&duplicate, &expected);
+        reconcile_temporal_transcriptions(
+            &preview,
+            std::slice::from_ref(&field.selector),
+            &mut ambiguous,
+        );
+        assert_eq!(ambiguous["comparisons"][0]["status"], "unobserved");
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: field.selector.clone(),
+                value: PacketValue::Date("2020-06".into()),
+            })
+            .unwrap();
+        let mut matching = compare(&observed, &expected);
+        assert_eq!(
+            crosscheck_live_values(
+                &mut driver,
+                &preview,
+                std::slice::from_ref(&field.selector),
+                &mut matching
+            ),
+            (1, 0)
+        );
+        assert_eq!(matching["comparisons"][0]["dom_status"], "matches");
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: field.selector.clone(),
+                value: PacketValue::Date("2020-05".into()),
+            })
+            .unwrap();
+        let mut stale = compare(&observed, &expected);
+        assert_eq!(
+            crosscheck_live_values(
+                &mut driver,
+                &preview,
+                std::slice::from_ref(&field.selector),
+                &mut stale
+            ),
+            (0, 1)
+        );
+        assert_eq!(stale["comparisons"][0]["status"], "unobserved");
+    }
+
+    #[test]
     #[ignore = "starts one local browser and does not submit"]
     fn time_visual_reconciliation_requires_the_live_value() {
         use waypoint_applications::driver::BrowserDriver;
@@ -1909,13 +2012,13 @@ mod tests {
             &json!({"observations":[{"label":"Interview time","visible_value":"01:30 PM"},{"label":"Interview time","visible_value":"01:30 PM"}]}),
             &expected,
         );
-        reconcile_time_transcriptions(&preview, &["#time".into()], &mut ambiguous);
+        reconcile_temporal_transcriptions(&preview, &["#time".into()], &mut ambiguous);
         assert_eq!(ambiguous["comparisons"][0]["status"], "unobserved");
         let mut other_type = preview.clone();
         other_type.schema.fields[0].field_type =
             waypoint_applications::form_mapping::FormFieldType::Text;
         let mut literal = compare(&observation, &expected);
-        reconcile_time_transcriptions(&other_type, &["#time".into()], &mut literal);
+        reconcile_temporal_transcriptions(&other_type, &["#time".into()], &mut literal);
         assert_eq!(
             literal["comparisons"][0]["status"],
             "differs_from_transcription"
@@ -1975,13 +2078,13 @@ mod tests {
             &json!({"observations":[{"label":"Appointment","visible_value":"01-Nov-2026 01:30 PM"},{"label":"Appointment","visible_value":"01-Nov-2026 01:30 PM"}]}),
             &expected,
         );
-        reconcile_time_transcriptions(&preview, &["#datetime".into()], &mut ambiguous);
+        reconcile_temporal_transcriptions(&preview, &["#datetime".into()], &mut ambiguous);
         assert_eq!(ambiguous["comparisons"][0]["status"], "unobserved");
         let mut other_type = preview.clone();
         other_type.schema.fields[0].field_type =
             waypoint_applications::form_mapping::FormFieldType::Text;
         let mut literal = compare(&observation, &expected);
-        reconcile_time_transcriptions(&other_type, &["#datetime".into()], &mut literal);
+        reconcile_temporal_transcriptions(&other_type, &["#datetime".into()], &mut literal);
         assert_eq!(
             literal["comparisons"][0]["status"],
             "differs_from_transcription"

@@ -3907,3 +3907,27 @@ editors change. Existing sensitive/model-review blocks remain in force. Local
 12B/14B diagnostics had different completeness outcomes; these limits and the
 remaining section/provenance work are recorded in [career history](docs/CANDIDATE_HISTORY.md).
 No real application interaction or submission and no release occurred.
+
+
+## Integrated career-history subject and visual checks — 2026-11-09
+
+Contact mapping now distinguishes ordinary candidate career facts from
+third-party/sensitive questions while preserving all existing review flags.
+Applicant contact reuse for organizations remains blocked, including educational
+institutions, and history resolution independently refuses recognizable
+other-person labels even when a model chooses a valid candidate component.
+
+The local 12B model completed seven intended contact/history fields on each of
+two fictional layouts with different labels and section markup. Every intended
+field passed local visual transcription and independent live-value checks;
+four restricted fields stayed blank. An initial visual mismatch exposed native
+month display formatting. Typed Gregorian month reconciliation now uses ICU/CLDR
+data, keeps the original observation, requires full precision and still verifies
+the live control. Adversarial checks cover stale values, wrong type, incomplete
+selection and ambiguous observations. No actual employer form was used.
+
+The web suite passed 722 tests with 396 ignored; local-model and headless checks
+were explicitly selected separately. Source/model records, screenshots and full
+results remain private. See [the qualification report](docs/HISTORY_PIPELINE_2026-11-09.md)
+for scope, failed diagnostics, dependencies and remaining gates. No release or
+application submission occurred.

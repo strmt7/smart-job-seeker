@@ -48,12 +48,15 @@ mod gpu_resources;
 mod history_advice;
 #[cfg(all(test, windows))]
 mod history_advice_browser_tests;
+#[cfg(all(test, windows))]
+mod history_pipeline_tests;
 mod letter_export;
 mod link_rank;
 mod local_advice;
 mod manual_job;
 mod model_install;
 mod model_start;
+mod native_month;
 mod pdf_extract;
 mod pdf_job;
 mod pdf_preview_task;

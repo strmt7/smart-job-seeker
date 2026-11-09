@@ -100,21 +100,33 @@ selection copies values only into the existing answer editors, after another
 binding check; any newer manual edit prevents the entire selection from applying.
 There is no browser action, grant or submission in this operation.
 
-The current contact-key mapper still excludes serialized history. Its existing
-model-review blocks are preserved: fields flagged there do not become eligible
-through history suggestions. This limits practical coverage of employer/education
-sections and still needs a properly scoped subject classifier. The feature does
+The contact-key mapper still excludes serialized history and refuses applicant
+contact values for employers and educational institutions. Its model instructions
+now distinguish ordinary candidate career facts from sensitive questions and
+other people's contact details. Existing model-review blocks remain in force:
+history suggestions never clear a flagged field. A deterministic subject guard
+also refuses history values for recognizable referee/manager/emergency-contact
+labels even when the model tries to map them. Unclear subjects remain manual.
+The feature does
 not select repeated sections autonomously, tailor documents or attach authoritative
 claim provenance to an answer archive. Neither order nor a checked flag proves
 that a role is current or a qualification completed.
 
-On the final dependency graph, a fictional six-field live check with local
+In the earlier 2026-11-09 checkpoint, a fictional six-field live check with local
 `gemma4:12b-it-q4_K_M` returned four expected grounded answers, left two unrelated
 questions manual, filled/read back four fictional controls and passed two visual
 comparisons. `ministral-3:14b` returned three of four expected answers, leaving
 the month manual; that completeness check failed and is retained. These are
 small diagnostics, not a broad platform benchmark or a reason to change the
 user's selected model automatically.
+
+The subsequent [integrated qualification](HISTORY_PIPELINE_2026-11-09.md) used
+two different 11-field layouts. The local 12B model produced seven grounded
+contact/history answers in each; all seven passed visual transcription and live
+value checks. Four restricted fields stayed blank. This covers one selected
+employment record and one selected education record, not autonomous record or
+section selection. Native month display reconciliation uses typed Gregorian
+locale data, retaining the original transcription and requiring live readback.
 
 The compiled interface passed five additional advice-panel width checks from
 320 to 1920 px and explicit-selection behavior with intercepted fictional API

@@ -22,6 +22,9 @@ percent-encoding = "2"
 quick-xml = "=0.42.0"
 zip = { version = "=9.5.0", default-features = false, features = ["deflate"] }
 serde_json = "1"
+icu_calendar = { version = "=2.4.0", default-features = false }
+icu_datetime = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
+icu_locale_core = "=2.4.0"
 tempfile = "3"
 url = "2"
 waypoint_domain = { path = "../../crates/waypoint_domain" }

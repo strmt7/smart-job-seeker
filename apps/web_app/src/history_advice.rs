@@ -55,7 +55,7 @@ pub fn validate_scope(fields: &[FormField]) -> Result<(), String> {
     Ok(())
 }
 fn value_for(field: &FormField, component: &str, value: &str) -> Option<PacketValue> {
-    if !text_fits_field(field, value) {
+    if crate::suggestions::names_other_person(&field.label) || !text_fits_field(field, value) {
         return None;
     }
     match &field.field_type {
@@ -164,6 +164,11 @@ pub fn propose(model: &mut dyn Inference, input: &Inputs) -> Result<Value, Strin
             if decision.get("component") != Some(&Value::Null) || reason == "matched" {
                 return Err("Missing or contradictory history component".into());
             }
+            let reason = if crate::suggestions::names_other_person(&field.label) {
+                "wrong_subject"
+            } else {
+                reason
+            };
             manual.push(json!({"selector":field.selector,"reason":reason}));
             continue;
         };
@@ -178,9 +183,12 @@ pub fn propose(model: &mut dyn Inference, input: &Inputs) -> Result<Value, Strin
         if let Some(typed) = value_for(field, component, value) {
             proposals.push(json!({"selector":field.selector,"label":field.label,"component":component,"value":typed,"entry_id":input.record.id,"source_sha256":Sha256Digest::of(&json!({"entry":input.record,"component":component,"value":value}).to_string()).as_str()}));
         } else {
-            manual.push(
-                json!({"selector":field.selector,"reason":"value_or_precision_not_supported"}),
-            );
+            let reason = if crate::suggestions::names_other_person(&field.label) {
+                "wrong_subject"
+            } else {
+                "value_or_precision_not_supported"
+            };
+            manual.push(json!({"selector":field.selector,"reason":reason}));
         }
     }
     Ok(
@@ -245,6 +253,36 @@ mod tests {
         assert!(model.prompts[0].contains("Fictional & Company"));
         assert!(model.prompts[0].contains("2020-06"));
         assert!(model.prompts[0].contains("start_year"));
+    }
+    #[test]
+    fn another_person_cannot_receive_candidate_history_even_when_model_matches_it() {
+        let mut input = input();
+        let mut model = Fake {
+            response: json!({"decisions":[{"field":"f1","component":"employer","reason":"matched"},{"field":"f2","component":"start_year_month","reason":"matched"}]}),
+            prompts: vec![],
+        };
+        for label in [
+            "Referee employer",
+            "Manager organization",
+            "Emergency contact — Employer",
+            "Referenzperson — Arbeitgeber",
+            "Référence — Entreprise",
+            "Referencia — Empresa",
+        ] {
+            input.fields[0].label = label.into();
+            let result = propose(&mut model, &input).unwrap();
+            assert_eq!(result["proposals"].as_array().unwrap().len(), 1, "{label}");
+            assert_eq!(result["proposals"][0]["selector"], "#start");
+            assert_eq!(result["manual_review"][0]["reason"], "wrong_subject");
+        }
+        input.fields[0].label = "Employment history — Employer name".into();
+        assert_eq!(
+            propose(&mut model, &input).unwrap()["proposals"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
     }
     #[test]
     fn incomplete_unknown_duplicated_and_contradictory_decisions_fail_closed() {

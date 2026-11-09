@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fictional career review with headings</title>
+<style>body{font:16px Arial;max-width:1000px;margin:20px}form{display:grid;grid-template-columns:1fr 1fr;gap:14px}section,[role=group]{border:1px solid #888;padding:12px;min-width:0}h2{font-size:18px;margin:0 0 8px}label{display:grid;gap:3px;margin:8px 0}input{font:inherit;padding:4px}</style>
+<h1>Fictional application</h1>
+<p>Local qualification only. This page has no submission mechanism.</p>
+<form onsubmit="return false">
+<section aria-labelledby="personal-title"><h2 id="personal-title">Your details</h2>
+<label>Given names<input id="candidate-name" autocomplete="given-name"></label>
+<label>Where can we email you?<input id="candidate-email" type="email" autocomplete="email"></label>
+</section>
+<section aria-labelledby="work-title-heading"><h2 id="work-title-heading">Your work record</h2>
+<label>Business / organisation name<input id="work-company" autocomplete="organization"></label>
+<label>Position held<input id="work-title" autocomplete="organization-title"></label>
+<label>Month you started<input id="work-month" type="month"></label>
+</section>
+<div role="group" aria-label="Academic background"><h2>Academic background</h2>
+<label>Learning provider name<input id="school-name" autocomplete="organization"></label>
+<label>Degree or course name<input id="qualification"></label>
+</div>
+<section><h2>Professional reference</h2>
+<label>Person's full name<input id="referee-name" autocomplete="name"></label>
+<label>Where they work<input id="referee-company" autocomplete="organization"></label>
+</section>
+<section><h2>Employer contact</h2>
+<label>Postal address<input id="office-address" autocomplete="street-address"></label>
+</section>
+<section><h2>Employment conditions</h2>
+<label>Pay expectation<input id="salary"></label>
+</section>
+</form>
