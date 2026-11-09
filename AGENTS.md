@@ -6,6 +6,18 @@ repo up cold. Read this first, then `README.md`, then the references below.
 
 ## Agent efficiency and research
 
+- Keep user-facing responses and progress updates brief, direct and useful.
+  Routine use of any current or future repository tool, workflow, protocol or
+  skill does not need narration. This includes Crawl4AI, CocoIndex Code and
+  caveman; do not spend tokens announcing, listing or explaining internal tools
+  unless the user asks, a material finding or blocker needs that context, or a
+  higher-priority instruction requires disclosure. Preserve required progress
+  updates, meaningful failures, uncertainty and permission boundaries.
+- Be efficient in execution as well as communication: prioritize work that
+  advances the requested product, inspect bounded relevant evidence, reuse
+  verified results and run checks appropriate to the actual changes. Avoid
+  repetitive plans, status recaps, unchanged tests and incidental exploration.
+  Brevity must not replace implementation, verification or honest reporting.
 - Apply [caveman](.agents/skills/caveman/SKILL.md) on every task. Keep internal
   work bounded while preserving exact evidence and normal public communication.
 - Before broad or conceptual code navigation, use the source-bound
