@@ -84,12 +84,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format check
         run: cargo fmt --all -- --check
+      - name: Check locked dependency license inventory
+        run: |
+          python apps/web_app/tests/license-inventory.test.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python apps/web_app/scripts/update-license-inventory.py --check
       - name: Clippy (zero warnings required)
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
       - name: Release build
-        run: cargo build --release -p windows_app
+        run: ./apps/web_app/scripts/build-windows.ps1 -Release
 
   # The submission engine is only meaningful if it works against a real
   # browser, so the ignored CDP tests run here against the runner's own
@@ -125,9 +130,7 @@ jobs:
         run: cargo install cargo-audit
       - name: Install cargo-deny
         run: cargo install cargo-deny
-      - name: Security audit (deny warnings except the documented unmaintained notice)
-        # RUSTSEC-2026-0192: ttf-parser 0.25.1 unmaintained, transitive via egui,
-        # no CVE, no safe upgrade; tracked in KNOWN_LIMITATIONS.md item 9.
-        run: cargo audit --deny warnings --ignore RUSTSEC-2026-0192
+      - name: Security audit (deny warnings)
+        run: cargo audit --deny warnings
       - name: License/ban/source policy
         run: cargo deny check licenses bans sources

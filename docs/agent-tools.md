@@ -78,3 +78,17 @@ The Codecov badge may show no data until the hosted integration accepts its firs
 upload. Local focused collection uses `cargo llvm-cov -p waypoint_domain --lcov
 --output-path target/domain.lcov`; full collection uses `--workspace` and the
 same SQLCipher/OpenSSL build environment as the application.
+
+## Embedded Rust license inventory
+
+Run `py -3.13 -B apps/web_app/scripts/update-license-inventory.py` after reviewing
+Cargo dependency changes, then use `--check` to verify the saved inventory.
+The generator uses locked, all-feature Cargo metadata for all resolved target
+platforms, records the lockfile digest and keeps complete SPDX expressions.
+The UI embeds this inventory; it is separate from the full dependency license
+files collected by the Windows packager. CI checks inventory freshness.
+
+The earlier native GUI packages were retired on 2026-11-09. Their source and
+tests remain in Git history through `b166ea93`; they are outside the current
+workspace and coverage denominator. Historical native-GUI gate records must not
+be presented as current web-app coverage or verification.

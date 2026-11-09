@@ -24,10 +24,6 @@ allow = [
   "0BSD",
   "BSL-1.0",
   "MPL-2.0",
-  # egui's epaint_default_fonts bundles its font files under these; both are
-  # OSI- and FSF-recognized free font licenses with redistribution rights.
-  "OFL-1.1",
-  "Ubuntu-font-1.0",
 ]
 # MPL-2.0 is file-level copyleft; allowed for linked deps but flagged in review.
 

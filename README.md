@@ -36,9 +36,11 @@ The build helper requires Rust and MSVC build tools; when no compatible OpenSSL 
 | `crates/waypoint_materials` | Semantic document tree, evidence validation, **correction propagation**, DOCX/Typst export, answer library |
 | `crates/waypoint_applications` | Preflight, one-use grants, durable journal, receipt qualification, uncertain-state recovery, typed form mapping, manual fallback |
 | `crates/waypoint_lifecycle` | Consent-scoped inbox, timeline reconciliation, calendar checks, CRM, interview practice, offers, analytics, review sharing |
-| `crates/waypoint_desktop` | Native eframe/egui shell: virtualized lists, coverage and model-qualification screens |
 | `apps/web_app` | Local web interface and Windows tray entrypoint |
-| `apps/windows_app` | Earlier native desktop entrypoint |
+
+The earlier native GUI packages were retired in favor of `apps/web_app`; their
+source remains in Git history through `b166ea93`. Current builds use the local
+web interface and Windows tray, without a separate native GUI.
 
 ## Product principles (enforced in code, not prose)
 

@@ -8960,8 +8960,27 @@ fn main() {
         let message = startup_error_message(&error.to_string());
         eprintln!("{message}");
         #[cfg(windows)]
-        show_startup_error(&message);
+        present_startup_error(
+            &message,
+            std::env::var_os("WAYPOINT_NO_BROWSER").is_some(),
+            std::env::var_os("WAYPOINT_NO_TRAY").is_some(),
+            show_startup_error,
+        );
         std::process::exit(1);
+    }
+}
+
+/// Headless callers disable both interactive surfaces. Their errors stay on
+/// stderr; invoking a native presenter would show UI even with no console.
+#[cfg(any(windows, test))]
+fn present_startup_error(
+    message: &str,
+    browser_disabled: bool,
+    tray_disabled: bool,
+    present: impl FnOnce(&str),
+) {
+    if !(browser_disabled && tray_disabled) {
+        present(message);
     }
 }
 
@@ -10232,6 +10251,23 @@ mod tests {
         assert_eq!(selected.len(), 20);
         assert_eq!(selected[0], "Built Rust compilers for embedded devices");
         assert_eq!(super::select_fit_facts(&facts, "unmatched")[0], facts[0]);
+    }
+
+    #[test]
+    fn headless_startup_error_never_invokes_the_native_presenter() {
+        present_startup_error("Fictional error", true, true, |_| {
+            panic!("Headless startup must not show a native window")
+        });
+        for (browser_disabled, tray_disabled) in [(false, false), (true, false), (false, true)] {
+            let mut shown = None;
+            present_startup_error(
+                "Fictional error",
+                browser_disabled,
+                tray_disabled,
+                |message| shown = Some(message.to_owned()),
+            );
+            assert_eq!(shown.as_deref(), Some("Fictional error"));
+        }
     }
 
     #[test]

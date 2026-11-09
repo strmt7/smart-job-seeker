@@ -58,6 +58,12 @@ build and configuration.
    do not assume a local pass explains it. Resolve the three denied unmaintained
    dependency notices through an appropriate dependency or architecture change,
    not an unexplained suppression. Re-run the affected checks on the final SHA.
+   The separate native GUI packages have now been retired in favor of the
+   requested web/tray entrypoint. Local audit passed on the resulting 353-package
+   graph without ignores; hosted confirmation remains required. The latest
+   preceding hosted browser failure is a fixture navigation abort in
+   `observes_non_read_request_triggered_by_field_input`, not the disconnect
+   observation. Its cause still needs investigation.
 2. **Measure the local application agent.** Run a controlled, versioned corpus
    of unseen forms and a diverse set of permitted live vacancies through
    discovery, inspection, reviewed filling and final-step handoff. Measure

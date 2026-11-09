@@ -59,13 +59,16 @@ repo up cold. Read this first, then `README.md`, then the references below.
 ## Map of the repo
 
 - `docs/waypoint-handoff/` — the source-of-truth research/design handoff this build
-  follows (MASTER_PLAN.md, backlog.json with the 50 gated tasks T001–T050,
+  follows (`agent/MASTER_PLAN.md`, `agent/backlog.json` with the 50 gated tasks T001–T050,
   AGENTS.md handoff rules, JSON schemas, fixtures). **This package has priority over
-  any older in-repo plan.**
+  any older in-repo plan.** Later user instructions for a local web interface and tray
+  supersede its older native-renderer requirement.
 - `docs/g0/`, `docs/g1/`, `docs/g6/` — gate evidence: license/permission inventories,
   hardware qualification (real measured numbers), release audit, SBOM.
 - `IMPLEMENTATION_STATUS.md`, `KNOWN_LIMITATIONS.md` — what is done vs honestly pending.
-- `crates/` — 13 crates, one job each (see README table). `apps/windows_app` is the binary.
+- `crates/` — backend components (see README table). `apps/web_app` is the
+  local web interface and Windows tray entrypoint. The older native GUI packages
+  were retired; do not restore them as a second product interface.
   - `waypoint_net` — the ONLY HTTP client: HTTPS-only for public hosts, OS-native TLS
     (schannel), resolves-then-validates every address (DNS-rebinding guard), size-capped.
   - `waypoint_workspace` — the end-to-end pipeline (permission gate → bounded fetch →
@@ -90,7 +93,7 @@ repo up cold. Read this first, then `README.md`, then the references below.
     UPDATE or DELETE on it fails at the SQLite level.
 - `deny.toml` — license/supply-chain policy; `cargo deny check` must stay green.
 - CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, workspace tests,
-  release build, `cargo audit` (with one documented informational ignore), deny checks.
+  web/tray release build, `cargo audit --deny warnings`, and deny checks.
 
 ## Build, test, quality commands
 
@@ -98,9 +101,9 @@ repo up cold. Read this first, then `README.md`, then the references below.
 cargo test --workspace                 # ignored live tests require explicit selection
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
-cargo build --release -p windows_app   # native PE32+ binary, ~14 MB
+./apps/web_app/scripts/build-windows.ps1 -Release # canonical Windows web/tray binary
 cargo deny check licenses bans sources
-cargo audit --deny warnings --ignore RUSTSEC-2026-0192   # documented unmaintained notice
+cargo audit --deny warnings
 # real-browser submission tests (Edge/Chrome required; CI runs these too):
 cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1
 #   set WAYPOINT_BROWSER_NO_SANDBOX=1 when the Chromium sandbox is unavailable (containers)
@@ -157,8 +160,6 @@ used by development tools and tests. Do not add WSL or Docker as product require
 - Adapters expect the providers' real camelCase payloads (Lever `hostedUrl`/`workplaceType`,
   Ashby `jobUrl`/`isRemote`/`publishedAt`). Fixtures written in snake_case silently default
   to empty strings and get dropped as untrusted URLs — mirror real payloads.
-- The shell has exactly ONE frame path (`WaypointShell::frame`: poll → render → dispatch).
-  Tests must render through it, or controller results never arrive.
 - `Cargo.lock` moves with the graph: adding a dep re-resolved `url`→`idna`→ICU and pulled a
   yanked `yoke-derive 0.8.3`. Always re-run `cargo audit --deny warnings` after dependency
   changes; fix yanks by moving versions (`cargo update -p <crate> --precise X`), never by
