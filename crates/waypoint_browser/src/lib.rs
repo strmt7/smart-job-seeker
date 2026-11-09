@@ -1612,6 +1612,19 @@ impl CdpDriver {
         Ok((driver, evidence))
     }
 
+    /// Experimental replay accounting; never a delivery or server-validation receipt.
+    #[cfg(windows)]
+    pub fn rehearsal_replay_report(&mut self) -> Result<Value, DriverError> {
+        if !matches!(self.browser, BrowserOwner::Rehearsal(_)) {
+            return Err(DriverError(
+                "Replay accounting requires an isolated session".into(),
+            ));
+        }
+        self.cdp
+            .call_browser("SmartJobseeker.replayReport", json!({}))
+            .map_err(derr)
+    }
+
     fn initialize(
         browser: BrowserOwner,
         cdp: Cdp,

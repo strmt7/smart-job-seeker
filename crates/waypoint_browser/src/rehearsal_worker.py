@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes as ct
 from ctypes import wintypes as wt
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -116,7 +117,7 @@ def source_root(value):
     return root.resolve(strict=True)
 
 
-def copy_verified(root, files, destination, budget, content=False):
+def copy_verified(root, files, destination, budget, content=False, replay=False):
     files = manifest(files)
     actual = set()
     total = 0
@@ -128,7 +129,7 @@ def copy_verified(root, files, destination, budget, content=False):
             relative_path(name)
             actual.add(name)
             total += path.stat().st_size
-            if content and path.suffix.lower() not in CONTENT_SUFFIXES:
+            if content and path.suffix.lower() not in CONTENT_SUFFIXES and not (replay and path.suffix.lower()=='.bin'):
                 raise WorkerError('unsupported_snapshot_file')
             if len(actual) > 4096 or total > budget:
                 raise WorkerError('source_copy_budget_exceeded')
@@ -622,7 +623,7 @@ class Container:
         if not binary.is_file() or not (engine / 'icudtl.dat').is_file():
             raise WorkerError('headless_engine_incomplete')
         content = self.folder / 'content'
-        copy_verified(source_root(config['content_root']), config['content_files'], content, 64 * 1024**2, True)
+        copy_verified(source_root(config['content_root']), config['content_files'], content, 64 * 1024**2, True, config['schema']==2)
         entry = str(relative_path(config['entry']))
         if entry not in config['content_files'] or Path(entry).suffix.lower() not in ('.html', '.htm'):
             raise WorkerError('invalid_snapshot_entry')
@@ -832,9 +833,14 @@ def emit(value):
 
 def validate_config(config):
     required = {'schema', 'engine_root', 'engine_files', 'content_root', 'content_files', 'entry', 'seconds'}
-    if (not isinstance(config, dict) or set(config) != required or
-            type(config['schema']) is not int or config['schema'] != 1):
+    if (not isinstance(config, dict) or type(config.get('schema')) is not int
+            or config['schema'] not in (1,2)
+            or set(config) != required | ({'replay_manifest'} if config['schema']==2 else set())):
         raise WorkerError('invalid_worker_configuration')
+    if config['schema']==2:
+        name=str(relative_path(config['replay_manifest']))
+        if not isinstance(config['content_files'], dict) or not name.endswith('.json') or name not in config['content_files']:
+            raise WorkerError('invalid_replay_manifest')
     if type(config['seconds']) is not int or not 5 <= config['seconds'] <= 3600:
         raise WorkerError('invalid_session_budget')
     return config
@@ -848,19 +854,34 @@ def run():
     cleanup = []
     min_available = None
     max_profile_bytes = 0
+    archive = broker = None
     try:
         binary, content, sid_text = owner.prepare(config)
+        if config['schema']==2:
+            spec=importlib.util.spec_from_file_location('smart_jobseeker_replay',Path(__file__).with_name('rehearsal_replay.py'))
+            module=importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            archive=module.Archive(content,config['replay_manifest'],config['content_files'],config['entry'])
         owner.launch(binary, sid_text)
         owner.audit_children()
         if api.WaitForSingleObject(owner.process.process, 0) == 0:
             raise WorkerError('browser_exited_before_ready')
-        emit({'type': 'ready', 'schema': 1, 'appcontainer': True, 'capabilities': 0,
+        ready={'type': 'ready', 'schema': config['schema'], 'appcontainer': True, 'capabilities': 0,
               'pid': owner.process.pid, 'content_root': str(content), 'entry': config['entry'],
-              'entry_url': (content / config['entry']).as_uri(),
+              'entry_url': archive.entry_url if archive else (content / config['entry']).as_uri(),
               'profile_name': owner.name,
               'job_memory_limit': 2 * 1024**3,
               'recovered_profiles': owner.recovery['recovered'],
-              'recovery_pending': owner.recovery['retained']})
+              'recovery_pending': owner.recovery['retained']}
+        if archive:
+            ready['replay']={'manifest_sha256':archive.manifest_sha256,'resources':len(archive.resources)}
+        emit(ready)
+        def send(value):
+            wire=json.dumps(value,ensure_ascii=True,separators=(',',':')).encode('ascii')+b'\0'
+            if len(wire)>MAX_FRAME or os.write(owner.write_fd,wire)!=len(wire):
+                raise WorkerError('protocol_write_failed')
+        if archive:
+            broker=module.Broker(archive,send,emit)
         host_fd = sys.stdin.fileno()
         host, browser = bytearray(), bytearray()
         deadline = time.monotonic() + config['seconds']
@@ -908,13 +929,13 @@ def run():
                         if not validate_command(value):
                             closing = True
                             break
-                        wire = json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode('ascii') + b'\0'
-                        if len(wire) > MAX_FRAME or os.write(owner.write_fd, wire) != len(wire):
-                            raise WorkerError('protocol_write_failed')
+                        if not broker or broker.host(value):
+                            send(value)
                     else:
                         if not isinstance(value, dict):
                             raise WorkerError('invalid_browser_message')
-                        emit(value)
+                        if not broker or broker.browser(value):
+                            emit(value)
             time.sleep(.005)
     except (WorkerError, OSError, KeyError, TypeError, ValueError):
         outcome = 'isolated_browser_operation_failed'

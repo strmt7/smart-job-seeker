@@ -18,6 +18,15 @@ pub struct RehearsalConfig {
     pub content_files: BTreeMap<String, String>,
     pub entry: String,
     pub seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_manifest: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayReady {
+    pub manifest_sha256: String,
+    pub resources: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -36,13 +45,30 @@ pub struct RehearsalReady {
     pub job_memory_limit: u64,
     pub recovered_profiles: u32,
     pub recovery_pending: u32,
+    #[serde(default)]
+    pub replay: Option<ReplayReady>,
 }
 
 impl RehearsalReady {
     pub fn validate(&self) -> Result<(), super::cdp::CdpError> {
         let name = self.profile_name.strip_prefix("SmartJobseeker.Rehearsal.");
         if self.kind != "ready"
-            || self.schema != 1
+            || !match (&self.replay, self.schema) {
+                (None, 1) => self.entry_url.starts_with("file:///"),
+                (Some(replay), 2) => {
+                    replay.manifest_sha256.len() == 64
+                        && replay
+                            .manifest_sha256
+                            .bytes()
+                            .all(|b| b.is_ascii_hexdigit())
+                        && (1..=512).contains(&replay.resources)
+                        && self.entry_url.len() <= 4096
+                        && !self.entry_url.chars().any(char::is_control)
+                        && waypoint_net::parse_url(&self.entry_url)
+                            .is_ok_and(|url| url.https && url.port == 443)
+                }
+                _ => false,
+            }
             || !self.appcontainer
             || self.capabilities != 0
             || self.pid == 0
@@ -50,7 +76,6 @@ impl RehearsalReady {
             || self.recovered_profiles > 256
             || self.recovery_pending > 256
             || !self.content_root.is_absolute()
-            || !self.entry_url.starts_with("file:///")
             || !name.is_some_and(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
         {
             return Err(super::cdp::CdpError(
@@ -163,7 +188,10 @@ mod windows {
             let admission = Admission;
             if !python.is_absolute()
                 || !python.is_file()
-                || config.schema != 1
+                || !matches!(
+                    (config.schema, config.replay_manifest.is_some()),
+                    (1, false) | (2, true)
+                )
                 || !(5..=3600).contains(&config.seconds)
             {
                 return Err(CdpError("Invalid isolated-browser setup".into()));
@@ -193,6 +221,15 @@ mod windows {
                 )));
             }
             let python = python.to_owned();
+            if let Err(error) = std::fs::write(
+                folder.join("rehearsal_replay.py"),
+                include_bytes!("rehearsal_replay.py"),
+            ) {
+                let _ = std::fs::remove_file(folder.join("rehearsal_replay.py"));
+                let _ = std::fs::remove_file(&script);
+                let _ = std::fs::remove_dir(&folder);
+                return Err(CdpError(format!("Cannot prepare replay worker: {error}")));
+            }
             let owned_folder = folder.clone();
             let lifetime = Duration::from_secs(config.seconds + 60);
             let (commands, command_rx) = mpsc::sync_channel(4);
@@ -263,6 +300,15 @@ mod windows {
                                 "Rehearsal worker did not produce valid readiness evidence"
                             })?;
                         evidence.validate().map_err(|e| e.to_string())?;
+                        if evidence.schema != config.schema
+                            || evidence.entry != config.entry
+                            || evidence.replay.as_ref().map(|r| r.manifest_sha256.as_str())
+                                != config.replay_manifest.as_ref().and_then(|name| {
+                                    config.content_files.get(name).map(String::as_str)
+                                })
+                        {
+                            return Err("Readiness does not match the requested rehearsal".into());
+                        }
                         if ready.send(Ok(evidence)).is_err() {
                             return Err("Rehearsal startup was abandoned".into());
                         }
@@ -430,10 +476,12 @@ mod windows {
                     // Only this newly created controller directory is removed here.
                     // The worker owns its separate AppContainer profile lifecycle.
                     let _ = std::fs::remove_file(owned_folder.join("rehearsal_worker.py"));
+                    let _ = std::fs::remove_file(owned_folder.join("rehearsal_replay.py"));
                     let _ = std::fs::remove_dir(&owned_folder);
                 });
             if let Err(error) = spawn {
                 let _ = std::fs::remove_file(folder.join("rehearsal_worker.py"));
+                let _ = std::fs::remove_file(folder.join("rehearsal_replay.py"));
                 let _ = std::fs::remove_dir(&folder);
                 return Err(CdpError(format!("Cannot start rehearsal owner: {error}")));
             }
@@ -631,6 +679,52 @@ mod tests {
         ] {
             let mut changed = good.clone();
             changed[key] = value;
+            assert!(serde_json::from_value::<RehearsalReady>(changed)
+                .unwrap()
+                .validate()
+                .is_err());
+        }
+    }
+    #[test]
+    fn replay_readiness_requires_bound_manifest_https_and_exact_mode() {
+        let good = serde_json::json!({"type":"ready","schema":2,"appcontainer":true,"capabilities":0,
+            "pid":1,"content_root":std::env::temp_dir(),"entry":"index.html","entry_url":"https://fixture.invalid/form#application",
+            "profile_name":"SmartJobseeker.Rehearsal.0123456789abcdef0123456789abcdef","job_memory_limit":2147483648u64,
+            "recovered_profiles":0,"recovery_pending":0,"replay":{"manifest_sha256":"a".repeat(64),"resources":8}});
+        assert!(serde_json::from_value::<RehearsalReady>(good.clone())
+            .unwrap()
+            .validate()
+            .is_ok());
+        for (key, value) in [
+            ("schema", serde_json::json!(1)),
+            ("replay", serde_json::Value::Null),
+            (
+                "entry_url",
+                serde_json::json!("http://fixture.invalid/form"),
+            ),
+            (
+                "entry_url",
+                serde_json::json!("file:///fictional/index.html"),
+            ),
+            (
+                "entry_url",
+                serde_json::json!("https://fixture.invalid:444/form"),
+            ),
+        ] {
+            let mut changed = good.clone();
+            changed[key] = value;
+            assert!(serde_json::from_value::<RehearsalReady>(changed)
+                .unwrap()
+                .validate()
+                .is_err());
+        }
+        for (key, value) in [
+            ("manifest_sha256", serde_json::json!("bad")),
+            ("resources", serde_json::json!(0)),
+            ("resources", serde_json::json!(513)),
+        ] {
+            let mut changed = good.clone();
+            changed["replay"][key] = value;
             assert!(serde_json::from_value::<RehearsalReady>(changed)
                 .unwrap()
                 .validate()

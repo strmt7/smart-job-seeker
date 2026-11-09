@@ -201,7 +201,7 @@ def main() -> int:
                        WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2',
                        WAYPOINT_BROWSER=str(control / 'chrome-headless-shell.exe'))
     sources = [REPO / 'crates/waypoint_browser' / item for item in [
-        'Cargo.toml', 'src/cdp.rs', 'src/lib.rs', 'src/rehearsal.rs', 'src/rehearsal_worker.py',
+        'Cargo.toml', 'src/cdp.rs', 'src/lib.rs', 'src/rehearsal.rs', 'src/rehearsal_worker.py', 'src/rehearsal_replay.py',
         'tests/rehearsal_live.rs', 'tests/test_rehearsal_windows.py', 'tests/support/rehearsal_network.rs',
         'tests/support/loopback.rs']]
     sources.append(REPO / 'crates/waypoint_browser/tests/support/rehearsal_relay.rs')

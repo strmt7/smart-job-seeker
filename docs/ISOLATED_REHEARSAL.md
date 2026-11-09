@@ -1,9 +1,14 @@
 # Isolated browser rehearsal
 
-Status: experimental Windows development interface, 2026-11-09. This mode is
+Status: experimental Windows development interface, 2026-11-10. This mode is
 not enabled in the application interface or qualified for employer applications.
 It does not establish a general no-egress guarantee. Setup failure never selects
 the ordinary browser as a fallback.
+
+Schema 2 adds [recorded-response replay](RECORDED_RESPONSE_REPLAY.md) for explicit
+fictional archives, preserving HTTPS origins with no live-fetch fallback. Its
+separate functional check does not qualify remaining network/broker channels or
+server-dependent steps. Schema 1 local-file behavior remains supported.
 
 ## Mechanism and budgets
 
@@ -189,7 +194,8 @@ results, explicit executed/ignored denominators, scoped resource observations
 and a PNG in `target/rehearsal-qualification-*`. It does not download
 engines or alter shared caches. `--python` selects an absolute interpreter; the
 embedded worker targets Python 3.12+, while this development command uses 3.13.
-The thirteen portable protocol/ownership/storage tests also run in CI. Opt-in live
+The fourteen portable protocol/ownership/storage tests also run in CI, alongside
+eighteen replay/archive checks. Opt-in live
 checks must not be counted as executed when skipped.
 
 Protocol references: [TURN URI syntax](https://www.rfc-editor.org/rfc/rfc7065),

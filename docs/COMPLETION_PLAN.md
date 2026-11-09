@@ -140,9 +140,12 @@ build and configuration.
    no observed isolated arrivals and confirmed receiver deletion. These scoped
    results do not qualify public UDP, DNS-specific paths or external brokers.
    There is no interface exposure or unrestricted
-   fallback. Real-site interaction is not enabled. Network-disabled replay also needs a
-   bounded way to capture/replay permitted assets and explicit handling of
-   server-dependent validation and missing steps. No live-form interaction is
+   fallback. Real-site interaction is not enabled. A [recorded-response replay](RECORDED_RESPONSE_REPLAY.md) now passes a fictional
+   multi-step check with scripts, cross-origin frame, dedicated worker and PDF
+   upload, retaining exact-request lookup and side-effect refusal. It has no live
+   fallback and is not exposed in the interface. Permitted asset capture,
+   unsupported target/transport lifecycles, server-dependent validation and missing
+   steps still need explicit handling and qualification. No live-form interaction is
    authorized by these partial results.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,

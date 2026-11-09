@@ -46,6 +46,23 @@ class RehearsalProtocolTests(unittest.TestCase):
         with self.assertRaises(worker.WorkerError):
             worker.validate_config(dict(good, unknown='ignored?'))
 
+    def test_replay_requires_explicit_manifest_and_binary_assets_remain_mode_gated(self):
+        good = dict(schema=2, engine_root='fixture', engine_files={}, content_root='fixture',
+                    content_files={'replay.json':'a'*64}, entry='index.html', seconds=30,
+                    replay_manifest='replay.json')
+        self.assertEqual(worker.validate_config(good), good)
+        for changes in [{'schema':1}, {'replay_manifest':'../replay.json'},
+                        {'replay_manifest':'other.json'}, {'content_files':None}]:
+            with self.subTest(changes=changes), self.assertRaises(worker.WorkerError):
+                worker.validate_config({**good,**changes})
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'source';source.mkdir();data=b'fictional response'
+            (source/'body.bin').write_bytes(data);files={'body.bin':hashlib.sha256(data).hexdigest()}
+            with self.assertRaisesRegex(worker.WorkerError, 'unsupported_snapshot_file'):
+                worker.copy_verified(source,files,root/'refused',4096,True)
+            worker.copy_verified(source,files,root/'replay',4096,True,True)
+            self.assertEqual((root/'replay/body.bin').read_bytes(),data)
+
     def test_windows_paths_and_manifest_aliases_are_refused(self):
         for path in ['../file', '/root', 'C:/file', 'dir\\file', 'a//b', 'CON.pdf',
                      'dir/lpt1.txt', 'COM¹.pdf', 'LPT³.txt', 'name.', 'name ', 'file:stream', '.']:
