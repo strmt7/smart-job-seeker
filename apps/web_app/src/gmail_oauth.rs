@@ -339,7 +339,10 @@ fn consent_code(
                         callback_code(target, state)
                     });
                 let (status, text) = if matches!(&result, Ok(Some(_))) {
-                    ("200 OK", "Authorization received. Return to Waypoint.")
+                    (
+                        "200 OK",
+                        "Authorization received. Return to Smart Jobseeker.",
+                    )
                 } else {
                     (
                         "400 Bad Request",

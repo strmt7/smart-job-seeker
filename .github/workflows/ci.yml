@@ -95,6 +95,19 @@ jobs:
         run: cargo test --workspace
       - name: Release build
         run: ./apps/web_app/scripts/build-windows.ps1 -Release
+      - name: Check headless resizing, browser zoom and pane dragging
+        shell: pwsh
+        run: |
+          npm install --prefix target/layout-qa --no-save --ignore-scripts playwright-core@1.65.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/web_app/scripts/qualify-layout.cjs --executable target/release/waypoint_web.exe
+      - name: Retain layout observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-layout-observations
+          path: target/layout-matrix-*/results.json
+          if-no-files-found: warn
 
   # The submission engine is only meaningful if it works against a real
   # browser, so the ignored CDP tests run here against the runner's own

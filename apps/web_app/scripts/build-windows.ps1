@@ -135,10 +135,10 @@ try {
         & cargo @cargoArgs
     }
     if ($LASTEXITCODE -ne 0) { throw "Cargo $operation failed ($LASTEXITCODE)." }
-    if ($Test) { Write-Host "Waypoint tests completed using the configured SQLCipher runtime."; return }
-    if ($Clippy) { Write-Host "Waypoint lint completed using the configured SQLCipher runtime."; return }
+    if ($Test) { Write-Host "Smart Jobseeker tests completed using the configured SQLCipher runtime."; return }
+    if ($Clippy) { Write-Host "Smart Jobseeker lint completed using the configured SQLCipher runtime."; return }
     $profile = if ($Release) { 'release' } else { 'debug' }
-    if ($artifactPaths.Count -ne 1) { throw 'Cargo did not identify exactly one Waypoint executable; no receipt was written.' }
+    if ($artifactPaths.Count -ne 1) { throw 'Cargo did not identify exactly one Smart Jobseeker executable; no receipt was written.' }
     $executable = [IO.Path]::GetFullPath([string]$artifactPaths[0])
     if ((Split-Path -Leaf $executable) -ne 'waypoint_web.exe' -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'Cargo returned an unexpected executable path; no receipt was written.' }
     $buildDirectory = Split-Path -Parent $executable

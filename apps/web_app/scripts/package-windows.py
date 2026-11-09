@@ -410,7 +410,7 @@ def main():
     exe = build / 'waypoint_web.exe'
     dlls = list(build.glob('libcrypto*.dll'))
     if not exe.is_file() or len(dlls) != 1:
-        raise ValueError('Build Waypoint first and ensure exactly one libcrypto DLL is next to the executable')
+        raise ValueError('Build Smart Jobseeker first and ensure exactly one libcrypto DLL is next to the executable')
     receipt_path = build / 'waypoint-build.json'
     if not receipt_path.is_file(): raise ValueError('Build receipt is missing; use build-windows.ps1 first')
     receipt = json.loads(receipt_path.read_text(encoding='utf-8-sig'))
@@ -493,7 +493,7 @@ def main():
         created = True
         with raw, zipfile.ZipFile(raw,'w',zipfile.ZIP_DEFLATED,strict_timestamps=False) as archive:
             def add(path, dest): archive.write(path, dest)
-            add(exe,'app/waypoint_web.exe');add(dlls[0],f'app/{dlls[0].name}')
+            add(exe,'app/SmartJobseeker.exe');add(dlls[0],f'app/{dlls[0].name}')
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
             office_hashes = add_libreoffice(archive, office_root) if office_root else {}
@@ -528,7 +528,7 @@ def main():
             office_note = 'LibreOffice is bundled.' if office_hashes else 'LibreOffice is not bundled and needs separate setup for document conversion.'
             ollama_note = 'Ollama is bundled; start it from Settings.' if ollama_hashes else 'Ollama is not bundled and needs separate setup.'
             browser_note = 'A supplied Chromium browser is bundled.' if chromium_hashes else 'A Chromium browser needs separate installation.'
-            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/waypoint_web.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} {browser_note} Microsoft Visual C++ runtime may need separate installation. See app/README.md.\n')
+            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/SmartJobseeker.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} {browser_note} Microsoft Visual C++ runtime may need separate installation. See app/README.md.\n')
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise

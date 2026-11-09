@@ -39,7 +39,7 @@ fn transmit(stream: &mut (impl Read + Write), address: &str, id: &str) -> Result
     if !valid_address(address) || !id.bytes().all(|b| b.is_ascii_hexdigit()) || id.is_empty() {
         return Err("Cannot use these credentials for the test message".into());
     }
-    let message = format!("From: {address}\r\nTo: {address}\r\nSubject: Waypoint connectivity test\r\nMessage-ID: <waypoint-test-{id}@localhost>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a self-addressed Waypoint connectivity test. It is not a job application.\r\n");
+    let message = format!("From: {address}\r\nTo: {address}\r\nSubject: Smart Jobseeker connectivity test\r\nMessage-ID: <waypoint-test-{id}@localhost>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a self-addressed Smart Jobseeker connectivity test. It is not a job application.\r\n");
     crate::smtp_handoff::handoff(stream, address, address, message.as_bytes()).map_err(
         |error| match error {
             crate::smtp_handoff::HandoffError::InvalidMessage => {

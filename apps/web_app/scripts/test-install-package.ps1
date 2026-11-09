@@ -25,9 +25,9 @@ try {
     Invoke-Expression $shortcutFunction.Extent.Text
     $redirectedPrograms = Join-Path $testRoot 'Redirected Programs'
     New-Item -ItemType Directory -Path $redirectedPrograms | Out-Null
-    if ((Get-WaypointShortcutPath $redirectedPrograms) -ne (Join-Path $redirectedPrograms 'Waypoint.lnk')) { throw 'Redirected Programs folder was not used.' }
+    if ((Get-WaypointShortcutPath $redirectedPrograms) -ne (Join-Path $redirectedPrograms 'Smart Jobseeker.lnk')) { throw 'Redirected Programs folder was not used.' }
     $actualPrograms = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
-    if ((Get-WaypointShortcutPath $actualPrograms) -ne (Join-Path $actualPrograms 'Waypoint.lnk')) { throw 'The current Windows Programs folder was not accepted.' }
+    if ((Get-WaypointShortcutPath $actualPrograms) -ne (Join-Path $actualPrograms 'Smart Jobseeker.lnk')) { throw 'The current Windows Programs folder was not accepted.' }
     foreach ($badPath in @('', 'relative', (Join-Path $testRoot 'missing'))) {
         $rejected = $false
         try { Get-WaypointShortcutPath $badPath | Out-Null } catch { $rejected = $true }
@@ -36,7 +36,7 @@ try {
     $installer = Join-Path $testRoot 'install.ps1'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-package.ps1') -Destination $installer
     $app = Join-Path $testRoot 'app'
-    foreach ($name in @('waypoint_web.exe', 'libcrypto-test.dll', 'dependencies/python/python.exe', 'dependencies/libreoffice/program/soffice.com', 'dependencies/libreoffice/LICENSE.html', 'dependencies/chromium/chrome.exe', 'dependencies/chromium/LICENSES.chromium.html', 'dependencies/ollama/ollama.exe', 'dependencies/ollama/LICENSE', 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE', 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll', 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')) {
+    foreach ($name in @('SmartJobseeker.exe', 'libcrypto-test.dll', 'dependencies/python/python.exe', 'dependencies/libreoffice/program/soffice.com', 'dependencies/libreoffice/LICENSE.html', 'dependencies/chromium/chrome.exe', 'dependencies/chromium/LICENSES.chromium.html', 'dependencies/ollama/ollama.exe', 'dependencies/ollama/LICENSE', 'dependencies/ollama/lib/ollama/LLAMA_CPP_LICENSE', 'dependencies/ollama/lib/ollama/vulkan/ggml-vulkan.dll', 'dependencies/ollama/lib/ollama/rocm_v7_1/ggml-hip.dll')) {
         $file = Join-Path $app $name
         New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
         [IO.File]::WriteAllText($file, "fictional fixture: $name")
@@ -49,7 +49,7 @@ try {
     (Get-Item -LiteralPath $hiddenTop -Force).Attributes = [IO.FileAttributes]::Hidden
     function Hash([string]$name) { (Get-FileHash -LiteralPath (Join-Path $app $name) -Algorithm SHA256).Hash.ToLowerInvariant() }
     $manifest = @{
-        executable_sha256 = Hash 'waypoint_web.exe'
+        executable_sha256 = Hash 'SmartJobseeker.exe'
         openssl_dll = 'libcrypto-test.dll'
         openssl_sha256 = Hash 'libcrypto-test.dll'
         python_files = @{ 'dependencies/python/python.exe' = (Hash 'dependencies/python/python.exe') }
@@ -119,13 +119,13 @@ try {
     New-Item -ItemType Junction -Path $otherLink -Target $other | Out-Null
     try {
         & $installer -InstallDirectory (Join-Path $otherLink 'installed') -NoShortcut
-        if (-not (Test-Path -LiteralPath (Join-Path $other 'installed/waypoint_web.exe'))) { throw 'Safe junction destination did not install.' }
+        if (-not (Test-Path -LiteralPath (Join-Path $other 'installed/SmartJobseeker.exe'))) { throw 'Safe junction destination did not install.' }
     } finally {
         [IO.Directory]::Delete($otherLink)
     }
     $sibling = Join-Path $testRoot 'app2'
     & $installer -InstallDirectory $sibling -NoShortcut
-    if (-not (Test-Path -LiteralPath (Join-Path $sibling 'waypoint_web.exe') -PathType Leaf)) { throw 'A sibling with a similar prefix was incorrectly rejected.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $sibling 'SmartJobseeker.exe') -PathType Leaf)) { throw 'A sibling with a similar prefix was incorrectly rejected.' }
     $installed = Join-Path $testRoot 'installed'
     & $installer -InstallDirectory $installed -NoShortcut
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/soffice.com') -PathType Leaf)) { throw 'Bundled converter was not copied.' }
@@ -220,7 +220,7 @@ try {
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $app 'package-manifest.json') -Encoding UTF8
     $withoutOffice = Join-Path $testRoot 'without-office'
     & $installer -InstallDirectory $withoutOffice -NoShortcut
-    if (-not (Test-Path -LiteralPath (Join-Path $withoutOffice 'waypoint_web.exe') -PathType Leaf)) { throw 'Package without the optional converter did not install.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $withoutOffice 'SmartJobseeker.exe') -PathType Leaf)) { throw 'Package without the optional converter did not install.' }
     $ollamaSource = [IO.Path]::GetFullPath((Join-Path $app 'dependencies/ollama'))
     $ollamaSaved = [IO.Path]::GetFullPath((Join-Path $testRoot 'saved-ollama'))
     $fixturePrefix = $testRoot.TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar

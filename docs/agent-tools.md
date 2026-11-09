@@ -92,3 +92,24 @@ The earlier native GUI packages were retired on 2026-11-09. Their source and
 tests remain in Git history through `b166ea93`; they are outside the current
 workspace and coverage denominator. Historical native-GUI gate records must not
 be presented as current web-app coverage or verification.
+
+## Headless layout qualification
+
+Install the pinned free development dependency with
+`npm install --prefix target/layout-qa --no-save --ignore-scripts playwright-core@1.65.0`,
+build the app, then run `node apps/web_app/scripts/qualify-layout.cjs`.
+Use `--browser <absolute Chromium executable>` for a nonstandard installation,
+`--executable <app executable>` for a packaged build, `--quick` for focused drag
+checks, or `--source-assets` for an explicitly reported uncompiled design pass.
+The default checks compiled assets. `--help` requires no browser or app launch.
+
+The tool uses an isolated headless browser/profile and a private Windows app
+workspace under `target/`. A temporary test extension controls actual per-tab
+browser zoom; its debugging flag is confined to that test browser and is not a
+product option. The renderer's external requests are refused. Jobs, documents
+and PDF preview responses are fictional; this is layout evidence, not a document
+or employer-form completion test. Results bind the binary digest and browser
+version; CI retains JSON observations only. Local screenshots can include paths
+and must not be committed. Available-memory checks are admission checks, not
+reservations or peak measurements. All new repository tools follow the concise
+communication rules in `AGENTS.md`.

@@ -18,7 +18,7 @@ pub fn client(timeout: u64, local: bool) -> Result<Client> {
         .timeout(Duration::from_secs(timeout))
         .connect_timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("Waypoint/", env!("CARGO_PKG_VERSION")));
+        .user_agent(concat!("SmartJobseeker/", env!("CARGO_PKG_VERSION")));
     if local {
         builder = builder.no_proxy();
     }

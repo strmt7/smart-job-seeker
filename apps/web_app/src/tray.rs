@@ -19,7 +19,7 @@ use winit::{
 pub fn run(url: String, stop: Arc<AtomicBool>, worker: JoinHandle<()>) -> Result<(), String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let menu = Menu::new();
-    let open = MenuItem::new("Open Waypoint", true, None);
+    let open = MenuItem::new("Open Smart Jobseeker", true, None);
     let quit = MenuItem::new("Exit", true, None);
     menu.append(&open).map_err(|e| e.to_string())?;
     menu.append(&quit).map_err(|e| e.to_string())?;
@@ -41,13 +41,13 @@ pub fn run(url: String, stop: Arc<AtomicBool>, worker: JoinHandle<()>) -> Result
                         pixels[i..i + 4].copy_from_slice(if mark {
                             &[255, 255, 255, 255]
                         } else {
-                            &[25, 115, 238, 255]
+                            &[22, 93, 82, 255]
                         });
                     }
                 }
                 if let Ok(image) = Icon::from_rgba(pixels, 32, 32) {
                     icon = TrayIconBuilder::new()
-                        .with_tooltip("Waypoint — local job workspace")
+                        .with_tooltip("Smart Jobseeker — local job workspace")
                         .with_icon(image)
                         .with_menu(Box::new(menu.clone()))
                         .build()
@@ -65,7 +65,7 @@ pub fn run(url: String, stop: Arc<AtomicBool>, worker: JoinHandle<()>) -> Result
                 if event.id == *quit.id() {
                     stop.store(true, Ordering::Release);
                     shutting_down = true;
-                    quit.set_text("Closing server…");
+                    quit.set_text("Closing…");
                 }
             }
             while let Ok(event) = TrayIconEvent::receiver().try_recv() {

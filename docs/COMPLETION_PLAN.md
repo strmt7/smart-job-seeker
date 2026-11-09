@@ -1,4 +1,4 @@
-# Waypoint completion plan
+# Smart Jobseeker completion plan
 
 Status: active development, updated 2026-11-09. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
@@ -60,8 +60,9 @@ build and configuration.
    not an unexplained suppression. Re-run the affected checks on the final SHA.
    The separate native GUI packages have now been retired in favor of the
    requested web/tray entrypoint. Local audit passed on the resulting 353-package
-   graph without ignores; hosted confirmation remains required. The latest
-   preceding hosted browser failure is a fixture navigation abort in
+   graph without ignores, and hosted supply-chain checks passed for `12fc1504`.
+   Its browser-e2e job still failed; the preceding identified browser failure
+   is a fixture navigation abort in
    `observes_non_read_request_triggered_by_field_input`, not the disconnect
    observation. Its cause still needs investigation.
 2. **Measure the local application agent.** Run a controlled, versioned corpus
@@ -135,7 +136,13 @@ build and configuration.
    and fixture installer checks do not prove clean-host installation.
 6. **Close experience and accessibility gaps.** Verify the actual rendered
    flows, visual consistency, keyboard and screen-reader operation, DPI and
-   narrow layouts; resolve findings with representative users. Complete privacy,
+   narrow layouts; resolve findings with representative users.
+   The current shared theme, mouse-drag panels, Appearance settings and bounded
+   license dialog passed a 295-case compiled-app Chrome layout matrix and a
+   16-case focused Edge pass. These fictional-data checks cover selected
+   geometry and interactions, not the entire settings/application journey or
+   native Windows DPI. Use the retained design reference and actual screenshots
+   for further refinements; no pixel-parity claim is established. Complete privacy,
    licensing and release documentation against the exact build. Do not publish
    a release as part of this work.
 

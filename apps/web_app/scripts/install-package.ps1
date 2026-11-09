@@ -1,9 +1,9 @@
 param(
-    [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs/Waypoint'),
+    [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs/Smart Jobseeker'),
     [switch]$NoShortcut
 )
 $ErrorActionPreference = 'Stop'
-if ($env:OS -ne 'Windows_NT') { throw 'Waypoint installation requires Windows.' }
+if ($env:OS -ne 'Windows_NT') { throw 'Smart Jobseeker installation requires Windows.' }
 if ($InstallDirectory -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') { throw 'Choose an absolute installation path.' }
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 if (Test-Path -LiteralPath $InstallDirectory) { throw 'The installation directory already exists. Choose a new directory; existing files will not be overwritten.' }
@@ -83,7 +83,7 @@ if ($manifest.openssl_dll -notmatch '^libcrypto[A-Za-z0-9_.-]*\.dll$' -or
     throw 'Package manifest does not contain valid runtime information.'
 }
 foreach ($entry in @(
-    @{ Name = 'waypoint_web.exe'; Hash = $manifest.executable_sha256 },
+    @{ Name = 'SmartJobseeker.exe'; Hash = $manifest.executable_sha256 },
     @{ Name = $manifest.openssl_dll; Hash = $manifest.openssl_sha256 }
 )) {
     $file = Join-Path $source $entry.Name
@@ -218,12 +218,12 @@ function Get-WaypointShortcutPath([string]$ProgramsDirectory) {
         -not (Test-Path -LiteralPath $ProgramsDirectory -PathType Container)) {
         throw 'The current user Start Menu Programs folder is unavailable. Use -NoShortcut to install without a shortcut.'
     }
-    return Join-Path $ProgramsDirectory 'Waypoint.lnk'
+    return Join-Path $ProgramsDirectory 'Smart Jobseeker.lnk'
 }
 $shortcut = $null
 if (-not $NoShortcut) {
     $shortcut = Get-WaypointShortcutPath ([Environment]::GetFolderPath([Environment+SpecialFolder]::Programs))
-    if (Test-Path -LiteralPath $shortcut) { throw 'The Waypoint Start Menu shortcut already exists; it will not be overwritten.' }
+    if (Test-Path -LiteralPath $shortcut) { throw 'The Smart Jobseeker Start Menu shortcut already exists; it will not be overwritten.' }
 }
 New-Item -ItemType Directory -Path $InstallDirectory -ErrorAction Stop | Out-Null
 try {
@@ -235,7 +235,7 @@ try {
     # Confirm the actual installed files, not only the extracted source, before
     # creating a shortcut or reporting that installation completed.
     foreach ($entry in @(
-        @{ Name = 'waypoint_web.exe'; Hash = $manifest.executable_sha256 },
+        @{ Name = 'SmartJobseeker.exe'; Hash = $manifest.executable_sha256 },
         @{ Name = $manifest.openssl_dll; Hash = $manifest.openssl_sha256 }
     )) {
         $file = Join-Path $InstallDirectory $entry.Name
@@ -252,12 +252,12 @@ try {
     if (-not $NoShortcut) {
         $shell = New-Object -ComObject WScript.Shell
         $link = $shell.CreateShortcut($shortcut)
-        $link.TargetPath = Join-Path $InstallDirectory 'waypoint_web.exe'
+        $link.TargetPath = Join-Path $InstallDirectory 'SmartJobseeker.exe'
         $link.WorkingDirectory = $InstallDirectory
-        $link.Description = 'Waypoint local job workspace'
+        $link.Description = 'Smart Jobseeker local workspace'
         $link.Save()
     }
-    Write-Host "Waypoint copied to $InstallDirectory. Start waypoint_web.exe to open the local workspace."
+    Write-Host "Smart Jobseeker copied to $InstallDirectory. Start SmartJobseeker.exe to open the local workspace."
 } catch {
     throw "Installation did not finish. The newly created directory $InstallDirectory may contain partial files; inspect it before retrying. $($_.Exception.Message)"
 }

@@ -1,6 +1,6 @@
 # AGENTS.md — how to work in this repo (for AI coding agents and humans)
 
-Waypoint (smart-job-seeker) is a Windows-first, local-first job-seeker prototype
+Smart Jobseeker (smart-job-seeker) is a Windows-first, local-first job-seeker prototype
 with a Rust backend and local web interface. This file is the single entry point for any agent (or person) picking the
 repo up cold. Read this first, then `README.md`, then the references below.
 
@@ -31,6 +31,17 @@ repo up cold. Read this first, then `README.md`, then the references below.
 - See [agent tools and coverage](docs/agent-tools.md) for explicit setup,
   external caches, receipt limits and the scope of the Codecov report. These
   are development tools, not application runtime dependencies.
+
+## Interface consistency
+
+The product name is **Smart Jobseeker**. Keep existing storage keys, protocols
+and crate identifiers compatible when changing public branding. Follow the
+[current interface contract](docs/design/2026-11-smart-jobseeker/README.md):
+shared visual/interaction styles belong in `workspace-theme.css`, and pane
+sizing/appearance behavior belongs in `layout.js`. Use standard mouse-drag grips
+for resizing. Avoid duplicate mechanisms, inert settings and fabricated status
+indicators. Validate relevant rendered states at narrow widths and browser zoom;
+passing geometry checks alone does not replace screenshot inspection.
 
 ## Non-negotiable product invariants (enforced by tests — do not break)
 

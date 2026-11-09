@@ -1,5 +1,5 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
-//! Local browser interface for the existing Waypoint workspace.
+//! Smart Jobseeker local web interface and Windows tray entrypoint.
 mod answer_task;
 mod application_check;
 pub mod application_email;
@@ -2319,6 +2319,15 @@ fn serve(
             "200 OK",
             "text/css; charset=utf-8",
             include_str!("../web/style.css"),
+        );
+        return Ok(());
+    }
+    if path == "/layout.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/layout.js"),
         );
         return Ok(());
     }
@@ -7785,7 +7794,7 @@ fn serve(
             {
                 Ok(count) => Some(count),
                 Err(_) => {
-                    let reason = "Network observation was unavailable before filling. Waypoint did not fill fields; the site may have sent requests. Check the employer site before retrying.";
+                    let reason = "Network observation was unavailable before filling. Smart Jobseeker did not fill fields; the site may have sent requests. Check the employer site before retrying.";
                     let record_error = current.record.as_mut().and_then(|record| {
                         record.event(json!({"type":"fill_network_preflight_unavailable","time":now(),"note":reason})).err()
                     });
@@ -8330,7 +8339,7 @@ fn serve(
             {
                 Ok(count) => count,
                 Err(_) => {
-                    let reason = "Network observation was unavailable before attachment. Waypoint did not attach this file; the site may have sent requests. Check the employer site before retrying.";
+                    let reason = "Network observation was unavailable before attachment. Smart Jobseeker did not attach this file; the site may have sent requests. Check the employer site before retrying.";
                     if let Some(record) = &mut current.record {
                         record.event(json!({"type":"attachment_network_preflight_unavailable","time":now(),"note":reason}))?;
                     }
@@ -8992,9 +9001,9 @@ fn startup_error_message(error: &str) -> String {
         .collect();
     let detail = detail.trim();
     if detail.is_empty() {
-        "Waypoint could not start. Check the workspace and try again.".into()
+        "Smart Jobseeker could not start. Check the workspace and try again.".into()
     } else {
-        format!("Waypoint could not start. Check the workspace and try again.\n\n{detail}")
+        format!("Smart Jobseeker could not start. Check the workspace and try again.\n\n{detail}")
     }
 }
 
@@ -9009,7 +9018,7 @@ fn show_startup_error(message: &str) {
     };
     let executable = std::path::PathBuf::from(system_root)
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let script = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; $message = [Console]::In.ReadToEnd(); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show($message, 'Waypoint startup error', 'OK', 'Error') | Out-Null";
+    let script = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; $message = [Console]::In.ReadToEnd(); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show($message, 'Smart Jobseeker startup error', 'OK', 'Error') | Out-Null";
     if let Ok(mut child) = Command::new(executable)
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
@@ -9041,7 +9050,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     getrandom::fill(&mut bytes).map_err(|e| format!("token generation failed: {e}"))?;
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let url = format!("http://127.0.0.1:{port}/#{token}");
-    println!("Waypoint: {url}");
+    println!("Smart Jobseeker: {url}");
     listener.set_nonblocking(true)?;
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_stop = stop.clone();
@@ -10278,7 +10287,7 @@ mod tests {
         assert!(!result.contains('\r'));
         assert_eq!(
             startup_error_message("\n\t"),
-            "Waypoint could not start. Check the workspace and try again."
+            "Smart Jobseeker could not start. Check the workspace and try again."
         );
     }
 

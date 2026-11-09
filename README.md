@@ -1,13 +1,13 @@
-# smart-job-seeker (Waypoint)
+# Smart Jobseeker
 
 [![Codecov](https://img.shields.io/codecov/c/github/strmt7/smart-job-seeker?label=Codecov&logo=codecov)](https://codecov.io/gh/strmt7/smart-job-seeker)
 [![cocoindex-code](https://img.shields.io/static/v1?label=&message=cocoindex-code&color=555&logo=github&logoColor=white)](https://github.com/cocoindex-io/cocoindex-code)
 [![caveman](https://img.shields.io/static/v1?label=&message=caveman&color=555&logo=github&logoColor=white)](https://github.com/JuliusBrussee/caveman)
 [![crawl4ai](https://img.shields.io/static/v1?label=&message=crawl4ai&color=555&logo=github&logoColor=white)](https://github.com/unclecode/crawl4ai)
 
-Waypoint is a Windows-first, local job-search and application-assistance prototype written in Rust. Its current interface is a local web page; it uses local tools, including Ollama for optional model-assisted features. The prototype is under active development and is not yet a complete enterprise product.
+Smart Jobseeker is a Windows-first, local job-search and application-assistance prototype written in Rust. Its current interface is a local web page; it uses local tools, including Ollama for optional model-assisted features. The prototype is under active development and is not yet a complete enterprise product.
 
-**Current status:** See [the web prototype checkpoint](docs/WEB_PROTOTYPE_CHECKPOINT.md) for the latest verified capabilities and limitations. Earlier gate documents describe historical work and do not establish current end-to-end readiness. No hiring-uplift, superiority or "undetectable AI" claims are made.
+**Current status:** See [the web prototype checkpoint](docs/WEB_PROTOTYPE_CHECKPOINT.md) for the latest verified capabilities and limitations. The [current interface contract](docs/design/2026-11-smart-jobseeker/README.md) records the latest visual and resizing checkpoint. Earlier gate documents describe historical work and do not establish current end-to-end readiness. No hiring-uplift, superiority or "undetectable AI" claims are made.
 
 The [completion plan](docs/COMPLETION_PLAN.md) records the remaining product work and evidence gates; implementation is ongoing and no readiness date is established.
 
@@ -20,7 +20,7 @@ On Windows, build the local web prototype from the repository root:
 ./target/debug/waypoint_web.exe
 ```
 
-The build helper requires Rust and MSVC build tools; when no compatible OpenSSL developer installation is found, it can download and extract a pinned package into the local build cache. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. Waypoint has no application submission or application-email sending feature. However, a website can submit or transmit data in response to form interactions, including a button that does not look like submit. The prototype cannot yet prevent all such behavior; do not interact with real application forms when an application must not be sent. Draft preparation and an explicit fixed Gmail self-test are available.
+The build helper requires Rust and MSVC build tools; when no compatible OpenSSL developer installation is found, it can download and extract a pinned package into the local build cache. See [the web prototype instructions](apps/web_app/README.md) for dependencies, packaging, data storage and limitations. Smart Jobseeker has no application submission or application-email sending feature. However, a website can submit or transmit data in response to form interactions, including a button that does not look like submit. The prototype cannot yet prevent all such behavior; do not interact with real application forms when an application must not be sent. Draft preparation and an explicit fixed Gmail self-test are available.
 
 ## Workspace layout
 
