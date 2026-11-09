@@ -37,7 +37,9 @@ paths. No employer application pages were contacted during this design work.
 1. Simplify search/filter density and preserve filter state across workspaces.
 2. Extend the searchable document library and selected-template badges into a
    focused role-specific review layout, including
-   PDF preview, factual review, revisions and outstanding checks.
+   PDF preview, factual review, revisions and outstanding checks. PDF rows now
+   expose saved draft-context and visual-review evidence for a selected job;
+   this remains an evidence snapshot rather than a readiness certificate.
 3. Reorganize local-tool setup around actual detected states and distinct actions;
    avoid implying a dependency is installed before checking it.
 4. Extend the mobile Jobs/Workspace dock with long-form review usability checks.

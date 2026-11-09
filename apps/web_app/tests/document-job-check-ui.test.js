@@ -1,0 +1,33 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const summary=source.split('\n').find(line=>line.startsWith('function documentJobCheckLines('));
+function element(tag,text=''){return {tag,textContent:text,children:[],value:'',append(...nodes){this.children.push(...nodes);},replaceChildren(...nodes){this.children=nodes;},setAttribute(){},addEventListener(name,fn){this[name]=fn;},scrollIntoView(){}};}
+const panel=element('div'),requests=[];
+const notifications=[];
+const ctx=vm.createContext({documentJobCheckGeneration:0,activeJobId:'job-a',state:{jobs:[{job:{id:'job-a',title:'Fictional role',employer:'Example'}}]},element,Option:function(text,value){this.textContent=text;this.value=value;},setWorkspaceView(){},notify(){},document:{querySelector:()=>panel,createElement:element},api:(_path,body)=>new Promise(resolve=>requests.push({body,resolve}))});
+vm.runInContext(summary,ctx);
+ctx.pendingDocumentVisual=ctx.pendingAtsCheck=()=>({doc:'second',job:'other-job'});
+ctx.notify=text=>notifications.push(text);
+vm.runInContext(source.slice(source.indexOf('function showDocumentJobCheck('),source.indexOf('function documentPreparationStatus(')),ctx);
+const report=id=>({document_id:id,job_id:'job-a',job_title:'Fictional role',document_sha256:'a'.repeat(64),requires_user_review:true,provenance:{status:'not_found',incomplete:true},visual:{status:'available',recorded:2,current_completed:1,incomplete:true},note:'Review the full PDF.'});
+const lines=ctx.documentJobCheckLines({...report('x'),provenance:{status:'found',context_current:false,incomplete:true}}).join(' ');
+assert.match(lines,/context has changed/);assert.match(lines,/lookup was incomplete/);assert.match(lines,/may still contain findings/);
+(async()=>{
+ ctx.showDocumentJobCheck({id:'first',name:'First.pdf'});
+ const firstButton=panel.children.find(n=>n.tag==='button');const first=firstButton.click();
+ assert.equal(requests[0].body.job_id,'job-a');
+ ctx.showDocumentJobCheck({id:'second',name:'Second.pdf'});
+ const second=panel.children.find(n=>n.tag==='button').click();
+ requests[1].resolve(report('second'));await second;
+ const output=panel.children.find(n=>n.tag==='div');const before=output.children.map(n=>n.textContent).join(' ');
+ requests[0].resolve(report('first'));await first;
+ assert.equal(output.children.map(n=>n.textContent).join(' '),before);
+ assert.match(before,/Fictional role/);
+ output.children.find(n=>n.textContent==='Review PDF visually for this job').click();
+ output.children.find(n=>n.textContent==='Check CV against this job').click();
+ assert.equal(notifications.length,2);
+ assert.ok(notifications.every(text=>text.includes('another job')));
+ const retry=panel.children.find(n=>n.tag==='button').click();requests[2].resolve(report('wrong-document'));await retry;
+ assert.match(output.children[0].textContent,/mismatched evidence/);
+ console.log('Document job checks preserve context and reject mismatched results.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

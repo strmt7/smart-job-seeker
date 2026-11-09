@@ -17,6 +17,7 @@ mod discovery_task;
 mod doc_suggest;
 mod document_convert;
 mod document_extract;
+mod document_job_check;
 mod document_visual;
 mod docx_edit;
 mod docx_edit_task;
@@ -4694,6 +4695,16 @@ fn serve(
                 stream,
                 "200 OK",
                 json!({"requested":document_visual::cancel(id)?}),
+            );
+        }
+        "/api/documents/job-check" => {
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            let document = body["document_id"].as_str().ok_or("missing document id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                document_job_check::inspect(ws, &job, document)?,
             );
         }
         "/api/documents/visual-review-candidates" => {

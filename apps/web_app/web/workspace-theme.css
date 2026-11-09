@@ -59,6 +59,15 @@ dialog { border-radius: 12px; border-color: var(--line); }
 .document-library-filters input,.document-library-filters select { min-width: 0; }
 .document-name .document-status { color: var(--muted); margin-top: 5px; font-size: 12px; }
 .document-name .document-template { color: var(--accent); margin-top: 4px; font-weight: 600; font-size: 12px; }
+.document-preview-pane:has(#document-job-check:not(:empty)) .preview-empty { display: none; }
+#document-job-check:not(:empty) { padding: 16px; overflow-wrap: anywhere; }
+#document-job-check>h3 { padding: 0 0 12px; }
+#document-job-check>button { margin: 12px 0; }
+#document-job-check { scroll-margin-top: 80px; }
+#document-job-check>.footnote { padding: 8px 0; }
+.document-job-results .footnote { padding: 6px 0; }
+.document-job-results button { margin: 10px 8px 0 0; }
+@media(min-width:1101px) { .document-layout:has(#document-job-check:not(:empty)) { grid-template-columns: minmax(0,.95fr) minmax(0,1.05fr); } }
 @media(max-width:420px) { .document-library-filters { grid-template-columns: 1fr; gap: 10px; } }
 @media(min-width:851px) { main { height: calc(100dvh - var(--header-height)); min-height: 0; } }
 @media(max-width:1100px) and (min-width:851px) { main { grid-template-columns: minmax(320px,36%) minmax(0,1fr); } .settings-layout { grid-template-columns: 1fr; } .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; } }
