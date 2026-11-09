@@ -53,7 +53,14 @@ a defensible percentage or date. The following order reflects current evidence;
 each item remains open until its stated evidence is recorded against the exact
 build and configuration.
 
-1. **Restore a trustworthy integration baseline.** Confirm the current hosted
+1. **Restore a trustworthy integration baseline.** The latest `89407eb8` hosted
+   browser and build checks passed, but its audit now reports
+   `RUSTSEC-2026-0459` for the locked SQLite binding. Review and repair both the
+   plain SQLite and SQLCipher paths: the nominal patched binding version still
+   pins an affected SQLCipher source. Verify the real engine versions, encrypted
+   reopen/migration behavior and inventory after a dependency change; do not
+   suppress the finding or infer safety from package versions alone.
+   Confirm the current hosted
    test and coverage results after the local fixture fixes. Investigate the
    hosted browser termination failure using the bounded survivor diagnostics;
    do not assume a local pass explains it. Resolve the three denied unmaintained
@@ -118,7 +125,14 @@ build and configuration.
    request and rendered a local fictional page, but inherited-pipe Chromium
    control remains unresolved. Investigate that compatibility before integrating
    a rehearsal mode; never relax network capabilities or silently run outside
-   the container to make it start. Network-disabled replay would also need a
+   the container to make it start. A subsequent private headless-shell probe did
+   complete pipe control, fictional field readback and screenshot capture inside
+   a checked zero-capability root token, with zero observed loopback requests
+   from four scripted mechanisms. It required a private readable engine copy,
+   separate stderr/protocol handles and document readiness checks. Qualify a
+   current engine, descendant tokens, additional channels, parent/control
+   failure and resource cleanup before integrating the production transport.
+   This remains a feasibility result; real-site interaction is not enabled. Network-disabled replay would also need a
    bounded way to capture/replay permitted assets and explicit handling of
    server-dependent validation and missing steps. No live-form interaction is
    authorized by these partial results.
