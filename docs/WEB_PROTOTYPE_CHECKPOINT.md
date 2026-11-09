@@ -1,5 +1,10 @@
 # Browser-interface prototype checkpoint
 
+Latest section-selection checkpoint, 2026-11-09: automatic advice can resolve a
+checked history entry from model-interpreted section intent. Stable section
+identities bind approvals and distinguish repeated rows. See
+[qualification and limits](HISTORY_SECTION_SELECTION_2026-11-09.md).
+
 Latest runtime checkpoint, 2026-11-09: the default package provisions private
 browser/converter runtimes, and PDF setup can bootstrap without host Python.
 See [runtime setup](RUNTIME_SETUP.md) and the [dependency refresh evidence](DEPENDENCY_REFRESH_2026-11-09.md).

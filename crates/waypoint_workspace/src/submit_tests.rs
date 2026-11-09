@@ -19,6 +19,7 @@ fn answerable_schema() -> FormSchema {
         origin: ORIGIN.into(),
         fields: vec![
             FormField {
+                context: Default::default(),
                 selector: "#cover".into(),
                 label: "Cover letter".into(),
                 field_type: FormFieldType::TextArea,
@@ -31,6 +32,7 @@ fn answerable_schema() -> FormSchema {
                 autocomplete: None,
             },
             FormField {
+                context: Default::default(),
                 selector: "#resume".into(),
                 label: "Resume".into(),
                 field_type: FormFieldType::File,
@@ -186,6 +188,7 @@ fn a_changed_form_voids_the_approval_and_sends_nothing() {
     // The live form differs (the site added a field).
     let mut changed = answerable_schema();
     changed.fields.push(FormField {
+        context: Default::default(),
         selector: "#portfolio".into(),
         label: "Portfolio URL".into(),
         field_type: FormFieldType::Text,
@@ -223,6 +226,7 @@ fn a_changed_form_voids_the_approval_and_sends_nothing() {
 fn a_sensitive_field_is_never_auto_answered_and_does_not_burn_the_approval() {
     let mut schema = answerable_schema();
     schema.fields.push(FormField {
+        context: Default::default(),
         selector: "#salary".into(),
         label: "Salary expectation".into(),
         field_type: FormFieldType::Text,
@@ -266,6 +270,7 @@ fn a_sensitive_field_is_never_auto_answered_and_does_not_burn_the_approval() {
 fn a_required_field_the_packet_cannot_answer_blocks_before_any_write() {
     let mut schema = answerable_schema();
     schema.fields.push(FormField {
+        context: Default::default(),
         selector: "#first_name".into(),
         label: "First name".into(),
         field_type: FormFieldType::Text,
@@ -452,6 +457,7 @@ fn the_fill_plan_only_claims_what_the_packet_really_answers() {
     // A sensitive field is offered to the candidate, never filled.
     let mut with_sensitive = answerable_schema();
     with_sensitive.fields.push(FormField {
+        context: Default::default(),
         selector: "#auth".into(),
         label: "Work authorization".into(),
         field_type: FormFieldType::Select {

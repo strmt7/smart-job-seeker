@@ -26,6 +26,10 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "history_section_intent",
+        include_str!("history_section_intent.schema.json"),
+    ),
+    (
         "history_field_mapping",
         include_str!("history_mapping.schema.json"),
     ),

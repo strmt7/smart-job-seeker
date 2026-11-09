@@ -3230,6 +3230,9 @@ impl CdpDriver {
                         format!("{prefix}waypoint-shadow:{host_backend}:{root_backend}:");
                     for field in &mut embedded.fields {
                         field.selector = format!("{child_prefix}{}", field.selector);
+                        for section in &mut field.context.sections {
+                            section.id = format!("{child_prefix}{}", section.id);
+                        }
                     }
                     schema.fields.extend(embedded.fields);
                     schema.multi_step |= embedded.multi_step;
@@ -3339,6 +3342,9 @@ impl CdpDriver {
                         format!("{prefix}waypoint-frame:{frame_backend}:{document_backend}:");
                     for field in &mut embedded.fields {
                         field.selector = format!("{child_prefix}{}", field.selector);
+                        for section in &mut field.context.sections {
+                            section.id = format!("{child_prefix}{}", section.id);
+                        }
                     }
                     schema.fields.extend(embedded.fields);
                     schema.multi_step |= embedded.multi_step;
@@ -3372,8 +3378,9 @@ impl CdpDriver {
         let mut radio_containers: HashMap<u64, (u64, String, Option<String>)> = HashMap::new();
         let mut radio_form_owners: HashMap<u64, u64> = HashMap::new();
         let mut radio_group_required: HashMap<u64, bool> = HashMap::new();
-        type GroupContext = (String, Option<String>, Option<u64>, bool, bool);
+        type GroupContext = (u64, String, Option<String>, Option<u64>, bool, bool);
         let mut field_containers: HashMap<u64, Vec<GroupContext>> = HashMap::new();
+        let mut missing_section_identity = false;
         let mut group_scan_budget = 50_000usize;
         let mut group_scan_incomplete = false;
         let mut wall_flags: Vec<String> = vec![];
@@ -3872,6 +3879,13 @@ impl CdpDriver {
                     .and_then(Value::as_u64)
                     .filter(|_| !legend.is_empty() || group_ref.is_some() || ambiguous_heading)
                 {
+                    // Frontend node IDs change on getDocument; backend IDs name
+                    // the same live node across inspections and change on replacement.
+                    let section_backend = node
+                        .get("backendNodeId")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    missing_section_identity |= section_backend == 0;
                     let completed =
                         walk_group_bounded(node, &mut group_scan_budget, &mut |child| {
                             let child_tag = child
@@ -3893,6 +3907,7 @@ impl CdpDriver {
                                     let groups = field_containers.entry(id).or_default();
                                     if groups.len() < 9 {
                                         groups.push((
+                                            section_backend,
                                             legend.clone(),
                                             group_ref.clone(),
                                             implicit_heading,
@@ -3957,6 +3972,12 @@ impl CdpDriver {
             }
             true
         });
+
+        if missing_section_identity {
+            return Err(DriverError(
+                "A form section has no stable identity; inspect again or review manually".into(),
+            ));
+        }
 
         // Accessible names may be provided by nodes elsewhere in the page.
         // Resolve only bounded, unambiguous references; unresolved names need
@@ -4207,7 +4228,7 @@ impl CdpDriver {
             .chain(
                 field_containers
                     .values()
-                    .flat_map(|groups| groups.iter().map(|(_, group_ref, _, _, _)| group_ref)),
+                    .flat_map(|groups| groups.iter().map(|(_, _, group_ref, _, _, _)| group_ref)),
             )
         {
             if let Some(ids) = group_ref.as_ref().filter(|s| s.len() <= 512) {
@@ -4465,14 +4486,20 @@ impl CdpDriver {
                     .cloned()
                     .unwrap_or_else(|| "unlabelled field".into());
             }
+            let mut section_path = Vec::new();
+            let mut section_context_complete = !group_scan_incomplete;
             if input_type != "radio" {
                 if let Some(groups) = field_containers.get(&control.node_id) {
                     if groups.len() > 8 {
+                        section_context_complete = false;
                         walls.push("field group nesting exceeds the inspection limit".into());
                     }
                     let mut context = Vec::new();
-                    for (legend, group_ref, heading, ambiguous, inferred) in groups.iter().take(8) {
+                    for (group_id, legend, group_ref, heading, ambiguous, inferred) in
+                        groups.iter().take(8)
+                    {
                         if *ambiguous {
+                            section_context_complete = false;
                             walls.push(
                                 "a section heading is ambiguous; review the form manually".into(),
                             );
@@ -4494,6 +4521,7 @@ impl CdpDriver {
                                 None
                             };
                             if text.is_none() {
+                                section_context_complete = false;
                                 walls.push("a section heading could not be verified; review the form manually".into());
                                 continue;
                             }
@@ -4521,27 +4549,36 @@ impl CdpDriver {
                         } else {
                             verified_heading.or_else(|| Some(legend.clone()))
                         };
-                        match group.filter(|group| !group.trim().is_empty() && group.len() <= 500) {
-                            Some(group)
-                                if !label.eq_ignore_ascii_case(&group)
-                                    && !context.iter().any(|existing: &String| {
-                                        existing
-                                            .strip_prefix("Possible section: ")
-                                            .unwrap_or(existing)
-                                            .eq_ignore_ascii_case(&group)
-                                    }) =>
+                        if let Some(group) =
+                            group.filter(|group| !group.trim().is_empty() && group.len() <= 500)
+                        {
+                            // Keep structural identity even when the display path deduplicates
+                            // an equal legend. Repeated records may have identical labels.
+                            section_path.push(waypoint_applications::form_mapping::FormSection {
+                                id: format!("group:{group_id}"),
+                                label: group.clone(),
+                                inferred: *inferred,
+                            });
+                            if !label.eq_ignore_ascii_case(&group)
+                                && !context.iter().any(|existing: &String| {
+                                    existing
+                                        .strip_prefix("Possible section: ")
+                                        .unwrap_or(existing)
+                                        .eq_ignore_ascii_case(&group)
+                                })
                             {
                                 context.push(if *inferred {
                                     format!("Possible section: {group}")
                                 } else {
                                     group
-                                })
+                                });
                             }
-                            Some(_) => {}
-                            None => walls.push(
+                        } else {
+                            section_context_complete = false;
+                            walls.push(
                                 "a field group has an unresolved or ambiguous accessible label"
                                     .into(),
-                            ),
+                            );
                         }
                     }
                     if !context.is_empty() {
@@ -4549,6 +4586,12 @@ impl CdpDriver {
                         label = context.join(" — ");
                     }
                 }
+            }
+
+            // A verified parent cannot stand in for an unresolved child section.
+            // Keep the inspection warning, but expose no selectable partial path.
+            if !section_context_complete {
+                section_path.clear();
             }
 
             if input_type == "password" {
@@ -4784,6 +4827,7 @@ impl CdpDriver {
                         let index = fields.len();
                         radio_groups.insert(key, index);
                         fields.push(FormField {
+                            context: Default::default(),
                             selector: selector.clone(),
                             label: group_label.clone(),
                             field_type: FormFieldType::Radio {
@@ -4830,6 +4874,7 @@ impl CdpDriver {
                         };
                         let context = context.filter(|text| !text.is_empty());
                         fields.push(FormField {
+                            context: Default::default(),
                             selector,
                             label: context.map_or_else(
                                 || format!("Unlabelled radio group: {name}"),
@@ -4927,6 +4972,9 @@ impl CdpDriver {
                 None
             };
             fields.push(FormField {
+                context: waypoint_applications::form_mapping::FormFieldContext {
+                    sections: section_path,
+                },
                 selector,
                 label,
                 field_type,
@@ -7328,6 +7376,7 @@ mod traversal_tests {
                 fields: selectors
                     .iter()
                     .map(|selector| FormField {
+                        context: Default::default(),
                         selector: (*selector).into(),
                         label: "Field".into(),
                         field_type: FormFieldType::Text,

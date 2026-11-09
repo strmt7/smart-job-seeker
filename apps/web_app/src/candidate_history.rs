@@ -135,6 +135,31 @@ pub fn selected(raw: &str, id: &str) -> Result<SelectedRecord, String> {
     })
 }
 
+/// Every checked record, with no ranking by storage order or silent truncation.
+pub fn reviewed(raw: &str) -> Result<Vec<SelectedRecord>, String> {
+    let canonical = canonicalize(raw)?;
+    let history: History =
+        serde_json::from_str(&canonical).map_err(|_| "Add checked career history first")?;
+    history
+        .employment
+        .iter()
+        .filter(|item| item.reviewed)
+        .map(|item| &item.id)
+        .chain(
+            history
+                .education
+                .iter()
+                .filter(|item| item.reviewed)
+                .map(|item| &item.id),
+        )
+        .map(|id| selected(&canonical, id))
+        .collect()
+}
+
+pub(crate) fn known_date_range(value: &str) -> Option<(u32, u32)> {
+    date_range(value).ok().flatten()
+}
+
 fn text(value: &str, limit: usize, required: bool, multiline: bool) -> Result<(), String> {
     if value.len() > limit
         || (required && value.trim().is_empty())

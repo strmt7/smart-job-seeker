@@ -45,6 +45,26 @@ pub enum EditingMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FormSection {
+    /// Opaque identity within the inspected document scope, never model-authored.
+    pub id: String,
+    pub label: String,
+    pub inferred: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FormFieldContext {
+    /// Named ancestor sections, from outermost to innermost.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<FormSection>,
+}
+impl FormFieldContext {
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormField {
     pub selector: String, // stable CSS selector from the form schema
     pub label: String,
@@ -64,6 +84,8 @@ pub struct FormField {
     pub pattern: Option<String>,
     #[serde(default)]
     pub autocomplete: Option<String>,
+    #[serde(default, skip_serializing_if = "FormFieldContext::is_empty")]
+    pub context: FormFieldContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -400,6 +422,7 @@ mod tests {
             origin: "https://jobs.acme.com".into(),
             fields: vec![
                 FormField {
+                    context: Default::default(),
                     selector: "#name".into(),
                     label: "Full name".into(),
                     field_type: FormFieldType::Text,
@@ -412,6 +435,7 @@ mod tests {
                     autocomplete: None,
                 },
                 FormField {
+                    context: Default::default(),
                     selector: "#salary".into(),
                     label: "Expected salary".into(),
                     field_type: FormFieldType::Text,
@@ -424,6 +448,7 @@ mod tests {
                     autocomplete: None,
                 },
                 FormField {
+                    context: Default::default(),
                     selector: "#country".into(),
                     label: "Country".into(),
                     field_type: FormFieldType::Select {
@@ -666,5 +691,48 @@ mod tests {
         let old = serde_json::json!({"selector":"#answer","label":"Answer","field_type":"text_area","required":false,"sensitive":false});
         let restored: FormField = serde_json::from_value(old).unwrap();
         assert_eq!(restored.editing_mode, None);
+    }
+}
+
+#[cfg(test)]
+mod context_binding_tests {
+    use super::*;
+    #[test]
+    fn legacy_context_defaults_and_section_changes_bind_approvals() {
+        let raw = r##"{"selector":"#a","label":"Role","field_type":"text","required":false,"sensitive":false}"##;
+        let field: FormField = serde_json::from_str(raw).unwrap();
+        assert!(field.context.is_empty());
+        assert!(serde_json::to_value(&field)
+            .unwrap()
+            .get("context")
+            .is_none());
+        let mut schema = FormSchema {
+            origin: "file:///fixture.html".into(),
+            fields: vec![field],
+            multi_step: false,
+            steps: 1,
+        };
+        let flat = schema.schema_hash_input();
+        schema.fields[0].context.sections.push(FormSection {
+            id: "group:1".into(),
+            label: "Employment".into(),
+            inferred: false,
+        });
+        assert_ne!(flat, schema.schema_hash_input());
+        let grouped = schema.schema_hash_input();
+        for change in 0..3 {
+            let mut altered = schema.clone();
+            let section = &mut altered.fields[0].context.sections[0];
+            match change {
+                0 => section.id = "group:2".into(),
+                1 => section.label = "Education".into(),
+                _ => section.inferred = true,
+            }
+            assert_ne!(grouped, altered.schema_hash_input());
+        }
+        assert_eq!(
+            schema,
+            serde_json::from_str::<FormSchema>(&serde_json::to_string(&schema).unwrap()).unwrap()
+        );
     }
 }

@@ -188,8 +188,12 @@ build and configuration.
    documents with provenance, OCR where needed, corrections and private storage.
    The [career-history editor](CANDIDATE_HISTORY.md) now stores reviewed employment
    and education with partial dates, explicit value reuse and scoped local-model
-   suggestions bound to one selected entry. Automatic repeated-
-   section mapping, history-based tailoring and revision-bound history provenance
+   suggestions bound to one selected section. The
+   [section-selection checkpoint](HISTORY_SECTION_SELECTION_2026-11-09.md) adds
+   model-interpreted intent and repeatable record resolution across checked
+   entries, with ten visually/live-verified answers in one repeated-history
+   fixture and seven additional intent cases. Global repeated-row assignment,
+   history-based tailoring and revision-bound answer provenance
    still need implementation and local-model evaluation; do not infer them from
    the editor or its workflow tests.
    The [integrated history qualification](HISTORY_PIPELINE_2026-11-09.md) now

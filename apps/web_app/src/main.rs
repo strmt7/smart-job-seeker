@@ -50,6 +50,7 @@ mod history_advice;
 mod history_advice_browser_tests;
 #[cfg(all(test, windows))]
 mod history_pipeline_tests;
+mod history_record_choice;
 mod letter_export;
 mod link_rank;
 mod local_advice;
@@ -1263,14 +1264,21 @@ fn history_inputs(
         fields.push(field.clone());
     }
     history_advice::validate_scope(&fields)?;
-    let record = candidate_history::selected(
-        profile["career_history"]
-            .as_str()
-            .ok_or("Add checked career history first")?,
-        entry,
-    )?;
-    let digest=Sha256Digest::of(&json!({"version":1,"session":session.id,"job":job,"url":session.url,"profile":session.profile_digest.as_str(),"schema":session.preview.schema.schema_hash_input(),"entry":record,"selectors":selectors}).to_string()).as_str().to_owned();
-    Ok((history_advice::Inputs { record, fields }, digest))
+    let raw = profile["career_history"]
+        .as_str()
+        .ok_or("Add checked career history first")?;
+    let source = if entry == "auto" {
+        history_record_choice::validate_section(&fields)?;
+        let records = candidate_history::reviewed(raw)?;
+        if records.is_empty() {
+            return Err("Add checked career history first".into());
+        }
+        history_advice::HistorySource::Automatic(records)
+    } else {
+        history_advice::HistorySource::Selected(candidate_history::selected(raw, entry)?)
+    };
+    let digest=Sha256Digest::of(&json!({"version":2,"session":session.id,"job":job,"url":session.url,"profile":session.profile_digest.as_str(),"schema":session.preview.schema.schema_hash_input(),"source":source,"history_month":if entry == "auto" {history_record_choice::current_utc_month()} else {None},"selectors":selectors}).to_string()).as_str().to_owned();
+    Ok((history_advice::Inputs { source, fields }, digest))
 }
 
 fn history_advice_status(
@@ -11197,6 +11205,7 @@ mod tests {
                 steps: 1,
                 fields: vec![
                     FormField {
+                        context: Default::default(),
                         selector: "#question".into(),
                         label: "Why this role?".into(),
                         field_type: FormFieldType::TextArea,
@@ -11209,6 +11218,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#country".into(),
                         label: "Country".into(),
                         field_type: FormFieldType::Select {
@@ -11223,6 +11233,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#visa".into(),
                         label: "Work authorization".into(),
                         field_type: FormFieldType::Text,
@@ -11235,6 +11246,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#start".into(),
                         label: "Available date".into(),
                         field_type: FormFieldType::Date,
@@ -11247,6 +11259,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#month".into(),
                         label: "Employment start month".into(),
                         field_type: FormFieldType::Month,
@@ -11259,6 +11272,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#time".into(),
                         label: "Interview time".into(),
                         field_type: FormFieldType::Time,
@@ -11271,6 +11285,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#datetime".into(),
                         label: "Appointment".into(),
                         field_type: FormFieldType::DateTimeLocal,
@@ -11283,6 +11298,7 @@ mod tests {
                         autocomplete: None,
                     },
                     FormField {
+                        context: Default::default(),
                         selector: "#skills".into(),
                         label: "Skills".into(),
                         field_type: FormFieldType::MultiSelect {
@@ -11409,6 +11425,7 @@ mod tests {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
         let fields: Vec<_> = (0..201)
             .map(|index| FormField {
+                context: Default::default(),
                 selector: format!("#field-{index}"),
                 label: format!("Field {index}"),
                 field_type: FormFieldType::Text,
@@ -11450,6 +11467,7 @@ mod tests {
             schema: FormSchema {
                 origin: "https://example.org".into(),
                 fields: vec![FormField {
+                    context: Default::default(),
                     selector: "#answer".into(),
                     label: "Answer".into(),
                     field_type: FormFieldType::Text,
@@ -11600,6 +11618,7 @@ mod tests {
     fn checkbox_evidence_respects_sensitive_and_model_review_gates() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType};
         let mut field = FormField {
+            context: Default::default(),
             selector: "#rust".into(),
             label: "Experience — Rust".into(),
             field_type: FormFieldType::Checkbox,
@@ -13087,6 +13106,7 @@ mod tests {
         let schema = FormSchema {
             origin: "https://example.org".into(),
             fields: vec![FormField {
+                context: Default::default(),
                 selector: "#name".into(),
                 label: "Name".into(),
                 field_type: FormFieldType::Text,
@@ -13189,6 +13209,7 @@ mod tests {
             schema: waypoint_applications::form_mapping::FormSchema {
                 origin: "https://example.org".into(),
                 fields: vec![waypoint_applications::form_mapping::FormField {
+                    context: Default::default(),
                     selector: "#fictional".into(),
                     label: "Fictional".into(),
                     field_type: waypoint_applications::form_mapping::FormFieldType::Text,

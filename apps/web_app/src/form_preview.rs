@@ -1347,6 +1347,7 @@ mod tests {
     #[test]
     fn incomplete_email_stays_in_review_until_corrected() {
         let field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#email".into(),
             label: "Email".into(),
             field_type: FormFieldType::Email,
@@ -1411,6 +1412,7 @@ mod tests {
     #[test]
     fn authentication_hint_is_reviewed_without_a_model() {
         let field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#login".into(),
             label: "Email".into(),
             field_type: FormFieldType::Email,
@@ -1588,6 +1590,7 @@ mod tests {
     fn phone_picker_requires_manual_review_without_affecting_other_fields() {
         let field = |selector: &str, label: &str, hint: Option<&str>| {
             waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: selector.into(),
                 label: label.into(),
                 field_type: FormFieldType::Text,
@@ -1741,6 +1744,7 @@ mod tests {
         ws.set_state(&job.id, ApplicationState::Shortlisted)
             .unwrap();
         let field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#name".into(),
             label: "Name".into(),
             field_type: FormFieldType::Text,
@@ -1876,6 +1880,7 @@ mod tests {
             .schema
             .fields
             .push(waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: "#new".into(),
                 label: "New required question".into(),
                 field_type: FormFieldType::Text,
@@ -2308,6 +2313,7 @@ mod tests {
         }
         let fields: Vec<_> = (0..130)
             .map(|i| waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: format!("#field-{i}"),
                 label: format!("Field {i}"),
                 field_type: FormFieldType::Text,
@@ -2487,6 +2493,7 @@ mod tests {
         let fields: Vec<_> = ["first", "second"]
             .iter()
             .map(|name| waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: format!("#{name}"),
                 label: "Name".into(),
                 field_type: FormFieldType::Text,
@@ -2555,6 +2562,7 @@ mod tests {
             }
         }
         let field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#code".into(),
             label: "Reference code".into(),
             field_type: FormFieldType::Text,
@@ -3600,6 +3608,7 @@ mod tests {
         ]
         .into_iter()
         .map(|(selector, label, field_type)| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: label.into(),
             field_type,
@@ -3665,6 +3674,7 @@ mod tests {
             ]
         );
         preview.schema.fields.push(FormField {
+            context: Default::default(),
             selector: "#years".into(),
             label: "Years".into(),
             field_type: FormFieldType::Number {
@@ -3735,6 +3745,7 @@ mod tests {
     fn required_coverage_rejects_invalid_typed_answers() {
         use waypoint_applications::form_mapping::FormField;
         let mut field = FormField {
+            context: Default::default(),
             selector: "#field".into(),
             label: "Field".into(),
             field_type: FormFieldType::Date,
@@ -3810,6 +3821,7 @@ mod tests {
         let fields = ["#personal-email", "#work-email"]
             .into_iter()
             .map(|selector| FormField {
+                context: Default::default(),
                 selector: selector.into(),
                 label: "Email".into(),
                 field_type: FormFieldType::Email,
@@ -3873,6 +3885,7 @@ mod tests {
         ]
         .into_iter()
         .map(|(selector, label)| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: label.into(),
             field_type: FormFieldType::Email,
@@ -3928,6 +3941,7 @@ mod tests {
         ]
         .into_iter()
         .map(|(selector, label)| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: label.into(),
             field_type: FormFieldType::Text,
@@ -4119,6 +4133,7 @@ mod tests {
             schema: FormSchema {
                 origin: "https://example.test".into(),
                 fields: vec![waypoint_applications::form_mapping::FormField {
+                    context: Default::default(),
                     selector: "#first".into(),
                     label: "First name".into(),
                     field_type: FormFieldType::Text,
@@ -4186,6 +4201,7 @@ mod tests {
         let schema = FormSchema {
             origin: "https://example.test".into(),
             fields: vec![waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: "#question".into(),
                 label: "Tem autorização legal para trabalhar neste país?".into(),
                 field_type: FormFieldType::Text,
@@ -4240,6 +4256,7 @@ mod tests {
         let schema = FormSchema {
             origin: "https://example.test".into(),
             fields: vec![waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: "#question".into(),
                 label: "A question".into(),
                 field_type: FormFieldType::Text,
@@ -4318,6 +4335,7 @@ mod tests {
             schema: FormSchema {
                 origin: "https://example.test".into(),
                 fields: vec![waypoint_applications::form_mapping::FormField {
+                    context: Default::default(),
                     selector: "#candidate".into(),
                     label: "First name".into(),
                     field_type: FormFieldType::Text,
@@ -6095,6 +6113,7 @@ mod tests {
     fn oversized_suggestion_does_not_block_other_fields() {
         let field = |selector: &str, label: &str, hint: &str, limit| {
             waypoint_applications::form_mapping::FormField {
+                context: Default::default(),
                 selector: selector.into(),
                 label: label.into(),
                 field_type: FormFieldType::Text,
@@ -6173,6 +6192,7 @@ mod tests {
     #[test]
     fn repeated_field_length_warnings_clear_independently() {
         let field = |selector: &str| waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: "First name".into(),
             field_type: FormFieldType::Text,
@@ -6222,6 +6242,7 @@ mod tests {
     #[test]
     fn optional_unchecked_checkbox_clears_conflict_without_clearing_required_review() {
         let mut field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#preference".into(),
             label: "Contact preference".into(),
             field_type: FormFieldType::Checkbox,
@@ -6264,6 +6285,7 @@ mod tests {
     #[test]
     fn edited_hinted_field_clears_warning_only_after_all_duplicate_labels_are_answered() {
         let field = |selector: &str| waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: "Phone number".into(),
             field_type: FormFieldType::Text,
@@ -6305,6 +6327,7 @@ mod tests {
     #[test]
     fn undersized_profile_suggestion_is_withheld_for_review() {
         let field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#first".into(),
             label: "First name".into(),
             field_type: FormFieldType::Text,
@@ -6347,6 +6370,7 @@ mod tests {
     #[test]
     fn embedded_frame_keeps_reviewable_main_fields_but_requires_stable_warning() {
         let field = waypoint_applications::form_mapping::FormField {
+            context: Default::default(),
             selector: "#first".into(),
             label: "First name".into(),
             field_type: FormFieldType::Text,
@@ -6397,6 +6421,7 @@ mod tests {
             schema: FormSchema {
                 origin: "https://example.test".into(),
                 fields: vec![waypoint_applications::form_mapping::FormField {
+                    context: Default::default(),
                     selector: "#first".into(),
                     label: "First name".into(),
                     field_type: FormFieldType::Text,
@@ -6433,6 +6458,7 @@ mod tests {
         use waypoint_applications::form_mapping::FormField;
         let fields = (0..201)
             .map(|index| FormField {
+                context: Default::default(),
                 selector: format!("#field-{index}"),
                 label: format!("Field {index}"),
                 field_type: FormFieldType::Text,

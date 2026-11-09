@@ -83,6 +83,33 @@ fn history_advice_binding_rejects_changed_information_and_late_results() {
         .insert("#organization".into());
     assert!(history_inputs(&ws, &session, &entry, &selectors).is_err());
     session.preview.model_review_selectors.clear();
+    let (automatic, auto_digest) = history_inputs(&ws, &session, "auto", &selectors).unwrap();
+    assert!(
+        matches!(automatic.source, history_advice::HistorySource::Automatic(ref records) if records.len() == 1)
+    );
+    let auto_binding = json!({"session_id":session.id,"entry_id":"auto","selectors":selectors,"digest":auto_digest});
+    history_advice::TASK.set_completed_fixture(
+        "auto-section-case",
+        auto_binding,
+        json!({"proposals":[]}),
+    );
+    assert_eq!(
+        history_advice_status(&ws, Some(&session), "auto-section-case").unwrap()["status"],
+        "complete"
+    );
+    let original_context = session.preview.schema.fields[0].context.clone();
+    session.preview.schema.fields[0].context.sections[0]
+        .id
+        .push_str("-replacement");
+    assert_eq!(
+        history_advice_status(&ws, Some(&session), "auto-section-case").unwrap()["status"],
+        "failed"
+    );
+    session.preview.schema.fields[0].context = original_context;
+    assert_eq!(
+        history_advice_status(&ws, Some(&session), "auto-section-case").unwrap()["status"],
+        "failed"
+    );
     history_advice::TASK.set_completed_fixture(
         "binding-case",
         binding.clone(),

@@ -58,6 +58,7 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
         let fixture_name = match layout.as_str() {
             "grouped" => "tests/form-career-subjects.html",
             "headings" => "tests/form-career-subjects-headings.html",
+            "repeated" => "tests/form-career-repeated.html",
             _ => panic!("Choose only an owned fictional layout"),
         };
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -68,7 +69,8 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
         let mut browser = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
         let live = browser.open(&url).unwrap();
         assert!(live.walls.is_empty(), "{:?}", live.walls);
-        assert_eq!(live.schema.fields.len(), 11);
+        let automatic = layout == "repeated";
+        assert_eq!(live.schema.fields.len(), if automatic { 14 } else { 11 });
         let (_, resident) = waypoint_inference::ollama::http_request(
             "127.0.0.1:11434".parse().unwrap(),
             "GET",
@@ -77,7 +79,7 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             3000,
         )
         .unwrap();
-        std::fs::write(directory.join("metadata.private.json"),json!({"model":model,"resident":serde_json::from_slice::<Value>(&resident).unwrap(),"layout":layout,"sources":{"normalizer":waypoint_domain::sha256_hex(include_str!("native_month.rs").as_bytes()),"visual_review":waypoint_domain::sha256_hex(include_str!("visual_review.rs").as_bytes()),"qualification":waypoint_domain::sha256_hex(include_str!("history_pipeline_tests.rs").as_bytes()),"lock":waypoint_domain::sha256_hex(include_str!("../../../Cargo.lock").as_bytes()),"classifier":waypoint_domain::sha256_hex(include_str!("suggestions.rs").as_bytes()),"history":waypoint_domain::sha256_hex(include_str!("history_advice.rs").as_bytes()),"fixture":waypoint_domain::sha256_hex(&std::fs::read(fixture).unwrap())},"schema":live.schema}).to_string()).unwrap();
+        std::fs::write(directory.join("metadata.private.json"),json!({"model":model,"resident":serde_json::from_slice::<Value>(&resident).unwrap(),"layout":layout,"sources":{"normalizer":waypoint_domain::sha256_hex(include_str!("native_month.rs").as_bytes()),"visual_review":waypoint_domain::sha256_hex(include_str!("visual_review.rs").as_bytes()),"qualification":waypoint_domain::sha256_hex(include_str!("history_pipeline_tests.rs").as_bytes()),"lock":waypoint_domain::sha256_hex(include_str!("../../../Cargo.lock").as_bytes()),"classifier":waypoint_domain::sha256_hex(include_str!("suggestions.rs").as_bytes()),"history":waypoint_domain::sha256_hex(include_str!("history_advice.rs").as_bytes()),"record_choice":waypoint_domain::sha256_hex(include_str!("history_record_choice.rs").as_bytes()),"browser":waypoint_domain::sha256_hex(include_str!("../../../crates/waypoint_browser/src/lib.rs").as_bytes()),"fixture":waypoint_domain::sha256_hex(&std::fs::read(fixture).unwrap())},"schema":live.schema}).to_string()).unwrap();
         let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
             .with_resident_context();
@@ -96,6 +98,16 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             calls: 0,
         };
         let history=json!({"version":1,"employment":[{"id":"a".repeat(32),"employer":"Fictional Engineering","title":"Systems Engineer","start_date":"2020-06","reviewed":true}],"education":[{"id":"b".repeat(32),"institution":"Fictional Institute","qualification":"BSc Engineering","reviewed":true}]}).to_string();
+        let history = if automatic {
+            json!({"version":1,"employment":[
+                {"id":"c".repeat(32),"employer":"Fictional Early Works","title":"Technician","start_date":"2011-01","end_date":"2015","reviewed":true},
+                {"id":"a".repeat(32),"employer":"Fictional Engineering","title":"Systems Engineer","start_date":"2020-06","current":true,"reviewed":true},
+                {"id":"d".repeat(32),"employer":"Fictional Prior Works","title":"Design Engineer","start_date":"2016-02","end_date":"2019-10","reviewed":true},
+                {"id":"e".repeat(32),"employer":"Unchecked Fictional","title":"Unverified","current":true,"reviewed":false}
+            ],"education":[{"id":"b".repeat(32),"institution":"Fictional Institute","qualification":"BSc Engineering","reviewed":true}]}).to_string()
+        } else {
+            history
+        };
         let profile = json!({"first_name":"Avery","email":"avery@example.invalid","address":"10 Candidate Street","career_history":history});
         let mut preview = form_preview::suggest_for_live_form(live, &mut traced, &profile).unwrap();
         std::fs::write(directory.join("preview.private.json"),json!({"mappings":preview.suggestions,"manual":preview.manual_review,"restricted":preview.model_review_selectors}).to_string()).unwrap();
@@ -138,13 +150,20 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
                 "restricted subject not flagged: {selector}"
             );
         }
-        for (entry, selectors) in [
+        let mut sections = vec![
             (
                 "a".repeat(32),
                 vec!["#work-company", "#work-title", "#work-month"],
             ),
             ("b".repeat(32), vec!["#school-name", "#qualification"]),
-        ] {
+        ];
+        if automatic {
+            sections.push((
+                "d".repeat(32),
+                vec!["#past-company", "#past-title", "#past-month"],
+            ));
+        }
+        for (entry, selectors) in sections {
             let fields = selectors
                 .iter()
                 .map(|selector| {
@@ -158,10 +177,22 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
                 })
                 .collect();
             let input = history_advice::Inputs {
-                record: candidate_history::selected(&history, &entry).unwrap(),
+                source: if automatic {
+                    history_advice::HistorySource::Automatic(
+                        candidate_history::reviewed(&history).unwrap(),
+                    )
+                } else {
+                    history_advice::HistorySource::Selected(
+                        candidate_history::selected(&history, &entry).unwrap(),
+                    )
+                },
                 fields,
             };
             let proposed = history_advice::propose(&mut traced, &input).unwrap();
+            assert_eq!(
+                proposed["entry_id"], entry,
+                "whole-record selection must match the section"
+            );
             std::fs::write(
                 directory.join(format!("history-{entry}.private.json")),
                 proposed.to_string(),
@@ -176,7 +207,7 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
                 });
             }
         }
-        let expected = [
+        let mut expected = vec![
             ("#candidate-name", "Avery"),
             ("#candidate-email", "avery@example.invalid"),
             ("#work-company", "Fictional Engineering"),
@@ -185,6 +216,13 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             ("#school-name", "Fictional Institute"),
             ("#qualification", "BSc Engineering"),
         ];
+        if automatic {
+            expected.extend([
+                ("#past-company", "Fictional Prior Works"),
+                ("#past-title", "Design Engineer"),
+                ("#past-month", "2016-02"),
+            ]);
+        }
         assert_eq!(preview.suggestions.len(), expected.len());
         let mut ws = Workspace::in_memory().unwrap();
         let job_id = JobIdentityId::new("fictional-career-pipeline").unwrap();
@@ -242,7 +280,7 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             .unwrap(),
             expected.len()
         );
-        for (selector, value) in expected {
+        for &(selector, value) in &expected {
             browser.verify_text_value(selector, value).unwrap();
         }
         for selector in [
@@ -302,5 +340,71 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             .trace
             .iter()
             .all(|entry| !entry.contains("submitted")));
+    });
+}
+
+#[test]
+#[ignore = "resource-gated local model, seven fictional held-out section descriptions; no browser or external form"]
+fn resource_gated_history_section_intent_variants() {
+    let model = std::env::var("WAYPOINT_VISION_BENCHMARK_MODEL")
+        .unwrap_or_else(|_| "gemma4:12b-it-q4_K_M".into());
+    crate::experience_inference::tests::with_resource_gated_named_model(&model, || {
+        let directory = tempfile::Builder::new()
+            .prefix("history-intent-")
+            .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
+            .unwrap()
+            .keep();
+        let llm = waypoint_inference::OllamaInference::new("http://127.0.0.1:11434", &model)
+            .unwrap()
+            .with_resident_context();
+        let mut guarded = crate::resident_inference::ResidentInference::new(
+            llm,
+            model.clone(),
+            crate::resident_model_identity,
+        );
+        let mut traced = Trace {
+            inner: &mut guarded,
+            file: std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join("model.private.jsonl"))
+                .unwrap(),
+            calls: 0,
+        };
+        let raw=json!({"version":1,"employment":[
+            {"id":"a".repeat(32),"employer":"Fictional Early","title":"Engineer","end_date":"2017","reviewed":true},
+            {"id":"c".repeat(32),"employer":"Fictional Current","title":"Lead","current":true,"reviewed":true},
+            {"id":"b".repeat(32),"employer":"Fictional Later","title":"Engineer","end_date":"2022-03","reviewed":true}
+        ],"education":[{"id":"d".repeat(32),"institution":"Fictional School","qualification":"Diploma","current":true,"reviewed":true}]}).to_string();
+        let records = candidate_history::reviewed(&raw).unwrap();
+        let cases = [
+            ("Aktuelle Beschäftigung", "Arbeitgeber", Some("c")),
+            ("Letzte abgeschlossene Tätigkeit", "Unternehmen", Some("b")),
+            ("Études en cours", "Établissement", Some("d")),
+            ("Employment records", "Organization", None),
+            ("Second most recent employment", "Employer", None),
+            ("Highest qualification", "Institution", None),
+            ("Education records", "Institution", Some("d")),
+        ];
+        let mut outcomes = Vec::new();
+        for (section, label, expected) in cases {
+            let field=serde_json::from_value(json!({"selector":"#example","label":format!("{section} — {label}"),"field_type":"text","required":true,"sensitive":false,"context":{"sections":[{"id":"group:example","label":section,"inferred":false}]}})).unwrap();
+            let result = history_record_choice::choose(&mut traced, &[field], &records);
+            let actual = result.as_ref().ok().map(|(record, _)| record.id.clone());
+            outcomes.push(json!({"section":section,"expected":expected.map(|id|id.repeat(32)),"actual":actual,"error":result.err()}));
+        }
+        let (_, resident) = waypoint_inference::ollama::http_request(
+            "127.0.0.1:11434".parse().unwrap(),
+            "GET",
+            "/api/ps",
+            None,
+            3000,
+        )
+        .unwrap();
+        std::fs::write(directory.join("result.private.json"),json!({"model":model,"resident":serde_json::from_slice::<Value>(&resident).unwrap(),"source_sha256":waypoint_domain::sha256_hex(include_str!("history_record_choice.rs").as_bytes()),"cases":outcomes}).to_string()).unwrap();
+        println!("History intent evidence: {}", directory.display());
+        for case in outcomes {
+            assert_eq!(case["actual"], case["expected"], "{case}");
+        }
     });
 }

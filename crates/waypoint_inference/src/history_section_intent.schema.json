@@ -1,0 +1,1 @@
+{"type":"object","properties":{"kind":{"type":"string","enum":["employment","education","unknown"]},"basis":{"type":"string","enum":["current","latest_completed","generic","unknown"]},"evidence":{"type":"string","minLength":1,"maxLength":1000}},"required":["kind","basis","evidence"],"additionalProperties":false}

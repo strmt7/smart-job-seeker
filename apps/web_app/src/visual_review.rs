@@ -1491,6 +1491,7 @@ mod tests {
         let fields = ["Email", "Name"]
             .iter()
             .map(|name| FormField {
+                context: Default::default(),
                 selector: format!("#{name}"),
                 label: (*name).into(),
                 field_type: FormFieldType::Text,
@@ -2785,6 +2786,7 @@ mod tests {
         ]
         .into_iter()
         .map(|(selector, label)| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: label.into(),
             field_type: FormFieldType::Text,

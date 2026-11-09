@@ -859,6 +859,7 @@ mod tests {
     #[test]
     fn discovery_warns_when_previously_observed_fields_disappear() {
         let field = FormField {
+            context: Default::default(),
             selector: "#previous".into(),
             label: "Earlier field".into(),
             field_type: FormFieldType::Text,
@@ -1186,6 +1187,7 @@ mod tests {
         );
         fresh.schema.multi_step = true;
         fresh.schema.fields.push(FormField {
+            context: Default::default(),
             selector: "#first".into(),
             label: "First name".into(),
             field_type: FormFieldType::Text,
@@ -1268,6 +1270,7 @@ mod tests {
         };
         assert!(relevant_experiences(&schema, &experiences).is_empty());
         let field = |field_type, sensitive| FormField {
+            context: Default::default(),
             selector: "#fixture".into(),
             label: "Fixture".into(),
             field_type,
@@ -1339,6 +1342,7 @@ mod tests {
             None
         );
         let field = |field_type| FormField {
+            context: Default::default(),
             selector: "#fixture".into(),
             label: "Fixture".into(),
             field_type,
@@ -1557,6 +1561,7 @@ mod tests {
         };
         crate::experience_inference::tests::with_resource_gated_model(|| {
             let field = |selector: &str, label: &str, kind| FormField {
+                context: Default::default(),
                 selector: selector.into(),
                 label: label.into(),
                 field_type: kind,
@@ -1658,6 +1663,7 @@ mod tests {
             let schema = FormSchema {
                 origin: "https://jobs.lever.co:8443".into(),
                 fields: vec![FormField {
+                    context: Default::default(),
                     selector: "#email".into(),
                     label: "Your email address".into(),
                     field_type: FormFieldType::Email,
@@ -2157,6 +2163,7 @@ mod tests {
             self.current = self.redirect.take().unwrap_or_else(|| url.into());
             let fields = if self.direct_upload && !url.ends_with("/apply") {
                 vec![FormField {
+                    context: Default::default(),
                     selector: "#resume".into(),
                     label: "Resume".into(),
                     field_type: FormFieldType::File,
@@ -2170,6 +2177,7 @@ mod tests {
                 }]
             } else if url.ends_with("/apply") || url.ends_with("/form") {
                 vec![FormField {
+                    context: Default::default(),
                     selector: "#name".into(),
                     label: if url.ends_with("/form") {
                         "First name"
@@ -2576,6 +2584,7 @@ mod tests {
     #[test]
     fn recognizes_multiple_required_data_entries_without_field_name_rules() {
         let field = |required, field_type| FormField {
+            context: Default::default(),
             selector: "#example".into(),
             label: "Response".into(),
             field_type,

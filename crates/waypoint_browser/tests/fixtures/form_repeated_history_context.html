@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Fictional history sections</title>
+<style>body{font:16px sans-serif;max-width:820px}fieldset,section{margin:12px;padding:12px}label{display:block;margin:8px}input{margin-left:8px}</style>
+<fieldset id="all"><legend>Career history</legend>
+<fieldset id="first"><legend>Employment</legend><label>Company<input id="company1"></label><label>Role<input id="role1"></label></fieldset>
+<fieldset id="second"><legend>Employment</legend><label>Company<input id="company2"></label><label>Role<input id="role2"></label></fieldset>
+<section aria-label="Career history"><label>Qualification<input id="degree"></label></section>
+</fieldset>
+<button id="move" type="button" onclick="document.querySelector('#second').append(document.querySelector('#role1').parentElement)">Move fictional field</button>
+<iframe title="Fictional education" srcdoc='<fieldset><legend>Education</legend><label>School<input id="school"></label></fieldset>'></iframe>
+<div id="shadow"></div><script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<fieldset><legend>Education</legend><label>School<input id="school"></label></fieldset>';</script>

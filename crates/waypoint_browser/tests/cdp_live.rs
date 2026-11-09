@@ -1014,6 +1014,15 @@ fn visible_unambiguous_headings_give_context_and_others_require_review() {
         .walls
         .iter()
         .any(|reason| reason.contains("section heading is ambiguous")));
+    assert_eq!(unclear.schema.fields.len(), 2);
+    assert!(
+        unclear
+            .schema
+            .fields
+            .iter()
+            .all(|field| field.context.is_empty()),
+        "A known parent must not hide an unverified child section"
+    );
     assert!(unclear
         .walls
         .iter()
@@ -6294,4 +6303,82 @@ fn custom_radio_action_checks_state_and_rejects_submit_targets() {
         .trace
         .iter()
         .all(|entry| !entry.contains("submitted")));
+}
+
+#[test]
+#[ignore = "one headless fictional browser verifies repeated section identity and approval binding"]
+fn repeated_history_sections_have_stable_scoped_identities() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_repeated_history_context.html"))
+        .unwrap();
+    let get = |selector: &str| {
+        live.schema
+            .fields
+            .iter()
+            .find(|f| f.selector == selector)
+            .unwrap()
+    };
+    let first = &get("#company1").context.sections;
+    let second = &get("#company2").context.sections;
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(),
+        vec!["Career history", "Employment"]
+    );
+    assert_eq!(first, &get("#role1").context.sections);
+    assert_eq!(first[0], second[0]);
+    assert_eq!(first[1].label, second[1].label);
+    assert_ne!(first[1].id, second[1].id);
+    let duplicate = &get("#degree").context.sections;
+    assert_eq!(duplicate.len(), 2);
+    assert_eq!(duplicate[0].label, duplicate[1].label);
+    assert_ne!(duplicate[0].id, duplicate[1].id);
+    let embedded: Vec<_> = live
+        .schema
+        .fields
+        .iter()
+        .filter(|f| f.selector.ends_with(":#school"))
+        .collect();
+    assert_eq!(embedded.len(), 2);
+    assert!(embedded
+        .iter()
+        .any(|f| f.selector.starts_with("waypoint-frame:")));
+    assert!(embedded
+        .iter()
+        .any(|f| f.selector.starts_with("waypoint-shadow:")));
+    for field in &embedded {
+        assert_eq!(field.context.sections.len(), 1);
+        let (prefix, _) = field.selector.rsplit_once(":#school").unwrap();
+        assert!(field.context.sections[0]
+            .id
+            .starts_with(&format!("{prefix}:group:")));
+    }
+    assert_ne!(
+        embedded[0].context.sections[0].id,
+        embedded[1].context.sections[0].id
+    );
+    let before = live.schema.schema_hash_input();
+    assert_eq!(
+        before,
+        driver.inspect_current().unwrap().schema.schema_hash_input()
+    );
+    driver
+        .execute(&BrowserCommand::Click {
+            selector: "#move".into(),
+        })
+        .unwrap();
+    let after = driver.inspect_current().unwrap();
+    let moved = after
+        .schema
+        .fields
+        .iter()
+        .find(|f| f.selector == "#role1")
+        .unwrap();
+    assert_eq!(&moved.context.sections, second);
+    assert_ne!(before, after.schema.schema_hash_input());
+    assert!(driver
+        .trace
+        .iter()
+        .all(|event| !event.contains("typed") && !event.contains("submitted")));
 }

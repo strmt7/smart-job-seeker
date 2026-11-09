@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fictional candidate and career sections</title>
+<style>body{font:16px Arial;max-width:1000px;margin:20px}form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}fieldset{min-width:0}label{display:grid;gap:3px;margin:8px 0}input{font:inherit;padding:4px}</style>
+<h1>Fictional application</h1>
+<p>Local qualification only. This page has no submission mechanism.</p>
+<form onsubmit="return false">
+<fieldset><legend>Applicant contact</legend>
+<label>Given name<input id="candidate-name" autocomplete="given-name"></label>
+<label>Email<input id="candidate-email" type="email" autocomplete="email"></label>
+</fieldset>
+<fieldset><legend>Current employment</legend>
+<label>Employer name<input id="work-company" autocomplete="organization"></label>
+<label>Job title<input id="work-title" autocomplete="organization-title"></label>
+<label>Starting month<input id="work-month" type="month"></label>
+</fieldset>
+<fieldset><legend>Most recent completed employment</legend>
+<label>Employer name<input id="past-company" autocomplete="organization"></label>
+<label>Job title<input id="past-title" autocomplete="organization-title"></label>
+<label>Starting month<input id="past-month" type="month"></label>
+</fieldset>
+<fieldset><legend>Education history</legend>
+<label>Institution name<input id="school-name" autocomplete="organization"></label>
+<label>Qualification<input id="qualification"></label>
+</fieldset>
+<fieldset><legend>Referee</legend>
+<label>Full name<input id="referee-name" autocomplete="name"></label>
+<label>Employer name<input id="referee-company" autocomplete="organization"></label>
+</fieldset>
+<fieldset><legend>Employer contact</legend>
+<label>Office address<input id="office-address" autocomplete="street-address"></label>
+</fieldset>
+<fieldset><legend>Employment conditions</legend>
+<label>Salary expectation<input id="salary"></label>
+</fieldset>
+</form>

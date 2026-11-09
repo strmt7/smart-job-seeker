@@ -2470,6 +2470,7 @@ mod tests {
     fn detected_fields_report_signals_without_confirming_an_application() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType};
         let field = |selector: &str, field_type, autocomplete: Option<&str>| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: "Fictional field".into(),
             field_type,

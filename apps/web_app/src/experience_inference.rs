@@ -533,6 +533,7 @@ pub(crate) mod tests {
         ];
         let mut fields: Vec<_> = (0..20)
             .map(|i| FormField {
+                context: Default::default(),
                 selector: format!("#text{i}"),
                 label: format!("Field {i}"),
                 field_type: FormFieldType::Text,
@@ -546,6 +547,7 @@ pub(crate) mod tests {
             })
             .collect();
         fields.push(FormField {
+            context: Default::default(),
             selector: "#choice".into(),
             label: "Choice".into(),
             field_type: FormFieldType::Select {
@@ -833,6 +835,7 @@ pub(crate) mod tests {
             assert!(!selectors.contains(&"#reference") && !selectors.contains(&"#manager"));
             use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
             let field = |selector: &str, label: &str, autocomplete: Option<&str>| FormField {
+                context: Default::default(),
                 selector: selector.into(),
                 label: label.into(),
                 field_type: FormFieldType::Text,
@@ -1321,6 +1324,7 @@ pub(crate) mod tests {
             },
         };
         let make = |selector: &str, label: &str, hint: Option<&str>| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: label.into(),
             field_type: FormFieldType::Text,
@@ -1427,6 +1431,7 @@ pub(crate) mod tests {
             crate::resident_model_identity,
         );
         let make = |selector: &str, label: &str, hint: Option<&str>| FormField {
+            context: Default::default(),
             selector: selector.into(),
             label: label.into(),
             field_type: FormFieldType::Text,

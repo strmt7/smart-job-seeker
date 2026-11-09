@@ -87,8 +87,11 @@ controller with a 4 GiB job and bounded run time. No paid API was used.
 ## Scoped local suggestions
 
 The form review now offers **Suggest answers from career history**. The user
-chooses one saved, checked entry and up to 20 eligible fields. The local model
-selects component keys; the application resolves exact values from the selected
+selects an inspected section and up to 20 eligible fields, then lets the local
+model interpret its purpose or chooses a saved, checked entry explicitly.
+Automatic resolution uses current/latest-completed/unique-category rules across
+all checked entries; ambiguous requests remain manual. The local model selects
+component keys; the application resolves exact values from the selected
 record. It cannot generate a new employer, qualification or date. Available
 components preserve year/month precision and field-type compatibility. Unknown,
 ambiguous, sensitive, duplicate-label and unsupported fields require review.
@@ -108,7 +111,7 @@ history suggestions never clear a flagged field. A deterministic subject guard
 also refuses history values for recognizable referee/manager/emergency-contact
 labels even when the model tries to map them. Unclear subjects remain manual.
 The feature does
-not select repeated sections autonomously, tailor documents or attach authoritative
+not assign records across repeated sections autonomously, tailor documents or attach authoritative
 claim provenance to an answer archive. Neither order nor a checked flag proves
 that a role is current or a qualification completed.
 
@@ -132,3 +135,10 @@ The compiled interface passed five additional advice-panel width checks from
 320 to 1920 px and explicit-selection behavior with intercepted fictional API
 responses. Those UI checks make no model-quality claim. Broader section resolution,
 visual accuracy and no-submission isolation remain open completion gates.
+
+The subsequent [section-selection checkpoint](HISTORY_SECTION_SELECTION_2026-11-09.md)
+adds stable section identities, an automatic entry option and a section picker.
+The local 12B model selected three appropriate records from multiple saved
+entries and completed ten visually/live-verified values in one fictional form;
+four restricted fields stayed empty. Seven additional semantic descriptions
+passed. These are small checks, not universal model or employer-site evidence.

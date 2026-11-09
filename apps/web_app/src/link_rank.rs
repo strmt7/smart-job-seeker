@@ -642,6 +642,7 @@ mod tests {
     fn page_context_omits_sensitive_labels_and_bounds_length() {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
         let field = |label: String, sensitive| FormField {
+            context: Default::default(),
             selector: "#fixture".into(),
             label,
             field_type: FormFieldType::Text,
@@ -676,6 +677,7 @@ mod tests {
         let mut schema = FormSchema {
             origin: "https://example.org".into(),
             fields: vec![FormField {
+                context: Default::default(),
                 selector: "#x".into(),
                 label: "Experience".into(),
                 field_type: FormFieldType::Text,
