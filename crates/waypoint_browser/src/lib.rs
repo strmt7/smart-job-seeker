@@ -5776,6 +5776,27 @@ fn retain_observed_walls(previous: Vec<String>, next: &mut LiveForm) {
 pub const DYNAMIC_FIELD_LOSS_REVIEW: &str = "a custom control needs manual review: Fields seen during page loading disappeared; inspect the entire application again";
 pub const DYNAMIC_UNSETTLED_REVIEW: &str = "a custom control needs manual review: The form did not settle during the bounded loading check; inspect the entire application again";
 
+#[derive(Default)]
+struct LoadingStability {
+    snapshots: usize,
+    unchanged: usize,
+}
+
+impl LoadingStability {
+    fn observe(&mut self, previous: &LiveForm, next: &LiveForm) {
+        self.snapshots += 1;
+        self.unchanged = if !next.schema.fields.is_empty() && previous.schema == next.schema {
+            self.unchanged + 1
+        } else {
+            0
+        };
+    }
+
+    fn settled(&self) -> bool {
+        self.unchanged >= 2
+    }
+}
+
 fn retain_loading_observations(previous: LiveForm, next: &mut LiveForm) {
     if previous.schema.fields.iter().any(|field| {
         !next
@@ -5900,7 +5921,7 @@ impl BrowserDriver for CdpDriver {
         // changing schema to settle within the same bounded loading window.
         let dynamic_deadline = Instant::now() + Duration::from_secs(3);
         let initial_nonempty = !result.schema.fields.is_empty();
-        let mut stable_observations = 0;
+        let mut loading = LoadingStability::default();
         for observation in 0..3 {
             if Instant::now() >= dynamic_deadline {
                 break;
@@ -5915,17 +5936,21 @@ impl BrowserDriver for CdpDriver {
                     .min(dynamic_deadline.saturating_duration_since(Instant::now())),
             );
             let mut next = self.inspect_with_retry()?;
-            let stable = !next.schema.fields.is_empty() && result.schema == next.schema;
-            stable_observations = if stable { stable_observations + 1 } else { 0 };
+            loading.observe(&result, &next);
             retain_loading_observations(result, &mut next);
             result = next;
-            if stable_observations >= 2 {
+            if loading.settled() {
                 break;
             }
         }
-        if !result.schema.fields.is_empty() && stable_observations < 2 {
+        if !result.schema.fields.is_empty() && !loading.settled() {
             result.walls.push(DYNAMIC_UNSETTLED_REVIEW.into());
         }
+        self.trace.push(format!(
+            "loading check: {} snapshots, {} consecutive unchanged",
+            loading.snapshots + 1,
+            loading.unchanged
+        ));
         // A same-document route has no new loader or HTTP response. For an
         // ordinary HTTP navigation, bind the status to the main frame and
         // loader, never to a subresource or an earlier page.
@@ -7221,10 +7246,9 @@ mod traversal_tests {
         assert_eq!(next.walls, vec!["other wall", "captcha present"]);
     }
 
-    #[test]
-    fn loading_field_loss_remains_visible_after_recovery() {
+    fn loading_test_page(selectors: &[&str]) -> LiveForm {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
-        let page = |selectors: &[&str]| LiveForm {
+        LiveForm {
             origin: "https://example.invalid".into(),
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
@@ -7247,7 +7271,33 @@ mod traversal_tests {
                 steps: 1,
             },
             walls: vec![],
-        };
+        }
+    }
+
+    #[test]
+    fn loading_stability_requires_two_consecutive_nonempty_matches() {
+        let a = loading_test_page(&["#a"]);
+        let b = loading_test_page(&["#a", "#b"]);
+        let empty = loading_test_page(&[]);
+        let mut progress = LoadingStability::default();
+        assert!(!progress.settled());
+        progress.observe(&a, &a);
+        assert!(!progress.settled());
+        progress.observe(&a, &b);
+        assert_eq!(progress.unchanged, 0);
+        progress.observe(&b, &b);
+        assert!(!progress.settled());
+        progress.observe(&b, &b);
+        assert!(progress.settled());
+        progress.observe(&b, &empty);
+        progress.observe(&empty, &empty);
+        assert!(!progress.settled(), "empty forms must not count as settled");
+        assert_eq!(progress.snapshots, 6);
+    }
+
+    #[test]
+    fn loading_field_loss_remains_visible_after_recovery() {
+        let page = loading_test_page;
         let mut grown = page(&["#a", "#b"]);
         retain_loading_observations(page(&["#a"]), &mut grown);
         assert!(grown.walls.is_empty());

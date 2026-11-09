@@ -6,6 +6,9 @@
 //! This is the evidence that the submission engine works against an actual
 //! browser, not only against a scripted driver.
 
+#[path = "support/loopback.rs"]
+mod loopback;
+
 use std::path::PathBuf;
 
 use waypoint_applications::driver::BrowserDriver;
@@ -3130,59 +3133,44 @@ fn fetch_request_stage_can_block_a_loopback_post() {
 #[ignore = "headless protocol experiment with a fictional loopback request and disconnect"]
 fn paused_request_disconnect_qualification() {
     use serde_json::json;
-    use std::io::{Read, Write};
-    use std::sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    };
     use std::time::{Duration, Instant};
     use waypoint_browser::cdp::{BrowserProcess, Cdp};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    listener.set_nonblocking(true).unwrap();
-    let stopped = Arc::new(AtomicBool::new(false));
-    let received = Arc::new(AtomicUsize::new(0));
-    let (worker_stop, worker_received) = (stopped.clone(), received.clone());
-    let server = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while !worker_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-                    let mut data = [0u8; 2048];
-                    let size = stream.read(&mut data).unwrap_or(0);
-                    if data[..size].starts_with(b"POST /fictional-submit ") {
-                        worker_received.fetch_add(1, Ordering::Relaxed);
-                    }
-                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                Err(_) => break,
-            }
-        }
-    });
     let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
+    let fixture =
+        loopback::HttpFixture::start("<!doctype html><title>Fictional disconnect fixture</title>");
     let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
     cdp.call("Page.enable", json!({})).unwrap();
     cdp.call(
         "Page.navigate",
-        json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
+        json!({"url":format!("{}/fixture", fixture.origin)}),
     )
     .unwrap();
+    // A queued load event can belong to about:blank. Verify this document.
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !cdp.saw_event("Page.loadEventFired") && Instant::now() < deadline {
-        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    loop {
+        let ready = cdp.call("Runtime.evaluate", json!({
+            "expression":format!("location.href === {} && document.readyState === 'complete'", serde_json::to_string(&format!("{}/fixture", fixture.origin)).unwrap()),
+            "returnByValue":true
+        })).unwrap();
+        if ready["result"]["value"] == true {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fictional document did not become ready: {ready}"
+        );
+        cdp.pump_checked(Duration::from_millis(50)).unwrap();
     }
-    assert!(cdp.saw_event("Page.loadEventFired"));
     let version = cdp.call("Browser.getVersion", json!({})).unwrap();
     let baseline = cdp.call("Runtime.evaluate", json!({
         "expression":"fetch('/fictional-submit',{method:'POST',body:'baseline'}).then(()=>true)",
         "awaitPromise":true,"returnByValue":true
     })).unwrap();
-    assert_eq!(baseline["result"]["value"], true);
-    assert_eq!(received.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        baseline["result"]["value"], true,
+        "baseline evaluation failed: {baseline}"
+    );
+    assert_eq!(fixture.posts(), 1);
     cdp.call(
         "Fetch.enable",
         json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
@@ -3194,15 +3182,13 @@ fn paused_request_disconnect_qualification() {
         cdp.pump_checked(Duration::from_millis(100)).unwrap();
     }
     assert!(cdp.saw_event("Fetch.requestPaused"));
-    assert_eq!(received.load(Ordering::Relaxed), 1);
+    assert_eq!(fixture.posts(), 1);
     drop(cdp);
     let disconnected_at = Instant::now();
     let deadline = disconnected_at + Duration::from_secs(3);
-    while received.load(Ordering::Relaxed) == 1 && Instant::now() < deadline {
+    while fixture.posts() == 1 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
-    stopped.store(true, Ordering::Relaxed);
-    server.join().unwrap();
     // This measures browser behavior; delivery and non-delivery are both valid
     // observations. Neither qualifies interception as a no-submission boundary.
     let report = json!({
@@ -3210,7 +3196,7 @@ fn paused_request_disconnect_qualification() {
         "browser": version,
         "baseline_posts": 1,
         "posts_while_paused": 0,
-        "posts_after_disconnect": received.load(Ordering::Relaxed).saturating_sub(1),
+        "posts_after_disconnect": fixture.posts().saturating_sub(1),
         "observation_budget_ms": 3000,
         "observation_elapsed_ms": disconnected_at.elapsed().as_millis(),
         "qualifies_submission_isolation": false
@@ -3224,6 +3210,7 @@ fn paused_request_disconnect_qualification() {
     )
     .unwrap();
     eprintln!("Disconnect qualification observation: {report}");
+    fixture.finish();
 }
 
 #[test]
@@ -3463,44 +3450,10 @@ fn parent_fetch_interception_of_worker_request_qualification() {
 #[test]
 #[ignore = "uses a local browser and loopback server to observe a fictional input-triggered request"]
 fn observes_non_read_request_triggered_by_field_input() {
-    use std::io::{Read, Write};
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
-    };
     use std::time::{Duration, Instant};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_worker = stop.clone();
-    let (tx, rx) = mpsc::channel();
-    let server = std::thread::spawn(move || {
-        while !stop_worker.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    let mut buffer = [0u8; 8192];
-                    let count = stream.read(&mut buffer).unwrap_or(0);
-                    if buffer[..count].starts_with(b"POST ") {
-                        let _ = tx.send(());
-                        let _ = stream.write_all(
-                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        );
-                    } else {
-                        let body = "<!doctype html><label for='name'>Name</label><input id='name' oninput=\"fetch('/fictional', {method:'POST',body:'fixture'})\">";
-                        let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                Err(_) => break,
-            }
-        }
-    });
     let mut driver = CdpDriver::launch(vec![]).unwrap();
-    driver.open(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let fixture = loopback::HttpFixture::start("<!doctype html><label for='name'>Name</label><input id='name' oninput=\"fetch('/fictional', {method:'POST',body:'fixture'})\">");
+    driver.open(&format!("{}/", fixture.origin)).unwrap();
     let before = driver.observed_non_read_requests().unwrap();
     if let Err(error) = driver.execute(&BrowserCommand::Fill {
         selector: "#name".into(),
@@ -3511,8 +3464,14 @@ fn observes_non_read_request_triggered_by_field_input() {
             "{error}"
         );
     }
-    rx.recv_timeout(Duration::from_secs(5))
-        .expect("fictional POST did not reach loopback server");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fixture.posts() == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "fictional POST did not reach loopback server"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if driver.observed_non_read_requests().unwrap() > before {
@@ -3522,17 +3481,16 @@ fn observes_non_read_request_triggered_by_field_input() {
         std::thread::sleep(Duration::from_millis(30));
     }
     drop(driver);
-    stop.store(true, Ordering::Relaxed);
-    server.join().unwrap();
+    fixture.finish();
 }
 
 #[test]
 #[ignore = "uses a local browser and loopback WebSocket on a fictional form"]
 fn observes_websocket_frame_triggered_by_field_input() {
-    use std::io::{Read, Write};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
     let socket_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     socket_listener.set_nonblocking(true).unwrap();
     let socket_port = socket_listener.local_addr().unwrap().port();
@@ -3559,22 +3517,9 @@ fn observes_websocket_frame_triggered_by_field_input() {
         tx.send(socket.read().unwrap().to_text().unwrap() == "fictional")
             .unwrap();
     });
-    let page_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let page_port = page_listener.local_addr().unwrap().port();
-    let page_server = std::thread::spawn(move || {
-        let (mut stream, _) = page_listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut request = [0; 2048];
-        let _ = stream.read(&mut request);
-        let body = format!("<!doctype html><label for='name'>Name</label><input id='name' oninput=\"socket.send('fictional')\"><script>const socket=new WebSocket('ws://127.0.0.1:{socket_port}');</script>");
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
-    });
-    let mut driver = CdpDriver::launch(vec![]).unwrap();
-    driver
-        .open(&format!("http://127.0.0.1:{page_port}/"))
-        .unwrap();
+    let body = format!("<!doctype html><label for='name'>Name</label><input id='name' oninput=\"socket.send('fictional')\"><script>const socket=new WebSocket('ws://127.0.0.1:{socket_port}');</script>");
+    let fixture = loopback::HttpFixture::start(body);
+    driver.open(&format!("{}/", fixture.origin)).unwrap();
     let before = driver.observed_non_read_requests().unwrap();
     if let Err(error) = driver.execute(&BrowserCommand::Fill {
         selector: "#name".into(),
@@ -3596,7 +3541,7 @@ fn observes_websocket_frame_triggered_by_field_input() {
         .iter()
         .all(|event| !event.contains("submitted")));
     drop(driver);
-    page_server.join().unwrap();
+    fixture.finish();
     socket_server.join().unwrap();
 }
 
@@ -5077,10 +5022,20 @@ fn initially_stable_form_is_checked_for_late_fields() {
         .fields
         .iter()
         .any(|field| field.label == "Last name"));
-    assert!(live
-        .walls
+    // A slow first inspection may already see both fields. The review wall
+    // depends on observed stability, not elapsed time since the page loaded.
+    let loading = driver
+        .trace
         .iter()
-        .any(|wall| wall == waypoint_browser::DYNAMIC_UNSETTLED_REVIEW));
+        .find(|event| event.starts_with("loading check: "))
+        .expect("missing bounded loading observation");
+    assert_eq!(
+        live.walls
+            .iter()
+            .any(|wall| wall == waypoint_browser::DYNAMIC_UNSETTLED_REVIEW),
+        !loading.ends_with("2 consecutive unchanged"),
+        "review state disagrees with the loading observation: {loading}"
+    );
     assert!(driver
         .trace
         .iter()

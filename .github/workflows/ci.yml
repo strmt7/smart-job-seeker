@@ -115,6 +115,7 @@ jobs:
   # ever contacted by these tests.
   browser-e2e:
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       WAYPOINT_BROWSER_NO_SANDBOX: "1"
     steps:

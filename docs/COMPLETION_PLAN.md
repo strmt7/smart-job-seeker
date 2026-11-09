@@ -5,8 +5,9 @@ product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no
 defensible completion percentage or delivery date yet: the unmeasured work is
 not uniform in difficulty. “Ready” requires the acceptance evidence below, not
-just implemented components or a passing unit suite. Do not create a release
-as part of this plan.
+just implemented components or a passing unit suite. The [capability coverage
+map](CAPABILITY_COVERAGE.md) adds the current comparison and connected workflow
+acceptance gates. Do not create a release as part of this plan.
 
 ## Operating boundaries
 
@@ -61,10 +62,15 @@ build and configuration.
    The separate native GUI packages have now been retired in favor of the
    requested web/tray entrypoint. Local audit passed on the resulting 353-package
    graph without ignores, and hosted supply-chain checks passed for `12fc1504`.
-   Its browser-e2e job still failed; the preceding identified browser failure
-   is a fixture navigation abort in
-   `observes_non_read_request_triggered_by_field_input`, not the disconnect
-   observation. Its cause still needs investigation.
+   Its actual browser log reports 133 passes and three failures: late-field
+   review-state timing, WebSocket fixture navigation and disconnect-probe baseline
+   evaluation. The previous single-failure description was incomplete. Local
+   repairs now cover fixture ownership/parsing, startup-independent fixture
+   lifetime and document readiness, while loading stability has deterministic
+   unit coverage and a trace. The later `10996953` hosted run passed all five CI
+   jobs, including 136 browser cases and 296 layout cases. It predates the local
+   fixture repairs; confirmation of those repairs is still required. Neither
+   result establishes a submission-isolation boundary.
 2. **Measure the local application agent.** Run a controlled, versioned corpus
    of unseen forms and a diverse set of permitted live vacancies through
    discovery, inspection, reviewed filling and final-step handoff. Measure
