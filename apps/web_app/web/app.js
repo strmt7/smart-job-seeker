@@ -16,6 +16,7 @@ let reviewedOrder=null,reviewedOrderGeneration=0,attentionSnapshot=false;
 let duplicateBatch=null;
 async function stopDuplicateBatch(jobId){if(!duplicateBatch || duplicateBatch.job!==jobId)return;duplicateBatch.stop=true;notify('The duplicate scan will stop after the current model batch.');try{const pending=JSON.parse(sessionStorage.getItem('waypoint-duplicate-search')||'null');if(pending?.job===jobId && typeof pending.task==='string')await api('/api/duplicates/search-cancel',{task_id:pending.task});}catch(error){notify(`Stop request could not be confirmed: ${error.message}. The current group may continue.`);}}
 function workspaceViewForHash(hash){return hash==='#documents-section'?'documents':hash==='#applications-section'?'applications':/^#(settings-|local-tools)/.test(hash)?'settings':'profile';}
+function focusWorkspaceRegion(id){if(!['jobs-pane','workspace-pane'].includes(id))return;const region=document.getElementById(id);if(!region)return;region.scrollIntoView({behavior:'instant',block:'start'});region.focus({preventScroll:true});}
 function setWorkspaceView(view){
  const groups={profile:['profile-section','qualifications-section','preferences-section'],documents:['documents-section'],applications:['applications-section'],settings:['settings-section']};
  if(!Object.hasOwn(groups,view))return;
@@ -1070,6 +1071,8 @@ document.querySelector('#close-license').addEventListener('click',()=>licenseDia
 const noticeText=document.querySelector('#notice-text'),noticeDescription=document.querySelector('#notice-description'),projectLicense=noticeText.textContent;let noticeData=null,noticeRequest=0;
 for(const button of document.querySelectorAll('.license-nav button'))button.addEventListener('click',async()=>{const selected=button.dataset.notice,request=++noticeRequest;for(const item of document.querySelectorAll('.license-nav button'))item.setAttribute('aria-pressed',String(item===button));const descriptions={project:'The Waypoint project license.',sqlcipher:'SQLCipher license text included with this project.',credits:'Attribution and license for incorporated code.',inventory:'A recorded dependency license inventory; it is a snapshot, not a complete set of license texts.'};noticeDescription.textContent=descriptions[selected] || '';if(selected==='project'){noticeText.textContent=projectLicense;return;}noticeText.textContent='Loading notice…';try{noticeData=noticeData || await api('/api/license-notices');if(request!==noticeRequest)return;noticeText.textContent=noticeData[selected] || 'This notice is unavailable.';}catch(error){if(request===noticeRequest)noticeText.textContent=`Notice could not be loaded: ${error.message}`;}});
 const workspaceLinks=[...document.querySelectorAll('nav[aria-label="Workspace sections"] a')];
+document.querySelector('#jump-to-jobs').addEventListener('click',()=>focusWorkspaceRegion('jobs-pane'));
+document.querySelector('#jump-to-workspace').addEventListener('click',()=>focusWorkspaceRegion('workspace-pane'));
 function syncWorkspaceNavigation(){
  setWorkspaceView(workspaceViewForHash(location.hash));
 }

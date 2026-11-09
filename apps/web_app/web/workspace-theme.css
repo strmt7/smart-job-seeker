@@ -53,7 +53,18 @@ aside>section,.settings-content>section,.settings-content .local-tools { border-
 .settings-content>section,.settings-content .local-tools { padding: 22px; }
 .settings-content h2 { font-size: 19px; color: var(--ink); }
 dialog { border-radius: 12px; border-color: var(--line); }
+.mobile-workspace-switch { display: none; }
 @media(min-width:851px) { main { height: calc(100dvh - var(--header-height)); min-height: 0; } }
 @media(max-width:1100px) and (min-width:851px) { main { grid-template-columns: minmax(320px,36%) minmax(0,1fr); } .settings-layout { grid-template-columns: 1fr; } .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; } }
 @media(max-width:850px) { main { grid-template-columns: 1fr; } header { padding: 0 18px; } .jobs { padding-top: 20px; } aside { padding: 22px 20px; } .settings-nav { position: static; } }
 @media(max-width:600px) { .settings-layout { grid-template-columns: 1fr; } .settings-nav { flex-direction: row; flex-wrap: wrap; gap: 2px; } .settings-nav a,.settings-nav button { padding: 9px 10px; } .settings-content>section,.settings-content .local-tools { padding: 18px; } .brand { font-size: 21px; } }
+@media(max-width:850px) {
+  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .mobile-workspace-switch { position: fixed; inset: auto 0 0; z-index: 20; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 0; padding: 10px 18px calc(10px + env(safe-area-inset-bottom)); border: 0; border-top: 1px solid var(--line); background: var(--surface); }
+  .mobile-workspace-switch button { min-height: 44px; margin: 0; font-size: 14px; }
+  #jump-to-jobs { background: var(--accent-soft); color: var(--accent); }
+  #message { bottom: calc(86px + env(safe-area-inset-bottom)); max-width: calc(100vw - 40px); }
+  #jobs-pane:focus-visible,#workspace-pane:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px; }
+  aside nav[aria-label="Workspace sections"] { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; }
+  aside nav[aria-label="Workspace sections"] a { min-width: 0; padding: 10px 4px; text-align: center; font-size: 12px; }
+}

@@ -1,3 +1,8 @@
+## Narrow-screen work-area navigation — 2026-11-09
+
+- Added a mobile Jobs/Workspace dock that scrolls and focuses the relevant region without changing the active workspace section or URL hash. The dock has keyboard-operable buttons, explicit region associations, safe-area spacing and an offset for notifications. Workspace tabs use four equal columns on narrow screens.
+- A headless isolated-app probe using fictional job rows verified switching to Settings, preserving a job filter and section hash during a workspace jump, and returning to the job list using Enter with focus on the correct region. Screenshots informed a second pass to remove tab wrapping at 390 pixels. The compiled app built successfully; navigation unit checks passed; no script errors or horizontal overflow were observed at widths 390, 768, 1024 and 1440. This is a focused layout and navigation check, not a full accessibility evaluation. No employer pages or candidate documents were involved.
+
 ## Workspace visual refinement and local-model checkpoint — 2026-11-09
 
 - Two original image-generation concepts and an implementation checkpoint are saved under `docs/design/2026-11-workspace/`. The implemented theme refines job cards, selection, spacing, workspace tabs, settings surfaces and focus outlines. It is a partial implementation of that direction, not an assertion that every concept element exists. Headless isolated-app checks with fictional job rows found no script errors or horizontal overflow at widths 390, 768, 1024 and 1440. The compiled stylesheet route was verified. Screenshots containing local paths stay under ignored `target/`. Windows build, seven model-start unit tests and web Clippy passed.

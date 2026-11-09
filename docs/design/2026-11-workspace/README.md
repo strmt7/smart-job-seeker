@@ -39,7 +39,9 @@ paths. No employer application pages were contacted during this design work.
    PDF preview, factual review, revisions and outstanding checks.
 3. Reorganize local-tool setup around actual detected states and distinct actions;
    avoid implying a dependency is installed before checking it.
-4. Improve narrow-screen movement between the job list and active workspace.
+4. Extend the mobile Jobs/Workspace dock with long-form review usability checks.
+   Its initial implementation preserves the active section, hash and filter and
+   was checked headlessly with keyboard activation and narrow screenshots.
 5. Refactor remaining legacy CSS rules after broader state coverage, including
    empty, loading, error, lengthy labels, dialogs and keyboard focus.
 
