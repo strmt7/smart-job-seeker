@@ -64,7 +64,7 @@ pub fn python_path() -> Option<PathBuf> {
 // Setup may need venv and ensurepip even when the first PATH interpreter does
 // not provide them. Explicit, managed and bundled runtimes keep precedence.
 // Call only from the setup worker: probes can take up to two seconds each.
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn supports_pdf_setup(path: &std::path::Path) -> bool {
     let mut command = Command::new(path);
     command.args([
@@ -75,22 +75,12 @@ fn supports_pdf_setup(path: &std::path::Path) -> bool {
     crate::pdf_job::run(&command, None, 128 * 1024 * 1024, 2, 0).is_ok_and(|result| result.success)
 }
 
-#[cfg(windows)]
-pub fn setup_python() -> Option<PathBuf> {
-    configured_python().or_else(|| choose_setup_python(path_pythons(), supports_pdf_setup))
-}
-
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn choose_setup_python(
     paths: Vec<PathBuf>,
     mut supports: impl FnMut(&std::path::Path) -> bool,
 ) -> Option<PathBuf> {
     paths.into_iter().take(4).find(|path| supports(path))
-}
-
-#[cfg(not(windows))]
-pub fn setup_python() -> Option<PathBuf> {
-    python_path()
 }
 
 // Probe only automatic PATH candidates. Explicit, managed and bundled runtimes

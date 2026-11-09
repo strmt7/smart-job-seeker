@@ -52,6 +52,11 @@ def edit_pdf_stream(reader, page_index, before, after):
             try:
                 font = fonts[operands[0]].get_object()
                 encoding, mapping = get_encoding(font)
+                if '/ToUnicode' in font and '/Encoding' not in font:
+                    # pypdf 7 supplies StandardEncoding where older versions
+                    # returned 'charmap'. That fallback is extraction evidence,
+                    # not proof that an unmapped replacement glyph exists.
+                    encoding = 'charmap'
                 current = (encoding, mapping, operands[0], operands[1], font)
             except Exception:
                 current = None

@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "properties": {
+    "decisions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "pattern": "^f([1-9]|1[0-9]|20)$"
+              },
+              "component": {
+                "type": "string",
+                "enum": [
+                  "employer",
+                  "title",
+                  "location",
+                  "institution",
+                  "qualification",
+                  "field_of_study",
+                  "description",
+                  "start_date",
+                  "end_date",
+                  "start_year",
+                  "end_year",
+                  "start_month",
+                  "end_month",
+                  "start_year_month",
+                  "end_year_month"
+                ]
+              },
+              "reason": {
+                "const": "matched"
+              }
+            },
+            "required": [
+              "field",
+              "component",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "pattern": "^f([1-9]|1[0-9]|20)$"
+              },
+              "component": {
+                "type": "null"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "ambiguous",
+                  "wrong_subject",
+                  "sensitive",
+                  "no_value",
+                  "not_supported"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "component",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "decisions"
+  ],
+  "additionalProperties": false
+}

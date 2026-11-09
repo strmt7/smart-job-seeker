@@ -48,7 +48,14 @@ try {
     [IO.File]::WriteAllText($hiddenTop, 'fictional hidden package file')
     (Get-Item -LiteralPath $hiddenTop -Force).Attributes = [IO.FileAttributes]::Hidden
     function Hash([string]$name) { (Get-FileHash -LiteralPath (Join-Path $app $name) -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $vcrtFiles = @{}
+    $runtimeCatalog = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../windows-runtime-artifacts.json') -Raw | ConvertFrom-Json
+    foreach ($entry in $runtimeCatalog.msvc.files.PSObject.Properties) {
+        [IO.File]::WriteAllText((Join-Path $app $entry.Name), "fictional runtime: $($entry.Name)")
+        $vcrtFiles[$entry.Name] = Hash $entry.Name
+    }
     $manifest = @{
+        vcrt_files = $vcrtFiles
         executable_sha256 = Hash 'SmartJobseeker.exe'
         openssl_dll = 'libcrypto-test.dll'
         openssl_sha256 = Hash 'libcrypto-test.dll'
@@ -128,6 +135,12 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $sibling 'SmartJobseeker.exe') -PathType Leaf)) { throw 'A sibling with a similar prefix was incorrectly rejected.' }
     $installed = Join-Path $testRoot 'installed'
     & $installer -InstallDirectory $installed -NoShortcut
+    if (-not (Test-Path -LiteralPath (Join-Path $installed 'msvcp140.dll') -PathType Leaf)) { throw 'App-local Microsoft runtime was not copied.' }
+    [IO.File]::WriteAllText((Join-Path $app 'msvcp140.dll'), 'damaged')
+    $rejected = $false
+    try { & $installer -InstallDirectory (Join-Path $testRoot 'damaged-vcrt') -NoShortcut } catch { $rejected = $_.Exception.Message -match 'Microsoft runtime file is missing or damaged' }
+    if (-not $rejected -or (Test-Path -LiteralPath (Join-Path $testRoot 'damaged-vcrt'))) { throw 'Damaged Microsoft runtime was accepted.' }
+    [IO.File]::WriteAllText((Join-Path $app 'msvcp140.dll'), 'fictional runtime: msvcp140.dll')
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/soffice.com') -PathType Leaf)) { throw 'Bundled converter was not copied.' }
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'dependencies/libreoffice/program/hidden.dll') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $installed 'hidden-top.txt') -PathType Leaf)) { throw 'Hidden package files were not copied.' }

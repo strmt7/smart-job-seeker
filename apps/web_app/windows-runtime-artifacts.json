@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "platform": "windows-x86_64",
+  "python": [
+    {
+      "id": "python",
+      "url": "https://api.nuget.org/v3-flatcontainer/python/3.15.2/python.3.15.2.nupkg",
+      "filename": "python.3.15.2.nupkg",
+      "bytes": 16672834,
+      "sha256": "294f5ed7ab97148fcbb57b8c06ba428f6d282c2bbaa266dbe3137284497998f0",
+      "archive_prefix": "tools/",
+      "destination": "",
+      "max_unpacked_bytes": 157286400
+    },
+    {
+      "id": "pypdf",
+      "url": "https://files.pythonhosted.org/packages/8a/21/e83122a25e334c718a4da67004fa94acd7215fe9f8e63a9d7c7f979eb52b/pypdf-7.0.0-py3-none-any.whl",
+      "filename": "pypdf-7.0.0-py3-none-any.whl",
+      "bytes": 413949,
+      "sha256": "112a2c7cbabefd8dfe498f7a13977e575e762d58cdb0d832acb8886922602c6f",
+      "archive_prefix": "",
+      "destination": "Lib/site-packages/",
+      "max_unpacked_bytes": 157286400
+    },
+    {
+      "id": "pypdfium2",
+      "url": "https://files.pythonhosted.org/packages/0a/80/3610390f0d23acc75a9d496f5b9f1217bedf34612d68b39be988cffea98d/pypdfium2-5.15.0-py3-none-win_amd64.whl",
+      "filename": "pypdfium2-5.15.0-py3-none-win_amd64.whl",
+      "bytes": 4191811,
+      "sha256": "eaa06c2e059ae0bd520acd67259a2ee29e15fc1751a566f4e2ac29ec345646f7",
+      "archive_prefix": "",
+      "destination": "Lib/site-packages/",
+      "max_unpacked_bytes": 157286400
+    },
+    {
+      "id": "pillow",
+      "url": "https://files.pythonhosted.org/packages/44/05/fdb6a79aee10861165526b41b7b440e36ee1ff58613b2fbefe3acbf06d4f/pillow-13.0.0-cp315-cp315-win_amd64.whl",
+      "filename": "pillow-13.0.0-cp315-cp315-win_amd64.whl",
+      "bytes": 7281107,
+      "sha256": "d4737f50d23ddd11d6685faacbb9252887dde0bc7997127757247983d74399d6",
+      "archive_prefix": "",
+      "destination": "Lib/site-packages/",
+      "max_unpacked_bytes": 157286400
+    }
+  ],
+  "browser": {
+    "id": "chromium-headless",
+    "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/win64/chrome-headless-shell-win64.zip",
+    "filename": "chrome-headless-shell-win64.zip",
+    "bytes": 126513060,
+    "sha256": "1ff4540855478ba0848e03f1ef8d455f77d058b38285df91bc34273788a73446",
+    "archive_prefix": "chrome-headless-shell-win64/",
+    "max_unpacked_bytes": 629145600
+  },
+  "msvc": {
+    "version": "14.51.36247.0",
+    "url": "https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe",
+    "bytes": 18731856,
+    "sha256": "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
+    "files": {
+      "vcruntime140_threads.dll": "40f39e8cee5f5a531b4010e18b807e8fe265b908dc58f959ecb7ebc6ea6cb11a",
+      "msvcp140_1.dll": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982",
+      "vcomp140.dll": "95d4ce4a6802d1e18b5e0e1722cc30ea72ca7e033f83828f05c0b7b993fe7cbf",
+      "vcruntime140_1.dll": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+      "msvcp140_atomic_wait.dll": "3d0cbfaa1bf3eecf5a3f4491d2960ee803cb994f30292c6adc4a07c498f60e2b",
+      "msvcp140_2.dll": "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838",
+      "msvcp140_codecvt_ids.dll": "8a65c7596ef2e6938731f5a1058e7e40145b6d97967cc649231a076b9a608d78",
+      "vcamp140.dll": "dc283ffb87e9b82e687ed4e899ae062a209aa338207abfc9a89d61407d678bd4",
+      "concrt140.dll": "54716f0738af891f283d213b5c8d11b25896bb8ee3097d301eae718560cf974e",
+      "msvcp140.dll": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+      "vccorlib140.dll": "09f93d5ff96ae09767f3e1af3cdd43a5a58f2598654fc63089429bb6f9f4737f",
+      "vcruntime140.dll": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    },
+    "license": {
+      "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+      "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+      "bytes": 39553
+    }
+  }
+}

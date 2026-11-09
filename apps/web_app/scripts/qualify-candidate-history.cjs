@@ -8,7 +8,7 @@ if(os.freemem()<6*1024**3)throw Error('Not enough available RAM for qualificatio
 const folder=fs.mkdtempSync(path.join(repo,'target/candidate-history-'));
 const executable=options.executable||path.join(repo,'target/debug/waypoint_web.exe');
 const browserExecutable=options.browser||'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const sources=['apps/web_app/src/main.rs','apps/web_app/src/candidate_history.rs','apps/web_app/web/app.js','apps/web_app/web/index.html','apps/web_app/web/workspace-theme.css','apps/web_app/web/candidate-history.js','apps/web_app/scripts/qualify-candidate-history.cjs'];
+const sources=['apps/web_app/src/main.rs','apps/web_app/src/candidate_history.rs','apps/web_app/src/history_advice.rs','apps/web_app/web/history-mapping.js','apps/web_app/web/app.js','apps/web_app/web/index.html','apps/web_app/web/workspace-theme.css','apps/web_app/web/candidate-history.js','apps/web_app/scripts/qualify-candidate-history.cjs'];
 const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const evidence={complete:false,sources:Object.fromEntries(sources.map(file=>[file,digest(path.join(repo,file))])),executable_sha256:digest(executable),cases:[],errors:[],scope:'fictional local profile and explicit answer selection; no employer forms or model calls'};
 const child=spawn(executable,[],{windowsHide:true,env:{...process.env,APPDATA:path.join(folder,'appdata'),WAYPOINT_WORKSPACE_DIR:path.join(folder,'workspace'),WAYPOINT_NO_BROWSER:'1',WAYPOINT_NO_TRAY:'1'},stdio:['ignore','pipe','pipe']});
@@ -107,6 +107,41 @@ const started=Date.now();
   const inspected=await page.evaluate(()=>{const input=document.createElement('textarea'),box=profileValuePicker({career_history:document.querySelector('#career-history-value').value},input,{label:'Previous school',field_type:'text',sensitive:false});document.querySelector('#candidate-history').append(box);const select=box.querySelector('select');const option=[...select.options].find(item=>item.value.endsWith(':institution'));select.value=option.value;box.querySelector('button').click();return input.value;});
   assert.equal(inspected,'Fictional University');
   evidence.cases.push('explicit checked education value selection uses exact saved text');
+  const historyCalls=[];
+  await page.route('**/api/form/history-advice-*',async route=>{
+   const name=new URL(route.request().url()).pathname;historyCalls.push(name);
+   const response=name.endsWith('-start')?{task_id:'fictional-layout'}:{status:'complete',advice:{entry_label:'Engineer at Fictional Co',proposals:[{selector:'#history-employer',label:'Employer',value:{text:'Fictional Co'}},{selector:'#history-month',label:'Start month',value:{date:'2020-06'}}],manual_review:[]}};
+   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(response)});
+  });
+  await page.evaluate(()=>{
+   const host=document.createElement('section');host.id='history-advice-qualification';
+   const answers=[['history-employer','text'],['history-month','month']].map(([id,type])=>{const label=document.createElement('label');label.textContent=id==='history-employer'?'Employer':'Start month';const input=document.createElement('input');input.id=id;input.type=type;label.append(input);host.append(label);return {selector:'#'+id,input,kind:type};});
+   const profile={career_history:JSON.stringify({version:1,employment:[{id:'c'.repeat(32),employer:'Fictional Co',title:'Engineer',start_date:'2020-06',end_date:'2023',description:'Fictional evidence only',ongoing:false,reviewed:true}],education:[]})};
+   host.append(HistoryMapping.control({session_id:'fictional-layout',fields:[{selector:'#history-employer',label:'Employer',field_type:'text',sensitive:false},{selector:'#history-month',label:'Start month',field_type:'month',sensitive:false}]},answers,profile));
+   document.querySelector('#workspace-pane').append(host);
+  });
+  const advice=page.locator('#history-advice-qualification');
+  await advice.locator('summary').click();
+  await advice.locator('select').selectOption('c'.repeat(32));
+  for(const check of await advice.locator('fieldset input[type=checkbox]').all())await check.check();
+  await advice.getByRole('button',{name:'Suggest answers',exact:true}).click();
+  await advice.getByRole('button',{name:'Use selected suggestions',exact:true}).waitFor();
+  assert.equal(await advice.locator('#history-employer').inputValue(),'');
+  assert.equal(await advice.locator('.history-proposal input:checked').count(),0);
+  for(const width of [320,390,768,1440,1920]) {
+   await page.setViewportSize({width,height:1000});await advice.scrollIntoViewIfNeeded();
+   const overflow=await advice.evaluate(host=>({document:document.documentElement.scrollWidth>innerWidth+1,host:host.scrollWidth>host.clientWidth+1}));
+   assert.deepEqual(overflow,{document:false,host:false},`history advice overflow at ${width}`);
+   evidence.cases.push(`history advice rendered at ${width}px with fictional intercepted responses`);
+   if(width===390||width===1440)await page.screenshot({path:path.join(folder,`history-advice-${width}.png`)});
+  }
+  for(const check of await advice.locator('.history-proposal input[type=checkbox]').all())await check.check();
+  await advice.getByRole('button',{name:'Use selected suggestions',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#history-employer').value==='Fictional Co');
+  assert.equal(await advice.locator('#history-employer').inputValue(),'Fictional Co');
+  assert.equal(await advice.locator('#history-month').inputValue(),'2020-06');
+  assert.ok(historyCalls.every(name=>name.endsWith('-start')||name.endsWith('-status')));
+  evidence.cases.push('intercepted history suggestions require checked proposals and update only local answer editors; no fill request');
   await page.evaluate(()=>CandidateHistory.load({version:2}));
   assert.equal(await page.locator('#career-history-value').inputValue(),'{"version":2}');
   assert.match(await page.locator('#candidate-history').innerText(),/could not be read/);

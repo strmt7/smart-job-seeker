@@ -45,8 +45,12 @@ mod gmail_oauth;
 mod gmail_password;
 mod gmail_self_test;
 mod gpu_resources;
+mod history_advice;
+#[cfg(all(test, windows))]
+mod history_advice_browser_tests;
 mod letter_export;
 mod link_rank;
+mod local_advice;
 mod manual_job;
 mod model_install;
 mod model_start;
@@ -54,6 +58,7 @@ mod pdf_extract;
 mod pdf_job;
 mod pdf_preview_task;
 mod pdf_probe_task;
+mod pdf_runtime;
 mod pdf_setup;
 mod pdf_transcribe;
 mod resident_inference;
@@ -1207,6 +1212,99 @@ fn answer_field_eligible(
         )
 }
 
+fn history_inputs(
+    ws: &Workspace,
+    session: &ReviewSession,
+    entry: &str,
+    selectors: &[String],
+) -> Result<(history_advice::Inputs, String), String> {
+    if session.created.elapsed() > session.ttl || session.filled {
+        return Err("Inspect the current form again".into());
+    }
+    let job = ws
+        .job(&session.job_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("Job not found")?;
+    if !matches!(
+        job.state,
+        ApplicationState::Shortlisted | ApplicationState::Prepared
+    ) || !form_destination_current(ws, &job, &session.url, session.route_binding.as_ref())?
+    {
+        return Err("Job or destination changed; inspect again".into());
+    }
+    let profile: Value = ws
+        .candidate_profile()
+        .map_err(|error| error.to_string())?
+        .map(|raw| serde_json::from_str(&raw))
+        .transpose()
+        .map_err(|_| "Stored profile is invalid")?
+        .unwrap_or(json!({}));
+    if Sha256Digest::of(&profile.to_string()) != session.profile_digest {
+        return Err("Profile changed; inspect the form again".into());
+    }
+    if selectors.is_empty() || selectors.len() > 20 {
+        return Err("Select from one to twenty fields".into());
+    }
+    let mut fields = Vec::new();
+    for selector in selectors {
+        let field = session
+            .preview
+            .schema
+            .fields
+            .iter()
+            .find(|field| &field.selector == selector)
+            .ok_or("Selected history field is no longer present")?;
+        if session.preview.model_review_selectors.contains(selector) {
+            return Err("A selected field requires manual handling".into());
+        }
+        fields.push(field.clone());
+    }
+    history_advice::validate_scope(&fields)?;
+    let record = candidate_history::selected(
+        profile["career_history"]
+            .as_str()
+            .ok_or("Add checked career history first")?,
+        entry,
+    )?;
+    let digest=Sha256Digest::of(&json!({"version":1,"session":session.id,"job":job,"url":session.url,"profile":session.profile_digest.as_str(),"schema":session.preview.schema.schema_hash_input(),"entry":record,"selectors":selectors}).to_string()).as_str().to_owned();
+    Ok((history_advice::Inputs { record, fields }, digest))
+}
+
+fn history_advice_status(
+    ws: &Workspace,
+    session: Option<&ReviewSession>,
+    id: &str,
+) -> Result<Value, String> {
+    let mut result = history_advice::TASK.poll(id)?;
+    if result["status"] == "complete" {
+        let binding = result["binding"].clone();
+        let fresh = (|| -> Result<String, String> {
+            let current = session
+                .as_ref()
+                .filter(|session| Some(session.id.as_str()) == binding["session_id"].as_str())
+                .ok_or("Form session expired")?;
+            let selectors: Vec<String> = serde_json::from_value(binding["selectors"].clone())
+                .map_err(|_| "Invalid history advice binding")?;
+            history_inputs(
+                ws,
+                current,
+                binding["entry_id"]
+                    .as_str()
+                    .ok_or("Missing history entry")?,
+                &selectors,
+            )
+            .map(|(_, digest)| digest)
+        })();
+        if fresh.as_ref().ok().map(String::as_str) != binding["digest"].as_str() {
+            result = json!({"status":"failed","binding":binding,"error":"History, job or inspected form changed; inspect and request suggestions again"});
+        }
+    }
+    if result["status"] != "running" {
+        result = history_advice::TASK.complete(id, result)?;
+    }
+    Ok(result)
+}
+
 fn answer_inputs(
     ws: &Workspace,
     session: &ReviewSession,
@@ -2323,6 +2421,15 @@ fn serve(
             "200 OK",
             "text/javascript; charset=utf-8",
             include_str!("../web/candidate-history.js"),
+        );
+        return Ok(());
+    }
+    if path == "/history-mapping.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/history-mapping.js"),
         );
         return Ok(());
     }
@@ -7390,6 +7497,40 @@ fn serve(
                 }
                 current.created = Instant::now();
             }
+            json_reply(stream, "200 OK", result);
+        }
+        "/api/form/history-advice-pending" => {
+            json_reply(stream, "200 OK", history_advice::TASK.pending()?);
+        }
+        "/api/form/history-advice-start" => {
+            let id = body["session_id"].as_str().ok_or("Missing form session")?;
+            let entry = body["entry_id"].as_str().ok_or("Choose a history entry")?;
+            let selectors: Vec<String> = serde_json::from_value(body["selectors"].clone())
+                .map_err(|_| "Select history fields")?;
+            let current = session
+                .as_ref()
+                .filter(|session| session.id == id)
+                .ok_or("Form session expired")?;
+            let (input, digest) = history_inputs(ws, current, entry, &selectors)?;
+            let model = resident_model()?.ok_or("No eligible resident local model is available")?;
+            let task = random_id()?;
+            history_advice::TASK.start(
+                task.clone(),
+                json!({"session_id":id,"entry_id":entry,"selectors":selectors,"digest":digest}),
+                model,
+                move |model| history_advice::propose(model, &input),
+            )?;
+            json_reply(stream, "200 OK", json!({"task_id":task}));
+        }
+        "/api/form/history-advice-status" => {
+            let id = body["task_id"]
+                .as_str()
+                .ok_or("Missing history advice task")?;
+            let mut result = history_advice_status(ws, session.as_ref(), id)?;
+            result
+                .as_object_mut()
+                .ok_or("Invalid history advice state")?
+                .remove("binding");
             json_reply(stream, "200 OK", result);
         }
         "/api/form/answer-start" => {

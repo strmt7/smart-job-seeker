@@ -3,13 +3,16 @@ param(
     [string]$InstallerPath
 )
 $ErrorActionPreference = 'Stop'
+foreach ($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Security')) {
+    Import-Module -Name (Join-Path $PSHOME ('Modules/' + $module + '/' + $module + '.psd1')) -ErrorAction Stop
+}
 if ($env:OS -ne 'Windows_NT') { throw 'OpenSSL provisioning requires Windows.' }
 $target = (Resolve-Path -LiteralPath $TargetRoot).Path
-$cache = Join-Path $target 'waypoint-openssl-4.1.0'
-$expectedHash = '23044e1e0cd365f644dfd753df1398004687f0aba7d742e69ea0a4e242a1d802'
-$expectedSize = 60402176
-$url = 'https://github.com/openssl/installer/releases/download/publish/4.1.0-1/OpenSSL-x64-hybridCRT-4.1.0.msi'
-$expectedTree = '0960061e70e8331c11c63420fda12b88b2d440704447be58c527b077e712e978'
+$cache = Join-Path $target 'waypoint-openssl-4.1.0-2'
+$expectedHash = '59803cf501cf4e643a89310a143e964ec9c0432d83a92f3fc585a4fc5a15dff3'
+$expectedSize = 60386816
+$url = 'https://github.com/openssl/installer/releases/download/publish/4.1.0-2/OpenSSL-x64-hybridCRT-4.1.0.msi'
+$expectedTree = '16edd3ef3e7175e0e9c6a0c859df4d0eb4d9a406fa1aa40f166be061646ead16'
 function Check-Cache([string]$Directory) {
     $include = Join-Path $Directory 'include'
     if (-not (Test-Path -LiteralPath $include -PathType Container)) { throw "OpenSSL cache is incomplete: $Directory" }
@@ -70,9 +73,16 @@ try {
     $content = Join-Path $stage 'content'
     New-Item -ItemType Directory -Path $content | Out-Null
     $arguments = @('/a', ('"' + $msi + '"'), '/qn', ('TARGETDIR="' + $content + '"'))
-    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/msiexec.exe') -ArgumentList $arguments -PassThru -WindowStyle Hidden
-    if (-not $process.WaitForExit(180000)) { throw 'OpenSSL extraction timed out; the installer may still be running.' }
-    if ($process.ExitCode -ne 0) { throw "OpenSSL extraction failed ($($process.ExitCode))." }
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = Join-Path $env:SystemRoot 'System32/msiexec.exe'
+    $info.Arguments = $arguments -join ' '
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        if (-not $process.WaitForExit(180000)) { throw 'OpenSSL extraction timed out; the installer may still be running.' }
+        if ($process.ExitCode -ne 0) { throw "OpenSSL extraction failed ($($process.ExitCode))." }
+    } finally { $process.Dispose() }
     Check-Cache $content
     if (Test-Path -LiteralPath $cache) { throw 'Another OpenSSL cache appeared during provisioning; retry using that cache.' }
     [IO.Directory]::Move($content, $cache)

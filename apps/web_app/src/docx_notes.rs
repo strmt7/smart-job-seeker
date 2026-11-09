@@ -21,14 +21,15 @@ pub(crate) fn note_relationships(xml: &[u8]) -> Result<[Option<String>; 2], Stri
         let (ns, event) = reader
             .read_resolved_event()
             .map_err(|_| "Malformed DOCX relationships")?;
-        let in_ns = matches!(ns, ResolveResult::Bound(value) if value.as_ref() == REL_NS);
+        let in_ns =
+            matches!(ns, ResolveResult::Bound(value) if value.as_ref().as_bytes() == REL_NS);
         if let Event::Start(e) | Event::Empty(e) = &event {
             if depth == 0 {
-                if root || !in_ns || e.local_name().as_ref() != b"Relationships" {
+                if root || !in_ns || e.local_name().as_ref().as_bytes() != b"Relationships" {
                     return Err("Invalid DOCX relationships root".into());
                 }
                 root = true;
-            } else if depth == 1 && in_ns && e.local_name().as_ref() == b"Relationship" {
+            } else if depth == 1 && in_ns && e.local_name().as_ref().as_bytes() == b"Relationship" {
                 let mut ty = None;
                 let mut target = None;
                 let mut mode = None;
@@ -38,7 +39,7 @@ pub(crate) fn note_relationships(xml: &[u8]) -> Result<[Option<String>; 2], Stri
                         .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                         .map_err(|_| "Invalid DOCX relationship value")?
                         .into_owned();
-                    match a.key.as_ref() {
+                    match a.key.as_ref().as_bytes() {
                         b"Type" => ty = Some(value),
                         b"Target" => target = Some(value),
                         b"TargetMode" => mode = Some(value),
@@ -93,7 +94,7 @@ pub(crate) fn note_relationships(xml: &[u8]) -> Result<[Option<String>; 2], Stri
 }
 
 fn word(ns: ResolveResult<'_>) -> bool {
-    matches!(ns, ResolveResult::Bound(value) if WORD_NAMESPACES.contains(&value.as_ref()))
+    matches!(ns, ResolveResult::Bound(value) if WORD_NAMESPACES.contains(&value.as_ref().as_bytes()))
 }
 
 fn reference_id(
@@ -104,11 +105,11 @@ fn reference_id(
     for attribute in event.attributes() {
         let attribute = attribute.ok()?;
         let (ns, local) = reader.resolver_mut().resolve_attribute(attribute.key);
-        if word(ns) && local.as_ref() == b"id" {
+        if word(ns) && local.as_ref().as_bytes() == b"id" {
             if id.is_some() {
                 return None;
             }
-            let parsed = std::str::from_utf8(attribute.value.as_ref())
+            let parsed = std::str::from_utf8(attribute.value.as_ref().as_bytes())
                 .ok()?
                 .parse::<i64>()
                 .ok()?;
@@ -145,14 +146,14 @@ fn collect_references(xml: &[u8], references: &mut References) -> Result<(), Str
             continue;
         }
         if is_word
-            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref(), b"del" | b"moveFrom"))
+            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom"))
         {
             removed = 1;
             continue;
         }
         match event {
             Event::Start(e) | Event::Empty(e) if is_word => {
-                let target = match e.local_name().as_ref() {
+                let target = match e.local_name().as_ref().as_bytes() {
                     b"footnoteReference" => Some(&mut references.footnotes),
                     b"endnoteReference" => Some(&mut references.endnotes),
                     _ => None,
@@ -198,14 +199,16 @@ fn extract_note_part(
                 } else {
                     b"endnotes".as_slice()
                 };
-                if root_seen || !is_word || e.local_name().as_ref() != expected {
+                if root_seen || !is_word || e.local_name().as_ref().as_bytes() != expected {
                     return Err("Invalid DOCX note root".into());
                 }
                 root_seen = true;
             }
         }
         match &event {
-            Event::Start(e) if is_word && e.local_name().as_ref() == kind && depth == 1 => {
+            Event::Start(e)
+                if is_word && e.local_name().as_ref().as_bytes() == kind && depth == 1 =>
+            {
                 if let Some(id) = reference_id(&mut reader, e).filter(|id| wanted.contains(id)) {
                     active = Some((id, depth, String::new()));
                     in_text = false;
@@ -215,13 +218,17 @@ fn extract_note_part(
                     invalid = e.attributes().any(|a| match a {
                         Ok(a) => {
                             let (ns, local) = reader.resolver_mut().resolve_attribute(a.key);
-                            word(ns) && local.as_ref() == b"type" && a.value.as_ref() != b"normal"
+                            word(ns)
+                                && local.as_ref().as_bytes() == b"type"
+                                && a.value.as_ref().as_bytes() != b"normal"
                         }
                         Err(_) => true,
                     });
                 }
             }
-            Event::Empty(e) if is_word && e.local_name().as_ref() == kind && depth == 1 => {
+            Event::Empty(e)
+                if is_word && e.local_name().as_ref().as_bytes() == kind && depth == 1 =>
+            {
                 if let Some(id) = reference_id(&mut reader, e).filter(|id| wanted.contains(id)) {
                     if found.insert(id, String::new()).is_some() {
                         duplicate.insert(id);
@@ -238,54 +245,61 @@ fn extract_note_part(
                     _ => {}
                 }
             } else if is_word
-                && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref(), b"del" | b"moveFrom"))
+                && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom"))
             {
                 removed = 1;
             } else {
                 match &event {
-                    Event::Start(e) if is_word && e.local_name().as_ref() == b"r" => run_depth += 1,
-                    Event::End(e) if is_word && e.local_name().as_ref() == b"r" => {
+                    Event::Start(e) if is_word && e.local_name().as_ref().as_bytes() == b"r" => {
+                        run_depth += 1
+                    }
+                    Event::End(e) if is_word && e.local_name().as_ref().as_bytes() == b"r" => {
                         run_depth = run_depth.saturating_sub(1)
                     }
-                    Event::Start(e) if is_word && e.local_name().as_ref() == b"tabs" => {
+                    Event::Start(e) if is_word && e.local_name().as_ref().as_bytes() == b"tabs" => {
                         tabs_depth += 1
                     }
-                    Event::End(e) if is_word && e.local_name().as_ref() == b"tabs" => {
+                    Event::End(e) if is_word && e.local_name().as_ref().as_bytes() == b"tabs" => {
                         tabs_depth = tabs_depth.saturating_sub(1)
                     }
                     Event::Start(e) | Event::Empty(e)
                         if is_word
                             && matches!(
-                                e.local_name().as_ref(),
+                                e.local_name().as_ref().as_bytes(),
                                 b"footnoteReference" | b"endnoteReference"
                             ) =>
                     {
                         invalid = true
                     }
-                    Event::Start(e) if is_word && e.local_name().as_ref() == b"t" => in_text = true,
-                    Event::End(e) if is_word && e.local_name().as_ref() == b"t" => in_text = false,
+                    Event::Start(e) if is_word && e.local_name().as_ref().as_bytes() == b"t" => {
+                        in_text = true
+                    }
+                    Event::End(e) if is_word && e.local_name().as_ref().as_bytes() == b"t" => {
+                        in_text = false
+                    }
                     Event::Text(e) if in_text => {
-                        let value = e.decode().map_err(|_| "Invalid DOCX note encoding")?;
+                        let value = e.as_ref();
                         text.push_str(
-                            &quick_xml::escape::unescape(&value)
+                            &quick_xml::escape::unescape(value)
                                 .map_err(|_| "Invalid DOCX note entity")?,
                         );
                     }
                     Event::GeneralRef(e) if in_text => {
-                        let name = e.decode().map_err(|_| "Invalid DOCX note entity")?;
+                        let name = e.as_ref();
                         text.push_str(
                             &quick_xml::escape::unescape(&format!("&{name};"))
                                 .map_err(|_| "Unsupported DOCX note entity")?,
                         );
                     }
                     Event::Empty(e) | Event::Start(e)
-                        if is_word && matches!(e.local_name().as_ref(), b"br" | b"cr") =>
+                        if is_word
+                            && matches!(e.local_name().as_ref().as_bytes(), b"br" | b"cr") =>
                     {
                         text.push('\n')
                     }
                     Event::Empty(e) | Event::Start(e)
                         if is_word
-                            && e.local_name().as_ref() == b"tab"
+                            && e.local_name().as_ref().as_bytes() == b"tab"
                             && run_depth > 0
                             && tabs_depth == 0 =>
                     {
@@ -294,23 +308,27 @@ fn extract_note_part(
                     Event::Empty(e) | Event::Start(e)
                         if is_word
                             && run_depth > 0
-                            && e.local_name().as_ref() == b"noBreakHyphen" =>
+                            && e.local_name().as_ref().as_bytes() == b"noBreakHyphen" =>
                     {
                         text.push('\u{2011}')
                     }
                     Event::Empty(e) | Event::Start(e)
-                        if is_word && run_depth > 0 && e.local_name().as_ref() == b"softHyphen" =>
+                        if is_word
+                            && run_depth > 0
+                            && e.local_name().as_ref().as_bytes() == b"softHyphen" =>
                     {
                         text.push('\u{00ad}')
                     }
-                    Event::End(e) if is_word && e.local_name().as_ref() == b"p" => text.push('\n'),
+                    Event::End(e) if is_word && e.local_name().as_ref().as_bytes() == b"p" => {
+                        text.push('\n')
+                    }
                     _ => {}
                 }
             }
             if text.len() > 200_000 {
                 return Err("Extracted DOCX note text exceeds limit".into());
             }
-            if matches!(&event, Event::End(e) if is_word && e.local_name().as_ref() == kind && depth == *note_depth + 1)
+            if matches!(&event, Event::End(e) if is_word && e.local_name().as_ref().as_bytes() == kind && depth == *note_depth + 1)
             {
                 let (id, _, text) = active.take().expect("active note");
                 if found

@@ -25,18 +25,17 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable action
         with:
+          toolchain: '1.99.1'
           components: llvm-tools-preview
       - name: Configure OpenSSL for SQLCipher
         shell: pwsh
         run: |
-          $openssl = Join-Path $env:ProgramFiles 'OpenSSL'
-          $libs = Join-Path $openssl 'lib\VC\x64\MD'
+          New-Item -ItemType Directory -Path target -Force | Out-Null
+          $openssl = & ./apps/web_app/scripts/provision-openssl.ps1 -TargetRoot target
+          $libs = Join-Path $openssl 'lib'
           $includes = Join-Path $openssl 'include'
-          if (!(Test-Path (Join-Path $includes 'openssl\crypto.h')) -or !(Test-Path (Join-Path $libs 'libcrypto.lib'))) {
-            throw 'The Windows runner OpenSSL headers or x64 MSVC libraries are unavailable.'
-          }
           "OPENSSL_DIR=$openssl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_INCLUDE_DIR=$includes" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_LIB_DIR=$libs" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

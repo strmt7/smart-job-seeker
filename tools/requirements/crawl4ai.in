@@ -1,0 +1,5 @@
+# Reviewed upstream source plus the repository's portable download repair.
+# Build the local wheel through tools/crawl4ai_source_build.py before resolving.
+crawl4ai==0.9.5+flitzzip.portable2
+# Immutable official NLTK release (newer than some package-index mirrors).
+nltk @ https://github.com/nltk/nltk/releases/download/v3.10.4/nltk-3.10.4-py3-none-any.whl

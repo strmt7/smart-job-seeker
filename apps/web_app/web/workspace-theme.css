@@ -20,6 +20,14 @@ aside>#profile-section:has(.profile-editor[open]) { grid-column: 1 / -1; }
 .profile-grid .history-check input { width: auto; margin: 0; flex: 0 0 auto; }
 .history-review-status { color: var(--muted); font-size: 12px; }
 .history-empty { padding: 16px; border: 1px dashed var(--line); border-radius: 8px; font-size: 13px; }
+.history-mapping { margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--canvas); }
+.history-mapping-content,.history-mapping-result { display: grid; gap: 12px; min-width: 0; }
+.history-mapping-content>label { display: grid; gap: 6px; }
+.history-mapping fieldset { max-height: 280px; overflow: auto; padding: 12px; border: 1px solid var(--line); }
+.history-mapping .history-check,.history-proposal { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; overflow-wrap: anywhere; }
+.history-mapping input[type=checkbox] { flex: 0 0 auto; width: auto; }
+.history-proposal { flex-wrap: wrap; }
+.history-proposal>span { flex: 1 1 120px; white-space: pre-wrap; }
 @container workspace (max-width: 500px) { .history-fields { grid-template-columns: minmax(0,1fr); } }
 @media (max-width: 600px) { .history-fields { grid-template-columns: minmax(0,1fr); } }
 :root {

@@ -23,22 +23,10 @@ if ($OpenSslInstaller) {
     $OpenSslRoot = & (Join-Path $PSScriptRoot 'provision-openssl.ps1') -TargetRoot (Join-Path $repo 'target') -InstallerPath $OpenSslInstaller
 }
 if (-not $OpenSslRoot) {
-    # The official Windows runner and common developer installers use different
-    # directories. Only select a complete x64 development installation.
-    $candidates = @('OpenSSL-Win64', 'OpenSSL') | ForEach-Object { Join-Path $env:ProgramFiles $_ }
-    $OpenSslRoot = $candidates | Where-Object {
-        $candidate = $_
-        (Test-Path -LiteralPath (Join-Path $candidate 'include/openssl/ssl.h') -PathType Leaf) -and
-        (@('lib/VC/x64/MD', 'lib/x64', 'lib') | Where-Object {
-            Test-Path -LiteralPath (Join-Path (Join-Path $candidate $_) 'libcrypto.lib') -PathType Leaf
-        }).Count -gt 0 -and
-        (Test-Path -LiteralPath (Join-Path $candidate 'bin') -PathType Container) -and
-        @(Get-ChildItem -LiteralPath (Join-Path $candidate 'bin') -Filter 'libcrypto*.dll' -File).Count -eq 1
-    } | Select-Object -First 1
-    if (-not $OpenSslRoot) {
-        New-Item -ItemType Directory -Path (Join-Path $repo 'target') -Force | Out-Null
-        $OpenSslRoot = & (Join-Path $PSScriptRoot 'provision-openssl.ps1') -TargetRoot (Join-Path $repo 'target')
-    }
+    # Host installations never silently select the default SDK. Explicit paths
+    # remain available; otherwise provision/reuse our exact verified SDK.
+    New-Item -ItemType Directory -Path (Join-Path $repo 'target') -Force | Out-Null
+    $OpenSslRoot = & (Join-Path $PSScriptRoot 'provision-openssl.ps1') -TargetRoot (Join-Path $repo 'target')
 }
 if (-not (Test-Path -LiteralPath $OpenSslRoot -PathType Container)) { throw "OpenSSL directory does not exist: $OpenSslRoot" }
 $root = (Resolve-Path -LiteralPath $OpenSslRoot).Path

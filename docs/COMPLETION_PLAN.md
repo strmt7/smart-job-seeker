@@ -38,8 +38,10 @@ acceptance gates. Do not create a release as part of this plan.
   pages have been inspected, but end-to-end form completion across many real
   platforms, visual verification accuracy, and live local-model reliability
   are not established. Do not generalize a single fixture or site to all forms.
-- Clean-Windows installation, browser and dependency provisioning, update and
-  recovery across machines are not established. The existing prototype bundle
+- Automatic [runtime provisioning](RUNTIME_SETUP.md) now covers the default
+  package and a native PDF setup path without host Python. Clean-Windows
+  installation, browser servicing and recovery across machines remain unproven.
+  The existing prototype bundle
   is unsigned and is not a distribution-ready package.
 - Document processing and tailoring exist in stages; generic template fidelity,
   scanned documents, factual correctness, ATS extraction, visual quality and
@@ -185,7 +187,8 @@ build and configuration.
 3. **Profile, documents and matching.** Ingest varied PDF/DOCX and supporting
    documents with provenance, OCR where needed, corrections and private storage.
    The [career-history editor](CANDIDATE_HISTORY.md) now stores reviewed employment
-   and education with partial dates and explicit value reuse. Automatic repeated-
+   and education with partial dates, explicit value reuse and scoped local-model
+   suggestions bound to one selected entry. Automatic repeated-
    section mapping, history-based tailoring and revision-bound history provenance
    still need implementation and local-model evaluation; do not infer them from
    the editor or its workflow tests.

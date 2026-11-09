@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>Fictional career form</title>
+<style>body{font:18px system-ui;margin:32px;max-width:760px}fieldset{display:grid;gap:14px;padding:20px}label{display:grid;gap:6px}input,textarea{font:18px system-ui;padding:10px}textarea{height:80px}</style>
+<h1>Fictional application: employment details</h1>
+<form onsubmit="event.preventDefault();document.body.dataset.submitted='yes'">
+<fieldset><legend>Candidate employment</legend>
+<label for="organization">Organization</label><input id="organization">
+<label for="position">Position held</label><input id="position">
+<label for="year">Year you joined</label><input id="year" type="number" min="1900" max="2100">
+<label for="month">Starting month</label><input id="month" type="month">
+<label for="referee">Your referee's employer</label><input id="referee">
+<label for="motivation">Why do you want this position?</label><textarea id="motivation"></textarea>
+</fieldset><button type="submit">Send fictional example</button></form>

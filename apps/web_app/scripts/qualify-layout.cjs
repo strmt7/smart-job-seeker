@@ -175,7 +175,7 @@ async function bounded(operation, label, milliseconds = 15000) {
         const file = u.pathname === '/' ? 'index.html' : u.pathname.slice(1);
         if (
           options['source-assets'] &&
-          ['index.html', 'app.js', 'layout.js', 'candidate-history.js', 'style.css', 'workspace-theme.css'].includes(file)
+          ['index.html', 'app.js', 'layout.js', 'candidate-history.js', 'history-mapping.js', 'style.css', 'workspace-theme.css'].includes(file)
         )
           return route.fulfill({
             path: path.join(root, 'apps/web_app/web', file),

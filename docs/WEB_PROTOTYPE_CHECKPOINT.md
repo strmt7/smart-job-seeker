@@ -1,5 +1,11 @@
 # Browser-interface prototype checkpoint
 
+Latest runtime checkpoint, 2026-11-09: the default package provisions private
+browser/converter runtimes, and PDF setup can bootstrap without host Python.
+See [runtime setup](RUNTIME_SETUP.md) and the [dependency refresh evidence](DEPENDENCY_REFRESH_2026-11-09.md).
+Older dated observations below remain historical, including earlier missing
+runtime and PDF-worker limitations. Clean-Windows qualification is still open.
+
 The current checkout is based on upstream `f5a0de0d16cbe6c3c1ac37c69e751dc7d4020d30`. The user requested a Windows tray-controlled local web interface, local Ollama inference, and reviewable application autofill. Do not submit real applications during development or tests. A model must never authorize an external write; retain the existing one-use approval and uncertain-result rules for any future submission capability.
 
 The previous scratch Python prototype is retained locally in `prototype-local/` and excluded from Git locally. It is not the shipped Waypoint implementation and must not replace the Rust domain, workspace, browser, inference, or storage components.

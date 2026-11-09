@@ -15,21 +15,18 @@ import zipfile
 
 REPO = Path(__file__).resolve().parents[3]
 TARGET = 'x86_64-pc-windows-msvc'
-PYTHON_URL = 'https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg'
-PYTHON_SHA256 = '0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8'
-PDF_WHEELS = (
-    ('pypdf-6.10.0-py3-none-any.whl', 'https://files.pythonhosted.org/packages/55/f2/7ebe366f633f30a6ad105f650f44f24f98cb1335c4157d21ae47138b3482/pypdf-6.10.0-py3-none-any.whl', '90005e959e1596c6e6c84c8b0ad383285b3e17011751cedd17f2ce8fcdfc86de'),
-    ('pypdfium2-5.14.0-py3-none-win_amd64.whl', 'https://files.pythonhosted.org/packages/00/dc/ca7874924c9cfd701ad53f89529968523790e70473e0b71e834668316148/pypdfium2-5.14.0-py3-none-win_amd64.whl', '149fd5c6397b8df8bf7911a93506eff0be874f877afe7ac936cf5d37d21a6a06'),
-    ('pillow-12.3.0-cp312-cp312-win_amd64.whl', 'https://files.pythonhosted.org/packages/45/89/da2f7971a317f83d807fdd4065c0af40208e59e692cc43d315a71a0e96d1/pillow-12.3.0-cp312-cp312-win_amd64.whl', 'a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09'),
-)
+RUNTIME_CATALOG = json.loads((REPO / 'apps/web_app/windows-runtime-artifacts.json').read_text(encoding='utf-8'))
+PYTHON_URL = RUNTIME_CATALOG['python'][0]['url']
+PYTHON_SHA256 = RUNTIME_CATALOG['python'][0]['sha256']
+PDF_WHEELS = tuple((item['filename'], item['url'], item['sha256']) for item in RUNTIME_CATALOG['python'][1:])
 # TheDocumentFoundation's published checksum and the winget x64 installer
 # manifest for 26.8.2.2 agree on this exact 26.8.2 MSI.
 OFFICE_MSI_URL = 'https://download.documentfoundation.org/libreoffice/stable/26.8.2/win/x86_64/LibreOffice_26.8.2_Win_x86-64.msi'
 OFFICE_MSI_SHA256 = 'ff4b911403b67ee9e6249f820f9782c44bb32c94fdaa45b0da53a8e419e5307a'
 OFFICE_MSI_MAX_BYTES = 512 * 1024 * 1024
 OLLAMA_ARCHIVES = (
-    ('ollama-windows-amd64.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.13/ollama-windows-amd64.zip', 1601969847, '7afa38624fa62ee5d8293422d0ab084c1bb4603134c7f4dafce11a033b57cc19', 4 * 1024**3),
-    ('ollama-windows-amd64-rocm.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.13/ollama-windows-amd64-rocm.zip', 257076385, '2ab082d5414d51ef4cd675543c976770743c90e3cad0d9deb540160ae3b25573', 2 * 1024**3),
+    ('ollama-windows-amd64.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.15/ollama-windows-amd64.zip', 1614941966, '9ca74a7ab66ec86870b1eecac7df160df08dc4e3a291ab5d2d59bcf9310221c6', 4 * 1024**3),
+    ('ollama-windows-amd64-rocm.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.15/ollama-windows-amd64-rocm.zip', 258790357, '2f5e81675329a5de2477a4a25823d55d5c3ead8d59522e92eac1664ab492faeb', 2 * 1024**3),
 )
 OLLAMA_LICENSE_SHA256 = '5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226'
 
@@ -58,11 +55,10 @@ def discover_libreoffice(environment):
     return None
 
 def select_libreoffice(no_libreoffice, configured_root, environment):
-    """Select an existing converter; None also means provisioning is needed."""
+    """Only reuse an explicitly chosen converter; default to the pinned package."""
     if no_libreoffice:
         return None
-    root = Path(configured_root) if configured_root else discover_libreoffice(environment)
-    return root
+    return Path(configured_root) if configured_root else None
 
 def copy_verified_office_msi(source, destination, expected_hash=OFFICE_MSI_SHA256):
     """Stream a bounded installer and refuse it before execution if it differs."""
@@ -126,7 +122,7 @@ def check_windows_bundle_path(relative, seen, component):
         raise ValueError(f'Unsupported {component} file path: {relative}')
     seen.add(key)
 
-def add_libreoffice(archive, root):
+def add_libreoffice(archive, root, *, replace_vcrt=False):
     """Bundle an existing complete distribution without modifying the host."""
     root = Path(root).resolve(strict=True)
     if not root.is_dir() or not (root / 'program' / 'soffice.com').is_file():
@@ -141,6 +137,8 @@ def add_libreoffice(archive, root):
         if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
+        if replace_vcrt and relative.casefold() in {'program/' + name.casefold() for name in RUNTIME_CATALOG['msvc']['files']}:
+            continue
         check_windows_bundle_path(relative, seen, 'LibreOffice')
         total += path.stat().st_size
         files.append((path, relative))
@@ -158,13 +156,73 @@ def add_libreoffice(archive, root):
     return hashes
 
 
+def provision_vcrt(stage, local_installer=None):
+    """Admit Microsoft's artifact then extract its cabinets without installing it."""
+    if sys.platform != 'win32':
+        raise ValueError('Microsoft runtime extraction requires Windows')
+    spec = RUNTIME_CATALOG['msvc']
+    path = stage / 'VC_redist.x64.exe'
+    source = open(local_installer, 'rb') if local_installer else urllib.request.urlopen(spec['url'], timeout=60)
+    size, sha = 0, hashlib.sha256()
+    with source, path.open('xb') as output:
+        while chunk := source.read(1024 * 1024):
+            size += len(chunk)
+            if size > spec['bytes']:
+                raise ValueError('Microsoft runtime exceeds its pinned size')
+            sha.update(chunk)
+            output.write(chunk)
+    if size != spec['bytes'] or sha.hexdigest() != spec['sha256']:
+        raise ValueError('Microsoft runtime does not match the pinned artifact')
+    result = subprocess.run([
+        str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+        str(Path(__file__).with_name('provision-vcrt.ps1')), '-TargetRoot', str(stage), '-InstallerPath', str(path),
+    ], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        creationflags=subprocess.CREATE_NO_WINDOW, timeout=120, check=False, encoding='utf-8')
+    if result.returncode:
+        raise ValueError('Microsoft runtime extraction failed: ' + result.stderr[-2000:])
+    content = Path(result.stdout.strip()).resolve(strict=True)
+    if not content.is_relative_to(stage.resolve(strict=True)) or not content.is_dir():
+        raise ValueError('Microsoft runtime extraction returned an unexpected directory')
+    for name, expected in spec['files'].items():
+        if hashlib.sha256((content / name).read_bytes()).hexdigest() != expected:
+            raise ValueError('Microsoft runtime DLL differs from its pinned inventory')
+    return content
+
+
+def add_vcrt(archive, root, *, with_office, with_ollama):
+    """Place DLLs next to their consumers; never modify global DLL search paths."""
+    spec = RUNTIME_CATALOG['msvc']
+    license_path = REPO / 'docs/MSVC_RUNTIME_LICENSE.docx'
+    if hashlib.sha256(license_path.read_bytes()).hexdigest() != spec['license']['sha256']:
+        raise ValueError('Microsoft runtime license differs from the reviewed document')
+    prefixes = ['']
+    if with_office:
+        prefixes.append('dependencies/libreoffice/program/')
+    if with_ollama:
+        prefixes.append('dependencies/ollama/')
+    hashes = {}
+    for prefix in prefixes:
+        for name, expected in sorted(spec['files'].items()):
+            source = root / name
+            if source.is_symlink() or not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+                raise ValueError('Microsoft runtime DLL differs from its pinned inventory')
+            destination = prefix + name
+            if 'app/' + destination in archive.NameToInfo:
+                raise ValueError('Microsoft runtime would overwrite a bundled file')
+            archive.write(source, 'app/' + destination)
+            hashes[destination] = expected
+    archive.write(license_path, 'app/licenses/MSVC_RUNTIME_LICENSE.docx')
+    return hashes
+
+
 def add_chromium(archive, root):
     """Bundle a supplied browser and its notices without changing the host."""
     root = Path(root).resolve(strict=True)
-    if not root.is_dir() or not (root / 'chrome.exe').is_file():
-        raise ValueError('Chromium directory must contain chrome.exe')
-    if not (root / 'LICENSES.chromium.html').is_file():
-        raise ValueError('Chromium directory must contain LICENSES.chromium.html')
+    full = (root / 'chrome.exe').is_file() and (root / 'LICENSES.chromium.html').is_file()
+    headless = (root / 'chrome-headless-shell.exe').is_file() and (root / 'LICENSE.headless_shell').is_file()
+    if not root.is_dir() or not (full or headless):
+        raise ValueError('Chromium must include chrome.exe and LICENSES.chromium.html, or chrome-headless-shell.exe and LICENSE.headless_shell')
     files, seen, total = [], set(), 0
     for path in root.rglob('*'):
         if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
@@ -187,6 +245,52 @@ def add_chromium(archive, root):
                 dest.write(chunk)
         hashes[name] = digest.hexdigest()
     return hashes
+
+
+def provision_chromium(stage, local_archive=None, *, spec=None):
+    """Extract a pinned redistributable headless browser in private staging."""
+    spec = RUNTIME_CATALOG['browser'] if spec is None else spec
+    if shutil.disk_usage(stage).free < 1024**3:
+        raise ValueError('At least 1 GiB of free disk space is required for browser provisioning')
+    engine = stage / 'chromium'
+    engine.mkdir()
+    with tempfile.TemporaryFile(dir=stage) as temporary:
+        source = open(local_archive, 'rb') if local_archive else urllib.request.urlopen(spec['url'], timeout=60)
+        sha, size = hashlib.sha256(), 0
+        with source:
+            while chunk := source.read(1024 * 1024):
+                size += len(chunk)
+                if size > spec['bytes']:
+                    raise ValueError('Browser archive exceeds its pinned size')
+                sha.update(chunk)
+                temporary.write(chunk)
+        if size != spec['bytes'] or sha.hexdigest() != spec['sha256']:
+            raise ValueError('Browser archive does not match its pinned size and SHA-256')
+        temporary.seek(0)
+        with zipfile.ZipFile(temporary) as source_zip:
+            entries = source_zip.infolist()
+            if len(entries) > 4096 or sum(item.file_size for item in entries) > spec['max_unpacked_bytes']:
+                raise ValueError('Browser contents exceed package limits')
+            files, seen = [], set()
+            for item in entries:
+                if (item.flag_bits & 1 or ((item.external_attr >> 16) & 0o170000) == 0o120000
+                    or not item.filename.startswith(spec['archive_prefix'])):
+                    raise ValueError('Browser archive contains an unsupported entry')
+                relative = item.filename.removeprefix(spec['archive_prefix'])
+                if item.is_dir():
+                    if relative:
+                        check_windows_bundle_path(relative.rstrip('/'), set(), 'Chromium')
+                    continue
+                check_windows_bundle_path(relative, seen, 'Chromium')
+                files.append((item, relative))
+            if not {'chrome-headless-shell.exe', 'icudtl.dat', 'license.headless_shell'} <= seen:
+                raise ValueError('Browser archive is incomplete')
+            for item, relative in files:
+                destination = engine / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with source_zip.open(item) as source, destination.open('xb') as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+    return engine
 
 def add_pdf_wheels(archive, wheel_dir=None):
     for name, url, expected_hash in PDF_WHEELS:
@@ -260,6 +364,7 @@ def add_ollama_runtime(archive, local_archives=None, *, specs=OLLAMA_ARCHIVES, l
         raise ValueError('Ollama license does not match the reviewed version')
     hashes = {}
     seen = set()
+    existing = {name.casefold() for name in archive.namelist()}
     for name, url, expected_size, expected_hash, max_unpacked in specs:
         with tempfile.TemporaryFile(dir=REPO / 'target') as temporary:
             source = open(Path(local_archives) / name, 'rb') if local_archives else urllib.request.urlopen(url, timeout=60)
@@ -294,6 +399,9 @@ def add_ollama_runtime(archive, local_archives=None, *, specs=OLLAMA_ARCHIVES, l
                         raise ValueError(f'Duplicate Ollama runtime path in {name}')
                     seen.add(key)
                     destination = 'app/dependencies/ollama/' + relative
+                    if destination.casefold() in existing:
+                        raise ValueError('Ollama runtime would overwrite a bundled file')
+                    existing.add(destination.casefold())
                     digest = hashlib.sha256()
                     with source_zip.open(entry) as src, archive.open(destination, 'w', force_zip64=True) as dest:
                         while chunk := src.read(1024 * 1024):
@@ -313,6 +421,7 @@ def add_ollama_from_package(archive, package_path, expected_hash):
     if not re.fullmatch(r'[a-fA-F0-9]{64}', expected_hash or ''):
         raise ValueError('A SHA-256 is required to reuse an Ollama package')
     package_path = Path(package_path)
+    existing = {name.casefold() for name in archive.namelist()}
     with package_path.open('rb') as source:
         digest = hashlib.sha256()
         while chunk := source.read(1024 * 1024):
@@ -357,6 +466,9 @@ def add_ollama_from_package(archive, package_path, expected_hash):
             if sum(item.file_size for item in entries) > 6 * 1024**3:
                 raise ValueError('The previous Ollama runtime exceeds the size limit')
             for item, name in zip(entries, names):
+                if ('app/' + name).casefold() in existing:
+                    raise ValueError('Previous Ollama runtime would overwrite a bundled file')
+                existing.add(('app/' + name).casefold())
                 if item.flag_bits & 1 or ((item.external_attr >> 16) & 0o170000) == 0o120000:
                     raise ValueError('The previous Ollama runtime contains an unsupported entry')
                 sha = hashlib.sha256()
@@ -402,7 +514,11 @@ def main():
     parser.add_argument('--build-dir', help='Directory containing the executable and its build receipt (defaults to target/<profile>)')
     parser.add_argument('--python-package', help='Optional local copy of the pinned Python NuGet package for offline packaging')
     parser.add_argument('--wheel-dir', help='Optional directory of pinned PDF wheels for offline packaging')
-    parser.add_argument('--chromium-dir', help='Optional complete, redistributable Chromium directory with license notices')
+    parser.add_argument('--vcrt-installer', help='Optional pinned Microsoft runtime EXE for offline, read-only extraction')
+    browser = parser.add_mutually_exclusive_group()
+    browser.add_argument('--chromium-dir', help='Use a complete redistributable Chromium directory with notices')
+    browser.add_argument('--chromium-archive', help='Use the pinned headless-browser ZIP for offline provisioning')
+    browser.add_argument('--no-chromium', action='store_true', help='Explicitly omit the browser from a minimal development bundle')
     ollama = parser.add_mutually_exclusive_group()
     ollama.add_argument('--ollama-archive-dir', help='Optional directory of pinned Ollama archives for offline packaging')
     ollama.add_argument('--no-ollama', action='store_true', help='Do not bundle the local model runtime')
@@ -411,7 +527,7 @@ def main():
     office = parser.add_mutually_exclusive_group()
     office.add_argument('--libreoffice-dir', help='Bundle this complete LibreOffice distribution for PDF conversion')
     office.add_argument('--libreoffice-msi', help='Use a local copy of the pinned LibreOffice MSI for offline provisioning')
-    office.add_argument('--no-libreoffice', action='store_true', help='Do not automatically bundle an installed LibreOffice distribution')
+    office.add_argument('--no-libreoffice', action='store_true', help='Explicitly omit the document converter from a minimal development bundle')
     parser.add_argument('--openssl-root', default=os.environ.get('OPENSSL_DIR'), help='OpenSSL installation used for the build')
     args = parser.parse_args()
     if bool(args.ollama_from_package) != bool(args.ollama_package_sha256):
@@ -480,9 +596,10 @@ def main():
         # .cargo_vcs_info.json revision 14011d08c42a7cd368698fe28f77eb4cd0b65bf0.
         if (name, version) == ('mutants', '0.0.4') and not files:
             files.add((REPO / 'docs/MUTANTS_LICENSE.txt').resolve())
-        # The 0.1.1 crate omits license files. This MIT license is from the
-        # repository commit recorded in its .cargo_vcs_info.json.
-        if (name, version) == ('gpuviewer-core', '0.1.1') and not files:
+        # Published crates omit the license files. The unchanged MIT option was
+        # checked at each crate's .cargo_vcs_info.json revision; 0.2.2 points to
+        # b7d2ba173e3a4a9e6f36e4a4c96299f6109e3060, LICENSE-MIT blob bc24999a...
+        if name == 'gpuviewer-core' and version in ('0.1.1', '0.2.2') and not files:
             fallback = (REPO / 'docs/GPUVIEWER_CORE_LICENSE.txt').resolve()
             if hashlib.sha256(fallback.read_bytes().replace(b'\r\n', b'\n')).hexdigest() != 'd82bb4454c3439167bdb64d9dd598d391978133cac416d2f417e6ef9450ab398':
                 raise ValueError('The gpuviewer-core license does not match its upstream revision')
@@ -515,16 +632,29 @@ def main():
         with raw, zipfile.ZipFile(raw,'w',zipfile.ZIP_DEFLATED,strict_timestamps=False) as archive:
             def add(path, dest): archive.write(path, dest)
             add(exe,'app/SmartJobseeker.exe');add(dlls[0],f'app/{dlls[0].name}')
+            # Check native extraction before the large browser/model downloads.
+            with tempfile.TemporaryDirectory(prefix='waypoint-vcrt-', dir=REPO / 'target') as vcrt_stage:
+                vcrt_root = provision_vcrt(Path(vcrt_stage), args.vcrt_installer)
+                vcrt_hashes = add_vcrt(archive, vcrt_root, with_office=office_root is not None, with_ollama=not args.no_ollama)
             add_python_runtime(archive, args.python_package)
             add_pdf_wheels(archive, args.wheel_dir)
-            office_hashes = add_libreoffice(archive, office_root) if office_root else {}
-            chromium_hashes = add_chromium(archive, args.chromium_dir) if args.chromium_dir else {}
+            office_hashes = add_libreoffice(archive, office_root, replace_vcrt=True) if office_root else {}
+            if args.no_chromium:
+                chromium_hashes = {}
+            elif args.chromium_dir:
+                chromium_hashes = add_chromium(archive, args.chromium_dir)
+            else:
+                with tempfile.TemporaryDirectory(prefix='waypoint-browser-', dir=REPO / 'target') as browser_stage:
+                    chromium_hashes = add_chromium(archive, provision_chromium(Path(browser_stage), args.chromium_archive))
             if args.no_ollama:
                 ollama_hashes = {}
             elif args.ollama_from_package:
                 ollama_hashes = add_ollama_from_package(archive, args.ollama_from_package, args.ollama_package_sha256)
             else:
                 ollama_hashes = add_ollama_runtime(archive, args.ollama_archive_dir)
+            office_hashes.update({name: value for name, value in vcrt_hashes.items() if name.startswith('dependencies/libreoffice/')})
+            ollama_hashes.update({name: value for name, value in vcrt_hashes.items() if name.startswith('dependencies/ollama/')})
+            vcrt_hashes = {name: value for name, value in vcrt_hashes.items() if '/' not in name}
             runtime_hashes = {}
             for info in archive.infolist():
                 if info.filename.startswith('app/dependencies/python/'):
@@ -545,11 +675,11 @@ def main():
                 for index,path in enumerate(files): add(path,f'app/licenses/crates/{name}-{version}/{index}-{path.name}')
                 inventory.append({'name':name,'version':version,'license':license_expr,'files':len(files)})
             archive.writestr('app/licenses/dependencies.json',json.dumps(inventory,indent=2))
-            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'ollama_files':ollama_hashes,'chromium_files':chromium_hashes,'note':'Prototype bundle. Website interactions can transmit or submit data; do not interact with real forms when an application must not be sent.'},indent=2))
+            archive.writestr('app/package-manifest.json',json.dumps({'profile':profile,'executable_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'openssl_dll':dlls[0].name,'openssl_sha256':hashlib.sha256(dlls[0].read_bytes()).hexdigest(),'static_crt_requested':receipt.get('static_crt_requested') is True,'python_files':runtime_hashes,'libreoffice_files':office_hashes,'ollama_files':ollama_hashes,'chromium_files':chromium_hashes,'vcrt_files':vcrt_hashes,'note':'Prototype bundle. Website interactions can transmit or submit data; do not interact with real forms when an application must not be sent.'},indent=2))
             office_note = 'LibreOffice is bundled.' if office_hashes else 'LibreOffice is not bundled and needs separate setup for document conversion.'
             ollama_note = 'Ollama is bundled; start it from Settings.' if ollama_hashes else 'Ollama is not bundled and needs separate setup.'
-            browser_note = 'A supplied Chromium browser is bundled.' if chromium_hashes else 'A Chromium browser needs separate installation.'
-            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/SmartJobseeker.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} {browser_note} Microsoft Visual C++ runtime may need separate installation. See app/README.md.\n')
+            browser_note = 'The application browser is bundled.' if chromium_hashes else 'Browser bundling was explicitly disabled; browser features need a compatible browser.'
+            archive.writestr('INSTALL.txt',f'Extract the entire archive. On Windows, run install.ps1 in PowerShell for a per-user copy, or launch app/SmartJobseeker.exe directly. Python and PDF libraries are included. {office_note} {ollama_note} {browser_note} Microsoft C++ runtime DLLs are included beside their consumers; no system-wide runtime installation is performed. See app/README.md.\n')
     except BaseException:
         if created and output.is_file(): output.unlink()
         raise

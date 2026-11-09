@@ -120,13 +120,13 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
             .read_resolved_event()
             .map_err(|_| "Malformed DOCX XML")?;
         let word = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if
-            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+            ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         match event {
             quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
                 if word
                     && matches!(
-                        e.local_name().as_ref(),
+                        e.local_name().as_ref().as_bytes(),
                         b"ins"
                             | b"del"
                             | b"moveFrom"
@@ -141,19 +141,19 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                 {
                     revision_markers += 1;
                 }
-                if word && e.local_name().as_ref() == b"tbl" {
+                if word && e.local_name().as_ref().as_bytes() == b"tbl" {
                     tables += 1;
                 }
-                if word && e.local_name().as_ref() == b"footnoteReference" {
+                if word && e.local_name().as_ref().as_bytes() == b"footnoteReference" {
                     footnote_references += 1;
                 }
-                if word && e.local_name().as_ref() == b"endnoteReference" {
+                if word && e.local_name().as_ref().as_bytes() == b"endnoteReference" {
                     endnote_references += 1;
                 }
-                if word && e.local_name().as_ref() == b"txbxContent" {
+                if word && e.local_name().as_ref().as_bytes() == b"txbxContent" {
                     text_boxes += 1;
                 }
-                if word && matches!(e.local_name().as_ref(), b"vanish" | b"webHidden") {
+                if word && matches!(e.local_name().as_ref().as_bytes(), b"vanish" | b"webHidden") {
                     let mut state = Some(true);
                     for attribute in e.attributes() {
                         let attribute =
@@ -161,10 +161,10 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                         let (namespace, local) =
                             reader.resolver_mut().resolve_attribute(attribute.key);
                         let is_word_attribute = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if
-                            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
-                        if is_word_attribute && local.as_ref() == b"val" {
-                            state = match attribute.value.as_ref() {
+                            ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                            || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+                        if is_word_attribute && local.as_ref().as_bytes() == b"val" {
+                            state = match attribute.value.as_ref().as_bytes() {
                                 b"1" | b"true" | b"on" => Some(true),
                                 b"0" | b"false" | b"off" => Some(false),
                                 _ => None,
@@ -177,17 +177,17 @@ fn structure_notes(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
                         None => uncertain_hidden = true,
                     }
                 }
-                if word && e.local_name().as_ref() == b"cols" {
+                if word && e.local_name().as_ref().as_bytes() == b"cols" {
                     for attribute in e.attributes() {
                         let attribute =
                             attribute.map_err(|_| "Malformed DOCX column attributes")?;
                         let (namespace, local) =
                             reader.resolver_mut().resolve_attribute(attribute.key);
                         let is_word_attribute = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if
-                            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
-                        if is_word_attribute && local.as_ref() == b"num" {
-                            match std::str::from_utf8(attribute.value.as_ref())
+                            ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                            || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+                        if is_word_attribute && local.as_ref().as_bytes() == b"num" {
+                            match std::str::from_utf8(attribute.value.as_ref().as_bytes())
                                 .ok()
                                 .and_then(|v| v.parse::<u32>().ok())
                             {

@@ -84,15 +84,39 @@ They use disposable workspaces; `--browser` and `--executable` select explicit
 local paths. The measured runs additionally used the existing owned-process
 controller with a 4 GiB job and bounded run time. No paid API was used.
 
-## Remaining integration
+## Scoped local suggestions
 
-History is not yet supplied to automatic model mapping or document tailoring.
-The current contact-key mapper continues to exclude the serialized history.
-Automatic history use needs independently evaluated entry/subject/section
-resolution, repeated-control handling, exact value and visual checks, partial
-date handling, revision-bound provenance and unambiguous manual fallback.
-Neither order nor a checked flag establishes that a role is current, a degree
-is completed or an experience supports an unrelated application question.
-Existing saved-value reuse is an explicit user choice, not proof of that future
-agent behavior. General no-submission isolation and broad local-model quality
-remain open gates in the completion plan.
+The form review now offers **Suggest answers from career history**. The user
+chooses one saved, checked entry and up to 20 eligible fields. The local model
+selects component keys; the application resolves exact values from the selected
+record. It cannot generate a new employer, qualification or date. Available
+components preserve year/month precision and field-type compatibility. Unknown,
+ambiguous, sensitive, duplicate-label and unsupported fields require review.
+
+The result is bound to the profile digest, selected entry, inspected schema,
+session and destination. A profile/session change invalidates the result,
+including cached and late completions. Suggestions start unchecked. Explicit
+selection copies values only into the existing answer editors, after another
+binding check; any newer manual edit prevents the entire selection from applying.
+There is no browser action, grant or submission in this operation.
+
+The current contact-key mapper still excludes serialized history. Its existing
+model-review blocks are preserved: fields flagged there do not become eligible
+through history suggestions. This limits practical coverage of employer/education
+sections and still needs a properly scoped subject classifier. The feature does
+not select repeated sections autonomously, tailor documents or attach authoritative
+claim provenance to an answer archive. Neither order nor a checked flag proves
+that a role is current or a qualification completed.
+
+On the final dependency graph, a fictional six-field live check with local
+`gemma4:12b-it-q4_K_M` returned four expected grounded answers, left two unrelated
+questions manual, filled/read back four fictional controls and passed two visual
+comparisons. `ministral-3:14b` returned three of four expected answers, leaving
+the month manual; that completeness check failed and is retained. These are
+small diagnostics, not a broad platform benchmark or a reason to change the
+user's selected model automatically.
+
+The compiled interface passed five additional advice-panel width checks from
+320 to 1920 px and explicit-selection behavior with intercepted fictional API
+responses. Those UI checks make no model-quality claim. Broader section resolution,
+visual accuracy and no-submission isolation remain open completion gates.

@@ -22,7 +22,7 @@ from contextlib import contextmanager
 
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.2.41"
+VERSION = "0.2.43"
 MODEL = "Snowflake/snowflake-arctic-embed-xs"
 MODEL_REVISION = "d8c86521100d3556476a063fc2342036d45c106f"
 MODEL_FILES = (
@@ -89,7 +89,8 @@ def home() -> Path:
 
 def paths(base: Path, repo: Path = ROOT) -> tuple[Path, Path, Path, Path]:
     digest = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:16]
-    return (base / "venv", base / "mirrors" / digest,
+    # Versioned environments preserve other repositories' installed providers.
+    return (base / "venvs" / f"cocoindex-code-{VERSION}-py{sys.version_info.major}{sys.version_info.minor}", base / "mirrors" / digest,
             base / "config" / digest, base / "runtime" / digest)
 
 
@@ -327,7 +328,7 @@ def index(base: Path, repo: Path = ROOT) -> None:
 def search(base: Path, query: str, limit: int, repo: Path = ROOT,
            path: str | None = None) -> None:
     if path and any(mark in path for mark in "*?["):
-        raise ValueError("wildcard path filters are unreliable in CocoIndex Code 0.2.41; "
+        raise ValueError("wildcard path filters are not qualified by this adapter; "
                          "search broadly, then validate files with rg")
     venv, mirror, config, runtime = paths(base, repo)
     marker = base / "active" / (mirror.name + ".json")

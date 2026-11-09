@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target)
     assert packager.select_libreoffice(False, None, {}) is None  # requires provisioning
     assert packager.select_libreoffice(True, None, {}) is None
     assert packager.select_libreoffice(False, str(root), {}) == root
-    assert packager.select_libreoffice(False, None, env) == program_files / 'LibreOffice'
+    assert packager.select_libreoffice(False, None, env) is None  # host packages never alter the default bundle
     msi = Path(temp) / 'fixture.msi'
     packager.copy_verified_office_msi(io.BytesIO(b'fixture'), msi, hashlib.sha256(b'fixture').hexdigest())
     assert msi.read_bytes() == b'fixture'
@@ -188,6 +188,71 @@ with tempfile.TemporaryDirectory(prefix='waypoint-chromium-fixture-', dir=target
         raise AssertionError('A browser without notices was accepted')
 print('Fictional Chromium bundle and notice checks passed.')
 
+with tempfile.TemporaryDirectory(prefix='waypoint-browser-bootstrap-fixture-', dir=target) as temp:
+    root = Path(temp)
+    def browser_zip(entries):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, 'w') as source:
+            for name, data in entries:
+                source.writestr('engine/' + name, data)
+        return output.getvalue()
+    entries = [('chrome-headless-shell.exe', b'fixture'), ('icudtl.dat', b'fixture'), ('LICENSE.headless_shell', b'fictional notices')]
+    for index, variant in enumerate([entries, entries + [('../outside', b'bad')], entries + [('ICUDTL.DAT', b'alias')]]):
+        data = browser_zip(variant)
+        package = root / f'engine-{index}.zip'
+        package.write_bytes(data)
+        stage = root / f'stage-{index}'
+        stage.mkdir()
+        spec = {'url': 'unused', 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'archive_prefix': 'engine/', 'max_unpacked_bytes': 1024}
+        if index == 0:
+            browser = packager.provision_chromium(stage, package, spec=spec)
+            with zipfile.ZipFile(root / 'browser.zip', 'w') as archive:
+                assert len(packager.add_chromium(archive, browser)) == 3
+            spec['sha256'] = '0' * 64
+            retry = root / 'corrupt-stage'
+            retry.mkdir()
+            try:
+                packager.provision_chromium(retry, package, spec=spec)
+            except ValueError:
+                assert not list((retry / 'chromium').iterdir())
+            else:
+                raise AssertionError('Corrupted browser accepted')
+        else:
+            try:
+                packager.provision_chromium(stage, package, spec=spec)
+            except ValueError:
+                assert not list((stage / 'chromium').iterdir())
+            else:
+                raise AssertionError('Invalid browser path accepted')
+print('Automatic browser provisioning, hash and Windows-path checks passed.')
+
+with tempfile.TemporaryDirectory(prefix='waypoint-vcrt-bundle-fixture-', dir=target) as temp:
+    root = Path(temp)
+    files = {}
+    for name in packager.RUNTIME_CATALOG['msvc']['files']:
+        content = b'fictional runtime ' + name.encode()
+        (root / name).write_bytes(content)
+        files[name] = hashlib.sha256(content).hexdigest()
+    catalog = dict(packager.RUNTIME_CATALOG)
+    catalog['msvc'] = dict(catalog['msvc'], files=files)
+    with patch.object(packager, 'RUNTIME_CATALOG', catalog):
+        with zipfile.ZipFile(root / 'vcrt.zip', 'w') as archive:
+            inventory = packager.add_vcrt(archive, root, with_office=True, with_ollama=True)
+            assert len(inventory) == 36
+        with zipfile.ZipFile(root / 'vcrt.zip') as archive:
+            for name, digest in inventory.items():
+                assert hashlib.sha256(archive.read('app/' + name)).hexdigest() == digest
+            assert 'app/licenses/MSVC_RUNTIME_LICENSE.docx' in archive.namelist()
+        (root / 'msvcp140.dll').write_bytes(b'damaged')
+        try:
+            with zipfile.ZipFile(root / 'damaged.zip', 'w') as archive:
+                packager.add_vcrt(archive, root, with_office=True, with_ollama=True)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Damaged Microsoft runtime accepted')
+print('App-local Microsoft runtime and original license checks passed.')
+
 # Exercise the pinned-runtime bundler using tiny fictional archives.
 with tempfile.TemporaryDirectory(prefix='waypoint-ollama-fixture-', dir=target) as temp:
     root = Path(temp)
@@ -212,6 +277,17 @@ with tempfile.TemporaryDirectory(prefix='waypoint-ollama-fixture-', dir=target) 
         assert len(hashes) == 5
         for name, digest in hashes.items():
             assert hashlib.sha256(archive.read('app/' + name)).hexdigest() == digest
+    with zipfile.ZipFile(root / 'collision.zip', 'w') as archive:
+        archive.writestr('app/dependencies/ollama/OLLAMA.EXE', b'previously bundled')
+        try:
+            packager.add_ollama_runtime(archive, root, specs=specs, license_path=license_file, license_hash=hashlib.sha256(b'fictional license').hexdigest())
+        except ValueError as error:
+            assert 'overwrite' in str(error)
+        else:
+            raise AssertionError('A runtime overwrote an existing Windows-path alias')
+    with zipfile.ZipFile(root / 'collision.zip') as archive:
+        assert archive.namelist() == ['app/dependencies/ollama/OLLAMA.EXE']
+        assert archive.read(archive.namelist()[0]) == b'previously bundled'
     make_archive(rocm, [('lib/ollama/rocm_v7_1/ggml-hip.dll', b'changed')])
     try:
         with zipfile.ZipFile(root / 'bad-hash.zip', 'w') as archive:
@@ -281,6 +357,7 @@ with tempfile.TemporaryDirectory(prefix='waypoint-ollama-fixture-', dir=target) 
     changed_during_copy.write_bytes(previous.read_bytes())
     class MutatingArchive:
         def __init__(self, wrapped): self.wrapped, self.changed = wrapped, False
+        def namelist(self): return self.wrapped.namelist()
         def open(self, *args, **kwargs):
             inner = self.wrapped.open(*args, **kwargs)
             outer = self

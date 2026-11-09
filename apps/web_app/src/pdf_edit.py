@@ -11,9 +11,18 @@ try:
     import pypdfium2.raw as raw
     import pypdf.filters as filters
     from pypdf import PdfReader
-    for name in ("JBIG2_MAX_OUTPUT_LENGTH", "LZW_MAX_OUTPUT_LENGTH", "MAX_ARRAY_BASED_STREAM_OUTPUT_LENGTH", "MAX_DECLARED_STREAM_LENGTH", "RUN_LENGTH_MAX_OUTPUT_LENGTH", "ZLIB_MAX_OUTPUT_LENGTH"):
-        if hasattr(filters, name):
-            setattr(filters, name, 8 * 1024 * 1024)
+    try:
+        from pypdf import overwrite_configuration
+    except ImportError:  # Explicit older custom runtimes retain their limits.
+        for name in ("JBIG2_MAX_OUTPUT_LENGTH", "LZW_MAX_OUTPUT_LENGTH", "MAX_ARRAY_BASED_STREAM_OUTPUT_LENGTH", "MAX_DECLARED_STREAM_LENGTH", "RUN_LENGTH_MAX_OUTPUT_LENGTH", "ZLIB_MAX_OUTPUT_LENGTH"):
+            if hasattr(filters, name):
+                setattr(filters, name, 8 * 1024 * 1024)
+    else:
+        overwrite_configuration(**{name: 8 * 1024 * 1024 for name in (
+            "jbig2_maximum_output_length", "lzw_maximum_output_length",
+            "array_based_stream_maximum_output_length", "maximum_declared_stream_length",
+            "run_length_maximum_output_length", "zlib_maximum_output_length",
+            "brotli_maximum_output_length")})
     payload = json.loads(sys.stdin.buffer.read(15 * 1024 * 1024 + 1))
     source = base64.b64decode(payload['pdf'], validate=True)
     before, after = payload['before'], payload['after']

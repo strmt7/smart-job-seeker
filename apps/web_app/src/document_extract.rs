@@ -76,14 +76,15 @@ pub(crate) fn related_header_footer_parts(xml: &[u8]) -> Result<Vec<(bool, Strin
         let (namespace, event) = reader
             .read_resolved_event()
             .map_err(|_| "Malformed DOCX relationships")?;
-        let in_ns = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == REL_NS);
+        let in_ns =
+            matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref().as_bytes() == REL_NS);
         if let Event::Start(e) | Event::Empty(e) = &event {
             if depth == 0 {
-                if root || !in_ns || e.local_name().as_ref() != b"Relationships" {
+                if root || !in_ns || e.local_name().as_ref().as_bytes() != b"Relationships" {
                     return Err("Invalid DOCX relationships root".into());
                 }
                 root = true;
-            } else if depth == 1 && in_ns && e.local_name().as_ref() == b"Relationship" {
+            } else if depth == 1 && in_ns && e.local_name().as_ref().as_bytes() == b"Relationship" {
                 let (mut ty, mut target, mut mode) = (None, None, None);
                 for attr in e.attributes() {
                     let attr = attr.map_err(|_| "Invalid DOCX relationship attribute")?;
@@ -91,7 +92,7 @@ pub(crate) fn related_header_footer_parts(xml: &[u8]) -> Result<Vec<(bool, Strin
                         .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                         .map_err(|_| "Invalid DOCX relationship value")?
                         .into_owned();
-                    match attr.key.as_ref() {
+                    match attr.key.as_ref().as_bytes() {
                         b"Type" => ty = Some(value),
                         b"Target" => target = Some(value),
                         b"TargetMode" => mode = Some(value),
@@ -291,8 +292,8 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
             .read_resolved_event()
             .map_err(|_| "Malformed DOCX XML")?;
         let word = matches!(namespace, ResolveResult::Bound(ns) if
-            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+            ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         // Use the accepted-change view for text: deleted and moved-from
         // content is not a current qualification; insertions and moved-to
         // content remain. Revisions still need review in the readability report.
@@ -309,30 +310,32 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
             continue;
         }
         if word
-            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref(), b"del" | b"moveFrom"))
+            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom"))
         {
             removed_revision_depth = 1;
             continue;
         }
         match event {
-            Event::Start(e) if word && e.local_name().as_ref() == b"r" => run_depth += 1,
-            Event::End(e) if word && e.local_name().as_ref() == b"r" => {
+            Event::Start(e) if word && e.local_name().as_ref().as_bytes() == b"r" => run_depth += 1,
+            Event::End(e) if word && e.local_name().as_ref().as_bytes() == b"r" => {
                 run_depth = run_depth.saturating_sub(1)
             }
-            Event::Start(e) if word && e.local_name().as_ref() == b"tabs" => tab_stops_depth += 1,
-            Event::End(e) if word && e.local_name().as_ref() == b"tabs" => {
+            Event::Start(e) if word && e.local_name().as_ref().as_bytes() == b"tabs" => {
+                tab_stops_depth += 1
+            }
+            Event::End(e) if word && e.local_name().as_ref().as_bytes() == b"tabs" => {
                 tab_stops_depth = tab_stops_depth.saturating_sub(1)
             }
-            Event::Start(e) if word && e.local_name().as_ref() == b"t" => in_text = true,
-            Event::End(e) if word && e.local_name().as_ref() == b"t" => in_text = false,
+            Event::Start(e) if word && e.local_name().as_ref().as_bytes() == b"t" => in_text = true,
+            Event::End(e) if word && e.local_name().as_ref().as_bytes() == b"t" => in_text = false,
             Event::Text(e) if in_text => {
-                let text = e.decode().map_err(|_| "Invalid DOCX text encoding")?;
+                let text = e.as_ref();
                 let decoded =
-                    quick_xml::escape::unescape(&text).map_err(|_| "Invalid DOCX text entity")?;
+                    quick_xml::escape::unescape(text).map_err(|_| "Invalid DOCX text entity")?;
                 output.push_str(&decoded);
             }
             Event::GeneralRef(e) if in_text => {
-                let name = e.decode().map_err(|_| "Invalid DOCX entity")?;
+                let name = e.as_ref();
                 let entity = format!("&{name};");
                 let decoded =
                     quick_xml::escape::unescape(&entity).map_err(|_| "Unsupported DOCX entity")?;
@@ -342,29 +345,32 @@ fn extract_docx_xml(xml: &[u8], output: &mut String) -> Result<(), String> {
                 if word
                     && run_depth > 0
                     && tab_stops_depth == 0
-                    && e.local_name().as_ref() == b"tab" =>
+                    && e.local_name().as_ref().as_bytes() == b"tab" =>
             {
                 output.push('\t')
             }
             // These are characters in a Word text run, not formatting-only
             // tags; dropping them joins words and changes qualifications.
             Event::Empty(e) | Event::Start(e)
-                if word && e.local_name().as_ref() == b"noBreakHyphen" =>
+                if word && e.local_name().as_ref().as_bytes() == b"noBreakHyphen" =>
             {
                 output.push('\u{2011}')
             }
             Event::Empty(e) | Event::Start(e)
-                if word && e.local_name().as_ref() == b"softHyphen" =>
+                if word && e.local_name().as_ref().as_bytes() == b"softHyphen" =>
             {
                 output.push('\u{00ad}')
             }
             Event::Empty(e) | Event::Start(e)
                 if word
-                    && (e.local_name().as_ref() == b"br" || e.local_name().as_ref() == b"cr") =>
+                    && (e.local_name().as_ref().as_bytes() == b"br"
+                        || e.local_name().as_ref().as_bytes() == b"cr") =>
             {
                 output.push('\n')
             }
-            Event::End(e) if word && e.local_name().as_ref() == b"p" => output.push('\n'),
+            Event::End(e) if word && e.local_name().as_ref().as_bytes() == b"p" => {
+                output.push('\n')
+            }
             Event::Eof => break,
             _ => (),
         }

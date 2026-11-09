@@ -844,7 +844,13 @@ fn listing_capture_integrity(
                 capture_metadata.extend_from_slice(&buffer[..n]);
             }
         }
-        if format!("{:x}", digest.finalize()) != expected {
+        if digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+            != expected
+        {
             return "mismatch";
         }
     }

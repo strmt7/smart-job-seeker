@@ -3,6 +3,11 @@ param(
     [switch]$NoShortcut
 )
 $ErrorActionPreference = 'Stop'
+# Use the current PowerShell's built-ins even when a parent process supplied
+# another edition's module search paths. This changes only this process.
+foreach ($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Security')) {
+    Import-Module -Name (Join-Path $PSHOME ('Modules/' + $module + '/' + $module + '.psd1')) -ErrorAction Stop
+}
 if ($env:OS -ne 'Windows_NT') { throw 'Smart Jobseeker installation requires Windows.' }
 if ($InstallDirectory -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') { throw 'Choose an absolute installation path.' }
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
@@ -18,14 +23,22 @@ $manifestPath = Join-Path $source 'package-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Package manifest is missing. Extract the complete package and try again.' }
 # Resolve the existing source and destination ancestors through junctions and
 # symlinks before comparing them. Never follow a link by deleting or moving it.
-if (-not ('WaypointInstallerPath' -as [type])) {
+if (-not ('WaypointInstallerPathV2' -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.IO;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
-public static class WaypointInstallerPath {
+public static class WaypointInstallerPathV2 {
+    public static string Sha256File(string path) {
+        using (var hash = SHA256.Create())
+        using (var file = File.OpenRead(path)) {
+            return BitConverter.ToString(hash.ComputeHash(file)).Replace("-", "");
+        }
+    }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
@@ -63,12 +76,12 @@ function Resolve-ProspectiveDirectory([string]$Path) {
         $missing = @([IO.Path]::GetFileName($current)) + $missing
         $current = $parent
     }
-    $resolved = [WaypointInstallerPath]::ResolveDirectory($current)
+    $resolved = [WaypointInstallerPathV2]::ResolveDirectory($current)
     foreach ($component in $missing) { $resolved = Join-Path $resolved $component }
     return [IO.Path]::GetFullPath($resolved)
 }
 try {
-    $resolvedSource = [WaypointInstallerPath]::ResolveDirectory($source)
+    $resolvedSource = [WaypointInstallerPathV2]::ResolveDirectory($source)
     $resolvedDestination = Resolve-ProspectiveDirectory $InstallDirectory
 } catch { throw "Could not verify the installation path; nothing was copied. $($_.Exception.Message)" }
 $resolvedPrefix = $resolvedSource.TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
@@ -88,7 +101,18 @@ foreach ($entry in @(
 )) {
     $file = Join-Path $source $entry.Name
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Package is missing $($entry.Name). Extract the complete package and try again." }
-    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Hash) { throw "Package file $($entry.Name) does not match its manifest. Extract the complete package and try again." }
+    if ([WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Hash) { throw "Package file $($entry.Name) does not match its manifest. Extract the complete package and try again." }
+}
+$vcrtFiles = @()
+if ($null -ne $manifest.vcrt_files) { $vcrtFiles = @($manifest.vcrt_files.PSObject.Properties) }
+if ($vcrtFiles.Count -gt 0) {
+    if ($vcrtFiles.Count -ne 12 -or -not $manifest.vcrt_files.'msvcp140.dll' -or -not $manifest.vcrt_files.'vcruntime140.dll') { throw 'Microsoft runtime inventory is incomplete.' }
+    $seenVcrt = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $vcrtFiles) {
+        if ($entry.Name -notmatch '^(?:vcruntime|msvcp|concrt|vccorlib|vcamp|vcomp)140(?:_[a-z0-9_]+)?\.dll$' -or $entry.Value -notmatch '^[a-fA-F0-9]{64}$' -or -not $seenVcrt.Add($entry.Name)) { throw 'Microsoft runtime inventory contains an invalid entry.' }
+        $file = Join-Path $source $entry.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Value) { throw "Microsoft runtime file is missing or damaged: $($entry.Name)." }
+    }
 }
 $pythonFiles = @($manifest.python_files.PSObject.Properties)
 if ($pythonFiles.Count -lt 1 -or $pythonFiles.Count -gt 10000 -or -not $manifest.python_files.'dependencies/python/python.exe') {
@@ -100,7 +124,7 @@ foreach ($entry in $pythonFiles) {
         throw 'Package manifest contains an invalid Python runtime entry.'
     }
     $file = Join-Path $source $name
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Value) {
         throw "Bundled Python file is missing or damaged: $name. Extract the complete package and try again."
     }
 }
@@ -119,7 +143,7 @@ if ($officeFiles.Count -gt 0) {
             throw 'Package manifest contains an invalid LibreOffice runtime entry.'
         }
         $file = Join-Path $source $name
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Value) {
             throw "Bundled LibreOffice file is missing or damaged: $name. Extract the complete package and try again."
         }
     }
@@ -137,7 +161,9 @@ if ($chromiumFiles.Count -eq 0 -and (Test-Path -LiteralPath $chromiumRoot)) {
 }
 if ($chromiumFiles.Count -gt 0) {
     $expectedChromium = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    if ($chromiumFiles.Count -gt 50000 -or -not $manifest.chromium_files.'dependencies/chromium/chrome.exe' -or -not $manifest.chromium_files.'dependencies/chromium/LICENSES.chromium.html') {
+    $fullBrowser = $manifest.chromium_files.'dependencies/chromium/chrome.exe' -and $manifest.chromium_files.'dependencies/chromium/LICENSES.chromium.html'
+    $headlessBrowser = $manifest.chromium_files.'dependencies/chromium/chrome-headless-shell.exe' -and $manifest.chromium_files.'dependencies/chromium/LICENSE.headless_shell' -and $manifest.chromium_files.'dependencies/chromium/icudtl.dat'
+    if ($chromiumFiles.Count -gt 50000 -or -not ($fullBrowser -or $headlessBrowser)) {
         throw 'Package manifest contains an incomplete Chromium runtime inventory.'
     }
     foreach ($entry in $chromiumFiles) {
@@ -147,7 +173,7 @@ if ($chromiumFiles.Count -gt 0) {
         }
         if (-not $expectedChromium.Add($name)) { throw 'Package manifest contains duplicate Chromium runtime entries.' }
         $file = Join-Path $source $name
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Value) {
             throw "Bundled Chromium file is missing or damaged: $name. Extract the complete package and try again."
         }
     }
@@ -179,7 +205,7 @@ if ($ollamaFiles.Count -gt 0) {
         }
         if (-not $expectedOllama.Add($name)) { throw 'Package manifest contains duplicate Ollama runtime entries.' }
         $file = Join-Path $source $name
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Value) {
             throw "Bundled Ollama file is missing or damaged: $name. Extract the complete package and try again."
         }
     }
@@ -210,7 +236,7 @@ while (-not (Test-Path -LiteralPath $existingDestination -PathType Container)) {
 }
 try {
     $sourceBytes = [UInt64]((Get-ChildItem -LiteralPath $source -File -Force -Recurse -ErrorAction Stop | Measure-Object -Property Length -Sum).Sum)
-    $freeBytes = [WaypointInstallerPath]::AvailableBytes($existingDestination)
+    $freeBytes = [WaypointInstallerPathV2]::AvailableBytes($existingDestination)
     Assert-InstallSpace $sourceBytes $freeBytes
 } catch { throw "Could not confirm sufficient installation space; nothing was copied. $($_.Exception.Message)" }
 function Get-WaypointShortcutPath([string]$ProgramsDirectory) {
@@ -239,13 +265,13 @@ try {
         @{ Name = $manifest.openssl_dll; Hash = $manifest.openssl_sha256 }
     )) {
         $file = Join-Path $InstallDirectory $entry.Name
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Hash) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Hash) {
             throw "Installed package file is missing or damaged: $($entry.Name)."
         }
     }
-    foreach ($entry in (@($pythonFiles) + @($officeFiles) + @($ollamaFiles) + @($chromiumFiles))) {
+    foreach ($entry in (@($pythonFiles) + @($officeFiles) + @($ollamaFiles) + @($chromiumFiles) + @($vcrtFiles))) {
         $file = Join-Path $InstallDirectory $entry.Name
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Value) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or [WaypointInstallerPathV2]::Sha256File($file) -ne $entry.Value) {
             throw "Installed dependency file is missing or damaged: $($entry.Name)."
         }
     }

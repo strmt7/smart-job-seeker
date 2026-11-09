@@ -215,9 +215,9 @@ fn reject_removed_revisions(bytes: &[u8]) -> Result<(), String> {
             let (namespace, event) = reader
                 .read_resolved_event()
                 .map_err(|_| "Malformed DOCX XML")?;
-            let word = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main" || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+            let word = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main" || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
             match event {
-                Event::Start(ref e) | Event::Empty(ref e) if word && matches!(e.local_name().as_ref(), b"del" | b"moveFrom") => return Err("DOCX contains removed tracked revisions that may appear in the PDF. Resolve revisions in a document editor before conversion.".into()),
+                Event::Start(ref e) | Event::Empty(ref e) if word && matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom") => return Err("DOCX contains removed tracked revisions that may appear in the PDF. Resolve revisions in a document editor before conversion.".into()),
                 Event::DocType(_) => return Err("DOCX document type declarations are not supported".into()),
                 Event::Eof => break,
                 _ => {}

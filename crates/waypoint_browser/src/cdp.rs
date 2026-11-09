@@ -129,16 +129,16 @@ fn candidate_binaries(
     discovered: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    let explicit_bundle = explicit.as_ref().is_some_and(|path| {
-        root.is_some_and(|root| {
-            same_binary_path(path, &root.join("dependencies/chromium/chrome.exe"))
-        })
-    });
     if let Some(path) = explicit {
         candidates.push(path);
     }
+    // Explicit overrides win; the app-private engine precedes optional host
+    // browsers so a clean machine and an upgraded host use the same default.
+    if let Some(root) = root {
+        candidates.push(root.join("dependencies/chromium/chrome-headless-shell.exe"));
+        candidates.push(root.join("dependencies/chromium/chrome.exe"));
+    }
     candidates.extend(discovered);
-    let bundled = root.map(|root| root.join("dependencies/chromium/chrome.exe"));
     let mut found: Vec<PathBuf> = Vec::new();
     for path in candidates {
         if path.is_file()
@@ -149,25 +149,7 @@ fn candidate_binaries(
             found.push(path);
         }
     }
-    // Prefer installed browsers, which may update independently. Keep the
-    // bundled browser within the launcher's twelve-candidate budget so it
-    // remains available when the installed candidates cannot start.
-    if let Some(bundled) = bundled.filter(|path| path.is_file()) {
-        if let Some(index) = found
-            .iter()
-            .position(|existing| same_binary_path(existing, &bundled))
-        {
-            // An explicit browser remains the user's first choice.
-            if !explicit_bundle {
-                found.remove(index);
-                found.truncate(11);
-                found.push(bundled);
-            }
-        } else {
-            found.truncate(11);
-            found.push(bundled);
-        }
-    }
+    found.truncate(12);
     found
 }
 
@@ -1437,7 +1419,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_prefers_explicit_then_installed_and_retains_bundled_fallback() {
+    fn discovery_prefers_explicit_then_bundled_and_retains_host_fallback() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../target")
             .join(format!(
@@ -1460,7 +1442,7 @@ mod tests {
             Some(&root),
             vec![installed.clone(), bundled.clone(), root.join("missing.exe")],
         );
-        assert_eq!(found, vec![explicit, installed, bundled]);
+        assert_eq!(found, vec![explicit, bundled, installed]);
         let many: Vec<_> = (0..15)
             .map(|n| {
                 let path = root.join(format!("installed-{n}.exe"));
@@ -1471,8 +1453,14 @@ mod tests {
         let found = candidate_binaries(None, Some(&root), many);
         assert_eq!(found.len(), 12);
         assert_eq!(
-            found.last(),
+            found.first(),
             Some(&root.join("dependencies/chromium/chrome.exe"))
+        );
+        let headless = root.join("dependencies/chromium/chrome-headless-shell.exe");
+        std::fs::write(&headless, b"fixture").unwrap();
+        assert_eq!(
+            candidate_binaries(None, Some(&root), vec![]).first(),
+            Some(&headless)
         );
         std::fs::remove_dir_all(root).unwrap();
     }

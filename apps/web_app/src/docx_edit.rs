@@ -43,8 +43,8 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
             .read_resolved_event()
             .map_err(|_| "Malformed DOCX body")?;
         let word = matches!(namespace, ResolveResult::Bound(ns) if
-            ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+            ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         let after = reader.buffer_position() as usize;
         if removed_revision_depth > 0 {
             match event {
@@ -56,7 +56,7 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
             continue;
         }
         if word
-            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref(), b"del" | b"moveFrom"))
+            && matches!(&event, Event::Start(e) if matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom"))
         {
             if active.is_some() {
                 return Err("Invalid DOCX revision inside text".into());
@@ -71,7 +71,7 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
         }
         match event {
             Event::DocType(_) => return Err("DOCX document types are unsupported".into()),
-            Event::Start(ref e) if word && e.local_name().as_ref() == b"p" => {
+            Event::Start(ref e) if word && e.local_name().as_ref().as_bytes() == b"p" => {
                 if let Some(parent) = stack.last_mut() {
                     if !parent.is_empty() {
                         blocks.push(std::mem::take(parent));
@@ -79,7 +79,7 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                 }
                 stack.push(Vec::new());
             }
-            Event::End(ref e) if word && e.local_name().as_ref() == b"p" => {
+            Event::End(ref e) if word && e.local_name().as_ref().as_bytes() == b"p" => {
                 if active.is_some() {
                     return Err("Invalid DOCX text structure".into());
                 }
@@ -88,13 +88,17 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                     blocks.push(group);
                 }
             }
-            Event::Start(ref e) if word && e.local_name().as_ref() == b"t" && !stack.is_empty() => {
+            Event::Start(ref e)
+                if word && e.local_name().as_ref().as_bytes() == b"t" && !stack.is_empty() =>
+            {
                 if active.is_some() {
                     return Err("Nested DOCX text is unsupported".into());
                 }
                 active = Some((before, after, after));
             }
-            Event::End(ref e) if word && e.local_name().as_ref() == b"t" && active.is_some() => {
+            Event::End(ref e)
+                if word && e.local_name().as_ref().as_bytes() == b"t" && active.is_some() =>
+            {
                 let (tag_start, tag_end, start) = active.take().ok_or("Invalid DOCX text")?;
                 let raw =
                     std::str::from_utf8(&xml[start..before]).map_err(|_| "Invalid DOCX UTF-8")?;
@@ -116,7 +120,9 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                     });
             }
             Event::Start(ref e) | Event::Empty(ref e)
-                if word && is_inline_boundary(e.local_name().as_ref()) && !stack.is_empty() =>
+                if word
+                    && is_inline_boundary(e.local_name().as_ref().as_bytes())
+                    && !stack.is_empty() =>
             {
                 let current = stack.last_mut().unwrap();
                 if !current.is_empty() {
@@ -124,7 +130,9 @@ fn parse_blocks(xml: &[u8]) -> Result<Vec<Vec<Node>>, String> {
                 }
             }
             Event::End(ref e)
-                if word && is_inline_boundary(e.local_name().as_ref()) && !stack.is_empty() =>
+                if word
+                    && is_inline_boundary(e.local_name().as_ref().as_bytes())
+                    && !stack.is_empty() =>
             {
                 let current = stack.last_mut().unwrap();
                 if !current.is_empty() {

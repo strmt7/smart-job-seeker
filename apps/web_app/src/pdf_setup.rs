@@ -1,4 +1,4 @@
-//! Install optional PDF dependencies into a new per-user virtual environment.
+//! Install PDF tools in an app-private runtime, with an optional custom interpreter.
 use serde_json::{json, Value};
 use std::{
     io::Write,
@@ -29,7 +29,8 @@ pub fn pending() -> Result<Option<String>, String> {
         .map(|task| task.id.clone()))
 }
 
-pub fn select_python(
+#[cfg(test)]
+fn select_python(
     configured: &str,
     discover: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<PathBuf, String> {
@@ -51,12 +52,24 @@ pub fn managed_python(control: &Path) -> Option<PathBuf> {
     if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let python = control
-        .join("pdf-runtimes")
-        .join(id)
-        .join("Scripts")
-        .join("python.exe");
+    let root = control.join("pdf-runtimes").join(id);
+    let python = match value["kind"].as_str() {
+        Some("portable") => root.join("python.exe"),
+        Some("venv") | None => root.join("Scripts").join("python.exe"),
+        _ => return None,
+    };
     python.is_file().then_some(python)
+}
+
+pub(crate) fn activate(control: &Path, id: &str, kind: &str) -> Result<(), String> {
+    let mut file = tempfile::NamedTempFile::new_in(control)
+        .map_err(|e| format!("Cannot save PDF tools setting: {e}"))?;
+    write!(file, "{}", json!({"id":id,"kind":kind}))
+        .and_then(|_| file.flush())
+        .map_err(|e| format!("Cannot save PDF tools setting: {e}"))?;
+    file.persist(control.join("pdf-runtime.json"))
+        .map_err(|e| format!("Cannot activate PDF tools: {e}"))?;
+    Ok(())
 }
 fn run(command: &mut Command, seconds: u64, label: &str) -> Result<(), String> {
     #[cfg(windows)]
@@ -143,9 +156,9 @@ fn install(control: &Path, id: &str, python: &Path) -> Result<String, String> {
             "1",
             "--index-url",
             "https://pypi.org/simple",
-            "pypdf==6.10.0",
-            "pypdfium2==5.14.0",
-            "Pillow==12.3.0",
+            "pypdf==7.0.0",
+            "pypdfium2==5.15.0",
+            "Pillow==13.0.0",
         ]),
         180,
         "PDF dependency installation",
@@ -162,13 +175,7 @@ fn install(control: &Path, id: &str, python: &Path) -> Result<String, String> {
         30,
         "PDF dependency check",
     )?;
-    let mut file = tempfile::NamedTempFile::new_in(control)
-        .map_err(|e| format!("Cannot save PDF tools setting: {e}"))?;
-    write!(file, "{}", json!({"id":id}))
-        .and_then(|_| file.flush())
-        .map_err(|e| format!("Cannot save PDF tools setting: {e}"))?;
-    file.persist(control.join("pdf-runtime.json"))
-        .map_err(|e| format!("Cannot activate PDF tools: {e}"))?;
+    activate(control, id, "venv")?;
     Ok(venv_python.display().to_string())
 }
 pub fn start(id: String, configured: String) -> Result<(), String> {
@@ -193,8 +200,14 @@ pub fn start(id: String, configured: String) -> Result<(), String> {
     drop(task);
     std::thread::spawn(move || {
         let outcome = std::panic::catch_unwind(|| {
-            let python = select_python(&configured, crate::pdf_extract::setup_python)?;
-            install(&control, &id, &python)
+            if configured.trim().is_empty() {
+                let _lease = crate::pdf_extract::acquire()?;
+                crate::pdf_runtime::install(&control, &id, |python| {
+                    run(Command::new(python).args(["-I", "-c", "import pypdf,pypdfium2,PIL.Image; assert pypdf.__version__ == '7.0.0'; assert PIL.__version__ == '13.0.0'"]), 30, "PDF runtime verification")
+                })
+            } else {
+                install(&control, &id, &PathBuf::from(configured.trim()))
+            }
         })
         .unwrap_or_else(|_| Err("PDF setup stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
@@ -274,7 +287,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "installs pinned PDF packages into an explicitly isolated test profile"]
-    fn automatic_setup_skips_incompatible_python_and_renders_pdf() {
+    fn automatic_setup_bootstraps_without_host_python_and_renders_pdf() {
         let root = PathBuf::from(std::env::var_os("WAYPOINT_SETUP_TEST_DIR").unwrap())
             .canonicalize()
             .unwrap();
@@ -285,8 +298,6 @@ mod tests {
         let control = crate::storage_settings::control_dir().unwrap();
         std::fs::create_dir_all(&control).unwrap();
         assert!(managed_python(&control).is_none());
-        let bootstrap = PathBuf::from(std::env::var_os("WAYPOINT_BOOTSTRAP_PYTHON").unwrap());
-        assert_eq!(crate::pdf_extract::setup_python().unwrap(), bootstrap);
         let id = "1234567890abcdef1234567890abcdef";
         start(id.into(), String::new()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);

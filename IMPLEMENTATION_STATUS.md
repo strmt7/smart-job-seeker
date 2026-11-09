@@ -3874,3 +3874,36 @@ model accuracy or visual quality.
 2026-11-03: A separate headless protocol experiment enabled request-stage Fetch interception after loading a fictional loopback page, observed a paused POST, rejected it, and confirmed the loopback server received no POST. This is a single manually serviced top-level request, not an application-level guard. It does not address other targets, GET writes, delayed actions, disconnection, service workers or WebSockets; the prior WebSocket fixture demonstrates a separate gap. No external application was contacted.
 
 2026-11-03: Buffered CDP `Fetch.requestPaused` events now retain bounded routing identifiers, method and response status only, rather than URLs, headers or body. A fictional unit test checked that private fixture data is not retained, and the loopback interception experiment still passed. This prepares protocol handling but does not enable interception in the app or resolve the scripted-submission gap.
+
+
+## Automatic runtime provisioning and dependency refresh — 2026-11-09
+
+The default Windows package now automatically provisions a pinned headless
+browser and converter rather than depending on implicit host installations.
+Python/PDF tools and Ollama remain bundled by default. Required Microsoft C++
+runtime DLLs are extracted from a verified publisher-signed redistributable
+without running its installer, then inventoried beside their consumers. The
+OpenSSL build SDK also defaults to a verified repository-local cache; explicit
+SDK overrides remain supported. Windows PowerShell 5.1 and PowerShell 7 module
+paths/child-exit behavior were exercised and corrected.
+
+PDF setup can now bootstrap Python and all PDF wheels natively into a new
+per-user runtime, without an existing Python or pip. It uses exact artifact
+digests, bounded archive extraction, an isolated import check and atomic active
+runtime selection. Failed setup preserves the previous runtime. The Settings
+copy describes automatic setup and the optional custom-interpreter path.
+
+The Rust graph, qualified Python research lock, portable PDF/Node runtime pins
+and CI action pins were refreshed to current compatible releases. Compatibility
+fixes preserve XML/text behavior, integrity hashes, PDF decompression bounds and
+conservative glyph editing. The dependency report records actual checks and
+remaining deployment limits: [dependency evidence](docs/DEPENDENCY_REFRESH_2026-11-09.md)
+and [runtime setup](docs/RUNTIME_SETUP.md).
+
+Scoped career-history suggestions now select exact saved components for one
+explicitly chosen reviewed entry and up to 20 eligible fields. Results are
+revision/session/schema-bound and require checked proposals before local answer
+editors change. Existing sensitive/model-review blocks remain in force. Local
+12B/14B diagnostics had different completeness outcomes; these limits and the
+remaining section/provenance work are recorded in [career history](docs/CANDIDATE_HISTORY.md).
+No real application interaction or submission and no release occurred.

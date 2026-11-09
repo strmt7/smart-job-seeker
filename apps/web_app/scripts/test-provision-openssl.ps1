@@ -1,11 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $target = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../../target')).Path
-$source = Join-Path $target 'waypoint-openssl-4.1.0'
+$source = Join-Path $target 'waypoint-openssl-4.1.0-2'
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw 'Provision the pinned OpenSSL cache before this offline fixture.' }
 $fixture = Join-Path $target ('waypoint-openssl-fixture-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {
-    $cache = Join-Path $fixture 'waypoint-openssl-4.1.0'
+    $cache = Join-Path $fixture 'waypoint-openssl-4.1.0-2'
     New-Item -ItemType Directory -Path $cache | Out-Null
     Copy-Item -LiteralPath (Join-Path $source 'include') -Destination (Join-Path $cache 'include') -Recurse
     foreach ($name in @('lib/libcrypto.lib', 'bin/libcrypto-4-x64.dll', 'LICENSE.txt')) {
@@ -32,7 +32,7 @@ try {
         if ($_.Exception.Message -notmatch 'does not match the pinned package') { throw }
         $rejected = $true
     }
-    if (-not $rejected -or (Test-Path -LiteralPath (Join-Path $invalidRoot 'waypoint-openssl-4.1.0'))) { throw 'Invalid installer was accepted.' }
+    if (-not $rejected -or (Test-Path -LiteralPath (Join-Path $invalidRoot 'waypoint-openssl-4.1.0-2'))) { throw 'Invalid installer was accepted.' }
     Write-Host 'OpenSSL cache reuse, modified-header and invalid-installer checks passed.'
 } finally {
     if (Test-Path -LiteralPath $fixture) {

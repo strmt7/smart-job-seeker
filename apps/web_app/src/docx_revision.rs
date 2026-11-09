@@ -15,7 +15,7 @@ fn remove_revisions(xml: &[u8]) -> Result<Option<Vec<u8>>, String> {
         let (namespace, event) = reader
             .read_resolved_event()
             .map_err(|_| "Malformed DOCX XML")?;
-        let word = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main" || ns.as_ref() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
+        let word = matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref().as_bytes() == b"http://schemas.openxmlformats.org/wordprocessingml/2006/main" || ns.as_ref().as_bytes() == b"http://purl.oclc.org/ooxml/wordprocessingml/main");
         let after = reader.buffer_position() as usize;
         if removed_depth > 0 {
             match event {
@@ -38,7 +38,7 @@ fn remove_revisions(xml: &[u8]) -> Result<Option<Vec<u8>>, String> {
             Event::Start(ref e) | Event::Empty(ref e)
                 if word
                     && matches!(
-                        e.local_name().as_ref(),
+                        e.local_name().as_ref().as_bytes(),
                         b"moveFromRangeStart"
                             | b"moveFromRangeEnd"
                             | b"delRangeStart"
@@ -48,7 +48,7 @@ fn remove_revisions(xml: &[u8]) -> Result<Option<Vec<u8>>, String> {
                 return Err(UNSUPPORTED.into())
             }
             Event::Start(ref e)
-                if word && matches!(e.local_name().as_ref(), b"del" | b"moveFrom") =>
+                if word && matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom") =>
             {
                 if !stack.last().is_some_and(|(word, name)| {
                     *word && matches!(name.as_slice(), b"p" | b"hyperlink")
@@ -59,7 +59,7 @@ fn remove_revisions(xml: &[u8]) -> Result<Option<Vec<u8>>, String> {
                 removed_depth = 1;
             }
             Event::Empty(ref e)
-                if word && matches!(e.local_name().as_ref(), b"del" | b"moveFrom") =>
+                if word && matches!(e.local_name().as_ref().as_bytes(), b"del" | b"moveFrom") =>
             {
                 return Err(UNSUPPORTED.into())
             }
@@ -67,7 +67,7 @@ fn remove_revisions(xml: &[u8]) -> Result<Option<Vec<u8>>, String> {
                 if stack.len() >= 256 {
                     return Err("DOCX structure is too deeply nested".into());
                 }
-                stack.push((word, e.local_name().as_ref().to_vec()));
+                stack.push((word, e.local_name().as_ref().as_bytes().to_vec()));
             }
             Event::End(_) => {
                 stack.pop().ok_or("Malformed DOCX structure")?;

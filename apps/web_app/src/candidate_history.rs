@@ -2,6 +2,7 @@
 //! Checking a record makes its values available for explicit answer selection;
 //! it does not attest a claim, authorize a fill or establish model correctness.
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 pub const MAX_BYTES: usize = 64 * 1024;
@@ -55,6 +56,83 @@ struct History {
     version: u32,
     employment: Vec<Employment>,
     education: Vec<Education>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct SelectedRecord {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub ongoing_confirmed: bool,
+    pub values: BTreeMap<String, String>,
+}
+
+pub fn selected(raw: &str, id: &str) -> Result<SelectedRecord, String> {
+    let canonical = canonicalize(raw)?;
+    let history: History =
+        serde_json::from_str(&canonical).map_err(|_| "Add checked career history first")?;
+    let (kind, label, ongoing_confirmed, pairs): (&str, String, bool, Vec<(&str, String)>) =
+        if let Some(item) = history
+            .employment
+            .into_iter()
+            .find(|item| item.id == id && item.reviewed)
+        {
+            (
+                "employment",
+                format!("{} at {}", item.title, item.employer),
+                item.current,
+                vec![
+                    ("employer", item.employer),
+                    ("title", item.title),
+                    ("location", item.location),
+                    ("start_date", item.start_date),
+                    ("end_date", item.end_date),
+                    ("description", item.description),
+                ],
+            )
+        } else if let Some(item) = history
+            .education
+            .into_iter()
+            .find(|item| item.id == id && item.reviewed)
+        {
+            (
+                "education",
+                format!("{} at {}", item.qualification, item.institution),
+                item.current,
+                vec![
+                    ("institution", item.institution),
+                    ("qualification", item.qualification),
+                    ("field_of_study", item.field_of_study),
+                    ("location", item.location),
+                    ("start_date", item.start_date),
+                    ("end_date", item.end_date),
+                    ("description", item.description),
+                ],
+            )
+        } else {
+            return Err("Choose a saved, checked history entry".into());
+        };
+    let mut values: BTreeMap<_, _> = pairs
+        .into_iter()
+        .filter(|(_, value)| !value.trim().is_empty())
+        .map(|(key, value)| (key.to_owned(), value))
+        .collect();
+    for date in ["start", "end"] {
+        if let Some(value) = values.get(&format!("{date}_date")).cloned() {
+            values.insert(format!("{date}_year"), value[..4].into());
+            if value.len() == 7 {
+                values.insert(format!("{date}_month"), value[5..].into());
+                values.insert(format!("{date}_year_month"), value);
+            }
+        }
+    }
+    Ok(SelectedRecord {
+        id: id.into(),
+        kind: kind.into(),
+        label,
+        ongoing_confirmed,
+        values,
+    })
 }
 
 fn text(value: &str, limit: usize, required: bool, multiline: bool) -> Result<(), String> {
@@ -178,6 +256,14 @@ mod tests {
         assert_eq!(value["employment"][0]["reviewed"], true);
         assert_eq!(value["employment"][0]["employer"], "Fictional & Co");
         assert_eq!(canonicalize("").unwrap(), "");
+        let record = selected(&saved, &"a".repeat(32)).unwrap();
+        assert_eq!(record.values["start_year"], "2020");
+        assert!(!record.values.contains_key("start_month"));
+        assert_eq!(record.values["end_month"], "01");
+        assert!(selected(&saved, &"b".repeat(32)).is_err());
+        let mut unreviewed = fixture();
+        unreviewed["employment"][0]["reviewed"] = json!(false);
+        assert!(selected(&unreviewed.to_string(), &"a".repeat(32)).is_err());
     }
 
     #[test]
