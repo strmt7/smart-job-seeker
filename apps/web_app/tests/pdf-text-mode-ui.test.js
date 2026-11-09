@@ -1,0 +1,6 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
+const start=source.indexOf("extract.addEventListener('click',async()=>{"),end=source.indexOf('item.append(identity);',start);
+assert.ok(start>=0&&end>start);
+async function check(name,expected){let handler,request,result,generation=0;const button={disabled:false,addEventListener(_event,fn){handler=fn;}};const ctx={extract:button,doc:{id:'fixture',name},document:{querySelector:()=>({value:'layout'})},get documentReviewGeneration(){return generation},beginDocumentReview:()=>++generation,api:async(_path,body)=>{request=body;return {task_id:'task',id:'fixture',name};},followDocumentExtraction:async()=>({status:'complete',text:'Fictional text',coverage:{text_mode:expected}}),showDocument:value=>result=value,notify:message=>{throw Error(message);}};vm.runInNewContext(source.slice(start,end),ctx);await handler();assert.equal(request.mode,expected);assert.equal(result.coverage.text_mode,expected);assert.equal(button.disabled,false);}
+(async()=>{await check('cv.PDF','layout');await check('cv.docx','normal');console.log('PDF text-review mode is explicit and does not affect DOCX review.');})().catch(error=>{console.error(error);process.exitCode=1;});

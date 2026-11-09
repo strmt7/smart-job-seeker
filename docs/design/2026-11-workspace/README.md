@@ -69,3 +69,19 @@ preferences, documents, storage and local AI; model selection and start/status
 controls, resource estimates explicitly distinguished from reservations, document
 tool status actions, no native window chrome or version claims, consistent
 spacing and rounded neutral surfaces.
+
+## Document-review iteration
+
+A third built-in image-generation reference, `documents-concept.png`, focuses
+on document-library hierarchy, paired extracted-text/PDF review and saved
+findings. The prompt requested fictional CV and letter rows, warm ivory and
+forest teal surfaces, a normal/layout extraction choice, an explicit comparison
+caution and saved-review context; no readiness guarantee, screening score,
+submission controls, real names or model-success claims.
+
+The implemented follow-up adds the explicit layout text-review option, Compare
+with PDF action, responsive paired panels and document binding. The existing
+saved-findings flow remains separate from the preview. The generated miniature,
+compact library layout and every control in the reference are not fully
+implemented. Public CV material used for local qualification stays under ignored
+`target/`; the generated reference contains fictional content only.

@@ -57,6 +57,16 @@ dialog { border-radius: 12px; border-color: var(--line); }
 .document-library-filters { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; margin: 14px 0 20px; padding: 0 16px; }
 .document-library-filters label { min-width: 0; }
 .document-library-filters input,.document-library-filters select { min-width: 0; }
+.document-text-mode { grid-column: 1/-1; }
+.document-text-mode .footnote { display: block; padding: 6px 0 0; font-weight: 400; }
+.document-preview-pane { container-type: inline-size; }
+.document-review-panes { min-width: 0; }
+.document-review-panes>div { min-width: 0; }
+#pdf-preview,#document-preview { scroll-margin-top: 100px; }
+#document-preview textarea.document-layout-text { font-family: ui-monospace, Consolas, monospace; white-space: pre; }
+.document-compare { margin: 8px 0; }
+@media(min-width:1101px) { .document-layout:has(#pdf-preview:not(:empty)):has(#document-preview:not(:empty)) { grid-template-columns: 1fr; } }
+@container(min-width:680px) { .document-review-panes:has(#pdf-preview:not(:empty)):has(#document-preview:not(:empty)) { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: start; } }
 .document-name .document-status { color: var(--muted); margin-top: 5px; font-size: 12px; }
 .document-name .document-template { color: var(--accent); margin-top: 4px; font-weight: 600; font-size: 12px; }
 .document-preview-pane:has(#document-job-check:not(:empty)) .preview-empty { display: none; }

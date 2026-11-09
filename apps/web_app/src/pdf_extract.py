@@ -12,6 +12,9 @@ try:
     if not payload.startswith(b"%PDF-") or len(payload) > 10 * 1024 * 1024:
         raise ValueError("Invalid or oversized PDF")
     reader = PdfReader(io.BytesIO(payload), strict=True)
+    if sys.argv[1:] not in ([], ["allow-empty"], ["layout"]):
+        raise ValueError("Invalid PDF extraction mode")
+    layout = sys.argv[1:] == ["layout"]
     if reader.is_encrypted:
         raise ValueError("Encrypted PDFs are not supported")
     if len(reader.pages) > 50:
@@ -55,6 +58,8 @@ try:
             if operator == b"INLINE IMAGE":
                 inline_image[0] = True
         text = page.extract_text(visitor_operand_before=observe_operator) or ""
+        if layout:
+            text = (page.extract_text(extraction_mode="layout") or "") if "/Contents" in page else ""
         if text.strip():
             try:
                 if inline_image[0] or image_resources(page):

@@ -4809,7 +4809,11 @@ fn serve(
                 .map_err(|e| e.to_string())?
                 .ok_or("document not found")?;
             let task_id = random_id()?;
-            extract_task::start(task_id.clone(), info.name.clone(), bytes)?;
+            if extract_task::layout_mode(body.get("mode"))? {
+                extract_task::start_with_mode(task_id.clone(), info.name.clone(), bytes, true)?;
+            } else {
+                extract_task::start(task_id.clone(), info.name.clone(), bytes)?;
+            }
             json_reply(
                 stream,
                 "200 OK",

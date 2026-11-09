@@ -302,6 +302,14 @@ pub fn extract_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value)
     extract_coverage_inner(bytes, false).map(|(text, coverage, _)| (text, coverage))
 }
 
+/// Alternative layout extraction for explicit text review, never an automatic
+/// replacement for the normal extractor used by other consumers.
+pub fn extract_layout_with_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
+    let (text, mut coverage, _) = extract_coverage_mode(bytes, false, true)?;
+    coverage["text_mode"] = serde_json::json!("layout");
+    Ok((text, coverage))
+}
+
 /// Inventory scanned pages even when the whole document has no selectable text.
 #[cfg(test)]
 pub(crate) fn scan_coverage(bytes: &[u8]) -> Result<(String, serde_json::Value), String> {
@@ -318,11 +326,23 @@ fn extract_coverage_inner(
     bytes: &[u8],
     allow_empty: bool,
 ) -> Result<(String, serde_json::Value, Vec<String>), String> {
+    extract_coverage_mode(bytes, allow_empty, false)
+}
+
+fn extract_coverage_mode(
+    bytes: &[u8],
+    allow_empty: bool,
+    layout: bool,
+) -> Result<(String, serde_json::Value, Vec<String>), String> {
     let data = run(
         bytes,
         bytes,
         include_str!("pdf_extract.py"),
-        allow_empty.then_some("allow-empty"),
+        if layout {
+            Some("layout")
+        } else {
+            allow_empty.then_some("allow-empty")
+        },
         2_600_000,
         true,
         "pypdf",

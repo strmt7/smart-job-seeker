@@ -22,6 +22,27 @@ fn expire_completed(task: &mut Option<Task>) {
 }
 
 pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
+    start_with_mode(id, name, bytes, false)
+}
+
+pub fn layout_mode(value: Option<&Value>) -> Result<bool, String> {
+    match value {
+        None => Ok(false),
+        Some(Value::String(mode)) if mode == "normal" => Ok(false),
+        Some(Value::String(mode)) if mode == "layout" => Ok(true),
+        _ => Err("Invalid document extraction mode".into()),
+    }
+}
+
+pub fn start_with_mode(
+    id: String,
+    name: String,
+    bytes: Vec<u8>,
+    layout: bool,
+) -> Result<(), String> {
+    if layout && !name.to_ascii_lowercase().ends_with(".pdf") {
+        return Err("Layout text review requires a PDF".into());
+    }
     let mut task = TASK
         .lock()
         .map_err(|_| "Extraction task state unavailable")?;
@@ -37,9 +58,15 @@ pub fn start(id: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
     });
     drop(task);
     std::thread::spawn(move || {
-        let outcome =
-            std::panic::catch_unwind(|| crate::document_extract::extract_for_review(&name, &bytes))
-                .unwrap_or_else(|_| Err("Document extraction stopped unexpectedly".into()));
+        let outcome = std::panic::catch_unwind(|| {
+            if layout {
+                crate::pdf_extract::extract_layout_with_coverage(&bytes)
+                    .map(|(text, coverage)| (text, Some(coverage)))
+            } else {
+                crate::document_extract::extract_for_review(&name, &bytes)
+            }
+        })
+        .unwrap_or_else(|_| Err("Document extraction stopped unexpectedly".into()));
         if let Ok(mut task) = TASK.lock() {
             if let Some(task) = task.as_mut() {
                 if task.id == id {
@@ -75,6 +102,26 @@ pub fn poll(id: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extraction_modes_are_explicit_and_layout_requires_pdf() {
+        assert!(!super::layout_mode(None).unwrap());
+        assert!(!super::layout_mode(Some(&serde_json::json!("normal"))).unwrap());
+        assert!(super::layout_mode(Some(&serde_json::json!("layout"))).unwrap());
+        for value in [
+            serde_json::json!(true),
+            serde_json::json!(null),
+            serde_json::json!("unknown"),
+        ] {
+            assert!(super::layout_mode(Some(&value)).is_err());
+        }
+        assert!(super::start_with_mode(
+            "invalid".into(),
+            "cv.docx".into(),
+            b"fictional".to_vec(),
+            true
+        )
+        .is_err());
+    }
     #[test]
     #[ignore = "requires an explicitly configured local pypdf runtime"]
     fn background_pdf_extraction_reports_unreadable_pages() {
