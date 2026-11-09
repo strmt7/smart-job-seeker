@@ -26,4 +26,4 @@ assert.equal(context.profileValuePicker(profile,input,{label:'Sensitive',field_t
 assert.equal(context.profileValuePicker(profile,input,{label:'Choice',field_type:{select:{options:['a']}},sensitive:false}),null);
 console.log('Profile value picker checks passed.');
 
-assert.match(source,/panel\.append\(row\);const picker=profileValuePicker\(state\.profile,input,field\);if\(picker\)panel\.append\(picker\)/);
+assert.match(source,/panel\.append\(row\);const picker=profileValuePicker\(state\.profile,input,field,result\.session_id\);if\(picker\)panel\.append\(picker\)/);

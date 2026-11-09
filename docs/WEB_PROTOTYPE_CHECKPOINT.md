@@ -1,5 +1,10 @@
 # Browser-interface prototype checkpoint
 
+Latest answer-source checkpoint, 2026-11-09: checked history values now retain
+source links through reviewed filling and application records. Source changes
+are shown without rewriting saved answers; large records have bounded, advancing
+pagination. See [scope and qualification](HISTORY_ANSWER_SOURCES.md).
+
 Latest section-selection checkpoint, 2026-11-09: automatic advice can resolve a
 checked history entry from model-interpreted section intent. Stable section
 identities bind approvals and distinguish repeated rows. See

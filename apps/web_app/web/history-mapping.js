@@ -52,7 +52,7 @@
     check.disabled=changed;check.checked=false;
     row.append(check,node('span',`${proposal.label}: ${value}`));
     if(changed)row.append(node('span','Your answer changed while suggestions ran; it has been kept.','review-label'));
-    output.append(row);proposals.push({target,check,value,baseline:baseline.get(proposal.selector)});
+    output.append(row);proposals.push({target,check,value,source:typeof proposal.entry_id==='string'&&typeof proposal.component==='string'&&typeof proposal.source_sha256==='string'?{entry_id:proposal.entry_id,component:proposal.component,source_sha256:proposal.source_sha256}:null,baseline:baseline.get(proposal.selector)});
    }
    if(advice.manual_review?.length)output.append(node('p',`${advice.manual_review.length} selected field(s) still need manual handling. No answer was invented for them.`,'footnote'));
    const apply=node('button','Use selected suggestions');apply.type='button';apply.disabled=!proposals.length;
@@ -66,8 +66,8 @@
      // Check every editor before making any changes, preserving edits atomically.
      if(selected.some(item=>item.target.input.value!==item.baseline))throw Error('An answer changed since this proposal. Your edits were kept; request new suggestions.');
      if(selected.some(item=>item.target.input.tagName==='SELECT'&&![...item.target.input.options].some(option=>option.value===item.value)))throw Error('A proposed option is no longer available. Your answers were kept; inspect again.');
-     for(const item of selected){delete item.target.input._draftId;delete item.target.input._letterDraftId;item.target.input._updateLetterLink?.();item.target.input.value=item.value;item.target.input.dispatchEvent(new Event('input',{bubbles:true}));item.check.disabled=true;}
-     notify('Suggestions copied into the answer editors. Review them before filling.');
+     for(const item of selected){delete item.target.input._draftId;delete item.target.input._letterDraftId;item.target.input._updateLetterLink?.();item.target.input.value=item.value;item.target.input.dispatchEvent(new Event('input',{bubbles:true}));if(item.source)linkFormHistorySource(item.target.input,item.source,item.value);item.check.disabled=true;}
+     notify('History answers copied for review. Editing an answer removes its saved-source link.');
     }catch(error){notify(error.message);}finally{apply.disabled=proposals.every(item=>item.check.disabled);}
    });
    output.append(apply,node('p','Suggestions are bound to the saved history and inspected session. The live page is checked again by the existing reviewed-fill action.','footnote'));

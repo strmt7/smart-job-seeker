@@ -223,3 +223,9 @@ html[data-motion="reduced"] button:active:not(:disabled) { transform: none; }
 @media(prefers-reduced-motion:reduce) { button:active:not(:disabled) { transform: none; } }
 
 #selected-job:not(:empty) { padding-top: 24px; }
+
+/* Saved answer snapshots share the workspace's card rhythm and review states. */
+.answer-history { min-width: 0; }
+.answer-history .answer-history-entry { margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.answer-history-entry>strong { display: block; margin-bottom: 8px; color: var(--ink); font-size: 14px; }
+.answer-history-entry>p { margin: 8px 0; }

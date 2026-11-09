@@ -664,6 +664,9 @@ pub fn matching_generated_evidence_in_listing(
     Ok(GeneratedEvidenceLookup { found, incomplete })
 }
 
+const MAX_ANSWER_RECORD_BYTES: u64 = 8 * 1024 * 1024;
+const ANSWER_PAGE_TARGET_BYTES: u64 = 2 * 1024 * 1024;
+
 pub struct AttemptRecord {
     dir: PathBuf,
     sequence: u32,
@@ -1234,6 +1237,7 @@ pub fn answer_history(
     }
     files.sort_by_key(|(number, _, _)| *number);
     let mut items = Vec::new();
+    let mut current_history = None;
     let mut bytes_read = 0u64;
     let mut next_after = None;
     let mut last_processed = None;
@@ -1247,21 +1251,41 @@ pub fn answer_history(
             unreadable += 1;
             continue;
         };
-        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 256 * 1024 {
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_ANSWER_RECORD_BYTES
+        {
             last_processed = Some(number);
             unreadable += 1;
             continue;
         }
-        if bytes_read.saturating_add(meta.len()) > 2 * 1024 * 1024 {
+        // Admit one bounded record even when it exceeds the usual page target.
+        // Count unreadable content too, so invalid large files cannot bypass it.
+        if bytes_read > 0 && bytes_read.saturating_add(meta.len()) > ANSWER_PAGE_TARGET_BYTES {
+            next_after = last_processed;
+            break;
+        }
+        // Enforce the byte budget on the handle as well as metadata: a local
+        // file can grow between stat and read. A later large record belongs on
+        // its own page; do not advance past it after a bounded partial read.
+        let remaining = if bytes_read == 0 {
+            MAX_ANSWER_RECORD_BYTES
+        } else {
+            ANSWER_PAGE_TARGET_BYTES.saturating_sub(bytes_read)
+        };
+        let mut data = Vec::new();
+        let readable = fs::File::open(path)
+            .and_then(|file| file.take(remaining + 1).read_to_end(&mut data))
+            .is_ok();
+        if bytes_read > 0 && data.len() as u64 > remaining {
             next_after = last_processed;
             break;
         }
         last_processed = Some(number);
-        bytes_read += meta.len();
-        let value: Value = match fs::read(path)
-            .ok()
-            .and_then(|data| serde_json::from_slice(&data).ok())
-        {
+        bytes_read = bytes_read.saturating_add(data.len() as u64);
+        if !readable || data.len() as u64 > MAX_ANSWER_RECORD_BYTES {
+            unreadable += 1;
+            continue;
+        }
+        let mut value: Value = match serde_json::from_slice(&data).ok() {
             Some(value) => value,
             None => {
                 unreadable += 1;
@@ -1279,6 +1303,34 @@ pub fn answer_history(
         ) {
             unreadable += 1;
             continue;
+        }
+        if value["type"] == "fields_requested" {
+            if let Some(fields) = value["fields"].as_array_mut() {
+                for field in fields {
+                    if field.get("source_career_history").is_some() {
+                        let records = current_history.get_or_insert_with(|| {
+                            ws.candidate_profile()
+                                .map_err(|_| "Saved profile cannot be read".to_owned())
+                                .and_then(|raw| {
+                                    let profile: Value = raw
+                                        .map(|raw| serde_json::from_str(&raw))
+                                        .transpose()
+                                        .map_err(|_| "Saved profile is unreadable")?
+                                        .unwrap_or(json!({}));
+                                    crate::history_answer_source::current_records(&profile)
+                                })
+                        });
+                        let status = crate::history_answer_source::current_status(
+                            records,
+                            &field["source_career_history"],
+                            &field["value"],
+                        );
+                        if let Some(source) = field["source_career_history"].as_object_mut() {
+                            source.insert("current_entry_status".into(), json!(status));
+                        }
+                    }
+                }
+            }
         }
         items.push(json!({"file":format!("answers/{name}"),"data":value}));
     }
@@ -2007,17 +2059,23 @@ impl AttemptRecord {
     /// Save one reviewed fill request separately from the event log. These
     /// are intended values, not evidence of successful filling or submission.
     pub fn requested_answers(&mut self, value: &Value) -> Result<String, String> {
-        self.sequence = self
+        let next = self
             .sequence
             .checked_add(1)
             .ok_or("Answer sequence exhausted")?;
-        let name = format!("{:04}.json", self.sequence);
+        let name = format!("{next:04}.json");
         let directory = self.dir.join("answers");
         let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(&mut file, value).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
+        if file.as_file().metadata().map_err(|e| e.to_string())?.len() > MAX_ANSWER_RECORD_BYTES {
+            return Err(
+                "The answer record exceeds 8 MiB; select fewer fields before filling".into(),
+            );
+        }
         file.persist_noclobber(directory.join(&name))
             .map_err(|e| e.to_string())?;
+        self.sequence = next;
         Ok(format!("answers/{name}"))
     }
     /// Record the observed questions without recording values from the page.
@@ -3191,6 +3249,78 @@ mod tests {
         assert!(remainder["next_after"].is_null());
     }
 
+    #[test]
+    fn oversized_answer_record_is_not_published_and_does_not_advance_sequence() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(root).unwrap();
+        fs::create_dir(directory.path().join("answers")).unwrap();
+        let mut record = AttemptRecord {
+            dir: directory.path().into(),
+            sequence: 0,
+        };
+        let good = json!({"type":"fields_requested","fields":[{"question":"Employer","value":{"text":"Fictional"}}]});
+        assert_eq!(
+            record.requested_answers(&good).unwrap(),
+            "answers/0001.json"
+        );
+        let oversized =
+            json!({"type":"fields_requested","text":"x".repeat(MAX_ANSWER_RECORD_BYTES as usize)});
+        assert!(record
+            .requested_answers(&oversized)
+            .unwrap_err()
+            .contains("select fewer fields"));
+        assert_eq!(record.sequence, 1);
+        assert_eq!(
+            fs::read_dir(directory.path().join("answers"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(
+            record.requested_answers(&good).unwrap(),
+            "answers/0002.json"
+        );
+    }
+    #[test]
+    fn large_answer_snapshots_are_readable_and_pagination_always_advances() {
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let directory = tempfile::tempdir_in(base).unwrap();
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let added=crate::manual_job::add(&mut ws,&json!({"url":"https://example.invalid/large-answer-history","title":"Fictional role","employer":"Fictional Co"}),1).unwrap();
+        let job = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+        let mut record = AttemptRecord::start(&ws, &job, "large-answer-snapshot", 2)
+            .unwrap()
+            .unwrap();
+        let fields:Vec<_>=(0..200).map(|i|json!({"selector":format!("#answer-{i}"),"question":format!("Fictional question {i}: {}","context ".repeat(500)),"value":{"text":"a".repeat(4000)}})).collect();
+        let answers:Vec<_>=(0..200).map(|i|json!({"field_selector":format!("#answer-{i}"),"value":{"text":"a".repeat(4000)}})).collect();
+        let large = json!({"type":"fields_requested","fields":fields,"answers":answers});
+        let path = record.requested_answers(&large).unwrap();
+        assert!(fs::metadata(record.dir.join(path)).unwrap().len() > ANSWER_PAGE_TARGET_BYTES);
+        let small = json!({"type":"fields_requested","fields":[{"question":"Small","value":{"text":"Fictional"}}]});
+        record.requested_answers(&small).unwrap();
+        let first = answer_history(&ws, &job, "large-answer-snapshot", 0).unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 1);
+        assert_eq!(first["items"][0]["data"], large);
+        assert_eq!(first["next_after"], 1);
+        let second = answer_history(&ws, &job, "large-answer-snapshot", 1).unwrap();
+        assert_eq!(second["items"][0]["data"], small);
+        assert!(second["next_after"].is_null());
+        // A large invalid record still consumes the page budget and advances.
+        record
+            .requested_answers(
+                &json!({"type":"unsupported","text":"x".repeat(ANSWER_PAGE_TARGET_BYTES as usize)}),
+            )
+            .unwrap();
+        record.requested_answers(&small).unwrap();
+        let invalid = answer_history(&ws, &job, "large-answer-snapshot", 2).unwrap();
+        assert!(invalid["items"].as_array().unwrap().is_empty());
+        assert_eq!(invalid["unreadable"], 1);
+        assert_eq!(invalid["next_after"], 3);
+        assert_eq!(
+            answer_history(&ws, &job, "large-answer-snapshot", 3).unwrap()["items"][0]["data"],
+            small
+        );
+    }
     #[test]
     fn reviewed_answer_snapshots_preserve_each_request_without_overwriting() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");

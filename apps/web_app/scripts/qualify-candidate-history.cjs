@@ -8,7 +8,7 @@ if(os.freemem()<6*1024**3)throw Error('Not enough available RAM for qualificatio
 const folder=fs.mkdtempSync(path.join(repo,'target/candidate-history-'));
 const executable=options.executable||path.join(repo,'target/debug/waypoint_web.exe');
 const browserExecutable=options.browser||'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const sources=['apps/web_app/src/main.rs','apps/web_app/src/candidate_history.rs','apps/web_app/src/history_advice.rs','apps/web_app/src/history_record_choice.rs','apps/web_app/web/history-mapping.js','apps/web_app/web/app.js','apps/web_app/web/index.html','apps/web_app/web/workspace-theme.css','apps/web_app/web/candidate-history.js','apps/web_app/scripts/qualify-candidate-history.cjs'];
+const sources=['apps/web_app/src/main.rs','apps/web_app/src/candidate_history.rs','apps/web_app/src/history_advice.rs','apps/web_app/src/history_answer_source.rs','apps/web_app/src/attempt_record.rs','apps/web_app/src/history_record_choice.rs','apps/web_app/web/history-mapping.js','apps/web_app/web/app.js','apps/web_app/web/index.html','apps/web_app/web/workspace-theme.css','apps/web_app/web/candidate-history.js','apps/web_app/scripts/qualify-candidate-history.cjs'];
 const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const evidence={complete:false,sources:Object.fromEntries(sources.map(file=>[file,digest(path.join(repo,file))])),executable_sha256:digest(executable),cases:[],errors:[],scope:'fictional profile, section advice interactions and actual browser zoom; no employer forms or model calls'};
 const child=spawn(executable,[],{windowsHide:true,env:{...process.env,APPDATA:path.join(folder,'appdata'),WAYPOINT_WORKSPACE_DIR:path.join(folder,'workspace'),WAYPOINT_NO_BROWSER:'1',WAYPOINT_NO_TRAY:'1'},stdio:['ignore','pipe','pipe']});
@@ -118,7 +118,7 @@ const started=Date.now();
   const historyCalls=[],historyStarts=[];
   await page.route('**/api/form/history-advice-*',async route=>{
    const name=new URL(route.request().url()).pathname;historyCalls.push(name);if(name.endsWith('-start'))historyStarts.push(route.request().postDataJSON());
-   const response=name.endsWith('-start')?{task_id:'fictional-layout'}:{status:'complete',advice:{entry_label:'Engineer at Fictional Co',selection:{basis:'current',evidence:'Current employment'},proposals:[{selector:'#history-employer',label:'Employer',value:{text:'Fictional Co'}},{selector:'#history-month',label:'Start month',value:{date:'2020-06'}}],manual_review:[]}};
+   const response=name.endsWith('-start')?{task_id:'fictional-layout'}:{status:'complete',advice:{entry_label:'Engineer at Fictional Co',selection:{basis:'current',evidence:'Current employment'},proposals:[{selector:'#history-employer',label:'Employer',value:{text:'Fictional Co'},entry_id:'c'.repeat(32),component:'employer',source_sha256:'d'.repeat(64)},{selector:'#history-month',label:'Start month',value:{date:'2020-06'},entry_id:'c'.repeat(32),component:'start_year_month',source_sha256:'e'.repeat(64)}],manual_review:[]}};
    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(response)});
   });
   await page.evaluate(()=>{
@@ -180,12 +180,20 @@ const started=Date.now();
     }
    }
   }
-  await zoom(1);await controller.close();await page.setViewportSize({width:1440,height:1000});
+  await zoom(1);await page.setViewportSize({width:1440,height:1000});
   for(const check of await advice.locator('.history-proposal input[type=checkbox]').all())await check.check();
   await advice.getByRole('button',{name:'Use selected suggestions',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#history-employer').value==='Fictional Co');
   assert.equal(await advice.locator('#history-employer').inputValue(),'Fictional Co');
   assert.equal(await advice.locator('#history-month').inputValue(),'2020-06');
+  const savedSource=await page.evaluate(()=>formAnswerPayload({selector:'#history-employer',kind:'text',input:document.querySelector('#history-employer')}));
+  assert.deepEqual(savedSource.history_source,{entry_id:'c'.repeat(32),component:'employer',source_sha256:'d'.repeat(64)});
+  const monthSource=await page.evaluate(()=>formAnswerPayload({selector:'#history-month',kind:'month',input:document.querySelector('#history-month')}));
+  assert.equal(monthSource.history_source.component,'start_year_month');
+  await advice.locator('#history-employer').fill('Manual revision');
+  await advice.locator('#history-employer').fill('Fictional Co');
+  assert.equal(await page.evaluate(()=>formAnswerPayload({selector:'#history-employer',kind:'text',input:document.querySelector('#history-employer')}).history_source),undefined);
+  evidence.cases.push('exact history source reaches fill payload; manual editing and reverting do not restore it');
   assert.equal(await advice.locator('#history-other').inputValue(),'');
   assert.equal(historyStarts.length,1);
   assert.equal(historyStarts[0].entry_id,'auto');
@@ -201,6 +209,38 @@ const started=Date.now();
   await page.reload();await page.waitForFunction(()=>typeof profileEditRevision==='string');
   assert.equal(JSON.parse(await page.locator('#career-history-value').inputValue()).employment[0].title,'Other saved edit');
   evidence.cases.push('unreadable loaded data stays explicit and cannot silently clear saved history');
+  await page.evaluate(()=>{
+   setWorkspaceView('applications');
+   const card=document.createElement('section');card.id='history-source-archive-qualification';card.className='answer-draft';
+   const heading=document.createElement('h3');heading.textContent='Saved answers';const content=document.createElement('div');card.append(heading,content);
+   renderAttemptAnswers(content,{available:true,items:[{file:'answers/0001.json',data:{type:'fields_requested',fields:[
+    {question:'Current employer',value:{text:'Fictional Co'},source_career_history:{version:1,entry_label:'Engineer at Fictional Co <literal>',component:'employer',current_entry_status:'entry_changed_or_unchecked'}},
+    {question:'Starting month',value:{date:'2020-06'},source_career_history:{version:1,entry_label:'Engineer at Fictional Co',component:'start_year_month',current_entry_status:'entry_unchanged'}}
+   ]}}],unreadable:0,truncated:false});document.querySelector('#workspace-pane').append(card);
+   document.querySelector('#message').classList.remove('visible');
+  });
+  const archived=page.locator('#history-source-archive-qualification');
+  assert.equal(await archived.locator('literal').count(),0);
+  assert.match(await archived.innerText(),/source entry changed or is no longer checked/);
+  assert.match(await archived.innerText(),/checked history entry still matches/);
+  for(const width of [320,390,768,1440,1920]){
+   await page.setViewportSize({width,height:1000});await archived.scrollIntoViewIfNeeded();
+   const overflow=await archived.evaluate(host=>({document:document.documentElement.scrollWidth>innerWidth+1,host:host.scrollWidth>host.clientWidth+1}));assert.deepEqual(overflow,{document:false,host:false},`source archive overflow at ${width}`);
+   evidence.cases.push(`saved answer source states at ${width}px with literal text`);
+   if(width===390||width===1440){await archived.evaluate(el=>el.scrollIntoView({block:'start',behavior:'instant'}));await page.screenshot({path:path.join(folder,`history-sources-${width}.png`)});}
+  }
+  for(const width of [1280,1920]){
+   await page.setViewportSize({width,height:1000});
+   for(const factor of [0.8,1,1.25,1.5,2,4]){
+    await zoom(factor);await page.bringToFront();const status=archived.locator('.review-label').first();await status.scrollIntoViewIfNeeded();
+    await status.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const visible=await status.evaluate(el=>{const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return r.width>0&&r.height>0&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight&&(hit===el||el.contains(hit));});assert.equal(visible,true,`source status visible at ${width}px and ${factor} zoom`);
+    const overflow=await archived.evaluate(host=>({document:document.documentElement.scrollWidth>innerWidth+1,host:host.scrollWidth>host.clientWidth+1}));assert.deepEqual(overflow,{document:false,host:false},`source status overflow at ${width}px and ${factor} zoom`);
+    evidence.cases.push(`saved answer source actual browser zoom ${factor} at ${width}px`);
+    if(width===1280&&factor===4){const session=await context.newCDPSession(page);const capture=await session.send('Page.captureScreenshot',{format:'png',fromSurface:true,captureBeyondViewport:false});fs.writeFileSync(path.join(folder,'history-sources-zoom-400.png'),Buffer.from(capture.data,'base64'));await session.detach();}
+   }
+  }
+  await zoom(1);await controller.close();
   assert.equal(evidence.errors.length,0);
   assert.deepEqual(Object.fromEntries(sources.map(file=>[file,digest(path.join(repo,file))])),evidence.sources);
   evidence.complete=true;

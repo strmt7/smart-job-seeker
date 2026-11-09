@@ -142,3 +142,10 @@ The local 12B model selected three appropriate records from multiple saved
 entries and completed ten visually/live-verified values in one fictional form;
 four restricted fields stayed empty. Seven additional semantic descriptions
 passed. These are small checks, not universal model or employer-site evidence.
+
+The [answer-source checkpoint](HISTORY_ANSWER_SOURCES.md) subsequently connected
+those values, and explicit saved-value choices, to checked source links in fill
+requests and application archives. Editing removes the link. Rust rechecks the
+current saved entry before filling, while the viewer flags later source changes
+without altering historical answer files. This is source traceability, not
+authoritative claim verification or a new model-quality result.

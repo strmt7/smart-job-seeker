@@ -3,7 +3,6 @@
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use waypoint_applications::form_mapping::{text_fits_field, FormField, FormFieldType, PacketValue};
-use waypoint_domain::Sha256Digest;
 use waypoint_inference::Inference;
 
 pub static TASK: crate::local_advice::Slot = crate::local_advice::Slot::new();
@@ -59,7 +58,7 @@ pub fn validate_scope(fields: &[FormField]) -> Result<(), String> {
     }
     Ok(())
 }
-fn value_for(field: &FormField, component: &str, value: &str) -> Option<PacketValue> {
+pub(crate) fn value_for(field: &FormField, component: &str, value: &str) -> Option<PacketValue> {
     if crate::suggestions::names_other_person(&field.label) || !text_fits_field(field, value) {
         return None;
     }
@@ -203,7 +202,7 @@ fn propose_selected(
             .get(component)
             .ok_or("Model selected an unavailable history component")?;
         if let Some(typed) = value_for(field, component, value) {
-            proposals.push(json!({"selector":field.selector,"label":field.label,"component":component,"value":typed,"entry_id":record.id,"source_sha256":Sha256Digest::of(&json!({"entry":record,"component":component,"value":value}).to_string()).as_str()}));
+            proposals.push(json!({"selector":field.selector,"label":field.label,"component":component,"value":typed,"entry_id":record.id,"source_sha256":crate::history_answer_source::source_digest(record, component).ok_or("History component disappeared")?.as_str()}));
         } else {
             let reason = if crate::suggestions::names_other_person(&field.label) {
                 "wrong_subject"

@@ -2,7 +2,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
-const start=source.indexOf('function bindDraftEvidence('),end=source.indexOf('function useFormDraft(',start);
+const start=source.indexOf('function bindDraftEvidence('),end=source.indexOf('\nfunction ',start);
 assert.ok(start>=0&&end>start);
 const bind=vm.runInNewContext(`(${source.slice(start,end).trim()})`);
 const input={events:[],addEventListener(name,fn){assert.equal(name,'input');this.events.push(fn)}};

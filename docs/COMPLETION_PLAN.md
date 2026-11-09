@@ -193,9 +193,12 @@ build and configuration.
    model-interpreted intent and repeatable record resolution across checked
    entries, with ten visually/live-verified answers in one repeated-history
    fixture and seven additional intent cases. Global repeated-row assignment,
-   history-based tailoring and revision-bound answer provenance
+   history-based tailoring and authoritative claim dependencies
    still need implementation and local-model evaluation; do not infer them from
-   the editor or its workflow tests.
+   the editor or its workflow tests. The [answer-source checkpoint](HISTORY_ANSWER_SOURCES.md)
+   now binds checked history values to reviewed answers and immutable historical
+   snapshots, with current-source annotations. Per-record field pagination still
+   needs implementation beyond the viewer's explicit first-100-field limit.
    The [integrated history qualification](HISTORY_PIPELINE_2026-11-09.md) now
    covers contact/history separation and seven visually checked fills on two
    fictional layouts using the local 12B model. This is a small integrated

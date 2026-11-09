@@ -48,6 +48,9 @@ mod gpu_resources;
 mod history_advice;
 #[cfg(all(test, windows))]
 mod history_advice_browser_tests;
+mod history_answer_source;
+#[cfg(test)]
+mod history_answer_source_browser_tests;
 #[cfg(all(test, windows))]
 mod history_pipeline_tests;
 mod history_record_choice;
@@ -1402,6 +1405,22 @@ fn attach_answer_provenance(
     let Some(answers) = body.get("answers").and_then(Value::as_array) else {
         return Ok(());
     };
+    if answers
+        .iter()
+        .any(|answer| answer.get("history_source").is_some())
+    {
+        let profile: Value = ws
+            .candidate_profile()
+            .map_err(|error| error.to_string())?
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()
+            .map_err(|_| "Stored profile is invalid")?
+            .unwrap_or(json!({}));
+        if Sha256Digest::of(&profile.to_string()) != session.profile_digest {
+            return Err("Profile changed; inspect the form again".into());
+        }
+        history_answer_source::attach(&profile, &session.preview, answers, fields)?;
+    }
     let mut used = std::collections::HashSet::new();
     for answer in answers {
         if let Some(value) = answer.get("letter_draft_id") {
@@ -7509,6 +7528,38 @@ fn serve(
                 current.created = Instant::now();
             }
             json_reply(stream, "200 OK", result);
+        }
+        "/api/form/history-value" => {
+            let id = body["session_id"].as_str().ok_or("Missing form session")?;
+            let entry = body["entry_id"]
+                .as_str()
+                .filter(|entry| *entry != "auto")
+                .ok_or("Choose a particular checked history entry")?;
+            let selector = body["selector"].as_str().ok_or("Missing history field")?;
+            let component = body["component"]
+                .as_str()
+                .filter(|key| key.len() <= 40)
+                .ok_or("Invalid history component")?;
+            let current = session
+                .as_ref()
+                .filter(|session| session.id == id)
+                .ok_or("Form session expired")?;
+            let (input, _) = history_inputs(ws, current, entry, &[selector.into()])?;
+            let history_advice::HistorySource::Selected(record) = input.source else {
+                return Err("Choose a particular history entry".into());
+            };
+            let value = record
+                .values
+                .get(component)
+                .and_then(|value| history_advice::value_for(&input.fields[0], component, value))
+                .ok_or("The saved value does not fit this field or its subject")?;
+            let digest = history_answer_source::source_digest(&record, component)
+                .ok_or("History component is unavailable")?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"selector":selector,"value":value,"history_source":history_answer_source::HistoryLink {entry_id:record.id,component:component.into(),source_sha256:digest.as_str().into()}}),
+            );
         }
         "/api/form/history-advice-pending" => {
             json_reply(stream, "200 OK", history_advice::TASK.pending()?);
